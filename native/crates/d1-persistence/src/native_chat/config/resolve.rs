@@ -362,6 +362,60 @@ fn existing_agent_codex_home(
     Ok(canonical)
 }
 
+/// Resolve an already persisted Codex RuntimeBinding profile without reading
+/// the conversation's currently selected Agent. Transcript readers use this
+/// only after D1 has authorized and pinned the historical binding identity.
+pub fn historical_codex_profile_home(
+    host: &LocalHostContext,
+    organization_id: &str,
+    agent_id: &str,
+    binding_profile_id: &str,
+) -> std::result::Result<PathBuf, super::Error> {
+    let prefix = format!("managed-codex:{agent_id}:");
+    let profile_id = binding_profile_id
+        .strip_prefix(&prefix)
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or_else(|| invalid("historical Codex binding identity is invalid"))?;
+    if !profile_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err(invalid("historical Codex profile identity is invalid"));
+    }
+
+    let path = if host.uses_native_codex_profile() {
+        match profile_id {
+            "default" => {
+                existing_agent_codex_home(host.instance_root(), organization_id, agent_id)?
+            }
+            "operator-default" => host
+                .operator_codex_home()
+                .ok_or_else(|| invalid("historical operator Codex profile is unavailable"))?
+                .to_path_buf(),
+            _ => return Err(unsupported("historical Codex profile is unavailable")),
+        }
+    } else {
+        managed_profile_home(
+            host.managed_profiles_root(),
+            organization_id,
+            agent_id,
+            profile_id,
+        )?
+    };
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|_| invalid("historical Codex profile is unavailable"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid("historical Codex profile is not a directory"));
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| invalid("historical Codex profile is unavailable"))?;
+    if canonical != path {
+        return Err(invalid("historical Codex profile escaped its host root"));
+    }
+    Ok(canonical)
+}
+
 /// Bind the selected profile's non-secret Codex configuration bytes into the
 /// existing capability revision. Never read auth.json or return/log config
 /// values; only the digest leaves this resolver.

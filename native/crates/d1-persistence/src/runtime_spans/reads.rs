@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rudder_auth_core::VerifiedActor;
 use serde_json::Value;
@@ -704,10 +704,68 @@ pub(super) async fn read_conversation_messages(
     let mut transcript_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut fallback_by_generation: HashMap<String, Vec<Value>> = HashMap::new();
     let mut transcript_summary_by_generation: HashMap<String, Value> = HashMap::new();
+    let mut codex_transcript_candidates = HashSet::new();
     if !generation_ids.is_empty() {
         let summaries = sqlx::query(
             "SELECT g.id::text AS generation_id, count(e.generation_seq)::bigint AS entry_count,
-                    min(e.recorded_at)::text AS started_at, max(e.recorded_at)::text AS ended_at
+                    min(e.recorded_at)::text AS started_at, max(e.recorded_at)::text AS ended_at,
+                    EXISTS (
+                      SELECT 1
+                      FROM heartbeat_runs r
+                      JOIN heartbeat_run_attempts a
+                        ON a.org_id=r.org_id AND a.run_id=r.id
+                      JOIN run_runtime_spans s
+                        ON s.org_id=r.org_id AND s.run_id=r.id
+                       AND s.attempt_id=a.id AND s.relation='primary'
+                      JOIN runtime_bindings b
+                        ON b.org_id=s.org_id AND b.id=s.binding_id
+                      JOIN native_segments n
+                        ON n.org_id=s.org_id AND n.binding_id=s.binding_id AND n.id=s.segment_id
+                      WHERE r.org_id=g.org_id AND r.chat_generation_id=g.id
+                        AND r.execution_authority='native_rust' AND r.status='succeeded'
+                        AND r.chat_conversation_id=g.conversation_id
+                        AND r.scene='chat' AND r.target_type='chat_conversation'
+                        AND r.target_id=g.conversation_id::text
+                        AND g.execution_authority='native_rust' AND g.status='completed'
+                        AND g.terminal_reason IS DISTINCT FROM 'operator_stop'
+                        AND g.stop_requested_at IS NULL AND g.accepted_through_seq IS NULL
+                        AND g.runtime_terminal_at IS NOT NULL AND g.completed_at IS NOT NULL
+                        AND g.provider_thread_id=a.provider_thread_id
+                        AND g.provider_turn_id=a.provider_turn_id
+                        AND a.runtime_type='codex_local' AND a.status='succeeded'
+                        AND a.protocol_phase='execution_terminal_committed'
+                        AND a.attempt_epoch=s.attempt_epoch
+                        AND a.generation_attempt_epoch=g.attempt_epoch
+                        AND a.connection_epoch IS NOT NULL
+                        AND a.provider_thread_id IS NOT NULL AND a.provider_turn_id IS NOT NULL
+                        AND a.checkpoint_json->>'phase'='execution_terminal_committed'
+                        AND a.checkpoint_json->>'threadId'=a.provider_thread_id
+                        AND a.checkpoint_json->>'turnId'=a.provider_turn_id
+                        AND s.state='sealed' AND s.completeness='terminal_only'
+                        AND s.native_execution_ref=a.provider_turn_id
+                        AND s.selector_json->>'kind'='codex_turn'
+                        AND s.selector_json->>'threadId'=a.provider_thread_id
+                        AND s.selector_json->>'turnId'=a.provider_turn_id
+                        AND b.runtime_type='codex_local' AND b.agent_id=r.agent_id
+                        AND b.target_type='chat_conversation'
+                        AND b.target_id=g.conversation_id::text
+                        AND b.host_id IS NOT NULL AND b.profile_id IS NOT NULL
+                        AND b.principal_scope_ref IS NOT NULL
+                        AND n.runtime_type='codex_local'
+                        AND n.state IN ('open','sealed')
+                        AND n.native_session_id=a.provider_thread_id
+                        AND NOT EXISTS (
+                          SELECT 1 FROM chat_generation_events e2
+                          WHERE e2.org_id=g.org_id AND e2.generation_id=g.id
+                            AND e2.event_kind IN ('assistant_delta','runtime_output','transcript')
+                            AND (g.accepted_through_seq IS NULL OR e2.generation_seq <= g.accepted_through_seq)
+                        )
+                        AND (SELECT count(*) FROM run_runtime_spans s2
+                             WHERE s2.org_id=r.org_id AND s2.run_id=r.id
+                               AND s2.relation='primary')=1
+                        AND (SELECT count(*) FROM heartbeat_run_attempts a2
+                             WHERE a2.org_id=r.org_id AND a2.run_id=r.id)=1
+                    ) AS codex_source_candidate
              FROM chat_generations g
              LEFT JOIN chat_generation_events e
                ON e.org_id=g.org_id AND e.generation_id=g.id AND e.event_kind='transcript'
@@ -722,6 +780,9 @@ pub(super) async fn read_conversation_messages(
         for summary in summaries {
             let generation_id: String = summary.try_get("generation_id")?;
             let entry_count: i64 = summary.try_get("entry_count")?;
+            if entry_count == 0 && summary.try_get::<bool, _>("codex_source_candidate")? {
+                codex_transcript_candidates.insert(generation_id.clone());
+            }
             transcript_summary_by_generation.insert(
                 generation_id,
                 if entry_count > 0 {
@@ -863,12 +924,28 @@ pub(super) async fn read_conversation_messages(
         } else {
             legacy_transcript
         };
-        let transcript_summary = generation_id
+        let mut transcript_summary = generation_id
             .as_ref()
             .and_then(|id| transcript_summary_by_generation.get(id))
             .cloned()
             .filter(|summary| !summary.is_null())
             .unwrap_or_else(|| transcript_summary(&selected_transcript));
+        if transcript_summary.is_null()
+            && selected_transcript.is_empty()
+            && generation_id
+                .as_ref()
+                .is_some_and(|id| codex_transcript_candidates.contains(id))
+        {
+            // This only makes the existing transcript affordance reachable.
+            // The subsequent exact-message GET performs full preflight and
+            // postflight authorization and may still report incomplete.
+            transcript_summary = serde_json::json!({
+                "entryCount": 0,
+                "startedAt": null,
+                "endedAt": null,
+                "providerSource": "codex",
+            });
+        }
         let transcript = if *include_transcript {
             selected_transcript
         } else {

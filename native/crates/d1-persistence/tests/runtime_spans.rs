@@ -326,6 +326,9 @@ mod lifecycle;
 #[path = "runtime_spans/concurrency_and_side_chat.rs"]
 mod concurrency_and_side_chat;
 
+#[path = "runtime_spans/codex_reader.rs"]
+mod codex_reader;
+
 #[tokio::test(flavor = "multi_thread")]
 async fn message_transcript_reader_maps_events_paginates_and_fences_access() {
     const GENERATION: &str = "66000000-0000-4000-8000-000000000101";

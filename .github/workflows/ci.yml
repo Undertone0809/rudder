@@ -447,7 +447,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.run_native == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # Leave room for cold Intel builds after the full native and host tests.
+    timeout-minutes: ${{ matrix.target == 'x86_64-apple-darwin' && 90 || 60 }}
     strategy:
       fail-fast: false
       matrix:

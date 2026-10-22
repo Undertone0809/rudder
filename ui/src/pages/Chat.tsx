@@ -161,7 +161,7 @@ import {
   shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
-import { resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
+import { canLoadChatMessageTranscript, resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
@@ -2782,7 +2782,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           ?? [];
         if (
           !transcript.some(isMatchingProcessEntry)
-          && sourceMessage.transcriptSummary?.entryCount
+          && canLoadChatMessageTranscript(sourceMessage.transcriptSummary)
         ) {
           transcript = await loadMessageTranscript(
             sourceMessage.conversationId,
@@ -3091,7 +3091,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (message.role !== "assistant" || !message.generationId) continue;
       if ((nativeSteerMessagesByGenerationId.get(message.generationId)?.length ?? 0) === 0) continue;
       if ((loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []).length > 0) continue;
-      if (!message.transcriptSummary?.entryCount || loadingTranscriptMessageIds[message.id]) continue;
+      if (!canLoadChatMessageTranscript(message.transcriptSummary) || loadingTranscriptMessageIds[message.id]) continue;
       void loadMessageTranscript(message.conversationId, message.id);
     }
   }, [
@@ -4788,7 +4788,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               || message.kind === "issue_proposal" || message.kind === "operation_proposal";
                             const shouldRenderPersistedTranscript =
                               (persistedTranscript.length > 0 || messageSteerMessages.length > 0)
-                              && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
+                              && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && canLoadChatMessageTranscript(message.transcriptSummary); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
                             const messageTurnBranchControls = turnBranchControlsFor(message);
                             const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
                             const historicalAnnotationsForMessage = historicalResponseAnnotations.filter(

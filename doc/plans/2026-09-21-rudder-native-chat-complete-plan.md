@@ -1836,3 +1836,93 @@ history is sent back as a prompt. Cover both one replay chunk and 160 chunks
 and a current-prompt update count of one. Keep the existing cleanup/Stop gates.
 Fresh real Stop/recall acceptance must verify exact final content, not only
 marker inclusion, before the repaired candidate can be published.
+
+### October 22 provider Reader source contracts (preparatory only)
+
+The preparatory checkpoint `714fa422c` has two deliberately bounded Rust source
+primitives. The public Codex-only candidate excludes the unused Hermes replay
+primitive; its source remains in that private checkpoint.
+Codex can issue `thread/read` with `includeTurns: true` and select only one
+exact persisted thread/turn identity from a bounded, strictly decoded response.
+A missing turn, unsupported method, malformed response and provider rejection
+remain distinct outcomes. The installed protocol deprecates full hydration for
+paginated threads; preserve `itemsView=summary/notLoaded` as incomplete rather
+than claiming complete history or inventing a provider cursor.
+
+Hermes can capture normalized public `session/update` replay notifications only
+until the exact `session/load` response. The result is explicitly session-only
+and provider completeness is unspecified: replay notifications contain no
+prompt request or source user-message identity. Never select a Run from the
+latest replay text, expose raw tool arguments/outputs, or treat a bounded
+session snapshot as paginated or complete history. Existing continuation
+`load_session` keeps its discard behavior until the Reader is separately wired.
+
+These primitives do not grant a historical process-launch permit, implement a
+public Reader route, replace SQL mirrors, or establish exact Hermes Run/span
+correlation. The next accepted product slice still needs Rust authorization and
+read-only launch capability, exact durable selectors, Stop-cutoff projection,
+missing-source fallback and real public-ingress acceptance. Keep the full
+Reader/storage/Fork/retention gates open.
+
+### October 22 Hermes exact-Run history boundary
+
+Installed Hermes 0.21.0 source inspection found that `session/load` is not a
+strictly read-only history API: it persists the working directory, attaches MCP
+servers, reconstructs the agent when necessary, and replays session-level
+display history. The private replay primitive above must therefore remain
+excluded from the public read-only Reader. Sending no prompt does not prove
+that a load operation has no side effects.
+
+The native store has durable `messages.id` row keys and bounded `after_id`
+queries, but current ACP ignores the submitted `messageId`. Rudder's existing
+Hermes checkpoint binds its ACP session and wire request, not the provider's
+message-row range. Compression lineage is also session-level and cannot close
+an exact Run. A complete Hermes Run Reader needs a verified durable provider
+binding to the exact source message and row ranges, including each compression
+segment, before those selectors can be persisted and read under Rust authority.
+Do not modify an operator's installed Hermes or native database to manufacture
+that capability. Existing Runs without such a binding remain explicitly
+unavailable for exact provider-native reading; they keep their authorized SQL
+projection. Do not substitute timestamps, the latest session, all descendants,
+session-wide replay, or a repeated prompt. The Codex exact-turn public slice is
+independent and does not establish Hermes history parity.
+
+### October 22 Codex public Reader implementation checkpoint
+
+The first Codex public exact-turn slice now connects the existing message
+transcript GET through the signed transport to Rust authorization, historical
+profile resolution, one bounded `thread/read`, public projection, and a fresh
+post-IPC SQL fence. It is local implementation work, not accepted delivery.
+Independent stage review rejected checkpoint `0e0006b49`: provider terminal
+status, ordinary item projection, recorded command output, positively observed
+process cleanup, and public-path adversarial evidence need correction before
+real installed-provider acceptance. Preserve that rejection and the original
+synthetic observations. Integrating the accepted runtime-hardening base does
+not resolve those findings or promote this slice to complete. The Hermes
+exact-Run history capability boundary above remains open independently.
+
+The repaired Codex-only checkpoint keeps a reusable native segment open while
+requiring its exact successful terminal span/attempt/turn. It additionally
+matches the segment's native session ID before and after IPC. A bounded list
+query advertises only a zero-entry native-source hint; it never launches a
+provider or fabricates a ledger count. The existing process-details control
+then invokes the authoritative transcript GET. Public integration now covers
+ordinary user/reasoning item shapes, completed-only turns, real bounded command
+output, positive owned cleanup, actual late Stop preserving completion, Rust
+organization denial, and no business-row additions from reads. Malformed-wire
+cleanup uncertainty remains an explicit failure. Real installed-provider and
+rendered acceptance, full candidate qualification, and publication remain open.
+
+### October 22 installed Codex initialization compatibility
+
+A real first-send prerequisite failed before a provider Thread or Turn existed:
+the installed Codex updated to `0.163.0-alpha.11.1` and now reports a
+`Codex Desktop/...` user agent. The executor incorrectly required the exact old
+`rudder-native-chat/0.163.0-alpha.10.2` prefix. An initialization-only probe
+reproduced that mismatch with the exact selected CODEX_HOME and no model input.
+Treat the user agent as bounded display metadata while retaining executable,
+exact profile-home, configuration provenance, policy, dispatch and owner fences.
+Malformed initialization and a mismatched home must still fail before dispatch.
+The failed real input remains recorded; a new frozen candidate and independent
+real-local acceptance are required. This is not a claim of compatibility with
+every future Codex protocol or completion of the Reader/full Native Chat plan.

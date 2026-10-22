@@ -118,3 +118,30 @@ async fn rejects_unsigned_commands_and_unknown_fields() {
     .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[test]
+fn reader_owner_token_is_unique_and_a_portable_path_component() {
+    let attempt_id = "20000000-0000-4000-8000-000000000001";
+    let prefix = format!("codex-reader-{attempt_id}-");
+    let first = codex_reader_owner_token(attempt_id);
+    let second = codex_reader_owner_token(attempt_id);
+
+    for token in [&first, &second] {
+        assert!(token.starts_with(&prefix));
+        let nonce = token.strip_prefix(&prefix).unwrap();
+        assert!(Uuid::parse_str(nonce).is_ok());
+        assert!(!token.ends_with('.') && !token.ends_with(' '));
+        assert!(
+            token
+                .chars()
+                .all(|character| !character.is_control() && !r#"<>:"/\\|?*"#.contains(character))
+        );
+        let path = std::path::Path::new(token);
+        assert_eq!(path.components().count(), 1);
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(token.as_str())
+        );
+    }
+    assert_ne!(first, second);
+}

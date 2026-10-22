@@ -6,8 +6,12 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 pub use crate::runtime_bindings::Error;
+pub use codex_reader::{
+    CodexTranscriptReadCompletion, CodexTranscriptReadPlan, CodexTranscriptReadPreflight,
+};
 
 mod admission;
+mod codex_reader;
 mod context;
 mod lifecycle;
 mod locator;
@@ -16,6 +20,29 @@ mod reads;
 mod validation;
 
 type Result<T> = std::result::Result<T, Error>;
+
+pub async fn prepare_codex_transcript_read(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    request: &Request,
+) -> Result<CodexTranscriptReadPreflight> {
+    codex_reader::prepare(pool, actor, organization_id, request).await
+}
+
+pub async fn complete_codex_transcript_read(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    organization_id: &str,
+    plan: &CodexTranscriptReadPlan,
+    transcript: &[Value],
+) -> Result<CodexTranscriptReadCompletion> {
+    codex_reader::complete(pool, actor, organization_id, plan, transcript).await
+}
+
+pub fn incomplete_codex_transcript_response(plan: &CodexTranscriptReadPlan, reason: &str) -> Value {
+    codex_reader::incomplete_response(plan, reason)
+}
 
 /// Strict signed-internal contract for one primary span per durable attempt.
 #[derive(Clone, Debug, Deserialize)]

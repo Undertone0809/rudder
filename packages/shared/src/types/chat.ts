@@ -664,6 +664,8 @@ export interface ChatWorkManifestResponse {
 }
 
 export interface ChatTranscriptSummary {
+  /** A persisted native source can be read on demand; completeness is checked by the transcript GET. */
+  providerSource?: "codex";
   entryCount: number;
   startedAt: string | null;
   endedAt: string | null;

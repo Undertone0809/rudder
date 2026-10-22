@@ -628,7 +628,8 @@ async fn real_prelaunch_rejections_do_not_exhaust_worker_capacity() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST, disposable PostgreSQL and synthetic provider"]
 async fn real_provider_failure_with_cleanup_finalizes_failed_run() {
-    let (db, host, actor, run, attempt) = fixture::database_and_admission("wrong-version").await;
+    let (db, host, actor, run, attempt) =
+        fixture::database_and_admission("invalid-user-agent").await;
     let worker = Supervisor::new(db.pool.clone());
     let ticket = worker.try_start(job(&host, actor, &run, &attempt)).unwrap();
     assert_eq!(ticket.wait().await, Status::FinalizationCommitted);

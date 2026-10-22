@@ -1735,13 +1735,7 @@ impl Driver<'_> {
         self.poll_stop()?;
         self.check_cancelled()?;
         let initialized = self.rpc("initialize", json!({"clientInfo":{"name":"rudder-native-chat","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}))?;
-        if !initialized["userAgent"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("rudder-native-chat/0.163.0-alpha.10.2 ("))
-            || initialized["codexHome"].as_str() != self.config.profile.home.to_str()
-        {
-            return Err(Error::UnsupportedConfiguration);
-        }
+        profile::validate_initialization(&initialized, &self.config.profile.home)?;
         self.transport.notify("initialized", json!({}))?;
         loop {
             match self.next()? {

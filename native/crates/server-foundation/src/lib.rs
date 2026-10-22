@@ -998,6 +998,7 @@ struct AppState {
     session_revocation: NativeSessionRevocationRegistry,
     d1_mutations: Option<MutationStore>,
     native_chat_worker: Option<native_chat_worker::Supervisor>,
+    native_chat_public_runtime: Arc<Mutex<Option<NativeChatPublicRuntime>>>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     actor_envelope_replay: Arc<Mutex<NonceReplayGuard>>,
@@ -1185,6 +1186,7 @@ impl AppState {
             session_revocation: NativeSessionRevocationRegistry::default(),
             d1_mutations,
             native_chat_worker,
+            native_chat_public_runtime: Arc::new(Mutex::new(None)),
             started_at: Instant::now(),
         })
     }

@@ -19,6 +19,7 @@ ring = "0.17.14"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-claude-code = { path = "../claude-code" }
+rudder-codex-app-server = { path = "../codex-app-server" }
 rudder-d1-persistence = { path = "../d1-persistence" }
 rudder-native-chat-executor = { path = "../native-chat-executor" }
 rudder-native-process-transport = { path = "../native-process-transport" }
