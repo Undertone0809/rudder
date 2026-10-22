@@ -1,3 +1,4 @@
+use super::native_provider_stop::{OPENCODE_PROMPT_GATE_TIMEOUT, opencode_prompt_gate_failure};
 use crate::fixture::*;
 use rudder_native_chat_executor::NativeExecutionObservation;
 use rudder_opencode_native::OpenCodeInputTerminal;
@@ -170,9 +171,26 @@ async fn opencode_records_fresh_session_workflow() {
         admitted_with_runtime(&database, &host, "opencode_local", runtime_config).await;
     let prompt_pending = cwd.join("opencode-prompt-pending");
     let prompt_release = PromptRelease(cwd.join("opencode-prompt-release"));
-    let worker =
+    let mut worker =
         spawn_native_executor_worker(&database, host, actor, run_id.clone(), attempt_id.clone());
-    wait_for_file(&prompt_pending).await;
+    let prompt_accepted = tokio::select! {
+        accepted = wait_for_file(&prompt_pending, OPENCODE_PROMPT_GATE_TIMEOUT) => accepted,
+        finished = &mut worker => {
+            panic!("OpenCode executor ended before the prompt gate: {}",
+                opencode_prompt_gate_failure(finished, &cwd.join("opencode-requests.jsonl")));
+        }
+    };
+    if !prompt_accepted {
+        // If the POST won a race with the gate timeout, release the synthetic
+        // server before joining the worker so a failed assertion cannot leave
+        // its request handler blocked.
+        let _ = fs::write(&prompt_release.0, "release");
+        let finished = worker.await;
+        panic!(
+            "OpenCode prompt gate did not open within the 30-second execution deadline: {}",
+            opencode_prompt_gate_failure(finished, &cwd.join("opencode-requests.jsonl"))
+        );
+    }
     let checkpoint_at_prompt: (String, Value) = sqlx::query_as(
         "SELECT protocol_phase, checkpoint_json FROM heartbeat_run_attempts
          WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid",
@@ -385,12 +403,12 @@ impl Drop for PromptRelease {
     }
 }
 
-async fn wait_for_file(path: &Path) {
-    tokio::time::timeout(Duration::from_secs(10), async {
+async fn wait_for_file(path: &Path, timeout: Duration) -> bool {
+    tokio::time::timeout(timeout, async {
         while !path.exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("fake OpenCode provider reached the prompt gate");
+    .is_ok()
 }
