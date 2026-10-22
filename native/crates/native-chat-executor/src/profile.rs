@@ -144,6 +144,23 @@ fn verify_canonical_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn validate_initialization(value: &Value, profile_home: &Path) -> Result<()> {
+    // The launcher pins the executable and selected profile. userAgent is
+    // provider display metadata: Codex updates can change both its version
+    // and branding without changing the App Server protocol. Validate its
+    // shape, then keep the exact profile check and effective-config gates.
+    value["userAgent"]
+        .as_str()
+        .filter(|value| {
+            !value.trim().is_empty() && value.len() <= 1024 && !value.chars().any(char::is_control)
+        })
+        .ok_or(Error::UnsupportedConfiguration)?;
+    if value["codexHome"].as_str() != profile_home.to_str() {
+        return Err(Error::UnsupportedConfiguration);
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_layers(value: &Value, profile_home: &Path) -> Result<()> {
     let layers = value["layers"]
         .as_array()
@@ -349,6 +366,34 @@ fn project_config_is_in_cwd_ancestry(folder: &Path, cwd: &Path) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn initialization_accepts_provider_branding_updates_but_keeps_profile_identity() {
+        let home = Path::new("/native-profile");
+        for user_agent in [
+            "rudder-native-chat/0.163.0-alpha.10.2 (test)",
+            "Codex Desktop/0.163.0-alpha.11.1 (Mac OS; arm64) dumb (rudder-native-chat; 0.7.24)",
+            "Codex CLI/1.0.0 (test)",
+        ] {
+            let value = json!({"userAgent": user_agent, "codexHome": home});
+            assert!(validate_initialization(&value, home).is_ok());
+            assert!(validate_initialization(&value, Path::new("/other-profile")).is_err());
+        }
+        for user_agent in [
+            json!(null),
+            json!(42),
+            json!(""),
+            json!(" \t"),
+            json!("agent\nother"),
+            json!("x".repeat(1025)),
+        ] {
+            assert!(
+                validate_initialization(&json!({"userAgent": user_agent, "codexHome": home}), home)
+                    .is_err()
+            );
+        }
+        assert!(validate_initialization(&json!({"userAgent": "Codex CLI"}), home).is_err());
+    }
 
     fn observed(home: &Path) -> Value {
         json!({"config":{"approval_policy":"on-request","sandbox_mode":"read-only","web_search":"disabled"},

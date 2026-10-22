@@ -1912,3 +1912,17 @@ output, positive owned cleanup, actual late Stop preserving completion, Rust
 organization denial, and no business-row additions from reads. Malformed-wire
 cleanup uncertainty remains an explicit failure. Real installed-provider and
 rendered acceptance, full candidate qualification, and publication remain open.
+
+### October 22 installed Codex initialization compatibility
+
+A real first-send prerequisite failed before a provider Thread or Turn existed:
+the installed Codex updated to `0.163.0-alpha.11.1` and now reports a
+`Codex Desktop/...` user agent. The executor incorrectly required the exact old
+`rudder-native-chat/0.163.0-alpha.10.2` prefix. An initialization-only probe
+reproduced that mismatch with the exact selected CODEX_HOME and no model input.
+Treat the user agent as bounded display metadata while retaining executable,
+exact profile-home, configuration provenance, policy, dispatch and owner fences.
+Malformed initialization and a mismatched home must still fail before dispatch.
+The failed real input remains recorded; a new frozen candidate and independent
+real-local acceptance are required. This is not a claim of compatibility with
+every future Codex protocol or completion of the Reader/full Native Chat plan.

@@ -2,9 +2,9 @@ use crate::fixture::*;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
-async fn unsupported_initialized_version_and_project_config_fail_before_thread_or_turn_dispatch() {
+async fn invalid_initialization_and_project_config_fail_before_thread_or_turn_dispatch() {
     assert_ignored_external_dependencies();
-    for mode in ["wrong-version", "project-layer"] {
+    for mode in ["invalid-user-agent", "wrong-profile", "project-layer"] {
         let (database, host, actor, run_id, attempt_id) = database_and_admission(mode).await;
         let (result, host) =
             execute_on_worker(&database, host, actor, run_id.clone(), attempt_id.clone()).await;

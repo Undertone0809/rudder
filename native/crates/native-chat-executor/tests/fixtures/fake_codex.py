@@ -247,14 +247,14 @@ for raw in sys.stdin:
     if request_id is None:
         continue
     if method == "initialize":
-        user_agent = "rudder-native-chat/0.163.0-alpha.10.2 (test)"
-        if mode == "wrong-version":
-            user_agent = "rudder-native-chat/0.163.0-alpha.11.0 (test)"
+        user_agent = "Codex Desktop/0.163.0-alpha.11.1 (Mac OS; arm64) dumb (rudder-native-chat; 0.7.24)"
+        if mode == "invalid-user-agent":
+            user_agent = None
         emit({
             "id": request_id,
             "result": {
                 "userAgent": user_agent,
-                "codexHome": os.environ["CODEX_HOME"],
+                "codexHome": "/wrong-profile" if mode == "wrong-profile" else os.environ["CODEX_HOME"],
             },
         })
     elif method == "config/read":
