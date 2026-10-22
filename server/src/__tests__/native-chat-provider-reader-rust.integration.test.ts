@@ -45,11 +45,11 @@ const SESSION_SECRET = "codex-reader-browser-session-fixture-secret";
 
 async function buildCandidate() {
   const child = spawn("cargo", [
-    "build", "--locked", "--manifest-path", path.join(root, "native/Cargo.toml"),
+    "build", "--locked", "--release", "--manifest-path", path.join(root, "native/Cargo.toml"),
     "--bin", "rudder-server-foundation", "--bin", "rudder-process-host", "--message-format=json",
   ], {
     cwd: root,
-    env: { ...process.env, CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? "/private/tmp/rudder-native-admission/native/target" },
+    env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const binaries = new Map<string, string>();
