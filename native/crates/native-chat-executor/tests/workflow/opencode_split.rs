@@ -1,4 +1,6 @@
-use super::native_provider_stop::{OPENCODE_PROMPT_GATE_TIMEOUT, opencode_prompt_gate_failure};
+use super::native_provider_stop::{
+    OPENCODE_PROMPT_GATE_TIMEOUT, assert_opencode_fixture_ready, opencode_prompt_gate_failure,
+};
 use crate::fixture::*;
 use rudder_native_chat_executor::NativeExecutionObservation;
 use rudder_opencode_native::OpenCodeInputTerminal;
@@ -14,7 +16,10 @@ use std::{
 const FAKE_OPENCODE: &str = r#"
 import json
 import os
+import platform
 import signal
+import socket
+import socketserver
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
@@ -24,6 +29,46 @@ request_log = os.path.join(root, 'opencode-requests.jsonl')
 prompt_path = os.path.join(root, 'opencode-prompt.json')
 prompt_pending = os.path.join(root, 'opencode-prompt-pending')
 prompt_release = os.path.join(root, 'opencode-prompt-release')
+diagnostics = os.path.join(root, 'opencode-server-diagnostics.txt')
+diagnostic_stages = set()
+
+def mark_stage(stage):
+    if stage in diagnostic_stages:
+        return
+    diagnostic_stages.add(stage)
+    with open(diagnostics, 'a', encoding='utf-8') as output:
+        output.write(stage + '\n')
+
+mark_stage('python-started-' + '.'.join(map(str, sys.version_info[:3])) + '-' + platform.machine())
+try:
+    port_argument = sys.argv.index('--port')
+    valid_launch_args = (sys.argv[1] == 'serve'
+                         and sys.argv[port_argument - 1] == '127.0.0.1'
+                         and int(sys.argv[port_argument + 1]) > 0)
+except (IndexError, ValueError):
+    valid_launch_args = False
+mark_stage('launch-args-valid' if valid_launch_args else 'launch-args-unexpected')
+original_getfqdn = socket.getfqdn
+def diagnosed_getfqdn(host=''):
+    mark_stage('fqdn-lookup-started')
+    name = original_getfqdn(host)
+    mark_stage('fqdn-lookup-completed')
+    return name
+socket.getfqdn = diagnosed_getfqdn
+
+def bind_loopback_without_dns(server):
+    mark_stage('loopback-bind-started')
+    socketserver.TCPServer.server_bind(server)
+    host, port = server.server_address[:2]
+    if host != '127.0.0.1':
+        raise RuntimeError('synthetic OpenCode must bind IPv4 loopback')
+    server.server_name = host
+    server.server_port = port
+    mark_stage('loopback-bind-completed')
+
+class LoopbackHTTPServer(HTTPServer):
+    def server_bind(self):
+        bind_loopback_without_dns(self)
 
 if os.path.exists(os.path.join(root, 'opencode-exit-before-ready')):
     sys.exit(0)
@@ -81,7 +126,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == '/doc':
-            return self.respond(200, {'info': {'title': 'synthetic OpenCode'}})
+            mark_stage('get-doc-received')
+            connection = self.headers.get('Connection', '').lower()
+            mark_stage('get-doc-connection-' + (connection if connection in ('close', 'keep-alive') else 'other'))
+            mark_stage('get-doc-http-1-1' if self.request_version == 'HTTP/1.1' else 'get-doc-other-http-version')
+            self.respond(200, {'info': {'title': 'synthetic OpenCode'}})
+            mark_stage('get-doc-response-written')
+            return
+        mark_stage('get-unexpected-path')
         if path == '/session/ses_split/message':
             if not os.path.exists(prompt_path):
                 return self.respond(200, [])
@@ -129,7 +181,13 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(404, {'error': 'not found'})
 
 port = int(sys.argv[sys.argv.index('--port') + 1])
-server = HTTPServer(('127.0.0.1', port), Handler)
+mark_stage('http-server-bind-started')
+try:
+    server = LoopbackHTTPServer(('127.0.0.1', port), Handler)
+except Exception as error:
+    mark_stage('http-bind-error-' + type(error).__name__)
+    raise
+mark_stage('http-listener-bound')
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 server.serve_forever()
 "#;
@@ -191,6 +249,7 @@ async fn opencode_records_fresh_session_workflow() {
             opencode_prompt_gate_failure(finished, &cwd.join("opencode-requests.jsonl"))
         );
     }
+    assert_opencode_fixture_ready(&cwd);
     let checkpoint_at_prompt: (String, Value) = sqlx::query_as(
         "SELECT protocol_phase, checkpoint_json FROM heartbeat_run_attempts
          WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid",
