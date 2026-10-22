@@ -540,8 +540,7 @@ export const chatsApi = {
     );
     if (response.reader?.availability === "incomplete" || response.reader?.availability === "unavailable") {
       const status = response.reader.availability;
-      const reason = response.reader.reason?.replaceAll("_", " ");
-      throw new Error(`Process details are ${status}${reason ? ` (${reason})` : ""}.`);
+      throw new Error(`Process details are ${status}.`);
     }
     return response;
   },

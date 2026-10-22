@@ -157,6 +157,9 @@ async fn execute_read(
                 Ok(ThreadReadSelection::Unsupported) => {
                     (Vec::new(), Some("provider_read_unsupported"))
                 }
+                Ok(ThreadReadSelection::NonTerminal) => {
+                    (Vec::new(), Some("provider_turn_not_completed"))
+                }
                 Ok(ThreadReadSelection::Incomplete) => {
                     (Vec::new(), Some("provider_turn_unhydrated"))
                 }
@@ -208,6 +211,7 @@ fn thread_read_error_reason(error: ThreadReadError) -> &'static str {
         ThreadReadError::Unsupported => "provider_read_unsupported",
         ThreadReadError::Incomplete => "provider_turn_incomplete",
         ThreadReadError::Unavailable => "reader_process_unavailable",
+        ThreadReadError::CleanupUnconfirmed => "provider_process_cleanup_unconfirmed",
     }
 }
 

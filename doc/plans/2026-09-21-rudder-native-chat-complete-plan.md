@@ -1900,3 +1900,15 @@ real installed-provider acceptance. Preserve that rejection and the original
 synthetic observations. Integrating the accepted runtime-hardening base does
 not resolve those findings or promote this slice to complete. The Hermes
 exact-Run history capability boundary above remains open independently.
+
+The repaired Codex-only checkpoint keeps a reusable native segment open while
+requiring its exact successful terminal span/attempt/turn. It additionally
+matches the segment's native session ID before and after IPC. A bounded list
+query advertises only a zero-entry native-source hint; it never launches a
+provider or fabricates a ledger count. The existing process-details control
+then invokes the authoritative transcript GET. Public integration now covers
+ordinary user/reasoning item shapes, completed-only turns, real bounded command
+output, positive owned cleanup, actual late Stop preserving completion, Rust
+organization denial, and no business-row additions from reads. Malformed-wire
+cleanup uncertainty remains an explicit failure. Real installed-provider and
+rendered acceptance, full candidate qualification, and publication remain open.

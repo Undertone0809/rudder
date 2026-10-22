@@ -18,6 +18,7 @@ const MAX_DURABLE_ID_BYTES: usize = 4096;
 const MAX_PUBLIC_ENTRIES: usize = 512;
 const MAX_PUBLIC_ENTRY_BYTES: usize = 32 * 1024;
 const MAX_PUBLIC_TRANSCRIPT_BYTES: usize = 256 * 1024;
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Result of looking up one caller-supplied durable turn ID in a thread read.
 #[derive(Clone, PartialEq)]
@@ -29,6 +30,8 @@ pub enum ThreadReadSelection {
     UnknownTurn,
     /// The provider does not implement `thread/read` on this connection.
     Unsupported,
+    /// The exact turn exists, but Codex did not report successful completion.
+    NonTerminal,
     /// The provider returned a summary, unloaded, or otherwise incomplete turn.
     Incomplete,
 }
@@ -39,6 +42,7 @@ impl fmt::Debug for ThreadReadSelection {
             Self::Turn(_) => formatter.write_str("ThreadReadSelection::Turn(<redacted>)"),
             Self::UnknownTurn => formatter.write_str("ThreadReadSelection::UnknownTurn"),
             Self::Unsupported => formatter.write_str("ThreadReadSelection::Unsupported"),
+            Self::NonTerminal => formatter.write_str("ThreadReadSelection::NonTerminal"),
             Self::Incomplete => formatter.write_str("ThreadReadSelection::Incomplete"),
         }
     }
@@ -59,6 +63,8 @@ pub enum ThreadReadError {
     Incomplete,
     #[error("Codex read-only process is unavailable or timed out")]
     Unavailable,
+    #[error("Codex read-only process cleanup was not positively confirmed")]
+    CleanupUnconfirmed,
 }
 
 /// Select one turn from a complete, already-correlated JSON-RPC response frame.
@@ -132,10 +138,12 @@ pub fn select_thread_read_result(
             .and_then(Value::as_str)
             .filter(|id| valid_durable_id(id))
             .ok_or(ThreadReadError::Malformed)?;
-        if !object.get("items").is_some_and(Value::is_array)
-            || object.get("status").and_then(Value::as_str).is_none()
-        {
+        if !object.get("items").is_some_and(Value::is_array) {
             return Err(ThreadReadError::Malformed);
+        }
+        match object.get("status").and_then(Value::as_str) {
+            Some("completed" | "interrupted" | "failed" | "inProgress") => {}
+            _ => return Err(ThreadReadError::Malformed),
         }
         if id == durable_turn_id {
             if selected.is_some() {
@@ -146,6 +154,9 @@ pub fn select_thread_read_result(
     }
 
     Ok(match selected {
+        Some(turn) if turn.get("status").and_then(Value::as_str) != Some("completed") => {
+            ThreadReadSelection::NonTerminal
+        }
         Some(turn) if turn.get("itemsView").and_then(Value::as_str) == Some("full") => {
             ThreadReadSelection::Turn(turn)
         }
@@ -175,15 +186,63 @@ pub fn read_exact_thread_turn(
     {
         return Err(ThreadReadError::Unavailable);
     }
+    let run_id = launch.run_id.clone();
+    let attempt_id = launch.attempt_id.clone();
+    let owner_token = launch.owner_token.clone();
     let mut transport =
         OwnedTransport::launch_external(launch, process_host).map_err(map_transport_error)?;
-    read_turn_over_transport(
+    let read = read_turn_over_transport(
         &mut transport,
         expected_codex_home,
         thread_id,
         durable_turn_id,
         timeout,
-    )
+    );
+    stop_and_confirm_cleanup(&mut transport, &run_id, &attempt_id, &owner_token)?;
+    read
+}
+
+fn stop_and_confirm_cleanup(
+    transport: &mut OwnedTransport,
+    run_id: &str,
+    attempt_id: &str,
+    owner_token: &str,
+) -> Result<(), ThreadReadError> {
+    if let Some(receipt) = transport.take_cleanup_receipt() {
+        return if receipt.matches_execution(run_id, attempt_id, owner_token) {
+            Ok(())
+        } else {
+            Err(ThreadReadError::CleanupUnconfirmed)
+        };
+    }
+    transport
+        .stop()
+        .map_err(|_| ThreadReadError::CleanupUnconfirmed)?;
+    let deadline = Instant::now() + CLEANUP_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ThreadReadError::CleanupUnconfirmed);
+        }
+        match transport
+            .receive(remaining)
+            .map_err(|_| ThreadReadError::CleanupUnconfirmed)?
+        {
+            TransportEvent::Lifecycle(event) if event["type"] == "terminal" => {
+                let receipt = transport
+                    .take_cleanup_receipt()
+                    .ok_or(ThreadReadError::CleanupUnconfirmed)?;
+                if receipt.matches_execution(run_id, attempt_id, owner_token) {
+                    return Ok(());
+                }
+                return Err(ThreadReadError::CleanupUnconfirmed);
+            }
+            TransportEvent::Lifecycle(_)
+            | TransportEvent::Rpc(SessionObservation::Incoming(_))
+            | TransportEvent::Rpc(SessionObservation::Completed { .. })
+            | TransportEvent::FrameWritten { .. } => {}
+        }
+    }
 }
 
 fn read_turn_over_transport(
@@ -233,7 +292,8 @@ pub fn project_public_transcript(
     turn: &Value,
     timestamp: &str,
 ) -> Result<Vec<Value>, ThreadReadError> {
-    if turn.get("itemsView").and_then(Value::as_str) != Some("full")
+    if turn.get("status").and_then(Value::as_str) != Some("completed")
+        || turn.get("itemsView").and_then(Value::as_str) != Some("full")
         || turn.get("items").and_then(Value::as_array).is_none()
         || timestamp.is_empty()
         || timestamp.len() > 128
@@ -256,6 +316,8 @@ pub fn project_public_transcript(
             .filter(|value| valid_durable_id(value))
             .ok_or(ThreadReadError::Malformed)?;
         match kind {
+            "userMessage" => validate_non_display_user_message(item)?,
+            "reasoning" => validate_non_display_reasoning(item)?,
             "agentMessage" => {
                 let phase = item
                     .get("phase")
@@ -277,6 +339,7 @@ pub fn project_public_transcript(
             }
             "commandExecution" => {
                 let command = bounded_text(item.get("command"))?;
+                let output = bounded_command_output(item.get("aggregatedOutput"))?;
                 let mut input = serde_json::Map::new();
                 input.insert("command".to_owned(), Value::String(command.to_owned()));
                 if let Some(cwd) = item.get("cwd") {
@@ -285,17 +348,30 @@ pub fn project_public_transcript(
                         Value::String(bounded_text(Some(cwd))?.to_owned()),
                     );
                 }
+                let status = item
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .ok_or(ThreadReadError::Malformed)?;
+                if !matches!(status, "completed" | "failed" | "declined") {
+                    return Err(ThreadReadError::Incomplete);
+                }
+                if item
+                    .get("exitCode")
+                    .is_some_and(|value| !value.is_null() && value.as_i64().is_none())
+                {
+                    return Err(ThreadReadError::Malformed);
+                }
                 entries.push(serde_json::json!({
                     "kind":"tool_call", "ts":timestamp, "name":"commandExecution",
                     "toolUseId":id, "input":input
                 }));
                 let exit_code = item.get("exitCode").and_then(Value::as_i64);
                 let is_error = exit_code.is_some_and(|code| code != 0)
-                    || item.get("status").and_then(Value::as_str) == Some("failed");
+                    || matches!(status, "failed" | "declined");
                 entries.push(serde_json::json!({
                     "kind":"tool_result", "ts":timestamp, "toolUseId":id,
                     "toolName":"commandExecution",
-                    "content":exit_code.map_or_else(|| "Process completed".to_owned(), |code| format!("Process exited with code {code}")),
+                    "content":output,
                     "isError":is_error
                 }));
             }
@@ -333,6 +409,123 @@ fn bounded_text(value: Option<&Value>) -> Result<&str, ThreadReadError> {
         return Err(ThreadReadError::Incomplete);
     }
     Ok(text)
+}
+
+fn validate_non_display_user_message(item: &Value) -> Result<(), ThreadReadError> {
+    let content = item
+        .get("content")
+        .and_then(Value::as_array)
+        .ok_or(ThreadReadError::Malformed)?;
+    for input in content {
+        let kind = input
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or(ThreadReadError::Malformed)?;
+        let required_string = |field: &str| {
+            input
+                .get(field)
+                .and_then(Value::as_str)
+                .ok_or(ThreadReadError::Malformed)
+        };
+        match kind {
+            "text" => {
+                required_string("text")?;
+                if input
+                    .get("text_elements")
+                    .is_some_and(|value| !value.is_array())
+                {
+                    return Err(ThreadReadError::Malformed);
+                }
+            }
+            "image" => {
+                if input.get("url").and_then(Value::as_str).is_none()
+                    && input.get("fileId").and_then(Value::as_str).is_none()
+                {
+                    return Err(ThreadReadError::Malformed);
+                }
+            }
+            "localImage" => {
+                required_string("path")?;
+            }
+            "audio" => {
+                required_string("url")?;
+            }
+            "localAudio" => {
+                required_string("path")?;
+            }
+            "skill" | "mention" => {
+                required_string("name")?;
+                required_string("path")?;
+            }
+            _ => return Err(ThreadReadError::Incomplete),
+        }
+    }
+    Ok(())
+}
+
+fn validate_non_display_reasoning(item: &Value) -> Result<(), ThreadReadError> {
+    for field in ["content", "summary"] {
+        if let Some(value) = item.get(field) {
+            let strings = value.as_array().ok_or(ThreadReadError::Malformed)?;
+            if strings.iter().any(|value| !value.is_string()) {
+                return Err(ThreadReadError::Malformed);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Only the provider's recorded stdout/stderr aggregate is eligible for the
+/// public tool result. It is bounded and checked for common credential
+/// serialization markers; if one is present, fail the whole projection rather
+/// than return a misleading redacted or fabricated result. Process environment,
+/// provider config and raw RPC envelopes are never read into public entries.
+fn bounded_command_output(value: Option<&Value>) -> Result<&str, ThreadReadError> {
+    let output = value
+        .and_then(Value::as_str)
+        .ok_or(ThreadReadError::Incomplete)?;
+    if output.len() > MAX_PUBLIC_ENTRY_BYTES || looks_like_credential_output(output) {
+        return Err(ThreadReadError::Incomplete);
+    }
+    Ok(output)
+}
+
+fn looks_like_credential_output(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    for marker in [
+        "authorization",
+        "api_key",
+        "api-key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "password",
+        "secret",
+    ] {
+        let mut offset = 0;
+        while let Some(found) = lower[offset..].find(marker) {
+            let end = offset + found + marker.len();
+            let remainder = lower[end..].trim_start_matches([' ', '\t', '"', '\'']);
+            if remainder.starts_with('=') || remainder.starts_with(':') {
+                let value = remainder[1..].trim_start_matches([' ', '\t', '"', '\'']);
+                let has_value = value
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| !matches!(ch, ',' | '}' | ']' | ';'));
+                if has_value {
+                    return true;
+                }
+            }
+            offset = end;
+            if offset >= lower.len() {
+                break;
+            }
+        }
+    }
+    lower
+        .find("bearer ")
+        .is_some_and(|start| !lower[start + "bearer ".len()..].trim().is_empty())
 }
 
 fn wait_for_spawn(
@@ -494,7 +687,7 @@ while IFS= read -r line; do
       printf '%s\n' thread/read >> "$READ_METHODS"
       case "$line" in *'"includeTurns":true'*'"threadId":"thread-exact"'*) ;; *) exit 91 ;; esac
       case "$line" in *thread/start*|*turn/start*|*prompt*) exit 92 ;; esac
-      printf '%s\n' '{"id":1,"result":{"thread":{"id":"thread-exact","turns":[{"id":"turn-old","status":"completed","itemsView":"full","items":[{"id":"old-item","type":"agentMessage","phase":"final_answer","text":"old"}]},{"id":"turn-exact","status":"completed","itemsView":"full","items":[{"id":"answer","type":"agentMessage","phase":"final_answer","text":"chosen"},{"id":"private","type":"agentMessage","phase":"analysis","text":"do not expose"},{"id":"command","type":"commandExecution","command":"pwd","cwd":"/workspace","exitCode":0}]},{"id":"turn-newest","status":"completed","itemsView":"full","items":[{"id":"new-item","type":"agentMessage","phase":"final_answer","text":"newest"}] }]}}}'
+      printf '%s\n' '{"id":1,"result":{"thread":{"id":"thread-exact","turns":[{"id":"turn-old","status":"completed","itemsView":"full","items":[{"id":"old-item","type":"agentMessage","phase":"final_answer","text":"old"}]},{"id":"turn-exact","status":"completed","itemsView":"full","items":[{"id":"user","type":"userMessage","content":[{"type":"text","text":"private user prompt"}]},{"id":"answer","type":"agentMessage","phase":"final_answer","text":"chosen"},{"id":"private","type":"reasoning","content":["private reasoning"],"summary":["private summary"]},{"id":"command","type":"commandExecution","command":"pwd","commandActions":[],"cwd":"/workspace","aggregatedOutput":"actual command result","exitCode":0,"status":"completed"}]},{"id":"turn-newest","status":"completed","itemsView":"full","items":[{"id":"new-item","type":"agentMessage","phase":"final_answer","text":"newest"}]}]}}}'
       ;;
     *'"method":"initialized"'*) ;;
     *) exit 93 ;;
@@ -536,11 +729,17 @@ done
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0]["text"], "chosen");
         assert_eq!(entries[1]["name"], "commandExecution");
+        assert_eq!(entries[2]["content"], "actual command result");
         assert_eq!(entries[2]["isError"], false);
         assert!(
             !serde_json::to_string(&entries)
                 .unwrap()
-                .contains("do not expose")
+                .contains("private reasoning")
+        );
+        assert!(
+            !serde_json::to_string(&entries)
+                .unwrap()
+                .contains("private user prompt")
         );
         drop(transport);
         assert_eq!(
@@ -557,6 +756,50 @@ done
         assert_eq!(
             super::select_thread_read_result(&result, "thread-exact", "turn-exact").unwrap(),
             ThreadReadSelection::Incomplete
+        );
+    }
+
+    #[test]
+    fn nonterminal_exact_turn_is_never_selected_as_complete() {
+        for status in ["interrupted", "failed", "inProgress"] {
+            let result = json!({"thread":{"id":"thread-exact","turns":[{
+                "id":"turn-exact","status":status,"itemsView":"full","items":[]
+            }]}});
+            assert_eq!(
+                super::select_thread_read_result(&result, "thread-exact", "turn-exact").unwrap(),
+                ThreadReadSelection::NonTerminal,
+                "status {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_result_requires_real_bounded_output_and_rejects_credential_shapes() {
+        let missing = json!({
+            "id":"turn-exact","status":"completed","itemsView":"full",
+            "items":[{"id":"command","type":"commandExecution","command":"echo output",
+                "commandActions":[],"cwd":"/fixture","exitCode":0,"status":"completed"}]
+        });
+        assert_eq!(
+            project_public_transcript(&missing, "2026-10-22T00:00:00Z"),
+            Err(super::ThreadReadError::Incomplete)
+        );
+        let secret = json!({
+            "id":"turn-exact","status":"completed","itemsView":"full",
+            "items":[{"id":"command","type":"commandExecution","command":"env",
+                "commandActions":[],"cwd":"/fixture","aggregatedOutput":"OPENAI_API_KEY=sk-fixture-secret",
+                "exitCode":0,"status":"completed"}]
+        });
+        assert_eq!(
+            project_public_transcript(&secret, "2026-10-22T00:00:00Z"),
+            Err(super::ThreadReadError::Incomplete)
+        );
+        let mut bearer = secret.clone();
+        bearer["items"][0]["aggregatedOutput"] =
+            json!("Authorization: Bearer secret-fixture-token");
+        assert_eq!(
+            project_public_transcript(&bearer, "2026-10-22T00:00:00Z"),
+            Err(super::ThreadReadError::Incomplete)
         );
     }
 

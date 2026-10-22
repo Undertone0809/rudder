@@ -1,3 +1,5 @@
+import type { ChatTranscriptSummary } from "@rudderhq/shared";
+
 export type ChatTranscriptLoadInput = {
   selectedOrganizationId: string | null;
   conversationId: string | null;
@@ -57,4 +59,11 @@ export function resolveChatTranscriptLoadState(
       && !input.hasMessages
     ),
   };
+}
+
+/** Enable an on-demand read without inventing a SQL event count. */
+export function canLoadChatMessageTranscript(
+  summary: ChatTranscriptSummary | null | undefined,
+): boolean {
+  return Boolean(summary && (summary.entryCount > 0 || summary.providerSource === "codex"));
 }

@@ -146,14 +146,16 @@ async fn terminal_codex_fixture() -> (Database, rudder_auth_core::VerifiedActor,
     .await
     .expect("seal exact terminal Codex span");
     sqlx::query(
-        "UPDATE native_segments SET state='sealed', sealed_at=clock_timestamp()
-         WHERE org_id=$1::uuid AND id=$2::uuid",
+        "UPDATE native_segments SET state='open', native_session_id=$3
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$4::uuid",
     )
     .bind(ORG)
-    .bind(segment_id)
+    .bind(&binding_id)
+    .bind(THREAD_ID)
+    .bind(&segment_id)
     .execute(&mut *tx)
     .await
-    .expect("seal Codex segment");
+    .expect("bind reusable native segment to Codex thread");
     tx.commit().await.expect("commit reader fixture");
 
     let request: Request = serde_json::from_value(json!({
@@ -258,6 +260,117 @@ async fn exact_codex_reader_requires_terminal_identity_and_revalidates_stop_and_
     .await
     .expect("read final fixture event count");
     assert_eq!(after_events, before_events);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exact_codex_reader_accepts_open_or_sealed_segment_but_rejects_pending_and_superseded() {
+    let (database, owner, request, _) = terminal_codex_fixture().await;
+
+    // A terminal Codex turn is independently sealed by its Run attempt and
+    // exact-turn span. The reusable native thread segment commonly stays open.
+    let open_plan = read_plan(&database, &owner, &request).await;
+    assert_eq!(open_plan.turn_id(), TURN_ID);
+
+    sqlx::query(
+        "UPDATE native_segments SET state='sealed', sealed_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(open_plan.binding_id())
+    .bind(open_plan.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("seal Codex segment");
+    assert_eq!(
+        read_plan(&database, &owner, &request).await.turn_id(),
+        TURN_ID
+    );
+
+    sqlx::query(
+        "UPDATE native_segments SET state='pending', sealed_at=NULL
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(open_plan.binding_id())
+    .bind(open_plan.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("reset segment to pending");
+    assert!(matches!(
+        prepare_codex_transcript_read(&database.pool, &owner, ORG, &request)
+            .await
+            .expect("preflight pending segment"),
+        CodexTranscriptReadPreflight::Incomplete("exact_codex_turn_unavailable")
+    ));
+
+    sqlx::query(
+        "UPDATE native_segments SET state='superseded', sealed_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(open_plan.binding_id())
+    .bind(open_plan.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("supersede segment");
+    assert!(matches!(
+        prepare_codex_transcript_read(&database.pool, &owner, ORG, &request)
+            .await
+            .expect("preflight superseded segment"),
+        CodexTranscriptReadPreflight::Incomplete("exact_codex_turn_unavailable")
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exact_codex_reader_requires_the_bound_native_session_to_match_and_revalidates_it() {
+    let (database, owner, request, _) = terminal_codex_fixture().await;
+    let plan = read_plan(&database, &owner, &request).await;
+
+    sqlx::query(
+        "UPDATE native_segments SET native_session_id='different-codex-thread'
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(plan.binding_id())
+    .bind(plan.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("change bound Codex thread fixture");
+    assert!(matches!(
+        prepare_codex_transcript_read(&database.pool, &owner, ORG, &request)
+            .await
+            .expect("preflight mismatched segment thread"),
+        CodexTranscriptReadPreflight::Incomplete("exact_codex_turn_unavailable")
+    ));
+
+    sqlx::query(
+        "UPDATE native_segments SET native_session_id=$3
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$4::uuid",
+    )
+    .bind(ORG)
+    .bind(plan.binding_id())
+    .bind(THREAD_ID)
+    .bind(plan.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("restore exact Codex thread binding");
+    let stale = read_plan(&database, &owner, &request).await;
+    sqlx::query(
+        "UPDATE native_segments SET native_session_id='different-codex-thread'
+         WHERE org_id=$1::uuid AND binding_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(stale.binding_id())
+    .bind(stale.segment_id())
+    .execute(&database.pool)
+    .await
+    .expect("change exact Codex thread after provider read");
+    assert!(matches!(
+        complete_codex_transcript_read(&database.pool, &owner, ORG, &stale, &[])
+            .await
+            .expect("postflight segment thread fence"),
+        CodexTranscriptReadCompletion::UseSqlPrefix
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
