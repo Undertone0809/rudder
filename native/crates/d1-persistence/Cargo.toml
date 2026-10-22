@@ -33,6 +33,7 @@ thiserror = "2.0"
 tracing = "0.1"
 tokio = { version = "1.47", features = ["rt", "time"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

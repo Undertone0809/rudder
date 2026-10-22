@@ -18,6 +18,8 @@ use std::{
 };
 use url::Url;
 
+mod compatibility;
+
 /// Trusted OpenCode Server configuration. The bearer token is intentionally
 /// exposed only through a narrow accessor and the type does not implement
 /// `Debug` or serialization.
@@ -229,6 +231,9 @@ pub(crate) async fn resolve_opencode_config(
         }
         _ => return Err(unsupported("the selected OpenCode Profile is unavailable")),
     };
+    if let Some(home) = profile_home.as_deref() {
+        compatibility::validate_profile_database(home)?;
+    }
     let profile_revision = profile_home
         .as_deref()
         .map(operator_profile_revision)

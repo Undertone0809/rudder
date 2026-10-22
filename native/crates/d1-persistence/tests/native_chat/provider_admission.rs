@@ -1006,6 +1006,47 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
     .execute(&database.pool)
     .await
     .unwrap();
+    // A newer operator database can accept session creation yet reject the
+    // calibrated CLI's message INSERT. Reject that before any Rudder input or
+    // execution state is committed, without migrating the native database.
+    let native_directory = host
+        ._root
+        .path()
+        .join("operator-home/.local/share/opencode");
+    fs::create_dir_all(&native_directory).unwrap();
+    let native_database = native_directory.join("opencode.db");
+    let sqlite = rusqlite::Connection::open(&native_database).unwrap();
+    sqlite
+        .execute_batch(
+            "CREATE TABLE session_message (
+               id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL,
+               time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL,
+               data TEXT NOT NULL, seq INTEGER NOT NULL
+             );
+             CREATE TABLE permission (
+               project_id TEXT PRIMARY KEY, time_created INTEGER NOT NULL,
+               time_updated INTEGER NOT NULL, data TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+    drop(sqlite);
+    let native_before = fs::read(&native_database).unwrap();
+    let before = row_counts(&database.pool, &chat).await;
+    assert_conflict(
+        admit(
+            &database.pool,
+            &actor,
+            &host,
+            &chat,
+            "incompatible-native-db",
+        )
+        .await,
+    );
+    assert_eq!(row_counts(&database.pool, &chat).await, before);
+    assert_eq!(fs::read(&native_database).unwrap(), native_before);
+    // Dispose only this synthetic fixture before the existing fresh-profile
+    // positive path. The product readiness check never removes a database.
+    fs::remove_file(&native_database).unwrap();
     let admitted = admit(&database.pool, &actor, &host, &chat, "supported-operator")
         .await
         .unwrap();

@@ -1755,3 +1755,39 @@ invalid body. Closed diagnostics distinguish bad-request, access-denied,
 other HTTP, and decode errors without storing response text. These repairs need
 a new immutable candidate and fresh public OpenCode acceptance; they do not
 recover the unrecorded HTTP subtype or change the earlier held input.
+
+### October 22 native profile database compatibility checkpoint
+
+Candidate `3748b480c` independently passed Cursor first input, same-chat recall,
+and restart recall with an immutable nested configuration chain. Its Stop was
+not sent: the verifier observer incorrectly excluded the legitimate `starting`
+generation state while the exact native input and live fences were present.
+The separate long input timed out and remains held. Correct the observer in a
+new tooling version, preserve the original verdict, and test Stop on a new
+explicitly leased input; do not relabel this as a failed cancellation request.
+
+OpenCode accepted one Rudder input but produced no native message. The exact
+owned native log reports `SQLITE_CONSTRAINT_NOTNULL`; the existing operator
+database has a required `session_message.seq` column without a default, absent
+from a fresh installed 1.15.11 database. A disposable no-reply storage probe
+made zero model calls: the fresh schema saved one message, while adding only
+that required column reproduced HTTP 500 and zero saved messages. This is an
+operator database/CLI compatibility failure, not evidence of model unavailability.
+
+Rust now checks the selected profile's native writer schema read-only during
+configuration resolution, before admission writes and again before dispatch.
+Missing databases remain uncreated for normal native initialization; malformed,
+unreadable, missing-column or incompatible required-column layouts fail closed.
+The check neither migrates nor redirects the operator database, changes global
+configuration, substitutes another profile, nor authorizes a Node fallback.
+PG admission coverage must prove no new user message, Run, Attempt, binding or
+event on rejection and byte-identical native database content. Real OpenCode
+success on this operator profile remains externally blocked; the old input is
+not retried or retroactively finalized. All 20 protected holds remain intact.
+
+Main `7441bf0ad` was integrated in checkpoint `5b833f1db`, preserving its Agent
+credential revalidation and workspace hardening alongside this branch's native
+profile and provisioning behavior. Rebuild and verify the integrated candidate;
+reuse unaffected provider observations only with explicit source equivalence.
+Full Readers, Fork/permissions, storage/retention, resource comparison and the
+complete-plan delivery gates remain open.
