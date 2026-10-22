@@ -1791,3 +1791,29 @@ profile and provisioning behavior. Rebuild and verify the integrated candidate;
 reuse unaffected provider observations only with explicit source equivalence.
 Full Readers, Fork/permissions, storage/retention, resource comparison and the
 complete-plan delivery gates remain open.
+
+### October 22 bounded native runtime hardening acceptance
+
+The installed local runtime candidate `500f81ad4` was frozen with a tracked-clean
+source tree, separate Rust Foundation/Host binaries and 213 matching UI assets.
+All acceptance used the ordinary public ingress on a disposable local instance;
+existing user instances and effective provider configuration were preserved.
+Only Cursor's monotonic privacy-cache timestamp refreshed, under the reviewed
+field-level comparison; effective privacy modes and every other field stayed fixed.
+
+| Boundary | Evidence and result | Remaining limitation |
+| --- | --- | --- |
+| Cursor first turn | Real operator Profile; one admitted user row; successful Rust finalization and exact native session/binding | No full provider-history completeness claim |
+| Cursor Stop | One Stop on the current submitted-input attempt; asynchronous `stopping` acknowledgement, then actual provider `interrupted`, matching owned-connection cleanup proof, stopped/cancelled Rust terminal and stable empty cutoff | The earlier v6 packet incorrectly required immediate `stopped=true`; its FAIL stays preserved rather than being relabeled |
+| Cursor post-Stop continuity | A separate reviewed one-shot recall uses the same session/binding and returns the first marker in its persisted final assistant message; no stopped output reappears | Stream-only marker flags are not final-message content checks when the provider emits only `ack` and `final` |
+| OpenCode incompatible operator database | Exact static HTTP409 before admission; chats/messages/generations/events/Runs/attempts/bindings/activity counts and selected Profile bytes unchanged | This is readiness rejection, not successful OpenCode conversation acceptance; no migration or substitute Profile was used |
+| Historical accepted inputs | All 21 held rows retain the same persisted fields, message hashes, attempt/event counts and owner/expiry digests; no live combined fences or provider descendants at handoff | Historical unresolved inputs remain unresolved and were never retried or repaired |
+| Repository checks | 1,234 Rust tests and 10,455 Node tests passed, zero failures; workspace typecheck, build and full packaged Desktop verification passed | 113 Rust tests ignored, 34 Node tests skipped; local lint retains 23 reconciled baseline import-order findings |
+| Native Profile UI | Four automated create/edit workflows and five rendered desktop/constrained cases passed; current served assets are byte-identical to that evidence | This reuses unchanged rendered evidence, not a claim of a new browser session |
+
+Earlier Codex/Hermes/Pi first/continuation/restart observations remain supporting
+evidence only at their recorded source/configuration boundaries; path-specific
+content equivalence is recorded separately. Codex/Hermes and the requested
+Messenger changes were already merged in PR #352. Neither this hardening tranche
+nor the preparatory Reader primitives close the full six-runtime, Reader,
+permission/Fork, Side Chat, retention/GC or resource-comparison plan.
