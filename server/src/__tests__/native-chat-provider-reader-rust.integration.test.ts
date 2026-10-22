@@ -1,0 +1,448 @@
+import {
+  agents,
+  applyPendingMigrations,
+  authUsers,
+  boardApiKeys,
+  chatConversations,
+  createDb,
+  ensurePostgresDatabase,
+  organizationMemberships,
+  organizations,
+} from "@rudderhq/db";
+import { eq, sql } from "drizzle-orm";
+import express from "express";
+import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import fs from "node:fs";
+import type { Server } from "node:http";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { actorMiddleware } from "../middleware/auth.js";
+import { errorHandler } from "../middleware/error-handler.js";
+import { registerChatMessageQueryRoutes } from "../routes/chats.message-query-routes.js";
+import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+
+// This exercises the actual authenticated Express transcript route, its signed
+// Rust bridge, Rust's exact-turn planner, and a synthetic process owned by the
+// installed-Codex runtime boundary. No real provider or Node business fallback.
+type Pg = { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> };
+type PgConstructor = new (options: {
+  databaseDir: string; user: string; password: string; port: number; persistent: boolean;
+  initdbFlags: string[]; postgresFlags: string[]; onLog: () => void; onError: () => void;
+}) => Pg;
+type TranscriptResult = { status: number; body: Record<string, unknown> };
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+const THREAD_ID = "codex-reader-public-thread";
+const TURN_ID = "codex-reader-public-old-turn";
+const LATEST_TURN_ID = "codex-reader-public-latest-turn";
+
+async function buildCandidate() {
+  const child = spawn("cargo", [
+    "build", "--locked", "--manifest-path", path.join(root, "native/Cargo.toml"),
+    "--bin", "rudder-server-foundation", "--bin", "rudder-process-host", "--message-format=json",
+  ], {
+    cwd: root,
+    env: { ...process.env, CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? "/private/tmp/rudder-native-admission/native/target" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const binaries = new Map<string, string>();
+  let diagnostics = "";
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", (line) => {
+    try {
+      const artifact = JSON.parse(line) as { reason?: string; target?: { name?: string }; executable?: string };
+      if (artifact.reason === "compiler-artifact" && artifact.executable && artifact.target?.name) {
+        binaries.set(artifact.target.name, artifact.executable);
+      }
+    } catch { /* Cargo may emit non-JSON progress in future versions. */ }
+  });
+  child.stderr.on("data", (chunk: Buffer) => { diagnostics = `${diagnostics}${chunk}`.slice(-5000); });
+  const [code] = await once(child, "exit");
+  lines.close();
+  if (code !== 0 || !binaries.has("rudder-server-foundation") || !binaries.has("rudder-process-host")) {
+    throw new Error(`Native Codex Reader candidate build failed: ${diagnostics}`);
+  }
+  return binaries.get("rudder-server-foundation")!;
+}
+
+async function freePort() {
+  const listener = net.createServer().listen(0, "127.0.0.1");
+  await once(listener, "listening");
+  const address = listener.address();
+  if (!address || typeof address === "string") throw new Error("No disposable test port");
+  await new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  return address.port;
+}
+
+async function closeServer(server?: Server) {
+  if (!server) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+    server.closeAllConnections();
+  });
+}
+
+async function waitForFile(file: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for synthetic Codex signal: ${path.basename(file)}`);
+}
+
+describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
+  let db: ReturnType<typeof createDb>;
+  let pg: Pg | undefined;
+  let bridge: RustFoundationBridge | undefined;
+  let server: Server | undefined;
+  let temporary = "";
+  let databaseUrl = "";
+  let binary = "";
+  let nodeUrl = "";
+  let instanceRoot = "";
+  let fakeBin = "";
+  let oldProfileHome = "";
+  let switchedProfileHome = "";
+  let modeFile = "";
+  let readStartedFile = "";
+  let releaseReadFile = "";
+  const previousHome = process.env.RUDDER_HOME;
+  const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+  const orgId = randomUUID();
+  const agentId = randomUUID();
+  const switchedAgentId = randomUUID();
+  const chatId = randomUUID();
+  const sourceMessageId = randomUUID();
+  const assistantMessageId = randomUUID();
+  const generationId = randomUUID();
+  const runId = randomUUID();
+  const attemptId = randomUUID();
+  const spanId = randomUUID();
+  const owner = `codex-reader-owner-${randomUUID()}`;
+  const outsider = `codex-reader-outsider-${randomUUID()}`;
+  const token = `codex-reader-board-${randomUUID()}`;
+  const outsiderToken = `codex-reader-outsider-${randomUUID()}`;
+  const instanceId = `codex-reader-${randomUUID()}`;
+
+  async function seedTerminalTranscript(bindingId: string, segmentId: string) {
+    await db.execute(sql`INSERT INTO heartbeat_runs
+      (id,org_id,agent_id,status,started_at,chat_conversation_id,execution_owner_token,execution_lease_expires_at)
+      VALUES (${runId}::uuid,${orgId}::uuid,${agentId}::uuid,'running',clock_timestamp(),${chatId}::uuid,
+        'reader-test-owner',clock_timestamp()+interval '1 hour')`);
+    await db.execute(sql`INSERT INTO heartbeat_run_attempts
+      (id,org_id,run_id,agent_id,attempt_index,runtime_type,status,owner_token,attempt_epoch)
+      VALUES (${attemptId}::uuid,${orgId}::uuid,${runId}::uuid,${agentId}::uuid,0,'codex_local','started',
+        'reader-test-owner',7)`);
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write','native_chat:provider_reader_e2e',true)`);
+      await tx.execute(sql`INSERT INTO chat_messages
+        (id,org_id,conversation_id,role,kind,status,body,turn_variant)
+        VALUES (${sourceMessageId}::uuid,${orgId}::uuid,${chatId}::uuid,'user','message','completed','fixture prompt',0)`);
+      await tx.execute(sql`INSERT INTO chat_generations
+        (id,org_id,conversation_id,execution_authority,source_message_id,source_turn_variant,
+         status,terminal_reason,control_state,attempt_epoch,provider_thread_id,provider_turn_id,
+         runtime_terminal_at,completed_at)
+        VALUES (${generationId}::uuid,${orgId}::uuid,${chatId}::uuid,'native_rust',${sourceMessageId}::uuid,0,
+         'completed','native_provider_succeeded','terminal',7,${THREAD_ID},${TURN_ID},clock_timestamp(),clock_timestamp())`);
+      await tx.execute(sql`INSERT INTO chat_messages
+        (id,org_id,conversation_id,role,kind,status,body,run_id,replying_agent_id,turn_variant)
+        VALUES (${assistantMessageId}::uuid,${orgId}::uuid,${chatId}::uuid,'assistant','message','completed',
+          'fixture answer',${runId}::uuid,${agentId}::uuid,0)`);
+      await tx.execute(sql`UPDATE heartbeat_runs
+        SET status='succeeded',finished_at=clock_timestamp(),process_exited_at=clock_timestamp(),
+            execution_lease_expires_at=NULL,chat_generation_id=${generationId}::uuid,
+            execution_authority='native_rust',scene='chat',target_type='chat_conversation',target_id=${chatId},
+            idempotency_key='provider-reader-e2e',
+            session_intent_json='{"kind":"fresh","reuseScope":"none","sourceRunId":null,"sessionId":null,"sessionParams":null}'::jsonb,
+            native_admission_hold=false
+        WHERE org_id=${orgId}::uuid AND id=${runId}::uuid`);
+      await tx.execute(sql`UPDATE heartbeat_run_attempts
+        SET status='succeeded',finished_at=clock_timestamp(),generation_attempt_epoch=7,connection_epoch=3,
+            protocol_phase='execution_terminal_committed',
+            checkpoint_json=${JSON.stringify({ phase: "execution_terminal_committed", revision: 1, threadId: THREAD_ID, turnId: TURN_ID })}::jsonb,
+            provider_thread_id=${THREAD_ID},provider_turn_id=${TURN_ID}
+        WHERE org_id=${orgId}::uuid AND run_id=${runId}::uuid AND id=${attemptId}::uuid`);
+      await tx.execute(sql`INSERT INTO run_runtime_spans
+        (id,org_id,run_id,binding_id,segment_id,attempt_id,attempt_ref,attempt_epoch,owner_token,ordinal,
+         relation,native_execution_ref,selector_json,state,completeness,closed_at)
+        VALUES (${spanId}::uuid,${orgId}::uuid,${runId}::uuid,${bindingId}::uuid,${segmentId}::uuid,
+         ${attemptId}::uuid,${attemptId},7,'reader-test-owner',0,'primary',${TURN_ID},
+         ${JSON.stringify({ kind: "codex_turn", threadId: THREAD_ID, turnId: TURN_ID })}::jsonb,
+         'sealed','terminal_only',clock_timestamp())`);
+      await tx.execute(sql`UPDATE native_segments SET state='sealed',sealed_at=clock_timestamp()
+        WHERE org_id=${orgId}::uuid AND binding_id=${bindingId}::uuid AND id=${segmentId}::uuid`);
+    });
+  }
+
+  async function transcript(authToken = token): Promise<TranscriptResult> {
+    const response = await request(server!)
+      .get(`/api/chats/${chatId}/messages/${assistantMessageId}/transcript`)
+      .set("authorization", `Bearer ${authToken}`);
+    return { status: response.status, body: response.body as Record<string, unknown> };
+  }
+
+  function rpcLog(profile = oldProfileHome): Array<Record<string, unknown>> {
+    const file = path.join(profile, "reader-rpc.jsonl");
+    if (!fs.existsSync(file)) return [];
+    return fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  function readRequests(profile = oldProfileHome) {
+    return rpcLog(profile).filter((entry) => (entry as { method?: string }).method === "thread/read");
+  }
+
+  async function addFilteredLedgerRow() {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write','native_chat:provider_reader_ledger_fixture',true)`);
+      await tx.execute(sql`INSERT INTO chat_generation_events
+        (org_id,generation_id,generation_seq,attempt_epoch,event_kind,payload,assistant_message_id,run_id)
+        VALUES (${orgId}::uuid,${generationId}::uuid,99,7,'assistant_delta','{}'::jsonb,
+          ${assistantMessageId}::uuid,${runId}::uuid)`);
+    });
+  }
+
+  async function removeFilteredLedgerRow() {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write','native_chat:provider_reader_ledger_fixture',true)`);
+      await tx.execute(sql`DELETE FROM chat_generation_events WHERE org_id=${orgId}::uuid AND generation_id=${generationId}::uuid`);
+    });
+  }
+
+  beforeAll(async () => {
+    binary = await buildCandidate();
+    temporary = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-native-codex-reader-public-"));
+    process.env.RUDDER_HOME = path.join(temporary, "rudder-home");
+    process.env.RUDDER_INSTANCE_ID = instanceId;
+    instanceRoot = path.join(temporary, "instance");
+    const workspaceHome = path.join(temporary, "workspace");
+    const operatorHome = path.join(temporary, "operator");
+    fakeBin = path.join(temporary, "bin");
+    for (const directory of [instanceRoot, workspaceHome, operatorHome, path.join(operatorHome, ".codex"), fakeBin]) {
+      fs.mkdirSync(directory, { recursive: true });
+    }
+    const organizationKey = orgId.replaceAll("-", "").slice(0, 12).toLowerCase();
+    const codexHomes = path.join(instanceRoot, "organizations", organizationKey, "codex-home", "agents");
+    oldProfileHome = path.join(codexHomes, agentId);
+    switchedProfileHome = path.join(codexHomes, switchedAgentId);
+    for (const directory of [oldProfileHome, switchedProfileHome]) fs.mkdirSync(directory, { recursive: true });
+    modeFile = path.join(oldProfileHome, "reader-mode");
+    readStartedFile = path.join(oldProfileHome, "read-started");
+    releaseReadFile = path.join(oldProfileHome, "release-read");
+
+    const fakeCodex = `#!${process.execPath}\nconst fs=require("node:fs");\nconst path=require("node:path");\nconst readline=require("node:readline");\nconst home=process.env.CODEX_HOME;\nconst log=path.join(home,"reader-rpc.jsonl");\nconst modeFile=path.join(home,"reader-mode");\nconst send=(value)=>process.stdout.write(JSON.stringify(value)+"\\n");\nconst turns=[\n {id:${JSON.stringify(LATEST_TURN_ID)},status:"completed",itemsView:"full",items:[{type:"agentMessage",id:"latest-message",phase:"final_answer",text:"Latest answer must not be substituted"}]},\n {id:${JSON.stringify(TURN_ID)},status:"completed",itemsView:"full",items:[{type:"agentMessage",id:"old-final",phase:"final_answer",text:"Old exact Codex answer"},{type:"agentMessage",id:"private-reasoning",phase:"analysis",text:"PRIVATE_REASONING_MUST_NOT_LEAK"},{type:"commandExecution",id:"old-command",command:"printf old",cwd:"/fixture",exitCode:0}]}\n];\nreadline.createInterface({input:process.stdin}).on("line",async(line)=>{\n let message; try{message=JSON.parse(line)}catch{return}\n fs.appendFileSync(log,JSON.stringify({...message,home})+"\\n");\n if(message.method==="initialize"){send({jsonrpc:"2.0",id:message.id,result:{codexHome:home}});return}\n if(message.method==="initialized")return;\n if(message.method!=="thread/read")return;\n const mode=fs.existsSync(modeFile)?fs.readFileSync(modeFile,"utf8").trim():"ok";\n if(mode==="block"){fs.writeFileSync(path.join(home,"read-started"),"started");while(!fs.existsSync(path.join(home,"release-read")))await new Promise(r=>setTimeout(r,10));}\n if(mode==="malformed"){process.stdout.write("{malformed-json\\n");return}\n if(mode==="unsupported"){send({jsonrpc:"2.0",id:message.id,error:{code:-32601,message:"unsupported"}});return}\n const selected=mode==="unhydrated"?turns.map(t=>t.id===${JSON.stringify(TURN_ID)}?{...t,itemsView:"summary"}:t):turns;\n send({jsonrpc:"2.0",id:message.id,result:{thread:{id:message.params.threadId,turns:selected}}});\n});\n`;
+    const codexExecutable = path.join(fakeBin, "codex");
+    fs.writeFileSync(codexExecutable, fakeCodex, { mode: 0o755 });
+    fs.chmodSync(codexExecutable, 0o755);
+
+    const port = await freePort();
+    const EmbeddedPostgres = (await import("embedded-postgres")).default as PgConstructor;
+    pg = new EmbeddedPostgres({
+      databaseDir: path.join(temporary, "pg"), user: "rudder", password: "rudder", port,
+      persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-k", ""],
+      onLog: () => {}, onError: () => {},
+    });
+    await pg.initialise();
+    await pg.start();
+    await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, "rudder");
+    databaseUrl = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
+    await applyPendingMigrations(databaseUrl);
+    db = createDb(databaseUrl);
+    await db.insert(organizations).values({ id: orgId, name: "Reader E2E", urlKey: `reader-${orgId}`, issuePrefix: "RDR" });
+    await db.insert(authUsers).values([owner, outsider].map((id) => ({
+      id, name: id, email: `${id}@example.test`, createdAt: new Date(), updatedAt: new Date(),
+    })));
+    await db.insert(organizationMemberships).values({
+      orgId, principalType: "user", principalId: owner, status: "active", membershipRole: "member",
+    });
+    await db.insert(boardApiKeys).values([
+      { userId: owner, name: "Reader owner", keyHash: createHash("sha256").update(token).digest("hex") },
+      { userId: outsider, name: "Reader outsider", keyHash: createHash("sha256").update(outsiderToken).digest("hex") },
+    ]);
+    await db.insert(agents).values([
+      { id: agentId, orgId, name: "Historical Codex Agent", role: "general", status: "idle", agentRuntimeType: "codex_local" },
+      { id: switchedAgentId, orgId, name: "Current Codex Agent", role: "general", status: "idle", agentRuntimeType: "codex_local" },
+    ]);
+    await db.insert(chatConversations).values({
+      id: chatId, orgId, title: "Exact-turn transcript", preferredAgentId: agentId, createdByUserId: owner,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
+    server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing Express test listener");
+    nodeUrl = `http://127.0.0.1:${address.port}`;
+
+    bridge = createRustFoundationBridge({
+      databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off",
+      requestTimeoutMs: 15_000,
+      publicIngress: {
+        listenAddr: "127.0.0.1:0",
+        nodeUpstream: nodeUrl,
+        authorizationKey: "codex-reader-public-ingress-fixture-key-32-bytes",
+        deploymentMode: "authenticated",
+        browserSessionAuth: {
+          issuer: "better_auth",
+          secret: "codex-reader-browser-session-fixture-secret",
+          secureCookie: false,
+          sessionCookieName: "better-auth.session_token",
+          dontRememberCookieName: "better-auth.dont_remember",
+          expiresIn: 7 * 24 * 60 * 60,
+          updateAge: 24 * 60 * 60,
+          disableSessionRefresh: false,
+        },
+        identityAuth: {
+          assertionKey: "44".repeat(32), agentJwtSecret: "codex-reader-agent-jwt-fixture-secret",
+          agentJwtIssuer: "rudder", agentJwtAudience: "rudder-api", localImplicitEnabled: false,
+        },
+        nativeChatHost: {
+          instanceId, instanceRoot, workspaceHome, operatorHome,
+          codexHome: path.join(operatorHome, ".codex"),
+          executableSearchPath: `${fakeBin}:/usr/bin:/bin`,
+          friendlyWorkspaceHome: false,
+          deploymentMode: "authenticated", deploymentExposure: "private", authRequirement: "required",
+          trustedOrigins: [nodeUrl],
+        },
+      },
+    });
+    await bridge.start();
+    const router = express.Router();
+    registerChatMessageQueryRoutes({
+      router,
+      svc: {},
+      rustFoundationBridge: bridge,
+      assertConversationAccess: async (req: any, conversationId: string) => {
+        const [conversation] = await db.select().from(chatConversations)
+          .where(eq(chatConversations.id, conversationId)).limit(1);
+        if (!conversation || req.actor?.type !== "board" || !req.actor.orgIds?.includes(conversation.orgId)) return null;
+        return { ...conversation, mutability: "native_chat" };
+      },
+    });
+    app.use("/api", router);
+    app.use(errorHandler);
+    const actor = {
+      type: "board" as const, userId: owner, source: "board_key" as const,
+      sessionId: "codex-reader-public-e2e", authEpoch: 1,
+    };
+    const bound = await bridge.runtimeBinding!(actor, orgId, {
+      operation: "ensure", target: { targetType: "chat_conversation", targetId: chatId },
+      identity: { agentId, profileId: "default" },
+    });
+    expect(bound.status).toBe(200);
+    const bindingResult = JSON.parse(bound.body.toString("utf8")) as { binding: { id: string }; segment: { id: string } };
+    // Binding.ensure starts before runtime admission has resolved a concrete
+    // provider profile. This fixture pins the durable identity that a
+    // terminal Native attempt records after admission.
+    await db.execute(sql`UPDATE runtime_bindings
+      SET profile_id=${`managed-codex:${agentId}:default`},host_id=${`local:${instanceId}`}
+      WHERE org_id=${orgId}::uuid AND id=${bindingResult.binding.id}::uuid`);
+    const persistedBinding = await db.execute(sql`SELECT profile_id,host_id FROM runtime_bindings WHERE org_id=${orgId}::uuid AND id=${bindingResult.binding.id}::uuid`);
+    expect(persistedBinding[0].profile_id).toBe(`managed-codex:${agentId}:default`);
+    expect(persistedBinding[0].host_id).toBe(`local:${instanceId}`);
+    await seedTerminalTranscript(bindingResult.binding.id, bindingResult.segment.id);
+  }, 180_000);
+
+  afterAll(async () => {
+    try {
+      await bridge?.close();
+      await closeServer(server);
+      await db?.$client.end({ timeout: 5 });
+      await pg?.stop();
+    } finally {
+      if (temporary) fs.rmSync(temporary, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.RUDDER_HOME; else process.env.RUDDER_HOME = previousHome;
+      if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID; else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+    }
+  }, 30_000);
+
+  it("reads one exact old turn, reports incomplete sources, fences Stop, and never writes transcripts or submits prompts", async () => {
+    const initialEvents = await db.execute(sql`SELECT count(*)::int AS count FROM chat_generation_events WHERE org_id=${orgId}::uuid`);
+    expect(initialEvents[0].count).toBe(0);
+    const beforeMessages = await db.execute(sql`SELECT to_jsonb(m) AS row FROM chat_messages m WHERE org_id=${orgId}::uuid ORDER BY id`);
+
+    const exact = await transcript();
+    expect(exact.status).toBe(200);
+    expect(exact.body.reader).toMatchObject({ source: "codex_exact_turn", availability: "complete", completeness: "terminal_only" });
+    const entries = exact.body.transcript as Array<Record<string, unknown>>;
+    expect(entries.some((entry) => entry.text === "Old exact Codex answer")).toBe(true);
+    expect(entries.some((entry) => entry.text === "Latest answer must not be substituted")).toBe(false);
+    expect(JSON.stringify(exact.body)).not.toContain("PRIVATE_REASONING_MUST_NOT_LEAK");
+    expect(entries.some((entry) => entry.kind === "tool_call")).toBe(true);
+    const firstRead = readRequests();
+    expect(firstRead).toHaveLength(1);
+    expect(firstRead[0].params).toEqual({ threadId: THREAD_ID, includeTurns: true });
+    expect(rpcLog().map((entry) => entry.method)).toEqual(["initialize", "initialized", "thread/read"]);
+    expect(await db.execute(sql`SELECT count(*)::int AS count FROM chat_generation_events WHERE org_id=${orgId}::uuid`)).toEqual(initialEvents);
+    expect(await db.execute(sql`SELECT to_jsonb(m) AS row FROM chat_messages m WHERE org_id=${orgId}::uuid ORDER BY id`)).toEqual(beforeMessages);
+
+    // A preferred-Agent switch does not change the historical binding's
+    // profile or provider home for this completed turn.
+    await db.update(chatConversations).set({ preferredAgentId: switchedAgentId }).where(eq(chatConversations.id, chatId));
+    const switched = await transcript();
+    expect(switched.status).toBe(200);
+    expect(switched.body.reader).toMatchObject({ source: "codex_exact_turn", availability: "complete" });
+    expect(readRequests()).toHaveLength(2);
+    expect(readRequests(switchedProfileHome)).toHaveLength(0);
+
+    for (const [mode, reason] of [
+      ["unsupported", "provider_read_unsupported"],
+      ["malformed", "provider_response_malformed"],
+      ["unhydrated", "provider_turn_unhydrated"],
+    ] as const) {
+      fs.writeFileSync(modeFile, mode);
+      const response = await transcript();
+      expect(response.status).toBe(200);
+      expect(response.body.reader).toMatchObject({ availability: "incomplete", reason });
+      expect(response.body.transcript).toEqual([]);
+    }
+
+    fs.writeFileSync(modeFile, "ok");
+    const beforeLedger = readRequests().length;
+    await addFilteredLedgerRow();
+    const ledger = await transcript();
+    expect(ledger.status).toBe(200);
+    expect(ledger.body.reader).toMatchObject({ source: "native_event_ledger", availability: "incomplete", reason: "ledger_source_not_projectable" });
+    expect(ledger.body.transcript).toEqual([]);
+    expect(readRequests()).toHaveLength(beforeLedger);
+    await removeFilteredLedgerRow();
+
+    fs.rmSync(readStartedFile, { force: true });
+    fs.rmSync(releaseReadFile, { force: true });
+    fs.writeFileSync(modeFile, "block");
+    const pendingRead = transcript();
+    await waitForFile(readStartedFile);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('rudder.native_chat_write','native_chat:provider_reader_stop_race',true)`);
+      await tx.execute(sql`UPDATE chat_generations
+        SET status='stop_requested',terminal_reason='operator_stop',stop_requested_at=clock_timestamp(),
+            accepted_through_seq=0,control_state='stopping'
+        WHERE org_id=${orgId}::uuid AND id=${generationId}::uuid`);
+    });
+    fs.writeFileSync(releaseReadFile, "release");
+    const stopped = await pendingRead;
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.reader).toMatchObject({ source: "native_event_ledger", availability: "incomplete", reason: "provider_read_fenced" });
+    expect(stopped.body.transcript).toEqual([]);
+    expect(await db.execute(sql`SELECT count(*)::int AS count FROM chat_generation_events WHERE org_id=${orgId}::uuid`)).toEqual(initialEvents);
+
+    const providerReadsBeforeDenied = readRequests().length;
+    const denied = await transcript(outsiderToken);
+    expect(denied.status).toBe(404);
+    expect(readRequests()).toHaveLength(providerReadsBeforeDenied);
+    const allMethods = rpcLog().map((entry) => entry.method);
+    expect(allMethods).not.toContain("thread/start");
+    expect(allMethods).not.toContain("turn/start");
+    expect(allMethods).not.toContain("turn/submit");
+    expect(allMethods).not.toContain("prompt");
+  }, 60_000);
+});

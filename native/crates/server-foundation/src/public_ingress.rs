@@ -154,6 +154,13 @@ impl PublicIngressRuntime {
         config: PublicIngressConfig,
         foundation: Arc<AppState>,
     ) -> Result<Self, ServerError> {
+        {
+            let mut reader_runtime = foundation
+                .native_chat_public_runtime
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *reader_runtime = config.native_chat_runtime.clone();
+        }
         if foundation.config.actor_envelope_key.is_none() {
             return Err(ConfigError::invalid(
                 "RUDDER_NATIVE_ACTOR_ENVELOPE_KEY",

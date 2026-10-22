@@ -527,10 +527,24 @@ export const chatsApi = {
     const query = params.toString();
     return api.get<ChatMessage[]>(`/chats/${chatId}/messages${query ? `?${query}` : ""}`);
   },
-  getMessageTranscript: (chatId: string, messageId: string) =>
-    api.get<{ messageId: string; transcript: ChatStreamTranscriptEntry[] }>(
+  getMessageTranscript: async (chatId: string, messageId: string) => {
+    const response = await api.get<{
+      messageId: string;
+      transcript: ChatStreamTranscriptEntry[];
+      reader?: {
+        availability?: "complete" | "partial" | "incomplete" | "unavailable";
+        reason?: string;
+      };
+    }>(
       `/chats/${chatId}/messages/${messageId}/transcript`,
-    ),
+    );
+    if (response.reader?.availability === "incomplete" || response.reader?.availability === "unavailable") {
+      const status = response.reader.availability;
+      const reason = response.reader.reason?.replaceAll("_", " ");
+      throw new Error(`Process details are ${status}${reason ? ` (${reason})` : ""}.`);
+    }
+    return response;
+  },
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),
   sendFirstMessageStream: async (

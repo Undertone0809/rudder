@@ -22,6 +22,7 @@ pub use opencode::OpenCodeLocalConfig;
 pub(crate) use opencode::resolve_opencode_config;
 pub use pi::PiLocalConfig;
 pub(crate) use pi::resolve_pi_config;
+pub use resolve::historical_codex_profile_home;
 pub(crate) use resolve::resolve_codex_config;
 pub use resolve::{ManagedCodexProfile, ResolvedCodexConfig, RuntimeBindingIdentity};
 

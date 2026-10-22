@@ -22,6 +22,7 @@ fn turn(id: &str, item_ids: &[&str]) -> Value {
     json!({
         "id": id,
         "status": "completed",
+        "itemsView": "full",
         "items": item_ids.iter().map(|item_id| json!({"id": item_id, "type": "agentMessage"})).collect::<Vec<_>>(),
     })
 }
@@ -122,7 +123,7 @@ fn malformed_mismatched_duplicate_and_wrong_request_responses_fail_closed() {
         7,
         read_result(
             "thread-exact",
-            vec![json!({"id":"turn-requested","status":"completed"})],
+            vec![json!({"id":"turn-requested","status":"completed","itemsView":"full"})],
         ),
     );
     assert_eq!(
@@ -201,7 +202,7 @@ while IFS= read -r line; do
   case "$line" in *'"method":"thread/read"'*) ;; *) exit 91 ;; esac
   case "$line" in *'"includeTurns":true'*'"threadId":" thread-exact "'*) ;; *) exit 92 ;; esac
   case "$line" in *thread/start*|*turn/start*|*prompt*) exit 93 ;; esac
-  printf '%s\n' '{"id":0,"result":{"thread":{"id":" thread-exact ","turns":[{"id":"turn-requested","status":"completed","items":[{"id":"item-exact","type":"agentMessage"}]},{"id":"turn-newest","status":"completed","items":[{"id":"item-newest","type":"agentMessage"}]}]}}}'
+  printf '%s\n' '{"id":0,"result":{"thread":{"id":" thread-exact ","turns":[{"id":"turn-requested","status":"completed","itemsView":"full","items":[{"id":"item-exact","type":"agentMessage"}]},{"id":"turn-newest","status":"completed","itemsView":"full","items":[{"id":"item-newest","type":"agentMessage"}]}]}}}'
 done
 "#;
     let (mut transport, _root) = launch(script);

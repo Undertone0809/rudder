@@ -1816,3 +1816,26 @@ correlation. The next accepted product slice still needs Rust authorization and
 read-only launch capability, exact durable selectors, Stop-cutoff projection,
 missing-source fallback and real public-ingress acceptance. Keep the full
 Reader/storage/Fork/retention gates open.
+
+### October 22 Hermes exact-Run history boundary
+
+Installed Hermes 0.21.0 source inspection found that `session/load` is not a
+strictly read-only history API: it persists the working directory, attaches MCP
+servers, reconstructs the agent when necessary, and replays session-level
+display history. The private replay primitive above must therefore remain
+excluded from the public read-only Reader. Sending no prompt does not prove
+that a load operation has no side effects.
+
+The native store has durable `messages.id` row keys and bounded `after_id`
+queries, but current ACP ignores the submitted `messageId`. Rudder's existing
+Hermes checkpoint binds its ACP session and wire request, not the provider's
+message-row range. Compression lineage is also session-level and cannot close
+an exact Run. A complete Hermes Run Reader needs a verified durable provider
+binding to the exact source message and row ranges, including each compression
+segment, before those selectors can be persisted and read under Rust authority.
+Do not modify an operator's installed Hermes or native database to manufacture
+that capability. Existing Runs without such a binding remain explicitly
+unavailable for exact provider-native reading; they keep their authorized SQL
+projection. Do not substitute timestamps, the latest session, all descendants,
+session-wide replay, or a repeated prompt. The Codex exact-turn public slice is
+independent and does not establish Hermes history parity.

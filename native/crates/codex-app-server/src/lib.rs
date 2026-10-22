@@ -25,7 +25,10 @@ pub use receipts::{
 pub use session::{
     MAX_PENDING_REQUESTS, PreparedRequest, RpcSession, SessionError, SessionObservation,
 };
-pub use thread_read::{ThreadReadError, ThreadReadSelection, select_thread_read_turn};
+pub use thread_read::{
+    ThreadReadError, ThreadReadSelection, project_public_transcript, read_exact_thread_turn,
+    select_thread_read_result, select_thread_read_turn,
+};
 pub use transport::{OwnedTransport, ProcessLaunch, TransportError, TransportEvent};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]

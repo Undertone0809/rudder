@@ -2363,6 +2363,7 @@ dependencies = [
  "rudder-archive-core",
  "rudder-auth-core",
  "rudder-claude-code",
+ "rudder-codex-app-server",
  "rudder-d1-persistence",
  "rudder-native-chat-executor",
  "rudder-native-process-transport",
