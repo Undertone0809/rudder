@@ -530,8 +530,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
-    if state.config.identity_auth.is_some()
-        && agent_core::is_reserved_path(request.uri().path(), request.method())
+    if agent_core::is_detail_path(request.uri().path(), request.method())
+        || (state.config.identity_auth.is_some()
+            && agent_core::is_reserved_path(request.uri().path(), request.method()))
     {
         return agent_core::dispatch_alias(state, request, payload).await;
     }
@@ -2494,6 +2495,76 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    #[actix_web::test]
+    async fn agent_detail_without_identity_never_reaches_compatibility_upstream() {
+        let forwarded = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let node = HttpServer::new({
+            let forwarded = forwarded.clone();
+            move || {
+                let forwarded = forwarded.clone();
+                App::new().default_service(web::to(move || {
+                    let forwarded = forwarded.clone();
+                    async move {
+                        forwarded.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let node_control = node.handle();
+        let node_task = actix_web::rt::spawn(node);
+        let foundation = Arc::new(
+            AppState::new(ServerConfig {
+                actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                workers: 1,
+                ..ServerConfig::default()
+            })
+            .unwrap(),
+        );
+        // Only the programmatic constructor permits this defensive state;
+        // the production CLI rejects missing identity configuration at boot.
+        let config =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap();
+        let runtime = PublicIngressRuntime::bind(config, foundation).unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+        let client = awc::Client::default();
+        for path in [
+            "/api/agents/agent-1",
+            "/api/agents/me",
+            "/API/AGENTS/agent-1/",
+            "/API/AGENTS/ME/",
+        ] {
+            for method in [Method::GET, Method::HEAD] {
+                let mut response = client
+                    .request(method.clone(), format!("http://{address}{path}"))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+                if method == Method::GET {
+                    let body: serde_json::Value = response.json().await.unwrap();
+                    assert_eq!(body["reason"], "native_identity_unavailable");
+                } else {
+                    assert!(response.body().await.unwrap().is_empty());
+                }
+            }
+        }
+        assert_eq!(forwarded.load(Ordering::SeqCst), 0);
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+        node_control.stop(true).await;
+        node_task.await.unwrap().unwrap();
     }
 
     #[actix_web::test]

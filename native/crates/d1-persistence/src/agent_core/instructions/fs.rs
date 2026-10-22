@@ -14,6 +14,10 @@ pub(super) fn random() -> io::Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 pub(super) fn path(value: &str, base: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let value = value.replace('/', "\\");
+    #[cfg(windows)]
+    let value = value.as_str();
     let joined = if Path::new(value).is_absolute() {
         PathBuf::from(value)
     } else {

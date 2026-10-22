@@ -1432,7 +1432,7 @@
     },
     {
       "path": "desktop/src/identity-runtime.ts",
-      "sha256": "fda54402669fdb02d747d82c58d0b5628ea94b598ac9a525f80587291a112c14",
+      "sha256": "90ceaf8a125bfad8c5e685ce6e72b91af0e3be3bb0127119a56b8d7be3b78afa",
       "families": [
         "electron_process_graph"
       ]
@@ -4625,7 +4625,7 @@
     },
     {
       "path": "server/src/routes/agents.core.ts",
-      "sha256": "1d16e36991054ab16d693d7b2a1bbd827090e69f78cbc2a1afc8a9d8e6a657be",
+      "sha256": "d46af15ad40343724d58a94acb65986d05282886ecb86daa677f71ae0b52013e",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -16639,7 +16639,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 50,
+      "line": 54,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/:id",
       "receiver": "router",
       "method": "GET",
@@ -16709,7 +16709,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 49,
+      "line": 53,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/me",
       "receiver": "router",
       "method": "GET",
@@ -59103,7 +59103,34 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "server/src/routes/agents.core.ts",
+      "change_kind": "modified_node_compatibility",
+      "base_sha256": "1d16e36991054ab16d693d7b2a1bbd827090e69f78cbc2a1afc8a9d8e6a657be",
+      "head_sha256": "d46af15ad40343724d58a94acb65986d05282886ecb86daa677f71ae0b52013e",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs -> d1-persistence::agent_core::execute_agent_with_native_auth",
+      "compatibility_boundary": "Disable detail/me Node adapters in nativeAgentCorePaths mode; preserve only legacy deployments without the native public listener. No new Node business logic.",
+      "retirement_criterion": "Remove remaining compatibility routes once all public Agent operations are native and default no-Node acceptance passes.",
+      "reviewer": "qualification_stage_review / 01a15f68-0fab-7473-bd09-ea2eeb62f302",
+      "review_reference": "doc/plans/2026-10-22-agent-detail-native-ingress-qualification.md",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "desktop/src/identity-runtime.ts",
+      "change_kind": "modified_retained_client",
+      "base_sha256": "fda54402669fdb02d747d82c58d0b5628ea94b598ac9a525f80587291a112c14",
+      "head_sha256": "90ceaf8a125bfad8c5e685ce6e72b91af0e3be3bb0127119a56b8d7be3b78afa",
+      "node_role": "retained_client",
+      "client_responsibility": "Electron desktop account-gate configuration and safeStorage client orchestration; derive the native launcher local-implicit policy from the same accountRequired decision. No backend identity authorization, persistence or fallback is added.",
+      "associated_backend_authority": "native/crates/server-foundation/src/native_chat_startup.rs and native public ingress identity checks",
+      "compatibility_boundary": "Explicit development bypass and authenticated marked packaged smoke keep their existing gates. Ordinary packaged apps and spoofed identity markers remain account-required; this client configuration is not full native auth retirement.",
+      "reviewer": "qualification_stage_review / 01a15f68-0fab-7473-bd09-ea2eeb62f302",
+      "review_reference": "doc/plans/2026-10-22-agent-detail-native-ingress-qualification.md#desktop-and-qualification-repairs; independent stage-review-v6.md identity paragraph (overall source rejected for separate workspace traversal finding)",
+      "review_status": "reviewed"
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
@@ -59135,10 +59162,10 @@
       "order_after": "agent_router_initialization",
       "order_before": "agent_core_compatibility_handlers",
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/agent_core.rs",
-      "compatibility_boundary": "Node retains the AgentCore router for detail, configuration, inbox, and other compatibility paths; this flag suppresses only the duplicate roster and permissions handlers when Rust owns those public paths.",
-      "retirement_criterion": "Remove this conditional adapter after native Rust AgentCore ingress owns roster and permissions in every supported deployment.",
-      "reviewer": "independent agent /root/review_convergence",
-      "review_reference": "doc/plans/artifacts/2026-10-21-native-chat-compatibility-boundary-review.json",
+      "compatibility_boundary": "Node retains the AgentCore router for configuration, inbox and other compatibility paths; nativeAgentCorePaths suppresses duplicate roster GET/HEAD, detail/me GET/HEAD and permissions PATCH adapters when Rust owns those public paths.",
+      "retirement_criterion": "Remove this conditional adapter after all public AgentCore operations are native in every supported deployment and default no-Node acceptance passes.",
+      "reviewer": "qualification_stage_review / 01a15f68-0fab-7473-bd09-ea2eeb62f302",
+      "review_reference": "doc/plans/2026-10-22-agent-detail-native-ingress-qualification.md",
       "review_status": "reviewed"
     },
     {

@@ -196,6 +196,35 @@ fn instruction_read_preflight_rejects_symlinked_entries_and_parents() {
     let nested_file = linked_parent.join("TOOLS.md");
     assert!(preflight_root(&f.instructions(), false).is_err());
     assert!(preflight_file(&nested_file).is_err());
+
+    let linked_ancestor = f.root.path().join("linked-parent");
+    disk::create_dir_all(outside.join("instructions")).unwrap();
+    symlink(&outside, &linked_ancestor).unwrap();
+    assert!(preflight_root(&linked_ancestor.join("instructions"), false).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn historical_recovery_rejects_symlink_ancestors_before_managed_writes() {
+    use std::os::unix::fs::symlink;
+    let mut f = Fixture::new();
+    let outside = f.root.path().join("outside-history");
+    let suffix = "organizations/100000000000/workspaces/agents/builder-key/instructions";
+    let source = outside.join(suffix);
+    disk::create_dir_all(&source).unwrap();
+    disk::write(source.join("SOUL.md"), "Must not copy this").unwrap();
+    let instances = Path::new(&f.host.instance_root).parent().unwrap();
+    disk::create_dir_all(instances).unwrap();
+    let historical = instances.join("historical");
+    symlink(&outside, &historical).unwrap();
+    f.row["agentRuntimeConfig"] =
+        json!({"instructionsFilePath":historical.join(suffix).join("SOUL.md")});
+    assert!(f.run().is_err());
+    assert!(!f.instructions().exists());
+    assert_eq!(
+        disk::read_to_string(source.join("SOUL.md")).unwrap(),
+        "Must not copy this"
+    );
 }
 
 #[test]
@@ -211,6 +240,65 @@ fn legacy_absolute_file_normalizes_only_for_managed_root_matching() {
         disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
         "Legacy file bytes"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn legacy_verbatim_file_handles_mixed_separators() {
+    for tail in [r"/folder\../SOUL.md", r"\folder/..\SOUL.md"] {
+        let mut f = Fixture::new();
+        let instructions =
+            Path::new(&f.host.previous_documents_root).join("agents/builder-key/instructions");
+        disk::create_dir_all(instructions.join("folder")).unwrap();
+        disk::write(instructions.join("SOUL.md"), "Legacy file bytes").unwrap();
+        f.row["agentRuntimeConfig"] =
+            json!({"instructionsFilePath":format!("{}{tail}", instructions.display())});
+        assert_eq!(f.run().unwrap(), json!("agents/builder-key/instructions"));
+        assert_eq!(
+            disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
+            "Legacy file bytes"
+        );
+        // Recovery leaves a proven compatibility junction. A later request
+        // must reuse it without rejecting that alias or changing file bytes.
+        assert_eq!(f.run().unwrap(), json!("agents/builder-key/instructions"));
+        assert_eq!(
+            disk::read_to_string(f.instructions().join("SOUL.md")).unwrap(),
+            "Legacy file bytes"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn legacy_verbatim_traversal_checks_junctions_and_files_before_normalizing() {
+    for junction in [true, false] {
+        let mut f = Fixture::new();
+        let instructions =
+            Path::new(&f.host.previous_documents_root).join("agents/builder-key/instructions");
+        disk::create_dir_all(&instructions).unwrap();
+        let outside = f.root.path().join("outside");
+        disk::create_dir_all(&outside).unwrap();
+        disk::write(outside.join("keep.md"), "outside bytes").unwrap();
+        let traversed = instructions.join("folder");
+        if junction {
+            windows::junction(&traversed, &outside).unwrap();
+        } else {
+            disk::write(&traversed, "not a directory").unwrap();
+        }
+        disk::write(instructions.join("SOUL.md"), "Legacy file bytes").unwrap();
+        f.row["agentRuntimeConfig"] =
+            json!({"instructionsFilePath":format!("{}/folder/../SOUL.md", instructions.display())});
+        assert!(f.run().is_err());
+        assert!(!f.instructions().exists());
+        assert_eq!(
+            disk::read_to_string(outside.join("keep.md")).unwrap(),
+            "outside bytes"
+        );
+        assert_eq!(
+            disk::read_to_string(instructions.join("SOUL.md")).unwrap(),
+            "Legacy file bytes"
+        );
+    }
 }
 #[test]
 fn foreign_workspace_identity_rejects_before_layout_or_migration_writes() {
@@ -266,7 +354,11 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        // System temporary paths can contain aliases such as macOS /tmp.
+        // Owned-root fixtures use canonical paths; the symlink cases below
+        // explicitly introduce the untrusted aliases they need to reject.
+        let temporary_root = std::env::temp_dir().canonicalize().unwrap();
+        let root = tempfile::tempdir_in(temporary_root).unwrap();
         let instance = root.path().join("instances/default");
         let host = Host {
             workspace_home: instance.join("organizations").to_string_lossy().into(),

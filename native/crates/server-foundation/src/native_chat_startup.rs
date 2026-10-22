@@ -56,6 +56,12 @@ pub(crate) fn configure(
     }
     let installation: Installation =
         serde_json::from_str(&raw).map_err(|_| invalid_at("invalid installation shape"))?;
+    // The transitional launcher also supplies its original workspace setting.
+    // Validate that fact before using its resolved path: path.resolve would
+    // otherwise erase a relative root or ParentDir before Rust can reject it.
+    let workspace_input = crate::optional_env("RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME")?;
+    validate_workspace_input(workspace_input.as_deref(), &installation.operator_home)?;
+    validate_workspace_shape(&installation.workspace_home)?;
     if installation.opencode_server_url.is_none() && installation.opencode_bearer_token.is_some() {
         return Err(invalid_at(
             "OpenCode bearer token requires an OpenCode Server URL",
@@ -146,7 +152,7 @@ pub(crate) fn configure(
         return Ok(config);
     };
     let instance = canonical_directory(&installation.instance_root)?;
-    let workspace = canonical_directory(&installation.workspace_home)?;
+    let workspace = workspace_directory(&installation.workspace_home)?;
     let operator_home = canonical_directory(&installation.operator_home)?;
     let native_root = instance.join("native-chat");
     let profiles = owned_directory(&native_root.join("profiles"))?;
@@ -279,6 +285,73 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(canonical)
 }
 
+fn contains_parent_component(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        // Verbatim Windows paths do not parse forward slashes as separators.
+        // Installation input still uses the launcher's two-separator syntax.
+        path.as_os_str()
+            .encode_wide()
+            .collect::<Vec<_>>()
+            .split(|character| matches!(*character, 47 | 92))
+            .any(|component| component == [46, 46])
+    }
+    #[cfg(not(windows))]
+    {
+        path.components()
+            .any(|component| component == std::path::Component::ParentDir)
+    }
+}
+
+fn validate_workspace_shape(path: &Path) -> Result<(), ConfigError> {
+    if !path.is_absolute() || contains_parent_component(path) {
+        return Err(invalid_at(
+            "workspace root must be absolute without parent traversal",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_workspace_input(input: Option<&str>, operator_home: &Path) -> Result<(), ConfigError> {
+    let Some(input) = input.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    // Joining onto a verbatim Windows home would otherwise remove `..`.
+    if contains_parent_component(Path::new(input)) {
+        return Err(invalid_at(
+            "workspace root must be absolute without parent traversal",
+        ));
+    }
+    // Preserve the launcher's documented home-prefix expansion. Everything
+    // else must already be absolute; never resolve relative input against cwd.
+    let expanded = if input == "~" {
+        operator_home.to_owned()
+    } else if let Some(relative) = input.strip_prefix("~/") {
+        operator_home.join(relative)
+    } else {
+        PathBuf::from(input)
+    };
+    validate_workspace_shape(&expanded)
+}
+
+fn workspace_directory(path: &Path) -> Result<PathBuf, ConfigError> {
+    validate_workspace_shape(path)?;
+    let invalid_workspace = || invalid_at("workspace root must resolve to a directory");
+    match std::fs::symlink_metadata(path) {
+        // Keep existing configured aliases compatible. A dangling alias or a
+        // file still fails canonical_directory without creating anything.
+        Ok(_) => canonical_directory(path).map_err(|_| invalid_workspace()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // This is a trusted launcher installation fact, never a request
+            // path. Fresh instances have no organizations root until first use.
+            std::fs::create_dir_all(path).map_err(|_| invalid_workspace())?;
+            canonical_directory(path).map_err(|_| invalid_workspace())
+        }
+        Err(_) => Err(invalid_workspace()),
+    }
+}
+
 fn owned_directory(path: &Path) -> Result<PathBuf, ConfigError> {
     // Refuse a symlink at the managed subtree before creating runtime files.
     for ancestor in path.ancestors().take(3) {
@@ -305,7 +378,119 @@ fn loopback_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    fn raw_child(root: &Path, tail: &str) -> PathBuf {
+        // Path::join normalizes `..` on verbatim Windows roots. Preserve the
+        // original installation input so this fixture exercises the guard.
+        let mut raw = root.as_os_str().to_os_string();
+        raw.push(std::path::MAIN_SEPARATOR_STR);
+        raw.push(tail);
+        PathBuf::from(raw)
+    }
+
+    #[test]
+    fn original_launcher_workspace_input_cannot_hide_invalid_path_shape() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        assert!(super::validate_workspace_input(None, &root).is_ok());
+        assert!(super::validate_workspace_input(Some("~/organizations"), &root).is_ok());
+        assert!(super::validate_workspace_input(Some("~"), &root).is_ok());
+        assert!(super::validate_workspace_input(Some(root.to_str().unwrap()), &root).is_ok());
+        for input in ["relative/organizations", "~/existing/../organizations"] {
+            let error = super::validate_workspace_input(Some(input), &root).unwrap_err();
+            assert!(error.to_string().contains("workspace root"));
+        }
+        let traversal = format!("{}/existing/../organizations", root.display());
+        std::fs::create_dir(root.join("existing")).unwrap();
+        std::fs::create_dir(root.join("organizations")).unwrap();
+        assert!(super::validate_workspace_input(Some(&traversal), &root).is_err());
+    }
+
+    #[test]
+    fn first_run_workspace_root_is_created_and_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let workspace = root.join("new-instance/organizations");
+        assert!(!workspace.exists());
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        std::fs::write(workspace.join("existing.txt"), b"keep").unwrap();
+        assert_eq!(super::workspace_directory(&workspace).unwrap(), workspace);
+        assert_eq!(
+            std::fs::read(workspace.join("existing.txt")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn invalid_workspace_roots_do_not_create_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let relative = PathBuf::from(format!("rudder-relative-{}", uuid::Uuid::new_v4()));
+        assert!(super::workspace_directory(&relative).is_err());
+        assert!(!relative.exists());
+        let file = root.join("file");
+        std::fs::write(&file, b"keep").unwrap();
+        assert!(super::workspace_directory(&file).is_err());
+        assert!(super::workspace_directory(&file.join("organizations")).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
+        assert!(super::workspace_directory(&raw_child(&root, "new/../organizations")).is_err());
+        assert!(!root.join("new").exists());
+        assert!(!root.join("organizations").exists());
+        std::fs::create_dir(root.join("existing")).unwrap();
+        std::fs::create_dir(root.join("organizations")).unwrap();
+        assert!(
+            super::workspace_directory(&raw_child(&root, "existing/../organizations")).is_err()
+        );
+        assert!(root.join("existing").is_dir());
+        assert!(root.join("organizations").is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_workspace_input_rejects_both_separators_before_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        for tail in [
+            r"new\..\organizations",
+            r"new/..\organizations",
+            r"new\../organizations",
+        ] {
+            let candidate = raw_child(&root, tail);
+            assert!(super::workspace_directory(&candidate).is_err());
+            assert!(super::validate_workspace_input(candidate.to_str(), &root).is_err());
+        }
+        assert!(!root.join("new").exists());
+        assert!(!root.join("organizations").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_workspace_aliases_remain_compatible_but_dangling_aliases_fail() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let target = root.join("target");
+        std::fs::create_dir(&target).unwrap();
+        let alias = root.join("alias");
+        symlink(&target, &alias).unwrap();
+        assert_eq!(super::workspace_directory(&alias).unwrap(), target);
+        assert_eq!(
+            super::workspace_directory(&alias.join("organizations")).unwrap(),
+            target.join("organizations")
+        );
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let missing = root.join("missing");
+        let dangling = root.join("dangling");
+        symlink(&missing, &dangling).unwrap();
+        assert!(super::workspace_directory(&dangling).is_err());
+        assert!(!missing.exists());
+    }
 
     #[test]
     fn implicit_local_board_never_trusts_a_remote_origin() {

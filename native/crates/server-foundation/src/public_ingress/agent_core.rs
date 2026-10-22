@@ -1,5 +1,5 @@
-//! Native public ingress for the organization Agent roster and permissions
-//! workflow. Parsing, authentication and host context are adapted here; the
+//! Native public ingress for Agent roster, detail, permissions and instructions.
+//! Parsing, authentication and host context are adapted here; the
 //! existing D1 AgentCore remains the only business and persistence authority.
 mod host_paths;
 
@@ -15,6 +15,8 @@ use serde_json::{Map, Value, json};
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Endpoint {
     Roster(String),
+    Detail(String),
+    Me,
     Permissions(String),
     InstructionsPath { org_id: String, agent_id: String },
     InstructionsBundle(String),
@@ -47,7 +49,9 @@ pub(super) async fn permissions(
 
 pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     endpoint_for_path(path).is_some_and(|endpoint| match endpoint {
-        Endpoint::Roster(_) => matches!(*method, Method::GET | Method::HEAD),
+        Endpoint::Roster(_) | Endpoint::Detail(_) | Endpoint::Me => {
+            matches!(*method, Method::GET | Method::HEAD)
+        }
         Endpoint::Permissions(_) => *method == Method::PATCH,
         Endpoint::InstructionsPath { .. } => {
             matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
@@ -64,8 +68,16 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     })
 }
 
+pub(super) fn is_detail_path(path: &str, method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD)
+        && matches!(
+            endpoint_for_path(path),
+            Some(Endpoint::Detail(_) | Endpoint::Me)
+        )
+}
+
 /// Handles Express-compatible casing and the optional trailing slash from the
-/// default service. The two matched endpoint families never continue to Node.
+/// default service. Matched endpoint families never continue to Node.
 pub(super) async fn dispatch_alias(
     state: web::Data<IngressState>,
     request: HttpRequest,
@@ -97,6 +109,18 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     let segments: Vec<_> = path.split('/').collect();
     if segments.iter().any(|segment| segment.is_empty()) {
         return None;
+    }
+    if segments.len() == 3
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+    {
+        // Express matches the literal route before the parameter route. An
+        // encoded capture remains an Agent reference, just as in Express.
+        return if segments[2].eq_ignore_ascii_case("me") {
+            Some(Endpoint::Me)
+        } else {
+            decode_capture(segments[2]).map(Endpoint::Detail)
+        };
     }
     if segments.len() == 6
         && segments[0].eq_ignore_ascii_case("api")
@@ -151,7 +175,9 @@ fn decode_capture(value: &str) -> Option<String> {
 
 fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
     match endpoint {
-        Endpoint::Roster(_) => matches!(*request.method(), Method::GET | Method::HEAD),
+        Endpoint::Roster(_) | Endpoint::Detail(_) | Endpoint::Me => {
+            matches!(*request.method(), Method::GET | Method::HEAD)
+        }
         Endpoint::Permissions(_) => *request.method() == Method::PATCH,
         Endpoint::InstructionsPath { .. } => matches!(
             *request.method(),
@@ -334,10 +360,12 @@ async fn execute(
     if let Err(error) = admit_agent(&actor, &parsed) {
         return response_error(error);
     }
-    if command["operation"] == "permissions"
-        || command["operation"]
-            .as_str()
-            .is_some_and(|op| op.starts_with("instructions-"))
+    if matches!(
+        command["operation"].as_str(),
+        Some("detail" | "me" | "permissions")
+    ) || command["operation"]
+        .as_str()
+        .is_some_and(|op| op.starts_with("instructions-"))
     {
         command["resolveOnly"] = json!(true);
         let resolve_bytes = match serde_json::to_vec(&command) {
@@ -444,6 +472,8 @@ fn request_command(
 ) -> Value {
     let (operation, org_id, id) = match endpoint {
         Endpoint::Roster(org_id) => ("list", Some(org_id), None),
+        Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id)),
+        Endpoint::Me => ("me", None, None),
         Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id)),
         Endpoint::InstructionsPath { org_id, agent_id } => {
             let op = match *request.method() {
@@ -526,10 +556,10 @@ fn agent_response(method: &Method, status: u16, body: String) -> HttpResponse {
     response.content_type("application/json; charset=utf-8");
     if *method == Method::HEAD {
         response.insert_header(("content-length", body.len().to_string()));
-        response.finish()
-    } else {
-        response.body(body)
     }
+    // Keep the representation size available to Actix's HEAD encoder. An
+    // empty response body would cause it to replace Content-Length with zero.
+    response.body(body)
 }
 
 fn is_json_content_type(value: &str) -> bool {
@@ -645,6 +675,31 @@ mod tests {
 
     fn request(method: Method) -> HttpRequest {
         TestRequest::default().method(method).to_http_request()
+    }
+
+    #[test]
+    fn detail_routes_are_native_for_aliases_and_head_without_capturing_mutations() {
+        for path in ["/api/agents/agent-1", "/API/AGENTS/agent-1/"] {
+            assert_eq!(
+                endpoint_for_path(path),
+                Some(Endpoint::Detail("agent-1".into()))
+            );
+            for method in [Method::GET, Method::HEAD] {
+                assert!(is_detail_path(path, &method));
+                assert!(is_reserved_path(path, &method));
+            }
+            for method in [Method::POST, Method::PATCH, Method::DELETE] {
+                assert!(!is_reserved_path(path, &method));
+            }
+        }
+        assert_eq!(endpoint_for_path("/API/AGENTS/ME/"), Some(Endpoint::Me));
+        assert_eq!(
+            endpoint_for_path("/api/agents/%6De"),
+            Some(Endpoint::Detail("me".into()))
+        );
+        assert!(!is_detail_path("/api/agents/me/inbox-lite", &Method::GET));
+        assert!(!is_detail_path("/api/agents/a//", &Method::GET));
+        assert_eq!(endpoint_for_path("/api/agents/%FF"), None);
     }
 
     #[test]

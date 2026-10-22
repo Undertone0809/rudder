@@ -360,6 +360,10 @@ async fn execute_agent_inner(
         }
         if matches!(op,"detail"|"me") {
             sqlx::query("SELECT id FROM agents WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
+            // Detail can wait behind another Agent transaction, and even a
+            // restricted projection may allocate a workspace key. Revalidate
+            // the original native credential before either projection path.
+            revalidate_native_auth(native_auth, &mut tx, &org).await?;
             let current=stored(&mut tx,id.as_deref().unwrap_or("")).await?.ok_or_else(||http(404,"Agent not found"))?;
             let admin=ctx.user().is_some()&&sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?;
             let ctx=Context{admin,..ctx};authorize_org(&mut tx,&ctx).await?;
