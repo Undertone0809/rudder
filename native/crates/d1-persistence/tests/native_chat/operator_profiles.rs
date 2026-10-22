@@ -108,7 +108,6 @@ impl OperatorProfileHost {
             &operator_home,
             &binaries,
             &cwd,
-            &instructions,
             &claude_profiles.join(".claude"),
             &cursor_profiles.join(".cursor"),
             &operator_home.join(".pi/agent"),
@@ -476,6 +475,7 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
 
     // Managed Cursor instructions use an owned native project rule on calibrated
     // platforms. Other platforms reject before storing any execution effects.
+    fs::create_dir_all(&host.instructions).expect("create synthetic Cursor instruction bundle");
     fs::write(
         host.instructions.join("SOUL.md"),
         "synthetic cursor instruction\n",
@@ -508,6 +508,14 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
             effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
             (0, 0, 0, 0, 0)
         );
+        assert_eq!(
+            fs::read_to_string(host.instructions.join("SOUL.md")).unwrap(),
+            "synthetic cursor instruction\n"
+        );
+        // Only this owned fixture is removed before the independent profile
+        // cases below, which exercise admission without an instruction bundle.
+        fs::remove_file(host.instructions.join("SOUL.md")).unwrap();
+        fs::remove_dir(&host.instructions).unwrap();
     }
 
     let mut malformed_model = Provider::Cursor.runtime_config(OPERATOR_PROFILE);

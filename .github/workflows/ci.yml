@@ -530,6 +530,10 @@ jobs:
       - name: Rust Clippy
         run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 
+      - name: Windows native admission preflight
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test native_chat -- --test-threads=1
+
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 
