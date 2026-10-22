@@ -14,7 +14,8 @@ export type MessengerStateInput =
   | { operation: "groupUpdate"; groupId: string; patch: { name?: string; icon?: string | null; collapsed?: boolean; pinned?: boolean; sortOrder?: number } }
   | { operation: "groupDelete" | "groupSeparate"; groupId: string }
   | { operation: "groupEntryRemove"; itemKey: string }
-  | { operation: "threadUserState"; threadKey: string; pinned?: boolean };
+  | { operation: "threadUserState"; threadKey: string; pinned?: boolean }
+  | { operation: "issueFollow" | "issueUnfollow"; issueId: string };
 
 /** Host identity is ambient effect-adapter context, never a user principal.
  * Rust reads the censorship setting and constructs/persists all audit fields. */

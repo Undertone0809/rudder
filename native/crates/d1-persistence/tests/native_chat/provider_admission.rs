@@ -467,7 +467,12 @@ impl ProviderHost {
             codex,
         )
         .expect("construct trusted synthetic host")
-        .with_executable_search_path("/usr/bin:/bin".into())
+        .with_executable_search_path(
+            std::env::join_paths([&binaries])
+                .expect("encode fixture executable search path")
+                .into_string()
+                .expect("fixture executable search path is UTF-8"),
+        )
         .expect("bind trusted executable search path")
         .with_claude_runtime(claude, claude_profiles)
         .expect("attach inert Claude installation")
@@ -914,8 +919,7 @@ fn assert_conflict<T>(result: Result<T, Error>) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts_managed_instructions()
- {
+async fn opencode_operator_profile_requires_an_owned_host_and_respects_instruction_capability() {
     let database = Database::start().await;
     prepare(&database).await;
     let mut host = ProviderHost::with_opencode_owned(false);
@@ -935,12 +939,6 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
         .join("workspaces")
         .join(compact_org_key(ORG))
         .join("workspaces/agents/provider-admission-ceo/instructions");
-    fs::create_dir_all(&instructions).unwrap();
-    fs::write(
-        instructions.join("SOUL.md"),
-        "Use the saved native system instructions.\n",
-    )
-    .unwrap();
     let mut config = json!({"profileId":"unknown-profile", "model":"fixture-provider/fixture-model",
         "command":"opencode", "timeoutSec":0, "graceSec":20,
         "instructionsBundleMode":"managed", "instructionsRootPath":instructions,
@@ -1047,6 +1045,33 @@ async fn opencode_operator_profile_requires_an_owned_calibrated_host_and_accepts
     // Dispose only this synthetic fixture before the existing fresh-profile
     // positive path. The product readiness check never removes a database.
     fs::remove_file(&native_database).unwrap();
+    // Keep bundles absent through profile/readiness checks so an unsupported
+    // instruction scanner cannot mask their rejection reason on Windows.
+    fs::create_dir_all(&instructions).unwrap();
+    let instruction_body = "Use the saved native system instructions.\n";
+    fs::write(instructions.join("SOUL.md"), instruction_body).unwrap();
+    if !cfg!(all(unix, any(target_os = "linux", target_os = "macos"))) {
+        let before = row_counts(&database.pool, &chat).await;
+        let refused = admit(
+            &database.pool,
+            &actor,
+            &host,
+            &chat,
+            "unsupported-managed-instructions",
+        )
+        .await;
+        assert!(matches!(refused, Err(Error::Http(409, message))
+            if message.contains("Agent instruction bundle cannot be resolved safely")));
+        assert_eq!(row_counts(&database.pool, &chat).await, before);
+        assert_eq!(
+            fs::read_to_string(instructions.join("SOUL.md")).unwrap(),
+            instruction_body
+        );
+        // Remove only the owned synthetic bundle, then retain the profile's
+        // positive admission/binding assertions on unsupported scanner hosts.
+        fs::remove_file(instructions.join("SOUL.md")).unwrap();
+        fs::remove_dir(&instructions).unwrap();
+    }
     let admitted = admit(&database.pool, &actor, &host, &chat, "supported-operator")
         .await
         .unwrap();

@@ -530,6 +530,10 @@ jobs:
       - name: Rust Clippy
         run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 
+      - name: Windows native admission preflight
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test native_chat -- --test-threads=1
+
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 
@@ -538,6 +542,8 @@ jobs:
         env:
           RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
         run: |
+          RUDDER_TEST_NODE_EXECUTABLE="$(node -p 'process.execPath')"
+          export RUDDER_TEST_NODE_EXECUTABLE
           cargo build --locked --manifest-path native/Cargo.toml -p rudder-process-host
           cargo test --locked --manifest-path native/Cargo.toml -p rudder-codex-app-server --test external_transport -- --ignored --test-threads=1
           cargo test --locked --manifest-path native/Cargo.toml -p rudder-native-chat-executor --test workflow -- --ignored --test-threads=1

@@ -764,7 +764,6 @@ impl PromptRequestBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn model_selection_requires_provider_and_model() {
@@ -794,6 +793,7 @@ mod tests {
     #[ignore = "requires RUDDER_TEST_PROCESS_HOST and a synthetic local child only"]
     fn stop_drains_terminal_after_cleanup_hook_outlives_deadline() {
         use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Instant};
+        use tempfile::tempdir;
 
         let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
             .expect("set RUDDER_TEST_PROCESS_HOST to the Rust process-host binary");

@@ -71,6 +71,7 @@ mod automation_reads;
 pub mod browser_auth;
 mod cost_reads;
 mod goal_reads;
+mod issue_checkout;
 mod issue_metadata_reads;
 mod llm_reflection;
 pub mod local_account_auth;
@@ -3171,6 +3172,10 @@ impl ServerRuntime {
                 .route(
                     "/internal/orgs/{org_id}/issue-metadata-reads",
                     web::post().to(issue_metadata_reads::issue_metadata_reads),
+                )
+                .route(
+                    "/internal/orgs/{org_id}/issue-checkout",
+                    web::post().to(issue_checkout::issue_checkout),
                 )
                 .route(
                     "/internal/orgs/{org_id}/organization-catalog-reads",

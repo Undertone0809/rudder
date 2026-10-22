@@ -9,8 +9,8 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { resolveOrganizationWorkspaceHomeDir, resolvePreviousDocumentsOrganizationWorkspaceRoot, resolveRudderInstanceRoot } from "../home-paths.js";
-import { type RustAgentCreateCommand } from "./agent-create-bridge.js";
+import { resolveRustAgentInstructionsHost, type RustAgentCreateCommand } from "./agent-create-bridge.js";
+import { requestIssueCheckout } from "./issue-checkout-rust-bridge.js";
 import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export { buildRustAgentCreateCommand, type RustAgentCreateCommand, type RustAgentCreateInput, type RustAgentCreateInstructionsBundle, type RustAgentCreateIntelligenceDefaults, type RustAgentCreateNodeOwned } from "./agent-create-bridge.js";
@@ -95,6 +95,11 @@ export interface RustFoundationBridge {
   calendar?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   secret?(actor: RustFoundationActor, orgId: string, input: Record<string, unknown>): Promise<RustFoundationResponse>;
   messengerState?(actor: RustFoundationActor, orgId: string, input: MessengerStateInput): Promise<RustFoundationResponse>;
+  issueCheckout?(actor: RustFoundationActor, orgId: string, input: {
+    issueId: string;
+    agentId: string;
+    expectedStatuses: string[];
+  }): Promise<RustFoundationResponse>;
   runRead?(actor: RustFoundationActor, orgId: string, input: RunReadInput): Promise<RustFoundationResponse>;
   liveRunRead?(
     actor: RustFoundationActor,
@@ -862,13 +867,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     },
     async agentInstructions(actor, input) {
       const orgId = typeof input.orgId === "string" ? input.orgId : "";
-      const host = {
-        instanceRoot: resolveRudderInstanceRoot(),
-        workspaceHome: resolveOrganizationWorkspaceHomeDir(),
-        previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId),
-        friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
-        hostname: hostname(),
-      };
+      const host = resolveRustAgentInstructionsHost(orgId);
       return requestAgentCore(actor, {
         operation: input.operation,
         orgId,
@@ -898,13 +897,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         // Installation placement is selected by the local bridge, never by
         // public create JSON. AgentCore uses it only after committing the
         // Agent row to materialize the durable managed-workspace projection.
-        instructionsHost: {
-          instanceRoot: resolveRudderInstanceRoot(),
-          workspaceHome: resolveOrganizationWorkspaceHomeDir(),
-          previousDocumentsRoot: resolvePreviousDocumentsOrganizationWorkspaceRoot(command.orgId),
-          friendlyWorkspaceHome: Boolean(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) || !process.env.RUDDER_HOME?.trim(),
-          hostname: hostname(),
-        },
+        instructionsHost: resolveRustAgentInstructionsHost(command.orgId),
       });
     },
     async goalRead(actor, orgId, input) {
@@ -1163,6 +1156,9 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       } catch (error) {
         throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
       }
+    },
+    async issueCheckout(actor, orgId, input) {
+      return requestIssueCheckout({ ensureStarted, getBaseUrl: () => baseUrl, actorEnvelopeKey }, actor, orgId, input);
     },
     async projectCreate(actor, orgId, data, idempotencyKey, activityDetails, roots) {
       if (projectGoalSetMode !== "required") {

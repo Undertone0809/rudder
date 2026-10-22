@@ -5,13 +5,11 @@ use tempfile::TempDir;
 
 const CHAT_CLAUDE_MANAGED: &str = "21000000-0000-4000-8000-000000000201";
 const CHAT_CLAUDE_MISSING: &str = "21000000-0000-4000-8000-000000000202";
-const CHAT_CLAUDE_SYMLINK: &str = "21000000-0000-4000-8000-000000000203";
 const CHAT_CLAUDE_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000204";
 const CHAT_CLAUDE_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000205";
 const CHAT_CLAUDE_BYPASS: &str = "21000000-0000-4000-8000-000000000211";
 const CHAT_CURSOR_MANAGED: &str = "21000000-0000-4000-8000-000000000206";
 const CHAT_CURSOR_MISSING: &str = "21000000-0000-4000-8000-000000000207";
-const CHAT_CURSOR_SYMLINK: &str = "21000000-0000-4000-8000-000000000208";
 const CHAT_CURSOR_OPERATOR_DARK: &str = "21000000-0000-4000-8000-000000000209";
 const CHAT_CURSOR_OPERATOR_LIGHT: &str = "21000000-0000-4000-8000-000000000210";
 const CHAT_CURSOR_COMMAND: &str = "21000000-0000-4000-8000-000000000212";
@@ -110,7 +108,6 @@ impl OperatorProfileHost {
             &operator_home,
             &binaries,
             &cwd,
-            &instructions,
             &claude_profiles.join(".claude"),
             &cursor_profiles.join(".cursor"),
             &operator_home.join(".pi/agent"),
@@ -142,7 +139,12 @@ impl OperatorProfileHost {
             codex,
         )
         .expect("construct synthetic trusted host")
-        .with_executable_search_path("/usr/bin:/bin".into())
+        .with_executable_search_path(
+            std::env::join_paths([&binaries])
+                .expect("encode fixture executable search path")
+                .into_string()
+                .expect("fixture executable search path is UTF-8"),
+        )
         .expect("bind trusted executable search path")
         .with_claude_runtime(claude, claude_profiles)
         .expect("attach inert Claude installation")
@@ -388,6 +390,8 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
+            const CHAT_CLAUDE_SYMLINK: &str = "21000000-0000-4000-8000-000000000203";
+            const CHAT_CURSOR_SYMLINK: &str = "21000000-0000-4000-8000-000000000208";
             let config_dir = host.operator_config_dir(provider);
             let redirected = host
                 ._root
@@ -471,6 +475,7 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
 
     // Managed Cursor instructions use an owned native project rule on calibrated
     // platforms. Other platforms reject before storing any execution effects.
+    fs::create_dir_all(&host.instructions).expect("create synthetic Cursor instruction bundle");
     fs::write(
         host.instructions.join("SOUL.md"),
         "synthetic cursor instruction\n",
@@ -503,6 +508,14 @@ async fn provider_operator_profiles_are_explicit_and_defaults_remain_managed() {
             effect_counts(&database.pool, CHAT_CURSOR_INSTRUCTIONS).await,
             (0, 0, 0, 0, 0)
         );
+        assert_eq!(
+            fs::read_to_string(host.instructions.join("SOUL.md")).unwrap(),
+            "synthetic cursor instruction\n"
+        );
+        // Only this owned fixture is removed before the independent profile
+        // cases below, which exercise admission without an instruction bundle.
+        fs::remove_file(host.instructions.join("SOUL.md")).unwrap();
+        fs::remove_dir(&host.instructions).unwrap();
     }
 
     let mut malformed_model = Provider::Cursor.runtime_config(OPERATOR_PROFILE);

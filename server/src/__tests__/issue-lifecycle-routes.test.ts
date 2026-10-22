@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
@@ -20,6 +21,8 @@ const mockIssueService = vi.hoisted(() => ({
   findMentionedProjectIds: vi.fn(),
   getAncestors: vi.fn(),
   getById: vi.fn(),
+  followIssue: vi.fn(),
+  unfollowIssue: vi.fn(),
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
   listComments: vi.fn(),
@@ -141,7 +144,7 @@ function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RU
   };
 }
 
-async function createApp(actor = createBoardActor()) {
+async function createApp(actor = createBoardActor(), rustFoundationBridge?: RustFoundationBridge) {
   const app = express();
   const db = {} as { transaction: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown> };
   db.transaction = async (callback) => callback(db);
@@ -150,7 +153,7 @@ async function createApp(actor = createBoardActor()) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", issueRoutes(db as any, {} as any));
+  app.use("/api", issueRoutes(db as any, {} as any, rustFoundationBridge));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -315,6 +318,65 @@ describe("issue lifecycle routes", () => {
       authorAgentId: null,
       authorUserId: author.userId,
     }));
+  });
+
+  it("delegates issue follow mutations to Rust without invoking the legacy service", async () => {
+    const issue = makeIssue();
+    mockIssueService.getById.mockResolvedValue(issue);
+    const messengerState = vi.fn()
+      .mockResolvedValueOnce({
+        status: 201,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ id: "follow-1", orgId: issue.orgId, issueId: issue.id, userId: "local-board", createdAt: "2026-10-18T00:00:00.000Z" })),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ ok: true })),
+      });
+    const bridge = { messengerState } as unknown as RustFoundationBridge;
+    const client = request(await createApp(createBoardActor(), bridge));
+
+    const followed = await client.post(`/api/issues/${issue.id}/follow`);
+    expect(followed.status).toBe(201);
+    expect(followed.body).toMatchObject({ issueId: issue.id, userId: "local-board" });
+    expect(messengerState).toHaveBeenNthCalledWith(
+      1,
+      createBoardActor(),
+      issue.orgId,
+      { operation: "issueFollow", issueId: issue.id },
+    );
+
+    const unfollowed = await client.delete(`/api/issues/${issue.id}/follow`);
+    expect(unfollowed.status).toBe(200);
+    expect(unfollowed.body).toEqual({ ok: true });
+    expect(messengerState).toHaveBeenNthCalledWith(
+      2,
+      createBoardActor(),
+      issue.orgId,
+      { operation: "issueUnfollow", issueId: issue.id },
+    );
+    expect(mockIssueService.followIssue).not.toHaveBeenCalled();
+    expect(mockIssueService.unfollowIssue).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("fails issue follow mutations closed when the Rust bridge is unavailable", async () => {
+    const issue = makeIssue();
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(await createApp()).post(`/api/issues/${issue.id}/follow`);
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.followIssue).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+
+    const unfollowRes = await request(await createApp()).delete(`/api/issues/${issue.id}/follow`);
+    expect(unfollowRes.status).toBe(503);
+    expect(mockIssueService.unfollowIssue).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {
@@ -3760,32 +3822,77 @@ describe("issue lifecycle routes", () => {
   });
 
   it("does not enqueue a duplicate wakeup when an agent checks out its own issue in-run", async () => {
-    mockIssueService.getById.mockResolvedValue(
-      makeIssue({
+    const issueCheckout = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(makeIssue({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
-        status: "todo",
-      }),
-    );
-    mockIssueService.checkout.mockResolvedValue(
-      makeIssue({
-        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        checkoutRunId: RUN_ID,
         executionRunId: RUN_ID,
         status: "in_progress",
-      }),
-    );
+      }))),
+    });
 
-    const res = await request(await createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .set("X-Rudder-Run-Id", RUN_ID)
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] });
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.checkout).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      ASSIGNEE_AGENT_ID,
-      ["todo", "backlog", "blocked"],
-      RUN_ID,
+    expect(issueCheckout).toHaveBeenCalledWith(
+      createAgentActor(),
+      "organization-1",
+      { issueId: "11111111-1111-4111-8111-111111111111", agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] },
     );
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for Agent self-checkout when the Rust bridge is unavailable", async () => {
+    const res = await request(await createApp(createAgentActor()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("forwards a typed self Agent reference to Rust without resolving it in Node", async () => {
+    const issueCheckout = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+        status: "in_progress",
+      }))),
+    });
+
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: "agt_22222222", expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(200);
+    expect(issueCheckout).toHaveBeenCalledTimes(1);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to Node when Rust self-checkout fails", async () => {
+    const issueCheckout = vi.fn().mockRejectedValue(new Error("native unavailable"));
+
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 

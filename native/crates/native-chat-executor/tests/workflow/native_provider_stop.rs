@@ -7,7 +7,7 @@ use rudder_d1_persistence::native_chat::{
         finalize_native_stopped,
     },
 };
-use rudder_native_chat_executor::NativeExecutionObservation;
+use rudder_native_chat_executor::{ExecutionFailure, NativeExecutionObservation};
 use rudder_opencode_native::OpenCodeInputTerminal;
 use serde_json::{Value, json};
 use std::{
@@ -168,6 +168,11 @@ def handle_term(*_):
 signal.signal(signal.SIGTERM, handle_term)
 server.serve_forever()
 "#;
+
+// spawn_native_executor_worker gives each execution a 30-second deadline.
+// Match the prompt gate to that real bound; shorter 10/15-second test gates
+// fail before a slow CI host has exhausted its allowed startup/readiness work.
+pub(super) const OPENCODE_PROMPT_GATE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; disposable PostgreSQL and a synthetic local Cursor ACP provider"]
@@ -371,16 +376,26 @@ async fn opencode_stop_workflow(grace_seconds: u64, hold_cleanup: bool) {
     .await;
 
     let pending = cwd.join("opencode-stop-prompt-pending");
-    let worker = spawn_native_executor_worker(
+    let mut worker = spawn_native_executor_worker(
         &database,
         host,
         actor.clone(),
         run_id.clone(),
         attempt_id.clone(),
     );
-    if !wait_for_file(&pending, Duration::from_secs(15)).await {
-        let _ = worker.await;
-        panic!("OpenCode fixture did not accept the one prompt");
+    let prompt_accepted = tokio::select! {
+        accepted = wait_for_file(&pending, OPENCODE_PROMPT_GATE_TIMEOUT) => accepted,
+        finished = &mut worker => {
+            panic!("OpenCode executor ended before the prompt gate: {}",
+                opencode_prompt_gate_failure(finished, &cwd.join("opencode-stop-events.jsonl")));
+        }
+    };
+    if !prompt_accepted {
+        let finished = worker.await;
+        panic!(
+            "OpenCode prompt gate did not open within the 30-second execution deadline: {}",
+            opencode_prompt_gate_failure(finished, &cwd.join("opencode-stop-events.jsonl"))
+        );
     }
     wait_phase(&database.pool, &attempt_id, "input_indeterminate").await;
     if hold_cleanup {
@@ -576,6 +591,50 @@ async fn wait_for_file(path: &Path, timeout: Duration) -> bool {
     })
     .await
     .is_ok()
+}
+
+pub(super) fn opencode_prompt_gate_failure(
+    finished: Result<
+        (
+            Result<NativeExecutionObservation, ExecutionFailure>,
+            FixtureHost,
+        ),
+        tokio::task::JoinError,
+    >,
+    request_log: &Path,
+) -> String {
+    let worker = match finished {
+        Ok((Err(failure), _)) => format!(
+            "worker ended with {} ({:?})",
+            failure.diagnostic_code(),
+            failure.process_disposition()
+        ),
+        Ok((Ok(_), _)) => "worker returned an observation before the prompt gate".to_owned(),
+        Err(error) => format!("worker task ended unexpectedly ({error})"),
+    };
+    format!(
+        "{worker}; OpenCode request methods=[{}]",
+        opencode_request_methods(request_log)
+    )
+}
+
+fn opencode_request_methods(path: &Path) -> String {
+    let methods = fs::read_to_string(path)
+        .ok()
+        .into_iter()
+        .flat_map(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter_map(|request| request["method"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if methods.is_empty() {
+        "<none>".to_owned()
+    } else {
+        methods.join(",")
+    }
 }
 
 async fn assert_no_provider_error_material(pool: &sqlx::PgPool, run_id: &str) {
