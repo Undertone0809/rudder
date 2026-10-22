@@ -46,7 +46,7 @@
         "server/src",
         "identity/src"
       ],
-      "source_files": 387,
+      "source_files": 388,
       "structural_surfaces": 90
     },
     {
@@ -4985,7 +4985,7 @@
     },
     {
       "path": "server/src/routes/issues.mutations.ts",
-      "sha256": "7149cd1a2f23acc5e9776473921f3101fdd037b22ce7ca12ead1631cfd04d78d",
+      "sha256": "f2af7eeaba697d6f67ddb12df3a0f0535394e5aa3934b4271548178349dd8678",
       "families": [
         "database_queries_and_writers",
         "identity_and_sessions",
@@ -4996,7 +4996,7 @@
     },
     {
       "path": "server/src/routes/issues.ts",
-      "sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
+      "sha256": "1ea808009b110d91cb9fcdb8c7201da15e9005a1566d2dda42ce16aa33d97127",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -6057,6 +6057,13 @@
       ]
     },
     {
+      "path": "server/src/services/issue-checkout-rust-bridge.ts",
+      "sha256": "245417954ca91eb130fe4c86f3f808fd8808c521b3da56ff4168b8cbee213e8b",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
       "path": "server/src/services/issue-metadata-read-bridge.ts",
       "sha256": "790c21cb1de85bb4153e238b16e18bd1e0a87d2eabe5f689f7ac59a871a8e45c",
       "families": [
@@ -6918,7 +6925,7 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
+      "sha256": "3d2562684e351285971f9928cc337b7ba67149fb6fe4aa60c730d22b6537d552",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -19463,7 +19470,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 875,
+      "line": 885,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|select|{ completionRevision: productAnalyticsWorkCycles.completionRevision }",
       "receiver": "db",
       "method": "select",
@@ -19474,7 +19481,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 570,
+      "line": 580,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|transaction|async (tx) => { const transactionalIssueSvc = issueService(tx as unknown as Db); const audit = awai… [sha256:ee83545ee720cf49a25ece6fac14e4e9fb890335248c267c81d8358a18ec5e78]",
       "receiver": "db",
       "method": "transaction",
@@ -19485,7 +19492,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 639,
+      "line": 649,
       "signature": "server/src/routes/issues.mutations.ts|db-call|db|transaction|async (tx) => { const transactionalIssueSvc = issueService(tx as unknown as Db); const updatedIssue… [sha256:a5f6eb11bbc6412f9e9cb0634685097855c3f3f3cf575755820a300aa423fa4d]",
       "receiver": "db",
       "method": "transaction",
@@ -19496,7 +19503,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1062,
+      "line": 1072,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|DELETE|/issues/:id",
       "receiver": "router",
       "method": "DELETE",
@@ -19506,7 +19513,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 451,
+      "line": 461,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|PATCH|/issues/:id",
       "receiver": "router",
       "method": "PATCH",
@@ -19516,7 +19523,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1101,
+      "line": 1111,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/issues/:id/checkout",
       "receiver": "router",
       "method": "POST",
@@ -19526,7 +19533,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 1170,
+      "line": 1201,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/issues/:id/commit",
       "receiver": "router",
       "method": "POST",
@@ -19536,7 +19543,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 224,
+      "line": 234,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/orgs/:orgId/agent-runs/:runId/debug-issue",
       "receiver": "router",
       "method": "POST",
@@ -19546,7 +19553,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/issues.mutations.ts",
-      "line": 330,
+      "line": 340,
       "signature": "server/src/routes/issues.mutations.ts|http-route|router|POST|/orgs/:orgId/issues",
       "receiver": "router",
       "method": "POST",
@@ -57105,7 +57112,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 450,
+      "line": 456,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -57115,7 +57122,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1263,
+      "line": 1272,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59099,35 +59106,61 @@
   "completion_gate": {
     "blocked": true,
     "blocking_unknown_count": 10,
-    "remaining_backend_node_source_files": 798,
+    "remaining_backend_node_source_files": 799,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/routes/issues.ts",
+      "path": "server/src/routes/issues.mutations.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "base_sha256": "13d2f67357281f0964872f1ae9f2d3e0e5343b11f273b9e85796f15009492a8a",
-      "head_sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
-      "rust_authority": "native/crates/server-foundation/src/messenger_state/threads.rs::follow_issue/unfollow_issue",
-      "compatibility_boundary": "Express keeps public issue path, board/org checks, and issue identity lookup; Rust Messenger state owns follow/unfollow writes, activity, and outbox with no Node fallback.",
-      "retirement_criterion": "Remove this Express adapter when Rust public HTTP owns the issue follow/unfollow paths and the general issue router no longer provides the endpoint.",
+      "base_sha256": "7149cd1a2f23acc5e9776473921f3101fdd037b22ce7ca12ead1631cfd04d78d",
+      "head_sha256": "f2af7eeaba697d6f67ddb12df3a0f0535394e5aa3934b4271548178349dd8678",
+      "rust_authority": "native/crates/server-foundation/src/issue_checkout.rs and native/crates/d1-persistence/src/issue_checkout.rs",
+      "compatibility_boundary": "The public Express route validates the existing request shape, selects only canonical or typed self-agent references, signs and forwards the actor/org/request to Rust, and relays the Rust response. Board and agent on-behalf checkout remain the explicit legacy Node branch for this bounded slice; Node performs no self-checkout write, activity, outbox, or wakeup after delegation. Name-based references other than canonical UUID or agt_ forms retain the Node resolver and checkout branch, including names resolving to the authenticated agent.",
+      "retirement_criterion": "Remove this self-agent adapter and the remaining Node checkout branch after Rust owns board/on-behalf checkout, every supported reference form, and assignment wakeup/recovery effects with matching public acceptance.",
       "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
+      "review_reference": "Issue checkout Rust checkpoint 43d7b50f7 stage review; exact candidate source hashes bound in this inventory",
       "review_status": "reviewed"
     },
     {
-      "path": "server/src/services/messenger-state-bridge.ts",
+      "path": "server/src/routes/issues.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "base_sha256": "73a97f3771c7fdd716667818bdfb3815990b623303c54c321d6b4284ce6f4bd5",
-      "head_sha256": "cf44058af397799d0a03fd8d72d889d625609a571e1751cacb4b7a3b3afca183",
-      "rust_authority": "native/crates/server-foundation/src/messenger_state/mod.rs::messenger_state",
-      "compatibility_boundary": "Bridge only signs and transports issueFollow/issueUnfollow commands; it does not perform database writes or activity logging.",
-      "retirement_criterion": "Remove the bridge when the public Rust HTTP server accepts issue follow/unfollow directly.",
-      "reviewer": "independent agent /root/side_chat_pr346_stage_review",
-      "review_reference": "PR #347 exact-candidate stage review at 370efdbb0",
+      "base_sha256": "6a9dd870699471e89036245250ecd07f190a7e96a8810052b386bb6230257a3a",
+      "head_sha256": "1ea808009b110d91cb9fcdb8c7201da15e9005a1566d2dda42ce16aa33d97127",
+      "rust_authority": "native/crates/server-foundation/src/messenger_state/threads.rs::follow_issue/unfollow_issue; native/crates/server-foundation/src/issue_checkout.rs and native/crates/d1-persistence/src/issue_checkout.rs",
+      "compatibility_boundary": "Express keeps the public issue paths, board/org checks, and issue identity lookup. Rust Messenger state owns follow/unfollow writes, activity, and outbox. The router passes the Rust checkout bridge into the mutation adapter; this assembly has no checkout business rule or persistence authority. Self-agent checkout delegates to Rust, while board and agent on-behalf checkout remain the bounded legacy Node branch. Name-based references other than canonical UUID or agt_ forms retain the Node resolver and checkout branch, including names resolving to the authenticated agent.",
+      "retirement_criterion": "Remove follow/unfollow Express adapters when Rust public HTTP owns those paths. Remove checkout route wiring when Rust public HTTP serves every supported checkout mode and the Node issue router no longer mounts this transport.",
+      "reviewer": "independent agent /root/follow347_final_merge_review",
+      "review_reference": "Independent stage-review-r14, candidate 4a5aa646c463b97d7592e03ec09411ec5da6c7b2; exact source hash unchanged in current candidate.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/issue-checkout-rust-bridge.ts",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "base_sha256": null,
+      "head_sha256": "245417954ca91eb130fe4c86f3f808fd8808c521b3da56ff4168b8cbee213e8b",
+      "rust_authority": "native/crates/server-foundation/src/issue_checkout.rs and native/crates/d1-persistence/src/issue_checkout.rs",
+      "compatibility_boundary": "This bridge starts Rust, signs the actor/org/request envelope, forwards the checkout request, and relays status/body. It does not access the database or write issue state, activity, or outbox; it has no Node fallback.",
+      "retirement_criterion": "Remove this adapter after issue checkout is served directly by Rust public HTTP and the Node backend process is retired from supported startup.",
+      "reviewer": "independent agent /root/follow347_final_merge_review",
+      "review_reference": "Independent stage-review-r14, candidate 4a5aa646c463b97d7592e03ec09411ec5da6c7b2; exact source hash unchanged in current candidate.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "ba533518d436fc7b9567dce3c8e6f4233e31a2ad18e5d5d6fd6145125bf82756",
+      "head_sha256": "3d2562684e351285971f9928cc337b7ba67149fb6fe4aa60c730d22b6537d552",
+      "rust_authority": "native/crates/server-foundation/src/issue_checkout.rs and native/crates/d1-persistence/src/issue_checkout.rs",
+      "compatibility_boundary": "The foundation bridge exposes issueCheckout by calling the dedicated transport adapter, which ensures Rust is running, signs the actor envelope, forwards the request, and relays status/body. It does not perform checkout persistence or activity/outbox writes.",
+      "retirement_criterion": "Remove the issueCheckout method when all issue checkout traffic is served directly by Rust public HTTP and the Node backend process is retired from supported startup.",
+      "reviewer": "independent agent /root/follow347_final_merge_review",
+      "review_reference": "Independent stage-review-r14, candidate 4a5aa646c463b97d7592e03ec09411ec5da6c7b2; exact source hash unchanged in current candidate.",
       "review_status": "reviewed"
     }
   ],

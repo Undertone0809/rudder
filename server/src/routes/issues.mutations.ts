@@ -34,17 +34,26 @@ import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
 import { publishLiveEvent } from "../services/live-events.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
-
 
 type IssueMutationRouteContext = {
   router: Router;
   db: Db;
   storage: StorageService;
+  rustFoundationBridge?: RustFoundationBridge;
   [key: string]: any;
 };
+
+function isSelfAgentReference(raw: unknown, actorAgentId: string): boolean {
+  if (typeof raw !== "string") return false;
+  const value = raw.trim();
+  if (value.toLowerCase() === actorAgentId.toLowerCase()) return true;
+  const shortId = /^agt_([0-9a-f]{8,32})$/i.exec(value)?.[1];
+  return Boolean(shortId && actorAgentId.replaceAll("-", "").toLowerCase().startsWith(shortId.toLowerCase()));
+}
 
 type IssueActivityReference = {
   id: string;
@@ -197,6 +206,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     router,
     db,
     storage,
+    rustFoundationBridge,
     svc,
     access,
     agentsSvc,
@@ -1099,6 +1109,27 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
   });
 
   router.post("/issues/:id/checkout", validate(checkoutIssueSchema), async (req, res) => {
+    const selfAgentCheckout =
+      req.actor.type === "agent" &&
+      typeof req.actor.agentId === "string" &&
+      isSelfAgentReference(req.body.agentId, req.actor.agentId);
+    if (selfAgentCheckout) {
+      if (!rustFoundationBridge?.issueCheckout || !req.actor.orgId) {
+        res.status(503).json({ error: "Rust Issue checkout is unavailable" });
+        return;
+      }
+      try {
+        const response = await rustFoundationBridge.issueCheckout(req.actor, req.actor.orgId, {
+          issueId: req.params.id as string,
+          agentId: req.body.agentId as string,
+          expectedStatuses: req.body.expectedStatuses as string[],
+        });
+        res.status(response.status).type(response.contentType).send(response.body);
+      } catch {
+        res.status(503).json({ error: "Rust Issue checkout is unavailable" });
+      }
+      return;
+    }
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {

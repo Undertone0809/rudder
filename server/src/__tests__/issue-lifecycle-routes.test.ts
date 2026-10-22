@@ -3822,32 +3822,77 @@ describe("issue lifecycle routes", () => {
   });
 
   it("does not enqueue a duplicate wakeup when an agent checks out its own issue in-run", async () => {
-    mockIssueService.getById.mockResolvedValue(
-      makeIssue({
+    const issueCheckout = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(makeIssue({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
-        status: "todo",
-      }),
-    );
-    mockIssueService.checkout.mockResolvedValue(
-      makeIssue({
-        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        checkoutRunId: RUN_ID,
         executionRunId: RUN_ID,
         status: "in_progress",
-      }),
-    );
+      }))),
+    });
 
-    const res = await request(await createApp(createAgentActor()))
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .set("X-Rudder-Run-Id", RUN_ID)
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] });
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.checkout).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      ASSIGNEE_AGENT_ID,
-      ["todo", "backlog", "blocked"],
-      RUN_ID,
+    expect(issueCheckout).toHaveBeenCalledWith(
+      createAgentActor(),
+      "organization-1",
+      { issueId: "11111111-1111-4111-8111-111111111111", agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo", "backlog", "blocked"] },
     );
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for Agent self-checkout when the Rust bridge is unavailable", async () => {
+    const res = await request(await createApp(createAgentActor()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("forwards a typed self Agent reference to Rust without resolving it in Node", async () => {
+    const issueCheckout = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+        status: "in_progress",
+      }))),
+    });
+
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: "agt_22222222", expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(200);
+    expect(issueCheckout).toHaveBeenCalledTimes(1);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to Node when Rust self-checkout fails", async () => {
+    const issueCheckout = vi.fn().mockRejectedValue(new Error("native unavailable"));
+
+    const res = await request(await createApp(createAgentActor(), { issueCheckout } as unknown as RustFoundationBridge))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
