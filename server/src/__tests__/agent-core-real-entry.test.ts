@@ -226,6 +226,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
         app.use((req, _res, next) => {
             if ((req.method === "GET" && /^\/api\/orgs\/[^/]+\/(?:agents|members\/directory)\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/?$/i.test(req.path))
                 || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/permissions\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
                 nodeNativeIngressPathHits += 1;
@@ -240,7 +241,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             socket.destroy();
         });
         nodeUrl = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { identityAuth: nativeIdentity.identityAuth, sessionAuth: { kind: "better_auth", secret: ownerSessionSecret, secureCookie: false, assertionKey: nativeIdentity.identityAuth.assertionKey }, privateHostGate: { enabled: true, allowedHostnames: ["127.0.0.1", "localhost"], bindHost: "127.0.0.1" }, listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
+        bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", actorEnvelopeKey: "synthetic-agent-foundation-key-32-bytes", publicIngress: { deploymentMode: "local_trusted", identityAuth: nativeIdentity.identityAuth, sessionAuth: { kind: "better_auth", secret: ownerSessionSecret, secureCookie: false, assertionKey: nativeIdentity.identityAuth.assertionKey }, privateHostGate: { enabled: true, allowedHostnames: ["127.0.0.1", "localhost"], bindHost: "127.0.0.1" }, listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl, authorizationKey: "synthetic-public-ingress-key-32-bytes" } });
         configureBrowserCapabilityDeployment(db, "local_trusted");
         // Rust snapshots these trusted host facts when the foundation child is
         // spawned; use that same configured path for the filesystem lock case.
@@ -862,7 +863,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
 
-    it("Agent detail preserves complete self, explicit access, integrations and current spend through both public ingresses", async () => {
+    it("Agent detail preserves complete self, explicit access, integrations and current spend at native public ingress", async () => {
         const subject = await detailSubject();
         const secret = randomUUID();
         await db.execute(sql`INSERT INTO organization_secrets(id,org_id,name) VALUES(${secret}::uuid,${org}::uuid,${secret})`);
@@ -893,19 +894,43 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 expect(response.body.rudderTools[1]).toMatchObject({ id: "rudder-browser", kind: "rudder_browser_mcp", serverName: "rudder-browser", contract: "browser-v1", authMode: "runtime_managed", status: available ? "available" : "disabled", tools: available ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [], toolCount: available ? RUDDER_BROWSER_MCP_TOOL_NAMES.length : 0 });
             }
         }
+        // An authenticated deployment remains ineligible even if the private
+        // Node process has been configured as local_trusted. Native config is
+        // the authority after the detail ingress cutover.
+        const authenticated = createRustFoundationBridge({
+            databaseUrl, binaryPath: binary, mode: "off",
+            actorEnvelopeKey: "synthetic-authenticated-agent-key-32bytes",
+            publicIngress: {
+                deploymentMode: "authenticated", identityAuth: nativeIdentity.identityAuth,
+                listenAddr: `127.0.0.1:${await port()}`, nodeUpstream: nodeUrl,
+                authorizationKey: "synthetic-authenticated-ingress-32bytes",
+            },
+        });
+        try {
+            await db.execute(sql`UPDATE agents SET agent_runtime_type='codex_local' WHERE id=${subject.id}::uuid`);
+            await db.execute(sql`UPDATE instance_settings SET browser='{"enabled":true}' WHERE singleton_key='default'`);
+            await authenticated.start();
+            const response = await call(authenticated.publicIngressBaseUrl!, "get", `/api/agents/${subject.id}`);
+            expect(response.status, response.text).toBe(200);
+            expect(response.body.rudderTools[1]).toMatchObject({ status: "disabled", tools: [], toolCount: 0 });
+        } finally { await authenticated.close(); }
     });
     it("Agent detail keeps restricted existing-key responses independent of corrupt friendly maps", async () => {
         const subject = await detailSubject(), caller = await detailSubject();
-        const original = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-        const friendly = path.join(root, "corrupt-friendly-map"); fs.mkdirSync(friendly); fs.writeFileSync(path.join(friendly, ".rudder-organizations.json"), "invalid JSON");
-        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = friendly;
+        // Corrupt the actual child process's configured map. Changing the
+        // parent environment would only exercise the retired Node adapter.
+        const friendly = nativeWorkspaceHome;
+        fs.mkdirSync(friendly, { recursive: true });
+        const map = path.join(friendly, ".rudder-organizations.json");
+        const original = fs.existsSync(map) ? fs.readFileSync(map) : undefined;
+        fs.writeFileSync(map, "invalid JSON");
         try {
             for (const base of [publicUrl]) {
                 const response = await call(base, "get", `/api/agents/${subject.id}`, caller.token);
                 expect(response.status, response.text).toBe(200);
                 expect(response.body).toMatchObject({ agentRuntimeConfig: {}, runtimeConfig: {}, instructionsLibraryPath: null });
                 expect(response.body).not.toHaveProperty("rudderTools"); expect(response.body).not.toHaveProperty("integrations");
-                expect(fs.readdirSync(friendly)).toEqual([".rudder-organizations.json"]);
+                expect(fs.readFileSync(map, "utf8")).toBe("invalid JSON");
                 expect((await call(base, "get", `/api/agents/${subject.id}`)).status).toBe(500);
                 for(const config of [null,false,3,"opaque",[]]) {
                     const malformed=await detailSubject();await db.execute(sql`UPDATE agents SET workspace_key=NULL,agent_runtime_config=${JSON.stringify(config)}::jsonb WHERE id=${malformed.id}::uuid`);
@@ -919,7 +944,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 await db.execute(sql`DELETE FROM agents WHERE id=${blank.id}::uuid`);
 
             }
-        } finally { if (original === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME; else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = original; }
+        } finally { if (original === undefined) fs.rmSync(map, { force: true }); else fs.writeFileSync(map, original); }
     });
     it("Agent detail preserves managed, explicit external, legacy external and recovered historical instruction semantics", async () => {
         const subject = await detailSubject();
@@ -930,6 +955,43 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             for (const base of [publicUrl]) { const response = await call(base, "get", `/api/agents/${subject.id}`); expect(response.status, response.text).toBe(200); expect(response.body.instructionsLibraryPath).toBe(expected); }
         }
         expect(fs.readFileSync(path.join(directory, "USER.md"), "utf8")).toBe("Do not replace my instructions");
+        // A detail projection does not own an external filesystem root. Even
+        // an invalid root must remain opaque rather than triggering discovery.
+        const opaqueRoot = path.join(root, "external-root-is-a-file");
+        fs.writeFileSync(opaqueRoot, "External bytes must remain untouched");
+        await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({ instructionsBundleMode: "external", instructionsRootPath: opaqueRoot })}::jsonb WHERE id=${subject.id}::uuid`);
+        const opaque = await call(publicUrl, "get", `/api/agents/${subject.id}`);
+        expect(opaque.status, opaque.text).toBe(200);
+        expect(opaque.body.instructionsLibraryPath).toBeNull();
+        expect(fs.readFileSync(opaqueRoot, "utf8")).toBe("External bytes must remain untouched");
+        expect(fs.readdirSync(directory)).toEqual(["USER.md"]);
+    });
+    it.skipIf(process.platform === "win32")("Agent detail leaves external symlinks opaque and rejects symlinked historical roots before recovery", async () => {
+        const subject = await detailSubject();
+        const outside = path.join(root, "outside-history");
+        const suffix = path.join("organizations", org.replaceAll("-", "").slice(0, 12), "workspaces", "agents", subject.workspace, "instructions");
+        const source = path.join(outside, suffix);
+        fs.mkdirSync(source, { recursive: true });
+        fs.writeFileSync(path.join(source, "SOUL.md"), "Do not import outside history");
+        const historical = path.join(path.dirname(resolveRudderInstanceRoot()), `linked-history-${randomUUID()}`);
+        fs.symlinkSync(outside, historical);
+        const directory = path.join(resolveOrganizationAgentsDir(org), subject.workspace, "instructions");
+        try {
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({ instructionsBundleMode: "external", instructionsRootPath: historical })}::jsonb WHERE id=${subject.id}::uuid`);
+            const external = await call(publicUrl, "get", `/api/agents/${subject.id}`);
+            expect(external.status, external.text).toBe(200);
+            expect(external.body.instructionsLibraryPath).toBeNull();
+            expect(fs.existsSync(directory)).toBe(false);
+
+            await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({ instructionsFilePath: path.join(historical, suffix, "SOUL.md") })}::jsonb WHERE id=${subject.id}::uuid`);
+            const denied = await call(publicUrl, "get", `/api/agents/${subject.id}`);
+            expect(denied.status, denied.text).toBe(500);
+            expect(fs.existsSync(directory)).toBe(false);
+            expect(fs.readFileSync(path.join(source, "SOUL.md"), "utf8")).toBe("Do not import outside history");
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+        } finally {
+            fs.unlinkSync(historical);
+        }
     });
     it("Agent detail never traverses external instruction roots and keeps instruction access fail-closed", async () => {
         const subject = await detailSubject();
@@ -1032,6 +1094,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
     });
     it("Agent detail enforces request and reference boundaries without Node fallback", async () => {
         const subject = await detailSubject();
+        nodeNativeIngressPathHits = 0;
         const valid = { canCreateAgents: false, canAssignTasks: false };
         for (const base of [publicUrl]) {
             expect((await call(base, "get", "/api/agents/me", ownerToken)).status).toBe(401);
@@ -1044,22 +1107,126 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 if(parsed.success) expect(response.status,response.text).toBe(200);else expect(response.body).toEqual({error:"Validation error",details:parsed.error.issues});
             }
         }
+        const alias = await call(publicUrl, "get", `/API/AGENTS/${subject.id}/`);
+        expect(alias.status, alias.text).toBe(200);
+        expect(alias.body.id).toBe(subject.id);
+        const meAlias = await call(publicUrl, "get", "/API/AGENTS/ME/", subject.token);
+        expect(meAlias.status, meAlias.text).toBe(200);
+        expect(meAlias.body.id).toBe(subject.id);
+        for (const url of [`/api/agents/${subject.id}`, "/api/agents/me"]) {
+            const head = await request(publicUrl).head(url).set("authorization", `Bearer ${subject.token}`);
+            expect(head.status, head.text).toBe(200);
+            expect(head.text ?? "").toBe("");
+            expect(Number(head.headers["content-length"])).toBeGreaterThan(0);
+        }
         const original=bridge!.agentCore;bridge!.agentCore=async()=>{throw new Error("synthetic native outage")};
         try {
             for (const base of [publicUrl]) {
-                expect((await call(base, "get", `/api/agents/${subject.id}`, ownerToken)).status).toBe(503);
-                expect((await call(base, "get", "/api/agents/me", subject.token)).status).toBe(503);
+                // Native detail no longer calls the Node bridge at all.
+                expect((await call(base, "get", `/api/agents/${subject.id}`, ownerToken)).status).toBe(200);
+                expect((await call(base, "get", "/api/agents/me", subject.token)).status).toBe(200);
                 const nativePermission = await call(base, "patch", `/api/agents/${subject.id}/permissions`, ownerToken, valid);
                 expect(nativePermission.status, nativePermission.text).toBe(200);
                 expect(nativePermission.body.permissions.canCreateAgents).toBe(false);
             }
         }
         finally{bridge!.agentCore=original;}
+        expect(nodeNativeIngressPathHits).toBe(0);
+        const activityBefore = await scalar(sql`SELECT count(*) AS value FROM activity_log`);
+        const outboxBefore = await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`);
+        await pg!.stop();
+        try {
+            const unavailable = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
+            expect(unavailable.status, unavailable.text).toBe(503);
+            expect(nodeNativeIngressPathHits).toBe(0);
+        } finally { await pg!.start(); }
+        const retry = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
+        expect(retry.status, retry.text).toBe(200);
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log`)).toBe(activityBefore);
+        expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`)).toBe(outboxBefore);
     });
     async function waitFor(check: () => Promise<boolean> | boolean, label: string, timeoutMs = 8000) {
         const deadline=Date.now()+timeoutMs;
         while(!await check()){if(Date.now()>deadline)throw new Error(`Timed out waiting for ${label}`);await new Promise(resolve=>setTimeout(resolve,20));}
     }
+    it("native ingress refuses startup without identity configuration and never reaches Node", async () => {
+        const deniedPort = await port();
+        const noIdentity = createRustFoundationBridge({
+            databaseUrl, binaryPath: binary, mode: "off",
+            actorEnvelopeKey: "synthetic-no-identity-agent-key-32bytes",
+            publicIngress: {
+                listenAddr: `127.0.0.1:${deniedPort}`, nodeUpstream: nodeUrl,
+                authorizationKey: "synthetic-no-identity-ingress-32bytes",
+            },
+        });
+        const activityBefore = await scalar(sql`SELECT count(*) AS value FROM activity_log`);
+        const outboxBefore = await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`);
+        nodeNativeIngressPathHits = 0;
+        try {
+            await expect(noIdentity.start()).rejects.toThrow("required mode, assertion key and local implicit policy must be configured together");
+            expect(noIdentity.publicIngressBaseUrl).toBeNull();
+            await new Promise<void>((resolve, reject) => {
+                const probe = net.createServer().once("error", reject);
+                probe.listen(deniedPort, "127.0.0.1", () => probe.close(error => error ? reject(error) : resolve()));
+            });
+            expect(nodeNativeIngressPathHits).toBe(0);
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log`)).toBe(activityBefore);
+            expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`)).toBe(outboxBefore);
+        } finally { await noIdentity.close(); }
+    });
+    it("Agent detail and me recheck credentials after actual Agent locks, including restricted projections", async () => {
+        const subject = await detailSubject();
+        const caller = await detailSubject();
+        const external = path.join(root, "opaque-lock-wait-external");
+        await db.execute(sql`UPDATE agents SET agent_runtime_config=${JSON.stringify({ instructionsBundleMode: "external", instructionsRootPath: external })}::jsonb WHERE id=${subject.id}::uuid`);
+        nodeNativeIngressPathHits = 0;
+        for (const credential of ["jwt", "jwt-me", "jwt-restricted", "board-key", "cookie"] as const) {
+            const expiresAt = Math.floor(Date.now() / 1000) + 3;
+            const jwtActor = credential === "jwt-restricted" ? caller.id : subject.id;
+            const token = credential.startsWith("jwt") ? signedAgentJwt(jwtActor, org, expiresAt) : ownerToken;
+            const url = credential === "jwt-me" ? "/api/agents/me" : `/api/agents/${subject.id}`;
+            const send = (freshToken: string) => credential === "cookie"
+                ? request(publicUrl).get(url).set("cookie", ownerCookie()).then(response => response)
+                : call(publicUrl, "get", url, freshToken).then(response => response);
+            if (credential === "jwt-restricted") {
+                await db.execute(sql`UPDATE agents SET workspace_key=NULL WHERE id=${subject.id}::uuid`);
+            }
+            const workspaceBefore = (await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${subject.id}::uuid`))[0]?.workspace_key;
+            const connection = await db.$client.reserve();
+            let pending: ReturnType<typeof send> | undefined;
+            try {
+                await connection.unsafe("BEGIN");
+                await connection`SELECT id FROM agents WHERE org_id=${org}::uuid ORDER BY id FOR UPDATE`;
+                pending = send(token);
+                await waitFor(async () => await scalar(sql`SELECT count(*) AS value FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM agents WHERE org_id=%'`) > 0, "external detail Agent lock wait");
+                if (credential.startsWith("jwt")) {
+                    await waitFor(() => Math.floor(Date.now() / 1000) > expiresAt, "external detail JWT expiry");
+                } else if (credential === "cookie") {
+                    await db.execute(sql`UPDATE session SET expires_at=clock_timestamp()-interval '1 second' WHERE token=${ownerSessionToken}`);
+                } else {
+                    await db.execute(sql`UPDATE board_api_keys SET revoked_at=clock_timestamp() WHERE key_hash=${hash(ownerToken)}`);
+                }
+                await connection.unsafe("COMMIT");
+                const response = await pending;
+                expect(response.status, response.text).toBe(401);
+                expect(fs.existsSync(external)).toBe(false);
+                expect(fs.existsSync(path.join(resolveOrganizationAgentsDir(org), subject.workspace, "instructions"))).toBe(false);
+                expect((await db.execute(sql`SELECT workspace_key FROM agents WHERE id=${subject.id}::uuid`))[0]?.workspace_key).toBe(workspaceBefore);
+                expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id}`)).toBe(0);
+            } finally {
+                await connection.unsafe("ROLLBACK").catch(() => {});
+                connection.release();
+                await pending;
+                await db.execute(sql`UPDATE board_api_keys SET revoked_at=NULL WHERE key_hash=${hash(ownerToken)}`);
+                await db.execute(sql`UPDATE session SET expires_at=clock_timestamp()+interval '2 days' WHERE token=${ownerSessionToken}`);
+            }
+            const retryToken = credential.startsWith("jwt") ? signedAgentJwt(jwtActor, org, Math.floor(Date.now() / 1000) + 60) : ownerToken;
+            const retry = await send(retryToken);
+            expect(retry.status, retry.text).toBe(200);
+            expect(retry.body.instructionsLibraryPath).toBeNull();
+        }
+        expect(nodeNativeIngressPathHits).toBe(0);
+    }, 30000);
     it("Agent detail permissions recheck a revoked administrator while blocked on actual Agent locks", async () => {
         const subject=await detailSubject();const valid={canCreateAgents:true,canAssignTasks:true};
         for(const base of [publicUrl]) {

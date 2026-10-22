@@ -172,6 +172,26 @@ describe("Desktop account startup policy", () => {
     });
   });
 
+  it.each([
+    { appName: "Rudder", packagedTestIdentityMarkerValid: true },
+    { appName: "Rudder-smoke-packaged-4312", packagedTestIdentityMarkerValid: false },
+  ])("rejects packaged bypass flags without both smoke identity gates: $appName", (identity) => {
+    const policy = resolveDesktopPackagedSmokeIdentityPolicy({
+      ...identity,
+      isPackaged: true,
+      platform: "darwin",
+      authBypassRequested: true,
+      storageMode: undefined,
+      memoryOnlyStorageOptInRequested: false,
+    });
+    expect(policy.packagedSmokeLocalImplicitAuthRequested).toBe(false);
+    expect(desktopAccountBypassAllowed({
+      isPackaged: true,
+      bypassRequested: true,
+      packagedSmokeBypassRequested: policy.packagedSmokeBypassRequested,
+    })).toBe(false);
+  });
+
   it("adds packaged process-memory sessions only for the scoped Darwin storage fixture", () => {
     expect(desktopIdentityProcessMemoryFallbackAllowed({
       isPackaged: true,
