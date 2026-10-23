@@ -1,6 +1,6 @@
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
