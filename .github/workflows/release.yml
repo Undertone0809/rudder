@@ -541,7 +541,7 @@ jobs:
           targets: ${{ matrix.native_target }}
 
       # Reuse dependency compilation from qualification, never its versioned
-      # executables. Cargo still rebuilds the four helpers at RELEASE_VERSION.
+      # executables. Cargo still rebuilds the versioned helpers at RELEASE_VERSION.
       - name: Restore qualified Cargo dependency build
         uses: actions/cache/restore@v5
         with:
@@ -573,25 +573,6 @@ jobs:
         if: matrix.platform == 'macos'
         run: pnpm exec vitest run desktop/scripts/archive.test.mjs
 
-      - name: Verify historical migration compatibility
-        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
-
-      - name: Cache Playwright Chromium
-        if: matrix.platform != 'windows'
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: playwright-chromium-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - name: Install Playwright Chromium
-        if: matrix.platform != 'windows'
-        run: |
-          if [ "$(uname -s)" = "Linux" ]; then
-            pnpm exec playwright install --with-deps chromium
-          else
-            pnpm exec playwright install chromium
-          fi
-
       - name: Cache PostgreSQL runtime payload
         uses: actions/cache@v5
         with:
@@ -602,6 +583,7 @@ jobs:
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
         run: |
+          set -euo pipefail
           if [ "$MATRIX_PLATFORM" = "linux" ]; then
             runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${{ matrix.arch }}"
             bin_dir="${runtime_root}/bin"
@@ -630,7 +612,35 @@ jobs:
           else
             bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
           fi
-          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+          # Historical fixtures need a compatible backup client before upgrading.
+          pg_dump_binary="${bin_dir}/pg_dump"
+          if [ "$MATRIX_PLATFORM" = "windows" ]; then pg_dump_binary="${bin_dir}/pg_dump.exe"; fi
+          "$pg_dump_binary" --version | tee "$RUNNER_TEMP/migration-pg-dump-version.txt"
+          grep -Eq 'PostgreSQL\)?[[:space:]]+18\.4([[:space:]]|$)' "$RUNNER_TEMP/migration-pg-dump-version.txt"
+          backup_dir="$RUNNER_TEMP/desktop-candidate-migration-backups"
+          install -d -m 700 "$backup_dir"
+          backup_probe="$(mktemp "$backup_dir/.preflight.XXXXXX")"
+          rm -- "$backup_probe"
+          printf 'RUDDER_POSTGRES_BIN_DIR=%s\nRUDDER_NATIVE_MIGRATIONS_PG_DUMP=%s\nRUDDER_DB_BACKUP_DIR=%s\n' "$bin_dir" "$pg_dump_binary" "$backup_dir" >> "$GITHUB_ENV"
+
+      - name: Verify historical migration compatibility
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
+
+      - name: Cache Playwright Chromium
+        if: matrix.platform != 'windows'
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-chromium-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: matrix.platform != 'windows'
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            pnpm exec playwright install chromium
+          fi
 
       - name: Build final Desktop candidate
         env:

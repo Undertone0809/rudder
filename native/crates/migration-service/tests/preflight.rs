@@ -1,7 +1,7 @@
 use rudder_migration_core::{MigrationLimits, MigrationManifest, load_migration_manifest};
 use rudder_migration_history_core::{
-    MigrationHistoryColumns, MigrationHistoryPreflight, MigrationHistoryReason,
-    MigrationHistoryRow, MigrationHistorySnapshot, MigrationHistoryStatus,
+    MigrationHistoryColumns, MigrationHistoryIdentity, MigrationHistoryPreflight,
+    MigrationHistoryReason, MigrationHistoryRow, MigrationHistorySnapshot, MigrationHistoryStatus,
     reconcile_migration_history,
 };
 use rudder_migration_service::{
@@ -46,6 +46,7 @@ fn history(reason: MigrationHistoryReason) -> MigrationHistoryPreflight {
         applied_migrations: Vec::new(),
         pending_migrations: Vec::new(),
         diagnostics: Vec::new(),
+        catalog_repair_candidates: Vec::new(),
     }
 }
 
@@ -110,6 +111,37 @@ fn report_preserves_ordered_plan_and_manifest_fingerprint() {
             .map(|entry| entry.file_name.as_str())
             .collect::<Vec<_>>(),
         ["0002_third.sql"]
+    );
+}
+
+#[test]
+fn preflight_wire_hides_internal_catalog_repair_candidates() {
+    let report = MigrationHistoryPreflight {
+        status: MigrationHistoryStatus::NeedsMigrations,
+        reason: MigrationHistoryReason::PendingMigrations,
+        manifest_fingerprint: "fixture".to_owned(),
+        migration_table_schema: Some("drizzle".to_owned()),
+        journal_entry_count: 1,
+        applied_migrations: Vec::new(),
+        pending_migrations: Vec::new(),
+        diagnostics: Vec::new(),
+        catalog_repair_candidates: vec![MigrationHistoryIdentity {
+            order: 21,
+            file_name: "0021_chief_vindicator.sql".to_owned(),
+            sha256: "source-pinned".to_owned(),
+            id: None,
+            name: None,
+            hash: None,
+            created_at: None,
+        }],
+    };
+
+    assert!(
+        serde_json::to_value(report)
+            .unwrap()
+            .get("catalogRepairCandidates")
+            .is_none(),
+        "internal repair candidates must not cross the Node preflight wire"
     );
 }
 

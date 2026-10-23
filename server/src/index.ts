@@ -1,31 +1,15 @@
 /// <reference path="./types/express.d.ts" />
 import {
-  applyPendingMigrations,
-  assertPostMigrationInvariants,
   authUsers,
-  cleanupStaleSysvSharedMemorySegments,
   createDb,
-  createEmbeddedPostgresStartupError,
-  createLocalPostgresInstance,
-  ensurePostgresDatabase,
-  ensurePostgresRolePassword,
-  getPostgresDataDirectory,
-  inspectMigrations,
+  createMigrationManifest,
+  getMigrationSourcePaths,
   instanceUserRoles,
   invites,
-  isEmbeddedPostgresSharedMemoryError,
-  listLegacyColumnRenames,
-  normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
-  readLivePostmasterPidFile,
-  reconcilePendingMigrationHistory,
-  removeStalePostmasterPidFile,
-  RUDDER_PRODUCTION_POSTGRES_VERSION,
-  runDatabaseBackup,
-  withMigrationAdvisoryLock,
+  startPostgresOwner,
   type Db,
-  type LocalPostgresInstance,
 } from "@rudderhq/db";
 import {
   authRequirementForDeploymentMode,
@@ -39,7 +23,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
@@ -54,7 +38,6 @@ import { selectAvailablePort } from "./bootstrap/port-selection.js";
 import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
-import { createEmbeddedPostgresStartupLogBuffer } from "./embedded-postgres-startup-logs.js";
 import {
   reconcileOrganizationStorageRoots,
   resolveOrganizationWorkspaceHomeDir,
@@ -78,6 +61,7 @@ import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { createHttpServerShutdown } from "./runtime/http-server-shutdown.js";
+import { disposeAfterPostgresOwnerExit } from "./runtime/postgres-owner-exit.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
 import {
   automationService,
@@ -96,9 +80,9 @@ import {
 } from "./services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
-import { resolveNativeChatProviderHostFields } from "./services/rust-public-ingress-config.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
-import { assertMigrationPreflightAgreement, runMigrationPreflightBeforeNodeInspection } from "./services/migration-preflight.js";
+import { NativeMigrationApplyError, runNativeMigrationStartup } from "./services/migration-apply.js";
+import { resolveNativeChatProviderHostFields } from "./services/rust-public-ingress-config.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -400,13 +384,28 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       logger.warn({ err: error, resource: name }, "Runtime resource cleanup failed");
     },
   });
-  return supervisedStart(supervisor, () => startServerRuntime(options, supervisor));
+  const startupAbort = new AbortController();
+  const abortStartup = () => startupAbort.abort(new Error("Rudder startup cancelled"));
+  process.on("SIGINT", abortStartup);
+  process.on("SIGTERM", abortStartup);
+  try {
+    return await supervisedStart(supervisor, async () => {
+      const started = await startServerRuntime(options, supervisor, startupAbort);
+      startupAbort.signal.throwIfAborted();
+      return started;
+    });
+  } finally {
+    process.off("SIGINT", abortStartup);
+    process.off("SIGTERM", abortStartup);
+  }
 }
 
 async function startServerRuntime(
   options: StartServerOptions,
   supervisor: RuntimeSupervisor,
+  startupAbort: AbortController,
 ): Promise<StartedServer> {
+  const startupSignal = startupAbort.signal;
   options.onEvent?.({ stage: "config", message: "Loading Rudder configuration" });
   const instanceId = resolveRudderInstanceId();
   const localEnv = resolveEffectiveLocalEnvName(instanceId);
@@ -445,14 +444,12 @@ async function startServerRuntime(
   }
   
   async function promptApplyMigrations(migrations: string[]): Promise<boolean> {
-    if (process.env.RUDDER_MIGRATION_AUTO_APPLY === "true") return true;
-    if (process.env.RUDDER_MIGRATION_PROMPT === "never") return false;
-    if (!stdin.isTTY || !stdout.isTTY) return true;
-  
+    startupSignal.throwIfAborted();
     const prompt = createInterface({ input: stdin, output: stdout });
     try {
       const answer = (await prompt.question(
         `Apply pending migrations (${formatPendingMigrationSummary(migrations)}) now? (y/N): `,
+        { signal: startupSignal },
       )).trim().toLowerCase();
       return answer === "y" || answer === "yes";
     } finally {
@@ -461,169 +458,77 @@ async function startServerRuntime(
   }
   
   type EnsureMigrationsOptions = {
-    autoApply?: boolean;
+    embeddedBootstrapFacts?: {
+      clusterInitializedBeforeStartup: boolean;
+      applicationDatabaseCreated: boolean;
+    };
     recoveryPointDir?: string;
-    recoveryPointRetentionDays?: number;
+    postgresBinDir?: string;
   };
-
-  async function createMigrationRecoveryPoint(
-    connectionString: string,
-    label: string,
-    opts: EnsureMigrationsOptions,
-  ): Promise<string> {
-    const backupDir = opts.recoveryPointDir;
-    if (!backupDir) {
-      throw new Error(
-        `${label} requires a migration recovery point, but no database backup directory is configured. ` +
-          "Refusing to migrate without a restorable pre-migration backup.",
-      );
-    }
-
-    try {
-      const result = await runDatabaseBackup({
-        connectionString,
-        backupDir,
-        retentionDays: Math.max(1, opts.recoveryPointRetentionDays ?? 30),
-        filenamePrefix: "rudder-pre-migration",
-        includeMigrationJournal: true,
-      });
-      logger.info(
-        {
-          label,
-          backupFile: result.backupFile,
-          sizeBytes: result.sizeBytes,
-          prunedCount: result.prunedCount,
-        },
-        `${label} migration recovery point created before schema upgrade`,
-      );
-      return result.backupFile;
-    } catch (error) {
-      throw new Error(
-        `${label} migration recovery point failed; refusing to apply schema changes: ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-  }
-
-  async function applyMigrationsWithRecoveryPoint(
-    connectionString: string,
-    label: string,
-    pendingMigrations: string[],
-    opts: EnsureMigrationsOptions,
-    requiresRecoveryPoint = true,
-    existingRecoveryPoint?: string | null,
-  ): Promise<void> {
-    const recoveryPoint = existingRecoveryPoint ?? (requiresRecoveryPoint
-      ? await createMigrationRecoveryPoint(connectionString, label, opts)
-      : null);
-    logger.info(
-      { label, pendingMigrations, ...(recoveryPoint ? { recoveryPoint } : {}) },
-      `Applying ${pendingMigrations.length} pending migrations for ${label}`,
-    );
-    await applyPendingMigrations(connectionString, { advisoryLockHeld: true });
-    try {
-      await assertPostMigrationInvariants(connectionString);
-    } catch (error) {
-      throw new Error(
-        `${label} migration completed without passing post-migration invariants. ` +
-          `${recoveryPoint ? `Recovery point: ${recoveryPoint}. ` : ""}` +
-          `${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-  }
-  
-  async function ensureMigrationsUnlocked(
-    connectionString: string,
-    label: string,
-    opts?: EnsureMigrationsOptions,
-  ): Promise<MigrationSummary> {
-    const nativePreflight = await runMigrationPreflightBeforeNodeInspection({ connectionString, label, logger });
-    const legacyColumnRenames = await listLegacyColumnRenames(connectionString);
-    const initialState = await inspectMigrations(connectionString);
-    assertMigrationPreflightAgreement({ ...nativePreflight, label, state: initialState, logger });
-    let recoveryPoint: string | null = null;
-    if (
-      initialState.tableCount > 0
-      && (legacyColumnRenames.length > 0 || initialState.status === "needsMigrations")
-    ) {
-      recoveryPoint = await createMigrationRecoveryPoint(connectionString, label, opts ?? {});
-    }
-
-    const normalizedLegacyColumns = await normalizeLegacyColumnNames(connectionString);
-    if (normalizedLegacyColumns.length > 0) {
-      logger.warn(
-        { normalizedLegacyColumns },
-        `${label} had legacy schema drift; normalized columns before migration inspection.`,
-      );
-    }
-
-    const autoApply = opts?.autoApply === true;
-    let state = await inspectMigrations(connectionString);
-    if (state.status === "needsMigrations" && state.reason === "pending-migrations") {
-      const repair = await reconcilePendingMigrationHistory(connectionString);
-      if (repair.repairedMigrations.length > 0) {
-        logger.warn(
-          { repairedMigrations: repair.repairedMigrations },
-          `${label} had drifted migration history; repaired migration journal entries from existing schema state.`,
-        );
-        state = await inspectMigrations(connectionString);
-        if (state.status === "upToDate") {
-          await assertPostMigrationInvariants(connectionString);
-          return "already applied";
-        }
-      }
-    }
-    if (state.status === "upToDate") {
-      await assertPostMigrationInvariants(connectionString);
-      return "already applied";
-    }
-    if (state.status === "needsMigrations" && state.reason === "no-migration-journal-non-empty-db") {
-      logger.warn(
-        { tableCount: state.tableCount },
-        `${label} has existing tables but no migration journal. Run migrations manually to sync schema.`,
-      );
-      const apply = autoApply ? true : await promptApplyMigrations(state.pendingMigrations);
-      if (!apply) {
-        throw new Error(
-          `${label} has pending migrations (${formatPendingMigrationSummary(state.pendingMigrations)}). ` +
-            "Refusing to start against a stale schema. Run pnpm db:migrate or set RUDDER_MIGRATION_AUTO_APPLY=true.",
-        );
-      }
-  
-      await applyMigrationsWithRecoveryPoint(connectionString, label, state.pendingMigrations, opts ?? {}, true);
-      return "applied (pending migrations)";
-    }
-  
-    const apply = autoApply ? true : await promptApplyMigrations(state.pendingMigrations);
-    if (!apply) {
-      throw new Error(
-        `${label} has pending migrations (${formatPendingMigrationSummary(state.pendingMigrations)}). ` +
-          "Refusing to start against a stale schema. Run pnpm db:migrate or set RUDDER_MIGRATION_AUTO_APPLY=true.",
-      );
-    }
-  
-    await applyMigrationsWithRecoveryPoint(
-      connectionString,
-      label,
-      state.pendingMigrations,
-      opts ?? {},
-      state.tableCount > 0,
-      recoveryPoint,
-    );
-    return "applied (pending migrations)";
-  }
 
   async function ensureMigrations(
     connectionString: string,
     label: string,
-    opts?: EnsureMigrationsOptions,
+    opts: EnsureMigrationsOptions = {},
   ): Promise<MigrationSummary> {
-    return withMigrationAdvisoryLock(
-      connectionString,
-      () => ensureMigrationsUnlocked(connectionString, label, opts),
-    );
+    startupSignal.throwIfAborted();
+    const source = getMigrationSourcePaths();
+    const manifest = await createMigrationManifest({
+      migrationsFolder: source.migrationsFolder,
+      journalFile: source.journalFile,
+    });
+    const startupFacts = {
+      autoApplyRequested: process.env.RUDDER_MIGRATION_AUTO_APPLY === "true",
+      promptNever: process.env.RUDDER_MIGRATION_PROMPT === "never",
+      interactive: stdin.isTTY === true && stdout.isTTY === true,
+      ...(opts.embeddedBootstrapFacts ? {
+        embeddedClusterInitializedBeforeStartup: opts.embeddedBootstrapFacts.clusterInitializedBeforeStartup,
+        applicationDatabaseCreated: opts.embeddedBootstrapFacts.applicationDatabaseCreated,
+      } : {}),
+    };
+    if (!opts.recoveryPointDir) {
+      throw new Error(`${label} requires a configured migration recovery directory; startup stopped.`);
+    }
+    const executable = process.platform === "win32" ? "pg_dump.exe" : "pg_dump";
+    const configuredDump = process.env.RUDDER_NATIVE_MIGRATIONS_PG_DUMP?.trim();
+    const binDir = opts.postgresBinDir ?? process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
+    const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+    const dump = configuredDump ? resolve(configuredDump)
+      : binDir ? resolve(binDir, executable)
+        : pathEntries.map((entry) => resolve(entry, executable)).find((entry) => existsSync(entry))
+          ?? resolve(dirname(process.execPath), executable);
+    let approval: { stateToken: string; approved: boolean } | undefined;
+    let staleApprovals = 0;
+    while (staleApprovals < 3) {
+      const outcome = await runNativeMigrationStartup({
+        databaseUrl: connectionString,
+        migrationsDir: source.migrationsFolder,
+        expectedFingerprint: manifest.fingerprint,
+        recoveryDirectory: resolve(opts.recoveryPointDir),
+        pgDumpBinary: dump,
+        startupGate: { facts: startupFacts, ...(approval ? { approval } : {}) },
+      }, { signal: startupSignal });
+      approval = undefined;
+      switch (outcome.kind) {
+        case "complete":
+          logger.info({ label, authority: "rust", ...outcome.report }, `${label} migration state verified by Rust`);
+          return outcome.report.alreadyCurrent ? "already applied" : "applied (pending migrations)";
+        case "approval-required":
+          approval = {
+            stateToken: outcome.stateToken,
+            approved: await promptApplyMigrations(outcome.pendingMigrations),
+          };
+          continue;
+        case "stale-approval":
+          staleApprovals += 1;
+          continue;
+        case "declined":
+          throw new Error(`${label} migration approval was declined; startup stopped before listeners.`);
+        case "refused":
+          throw new Error(`${label} has pending migrations (${formatPendingMigrationSummary(outcome.pendingMigrations)}). Refusing to start against a stale schema; approve with an interactive startup or set RUDDER_MIGRATION_AUTO_APPLY=true.`);
+      }
+    }
+    throw new NativeMigrationApplyError("migration_state_changed_repeatedly");
   }
   
   function isLoopbackHost(host: string): boolean {
@@ -692,12 +597,6 @@ async function startServerRuntime(
   }
   
   let db: Db;
-  let embeddedPostgres: LocalPostgresInstance | null = null;
-  let embeddedPostgresStartedByThisProcess = false;
-  supervisor.own("embedded-postgres", async () => {
-    if (!embeddedPostgres || !embeddedPostgresStartedByThisProcess) return;
-    await embeddedPostgres.stop();
-  });
   let migrationSummary: MigrationSummary = "skipped";
   let activeDatabaseConnectionString: string;
   let startupDbInfo:
@@ -707,7 +606,6 @@ async function startServerRuntime(
   if (config.databaseUrl) {
     migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL", {
       recoveryPointDir: config.databaseBackupDir,
-      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
     });
   
     db = createDb(config.databaseUrl);
@@ -716,194 +614,44 @@ async function startServerRuntime(
     startupDbInfo = { mode: "external-postgres", connectionString: config.databaseUrl };
   } else {
     const dataDir = resolve(config.embeddedPostgresDataDir);
-    const configuredPort = config.embeddedPostgresPort;
-    let port = configuredPort;
-    let localPostgresProvider = "embedded-postgres";
-    let localPostgresBinDir: string | undefined;
-    const verboseEmbeddedPostgresLogs = process.env.RUDDER_EMBEDDED_POSTGRES_VERBOSE === "true";
-    const embeddedPostgresLogs = createEmbeddedPostgresStartupLogBuffer((line) => {
-      if (verboseEmbeddedPostgresLogs) {
-        logger.info({ embeddedPostgresLog: line }, "embedded-postgres");
-      }
-    });
-    const embeddedPostgresLogBuffer = embeddedPostgresLogs.lines;
-    const appendEmbeddedPostgresLog = embeddedPostgresLogs.append;
-    const recordEmbeddedPostgresFailure = (phase: "initialise" | "start", err: unknown): Error => {
-      embeddedPostgresLogs.flush();
-      const startupError = createEmbeddedPostgresStartupError(
-        err,
-        `Embedded PostgreSQL failed during ${phase}`,
-        embeddedPostgresLogBuffer,
-      );
-      if (embeddedPostgresLogBuffer.length > 0) {
-        logger.error(
-          {
-            phase,
-            recentLogs: embeddedPostgresLogBuffer,
-            err: err instanceof Error ? err : startupError,
-          },
-          "Embedded PostgreSQL failed; showing buffered startup logs",
-        );
-      }
-      return startupError;
-    };
-    const resolveEmbeddedAdminConnectionString = async (candidatePort: number): Promise<string> => {
-      const result = await ensurePostgresRolePassword({
-        host: "127.0.0.1",
-        port: candidatePort,
-        user: "rudder",
-        database: "postgres",
-        preferredPassword: "rudder",
-        fallbackPasswords: ["password"],
-        expectedDataDir: dataDir,
-      });
-      if (result.normalized) {
-        logger.warn(
-          `Normalized legacy embedded PostgreSQL password for ${dataDir}; old desktop data dir was using a previous default password`,
-        );
-      }
-      return result.connectionString;
-    };
-    const createEmbeddedPostgresInstance = async (candidatePort: number) => {
-      const selection = await createLocalPostgresInstance({
-        databaseDir: dataDir,
-        user: "rudder",
-        password: "rudder",
-        port: candidatePort,
-        persistent: true,
-        initdbFlags: ["--encoding=UTF8", "--locale=C"],
-        onLog: appendEmbeddedPostgresLog,
-        onError: appendEmbeddedPostgresLog,
-      });
-      localPostgresProvider = selection.provider === "official-postgres"
-        ? `postgresql-${RUDDER_PRODUCTION_POSTGRES_VERSION}`
-        : "embedded-postgres";
-      localPostgresBinDir = selection.postgresBinDir;
-      return selection.instance;
-    };
-  
+    const clusterInitializedBeforeStartup = existsSync(resolve(dataDir, "PG_VERSION"));
     if (config.databaseMode === "postgres") {
-      logger.warn("Database mode is postgres but no connection string was set; falling back to embedded PostgreSQL");
+      logger.warn("Database mode is postgres but no connection string was set; using the managed embedded PostgreSQL owner");
     }
-  
-    const clusterVersionFile = resolve(dataDir, "PG_VERSION");
-    const clusterAlreadyInitialized = existsSync(clusterVersionFile);
-    const postmasterPidFile = resolve(dataDir, "postmaster.pid");
-    const runningPostmaster = readLivePostmasterPidFile(postmasterPidFile, {
-      expectedDataDir: dataDir,
-    });
-    if (runningPostmaster?.pid) {
-      port = runningPostmaster.port ?? configuredPort;
-      const runningAdminConnectionString = await resolveEmbeddedAdminConnectionString(port);
-      const runningDataDir = await getPostgresDataDirectory(runningAdminConnectionString);
-      if (typeof runningDataDir !== "string" || resolve(runningDataDir) !== resolve(dataDir)) {
-        throw new Error(
-          `Embedded PostgreSQL pid ${runningPostmaster.pid} on port ${port} does not use the expected data directory ${dataDir}`,
-        );
-      }
-      logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPostmaster.pid}, port=${port})`);
-    } else {
-      try {
-        const configuredAdminConnectionString = await resolveEmbeddedAdminConnectionString(configuredPort);
-        const actualDataDir = await getPostgresDataDirectory(configuredAdminConnectionString);
-        if (
-          typeof actualDataDir !== "string" ||
-          resolve(actualDataDir) !== resolve(dataDir)
-        ) {
-          throw new Error("reachable postgres does not use the expected embedded data directory");
-        }
-        await ensurePostgresDatabase(configuredAdminConnectionString, "rudder");
-        logger.warn(
-          `Embedded PostgreSQL appears to already be reachable without a pid file; reusing existing server on configured port ${configuredPort}`,
-        );
-      } catch {
-        const detectedPort = await selectAvailablePort(configuredPort, "127.0.0.1");
-        if (detectedPort !== configuredPort) {
-          logger.warn(`Embedded PostgreSQL port is in use; using next free port (requestedPort=${configuredPort}, selectedPort=${detectedPort})`);
-        }
-        port = detectedPort;
-        embeddedPostgres = await createEmbeddedPostgresInstance(port);
-        logger.info(`Using local PostgreSQL because no DATABASE_URL set (provider=${localPostgresProvider}, dataDir=${dataDir}, port=${port})`);
-
-        if (!clusterAlreadyInitialized) {
-          try {
-            await embeddedPostgres.initialise();
-            embeddedPostgresLogs.flush();
-          } catch (err) {
-            throw recordEmbeddedPostgresFailure("initialise", err);
-          }
-        } else {
-          logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
-        }
-
-        const removedPostmaster = removeStalePostmasterPidFile({
-          postmasterPidFile,
-          expectedDataDir: dataDir,
+    const owner = await startPostgresOwner({
+      instanceId,
+      dataDir,
+      port: config.embeddedPostgresPort,
+      signal: startupSignal,
+      onUnexpectedExit: (error) => {
+        logger.error({ err: error }, "Rust PostgreSQL owner exited; stopping dependent server resources");
+        startupAbort.abort(error);
+        disposeAfterPostgresOwnerExit(supervisor, (cleanupError) => {
+          logger.error({ err: cleanupError, ownerError: error }, "Runtime cleanup failed after Rust PostgreSQL owner exit");
         });
-        if (removedPostmaster) {
-          logger.warn(
-            {
-              stalePid: removedPostmaster.pid,
-              stalePort: removedPostmaster.port,
-              dataDir,
-            },
-            "Removed stale embedded PostgreSQL pid file before startup",
-          );
-        }
-        try {
-          await embeddedPostgres.start();
-        } catch (err) {
-          embeddedPostgresLogs.flush();
-          if (isEmbeddedPostgresSharedMemoryError(err, embeddedPostgresLogBuffer)) {
-            const recovered = await cleanupStaleSysvSharedMemorySegments();
-            if (recovered.removedIds.length > 0) {
-              logger.warn(
-                { removedSegmentIds: recovered.removedIds },
-                "Recovered stale SysV shared memory segments after embedded PostgreSQL startup failure; retrying once",
-              );
-              embeddedPostgres = await createEmbeddedPostgresInstance(port);
-              try {
-                await embeddedPostgres.start();
-              } catch (retryErr) {
-                throw recordEmbeddedPostgresFailure("start", retryErr);
-              }
-            } else {
-              throw recordEmbeddedPostgresFailure("start", err);
-            }
-          } else {
-            throw recordEmbeddedPostgresFailure("start", err);
-          }
-        }
-        embeddedPostgresLogs.flush();
-        embeddedPostgresStartedByThisProcess = true;
-      }
-    }
-  
-    const embeddedAdminConnectionString = await resolveEmbeddedAdminConnectionString(port);
-    const dbStatus = await ensurePostgresDatabase(embeddedAdminConnectionString, "rudder");
-    if (dbStatus === "created") {
-      logger.info("Created embedded PostgreSQL database: rudder");
-    }
-  
-    const embeddedConnectionString = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
-    const shouldAutoApplyFirstRunMigrations = !clusterAlreadyInitialized || dbStatus === "created";
-    if (shouldAutoApplyFirstRunMigrations) {
-      logger.info("Detected first-run embedded PostgreSQL setup; applying pending migrations automatically");
-    }
-    migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL", {
-      autoApply: shouldAutoApplyFirstRunMigrations,
-      recoveryPointDir: config.databaseBackupDir,
-      recoveryPointRetentionDays: config.databaseBackupRetentionDays,
+      },
     });
-  
+    supervisor.own("embedded-postgres", owner.stop, { critical: true });
+    const embeddedConnectionString = owner.connection_string;
+    migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL", {
+      embeddedBootstrapFacts: {
+        clusterInitializedBeforeStartup,
+        applicationDatabaseCreated: owner.database_created,
+      },
+      postgresBinDir: owner.bin_dir,
+      recoveryPointDir: config.databaseBackupDir,
+    });
+
     db = createDb(embeddedConnectionString);
-    if (localPostgresProvider === `postgresql-${RUDDER_PRODUCTION_POSTGRES_VERSION}`) {
-      logger.info({ postgresBinDir: localPostgresBinDir }, `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} production runtime ready`);
-    } else {
-      logger.info("Embedded PostgreSQL ready");
-    }
+    logger.info({ postgresBinDir: owner.bin_dir, postgresVersion: owner.postgres_version, reused: !owner.owned }, "Rust PostgreSQL owner ready");
     activeDatabaseConnectionString = embeddedConnectionString;
-    startupDbInfo = { mode: "embedded-postgres", provider: localPostgresProvider, dataDir, port, ...(localPostgresBinDir ? { postgresBinDir: localPostgresBinDir } : {}) };
+    startupDbInfo = {
+      mode: "embedded-postgres",
+      provider: `postgresql-${owner.postgres_version}`,
+      dataDir: owner.data_dir,
+      port: owner.port,
+      postgresBinDir: owner.bin_dir,
+    };
   }
 
   supervisor.own("database-pool", async () => {
@@ -1487,6 +1235,7 @@ async function startServerRuntime(
   }
   
   options.onEvent?.({ stage: "listening", message: "Starting local HTTP server" });
+  startupSignal.throwIfAborted();
   await new Promise<void>((resolveListen, rejectListen) => {
     const onError = (err: Error) => {
       server.off("error", onError);

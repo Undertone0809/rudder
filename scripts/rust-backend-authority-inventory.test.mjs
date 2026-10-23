@@ -12,12 +12,14 @@ import {
   compareInventories as compareProductionInventories,
   scanSource,
   sha256,
-  TRUSTED_TRANSPORT_ADMISSIONS,
   TRUSTED_NODE_TRANSPORT_SOURCES,
+  TRUSTED_TRANSPORT_ADMISSIONS,
   TRUSTED_TRANSPORT_SURFACES,
   consumeReviewedTransportSurfaces,
   validateTrustedNodeTransportSourceRecord,
 } from "./rust-backend-authority-inventory.mjs";
+
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 
 // Fixed canonical caller fixture, never derived from the mutated candidate.
@@ -1131,6 +1133,142 @@ test("new transport adapter requires a reviewed boundary and cannot add Node aut
   const headWithRoute = buildInventory(headRoot, [boundaryRecord(sourcePath, null, routeHash)]);
   const blocked = compareInventories(base, headWithRoute, contentsFor(baseRoot, base), contentsFor(headRoot, headWithRoute));
   assert(blocked.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+});
+
+test("only the two hash-pinned packages/db Rust process transports are admitted", (t) => {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const paths = Object.keys(TRUSTED_NODE_TRANSPORT_SOURCES).sort();
+  assert.deepEqual(paths, [
+    "packages/db/src/migration-operator.ts",
+    "packages/db/src/postgres-owner.ts",
+  ]);
+
+  const records = [];
+  for (const sourcePath of paths) {
+    const policy = TRUSTED_NODE_TRANSPORT_SOURCES[sourcePath];
+    const source = fs.readFileSync(path.join(REPOSITORY_ROOT, sourcePath), "utf8");
+    assert.equal(sha256(source), policy.source_sha256, `${sourcePath} must match the static source pin`);
+    put(headRoot, sourcePath, source);
+    records.push(boundaryRecord(sourcePath, null, policy.source_sha256, {
+      transport_admission_id: policy.id,
+      rust_authority: policy.rust_authority,
+      allowed_node_duties: [...policy.allowed_node_duties],
+      prohibited_node_duties: [...policy.prohibited_node_duties],
+      compatibility_boundary: policy.compatibility_boundary,
+      retirement_criterion: policy.retirement_criterion,
+    }));
+  }
+
+  const base = buildInventory(baseRoot);
+  const head = buildInventory(headRoot, records);
+  const admitted = compareProductionInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  assert.deepEqual(admitted.failures, []);
+
+  const [pinnedRecord] = structuredClone(records);
+  const driftedPath = pinnedRecord.path;
+  const driftedSource = `${fs.readFileSync(path.join(REPOSITORY_ROOT, driftedPath), "utf8")}\n// unreviewed drift\n`;
+  put(headRoot, driftedPath, driftedSource);
+  pinnedRecord.head_sha256 = sha256(driftedSource);
+  const driftedHead = buildInventory(headRoot, [pinnedRecord, records[1]]);
+  const drifted = compareProductionInventories(base, driftedHead, contentsFor(baseRoot, base), contentsFor(headRoot, driftedHead));
+  assert(drifted.failures.some((failure) => failure.includes("source hash does not match the statically trusted transport-source digest")));
+
+  const unrelatedPath = "packages/db/src/unreviewed-node-bridge.ts";
+  const unrelatedSource = "export const bridge = true;\n";
+  put(headRoot, unrelatedPath, unrelatedSource);
+  const unrelatedRecord = boundaryRecord(unrelatedPath, null, sha256(unrelatedSource));
+  const unrelatedHead = buildInventory(headRoot, [pinnedRecord, records[1], unrelatedRecord]);
+  const unrelated = compareProductionInventories(base, unrelatedHead, contentsFor(baseRoot, base), contentsFor(headRoot, unrelatedHead));
+  assert(unrelated.failures.some((failure) => failure.includes(`new production Node source is forbidden by the ratchet: ${unrelatedPath}`)));
+});
+
+test("only the exact migration-preflight child escalation timer is admitted", (t) => {
+  const sourcePath = "server/src/services/migration-preflight.ts";
+  const policy = TRUSTED_TRANSPORT_SURFACES[sourcePath];
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_SURFACES), [sourcePath]);
+  assert.equal(policy.signatures.length, 1);
+  assert.equal(policy.owner, `${sourcePath}::runMigrationProcess`);
+
+  const original = fs.readFileSync(path.join(REPOSITORY_ROOT, sourcePath), "utf8");
+  assert.equal(sha256(original), policy.source_sha256, "candidate source must match the exact helper-bound source pin");
+  const pendingFailureGuard = `if (pendingFailure) {\n          pendingFailure = new MigrationPreflightAdapterError(\n            "process",\n            "cancellation_cleanup_unconfirmed",\n          );\n        }\n        `;
+  assert(original.includes(pendingFailureGuard), "candidate source must contain the reviewed child escalation guard");
+  const baseSource = original.replace(pendingFailureGuard, "");
+  assert.notEqual(baseSource, original);
+
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  put(baseRoot, sourcePath, baseSource);
+  put(headRoot, sourcePath, original);
+  const base = buildInventory(baseRoot);
+  const head = buildInventory(headRoot);
+  const signature = policy.signatures[0];
+  const record = boundaryRecord(
+    sourcePath,
+    base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+    head.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+    { node_role: "transport_adapter", transport_surface_owner: policy.owner, allowed_transport_surfaces: [signature] },
+  );
+  const reviewedHead = buildInventory(headRoot, [record]);
+  const reviewed = compareProductionInventories(base, reviewedHead, contentsFor(baseRoot, base), contentsFor(headRoot, reviewedHead));
+  assert.deepEqual(reviewed.failures, []);
+
+  const wrongOwnerHead = buildInventory(headRoot, [
+    boundaryRecord(
+      sourcePath,
+      base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      head.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      { node_role: "transport_adapter", transport_surface_owner: `${sourcePath}::unrelatedWorker`, allowed_transport_surfaces: [signature] },
+    ),
+  ]);
+  const wrongOwner = compareProductionInventories(base, wrongOwnerHead, contentsFor(baseRoot, base), contentsFor(headRoot, wrongOwnerHead));
+  assert(wrongOwner.failures.some((failure) => failure.includes("transport_surface_owner does not match the exact statically trusted adapter helper")));
+
+  const fabricatedTimerSignature = `${sourcePath}|worker-schedule-candidate|setTimeout|() => worker.poll()`;
+  const fabricatedTimerHead = buildInventory(headRoot, [
+    boundaryRecord(
+      sourcePath,
+      base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      head.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      { node_role: "transport_adapter", transport_surface_owner: policy.owner, allowed_transport_surfaces: [signature, fabricatedTimerSignature] },
+    ),
+  ]);
+  const fabricatedTimer = compareProductionInventories(base, fabricatedTimerHead, contentsFor(baseRoot, base), contentsFor(headRoot, fabricatedTimerHead));
+  assert(fabricatedTimer.failures.some((failure) => failure.includes("transport surface is not statically trusted for this exact source path")));
+
+  const renamedHelperSource = original.replace(
+    "export async function runMigrationProcess(",
+    "export async function unrelatedWorker(",
+  );
+  assert.notEqual(renamedHelperSource, original);
+  put(headRoot, sourcePath, renamedHelperSource);
+  const renamedHelperHead = buildInventory(headRoot, [
+    boundaryRecord(
+      sourcePath,
+      base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      sha256(renamedHelperSource),
+      { node_role: "transport_adapter", transport_surface_owner: policy.owner, allowed_transport_surfaces: [signature] },
+    ),
+  ]);
+  const renamedHelper = compareProductionInventories(base, renamedHelperHead, contentsFor(baseRoot, base), contentsFor(headRoot, renamedHelperHead));
+  assert(renamedHelper.failures.some((failure) => failure.includes("source hash does not match the statically trusted transport-helper digest")));
+
+  const unrelatedSource = `${original}\nsetTimeout(() => worker.poll(), 25);\n`;
+  put(headRoot, sourcePath, unrelatedSource);
+  const unrelatedTimerSignature = scanSource(sourcePath, unrelatedSource).surfaces.find((surface) =>
+    surface.type === "worker_schedule_candidate" && surface.expression.includes("worker.poll()"))?.signature;
+  assert(unrelatedTimerSignature);
+  const withUnrelatedTimer = buildInventory(headRoot, [
+    boundaryRecord(
+      sourcePath,
+      base.source_manifest.find((entry) => entry.path === sourcePath).sha256,
+      sha256(unrelatedSource),
+      { node_role: "transport_adapter", transport_surface_owner: policy.owner, allowed_transport_surfaces: [signature, unrelatedTimerSignature] },
+    ),
+  ]);
+  const unrelated = compareProductionInventories(base, withUnrelatedTimer, contentsFor(baseRoot, base), contentsFor(headRoot, withUnrelatedTimer));
+  assert(unrelated.failures.some((failure) => failure.includes("source hash does not match the statically trusted transport-helper digest")));
 });
 
 test("trusted-base policy pins the exact Rust identity-proof source and mount without activating it on its own", (t) => {

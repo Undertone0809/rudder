@@ -2,11 +2,13 @@ import type { Db } from "@rudderhq/db";
 import { applyPendingMigrations, createDb, createLocalPostgresInstance, ensurePostgresDatabase } from "@rudderhq/db";
 import { createOfflineGrantProof, generateOfflineDeviceKeyPair, issueOfflineGrant, offlineRequestBodyHash } from "@rudderhq/identity-core";
 import { localOfflineGrantSchema, localServerExchangeSchema } from "@rudderhq/shared";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import express from "express";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { copyFileSync, constants as fsConstants, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, constants as fsConstants, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -56,6 +58,15 @@ type StartupReceipt = {
     };
   };
 };
+
+type MigrationJournalEntry = { idx: number; tag: string };
+type MigrationJournal = {
+  version: string;
+  dialect: string;
+  entries: MigrationJournalEntry[];
+  [key: string]: unknown;
+};
+type OwnedMigrationDatabase = { adminUrl: string; databaseName: string; url: string };
 
 let fixtureRoot = "";
 let artifactRoot = "";
@@ -175,45 +186,170 @@ function forgeAgentJwt(): string {
   return `${token.slice(0, token.lastIndexOf(".") + 1)}${"x".repeat(43)}`;
 }
 
-async function verifySessionTokenIndexUpgradeWithExistingRows(): Promise<void> {
-  if (!embedded || !fixtureSql) return;
-  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const probeUser = `native-session-migration-user-${suffix}`;
-  const probeSession = `native-session-migration-id-${suffix}`;
+function migrationJournal(): MigrationJournal {
+  const journalPath = path.join(repositoryRoot, "packages/db/src/migrations/meta/_journal.json");
+  return JSON.parse(readFileSync(journalPath, "utf8")) as MigrationJournal;
+}
+
+function migrationHash(entry: MigrationJournalEntry): string {
+  const migrationPath = path.join(repositoryRoot, "packages/db/src/migrations", `${entry.tag}.sql`);
+  return createHash("sha256").update(readFileSync(migrationPath)).digest("hex");
+}
+
+function migrationSnapshotThrough(maxIdx: number, name: string): string {
+  if (!fixtureRoot) throw new Error("Migration-prefix fixtures require an owned embedded database root");
+  const journal = migrationJournal();
+  const entries = journal.entries.filter((entry) => entry.idx <= maxIdx);
+  if (entries.length !== maxIdx + 1 || entries.some((entry, index) => entry.idx !== index)) {
+    throw new Error(`Migration manifest does not end at requested idx ${maxIdx}`);
+  }
+
+  const folder = path.join(fixtureRoot, name);
+  mkdirSync(path.join(folder, "meta"), { recursive: true });
+  for (const entry of entries) {
+    copyFileSync(
+      path.join(repositoryRoot, "packages/db/src/migrations", `${entry.tag}.sql`),
+      path.join(folder, `${entry.tag}.sql`),
+    );
+  }
+  writeFileSync(path.join(folder, "meta/_journal.json"), JSON.stringify({ ...journal, entries }));
+  return folder;
+}
+
+async function createOwnedMigrationDatabase(label: "session_upgrade" | "interior_gap"): Promise<OwnedMigrationDatabase> {
+  const databaseName = `rudder_${label}_${randomUUID().replace(/-/g, "")}`;
+  const sourceUrl = new URL(connectionString);
+  const adminUrl = new URL(sourceUrl);
+  adminUrl.pathname = "/postgres";
+  const databaseUrl = new URL(sourceUrl);
+  databaseUrl.pathname = `/${databaseName}`;
+  const created = await ensurePostgresDatabase(adminUrl.toString(), databaseName);
+  if (created !== "created") throw new Error(`Refusing to reuse migration probe database ${databaseName}`);
+  return { adminUrl: adminUrl.toString(), databaseName, url: databaseUrl.toString() };
+}
+
+async function dropOwnedMigrationDatabase(database: OwnedMigrationDatabase): Promise<void> {
+  const adminSql = postgres(database.adminUrl, { max: 1, onnotice: () => {} });
   try {
-    await fixtureSql`
-      INSERT INTO "user" (id, name, email, created_at, updated_at)
-      VALUES (${probeUser}, 'Migration Probe', ${`${probeUser}@invalid.test`}, now(), now())
-    `;
-    await fixtureSql`
-      INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at)
-      VALUES (${probeSession}, ${`migration-token-${suffix}`}, ${probeUser}, now() + interval '2 days', now(), now())
-    `;
+    await adminSql.unsafe(`DROP DATABASE "${database.databaseName}"`);
+  } finally {
+    await adminSql.end();
+  }
+}
 
-    const migrationPath = path.join(repositoryRoot, "packages/db/src/migrations/0179_reflective_wallow.sql");
-    const migrationHash = createHash("sha256").update(readFileSync(migrationPath)).digest("hex");
-    await fixtureSql`DROP INDEX public.session_token_idx`;
-    const [removedHistory] = await fixtureSql`
-      DELETE FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash} RETURNING id
-    `;
-    if (!removedHistory) throw new Error("Could not create the previous-migration-state fixture");
+async function verifySessionTokenIndexUpgradeWithExistingRows(): Promise<void> {
+  if (!embedded) return;
 
-    await applyPendingMigrations(connectionString);
-    const [index] = await fixtureSql`
+  const journal = migrationJournal();
+  const prefixEntry = journal.entries.find((entry) => entry.idx === 178);
+  const upgradeEntry = journal.entries.find((entry) => entry.idx === 179);
+  const currentEntry = journal.entries[journal.entries.length - 1];
+  if (!prefixEntry || !upgradeEntry || !currentEntry || currentEntry.idx <= upgradeEntry.idx) {
+    throw new Error("Migration manifest is missing the expected 0178 prefix or current suffix");
+  }
+
+  const upgradeDatabase = await createOwnedMigrationDatabase("session_upgrade");
+  let upgradeSql: ReturnType<typeof postgres> | undefined;
+  try {
+    const prefixFolder = migrationSnapshotThrough(178, "session-upgrade-through-0178");
+    upgradeSql = postgres(upgradeDatabase.url, { max: 1, onnotice: () => {} });
+    await migrate(drizzle(upgradeSql), { migrationsFolder: prefixFolder });
+
+    const [lastPrefixHistory] = await upgradeSql`
+      SELECT id::int AS id, hash
+      FROM drizzle.__drizzle_migrations
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+    const [prefixHistoryCount] = await upgradeSql`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    if (!lastPrefixHistory || lastPrefixHistory.hash !== migrationHash(prefixEntry)
+      || prefixHistoryCount.count !== 179) {
+      throw new Error("Upgrade fixture did not end at the immutable migration prefix through idx 178");
+    }
+    const [indexBeforeUpgrade] = await upgradeSql`
       SELECT EXISTS (
         SELECT 1 FROM pg_indexes
         WHERE schemaname = 'public' AND indexname = 'session_token_idx'
       ) AS exists
     `;
-    const [preservedSession] = await fixtureSql`
-      SELECT EXISTS (SELECT 1 FROM session WHERE id = ${probeSession}) AS exists
+    if (indexBeforeUpgrade.exists) throw new Error("0178 migration prefix unexpectedly contains the 0179 session-token index");
+
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const probeUser = `native-session-migration-user-${suffix}`;
+    const probeSession = `native-session-migration-id-${suffix}`;
+    const probeToken = `migration-token-${suffix}`;
+    const probeEmail = `${probeUser}@invalid.test`;
+    await upgradeSql`
+      INSERT INTO "user" (id, name, email, created_at, updated_at)
+      VALUES (${probeUser}, 'Migration Probe', ${probeEmail}, now(), now())
     `;
-    if (!index.exists || !preservedSession.exists) {
-      throw new Error("Session-token index upgrade did not preserve the existing session row");
+    await upgradeSql`
+      INSERT INTO session (id, token, user_id, expires_at, created_at, updated_at)
+      VALUES (${probeSession}, ${probeToken}, ${probeUser}, now() + interval '2 days', now(), now())
+    `;
+
+    await applyPendingMigrations(upgradeDatabase.url);
+
+    const [index] = await upgradeSql`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'session_token_idx'
+      ) AS exists
+    `;
+    const [preservedSession] = await upgradeSql`
+      SELECT s.token, s.user_id, u.email
+      FROM session AS s
+      JOIN "user" AS u ON u.id = s.user_id
+      WHERE s.id = ${probeSession}
+    `;
+    const [appliedUpgrade] = await upgradeSql`
+      SELECT id::int AS id FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash(upgradeEntry)}
+    `;
+    const [appliedCurrent] = await upgradeSql`
+      SELECT id::int AS id FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash(currentEntry)}
+    `;
+    if (!index.exists || !preservedSession || preservedSession.token !== probeToken
+      || preservedSession.user_id !== probeUser || preservedSession.email !== probeEmail
+      || !appliedUpgrade || appliedUpgrade.id <= lastPrefixHistory.id || !appliedCurrent
+      || appliedCurrent.id <= appliedUpgrade.id) {
+      throw new Error("Current migration entry point did not apply 0179, preserve the session row, and advance history");
     }
   } finally {
-    await fixtureSql`DELETE FROM session WHERE id = ${probeSession}`;
-    await fixtureSql`DELETE FROM "user" WHERE id = ${probeUser}`;
+    await upgradeSql?.end();
+    await dropOwnedMigrationDatabase(upgradeDatabase);
+  }
+
+  const corruptDatabase = await createOwnedMigrationDatabase("interior_gap");
+  let corruptSql: ReturnType<typeof postgres> | undefined;
+  try {
+    await applyPendingMigrations(corruptDatabase.url);
+    corruptSql = postgres(corruptDatabase.url, { max: 1, onnotice: () => {} });
+    await corruptSql`DROP INDEX public.session_token_idx`;
+    const [removedHistory] = await corruptSql`
+      DELETE FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash(upgradeEntry)} RETURNING id
+    `;
+    if (!removedHistory) throw new Error("Could not create the isolated 0179 interior-gap refusal fixture");
+
+    await expect(applyPendingMigrations(corruptDatabase.url)).rejects.toMatchObject({
+      code: "migration_apply_failed",
+    });
+    const [refusedState] = await corruptSql`
+      SELECT
+        EXISTS (SELECT 1 FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash(upgradeEntry)}) AS has_0179,
+        EXISTS (SELECT 1 FROM drizzle.__drizzle_migrations WHERE hash = ${migrationHash(currentEntry)}) AS has_current,
+        EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'session_token_idx'
+        ) AS has_index
+    `;
+    if (refusedState.has_0179 || !refusedState.has_current || refusedState.has_index) {
+      throw new Error("Interior-gap refusal changed the isolated corrupt migration state");
+    }
+  } finally {
+    await corruptSql?.end();
+    await dropOwnedMigrationDatabase(corruptDatabase);
   }
 }
 

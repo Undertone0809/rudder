@@ -9,6 +9,10 @@ contract_ids:
 related_code:
   - packages/db/src/client.ts
   - packages/db/src/migration-manifest.ts
+  - packages/db/src/migration-operator.ts
+  - native/crates/migration-service/src/apply.rs
+  - native/crates/migration-service/src/operator.rs
+  - native/crates/postgres-lifecycle/src/owner.rs
   - server/src/index.ts
   - scripts/release-compatibility-matrix.mjs
   - scripts/release-compatibility-runtime.ts
@@ -18,6 +22,9 @@ related_tests:
   - packages/db/src/migration-manifest.test.ts
   - scripts/release-compatibility-matrix.test.mjs
   - scripts/release-workflow-contract.test.mjs
+  - native/crates/migration-service/tests/apply_cli.rs
+  - native/crates/migration-service/tests/postgres_apply.rs
+  - native/crates/postgres-lifecycle/tests/postgres_lifecycle.rs
   - server/src/__tests__/migration-startup-contract.test.ts
   - desktop/scripts/smoke.mjs
 related_plans: []
@@ -31,13 +38,13 @@ edit_policy: user_confirmed_only
 ## Contract Summary
 
 Rudder's managed server-startup upgrade path changes an existing PostgreSQL
-database only through an immutable, verified migration history. A candidate
-release must preserve every published migration and declare a compatibility
-matrix containing strictly older, production-shaped database fixtures. Before
-that path changes a non-empty database, Rudder creates a recoverable
-pre-migration backup, serializes the complete startup migration flow, applies
-legacy normalization transactionally, and checks post-migration invariants
-before the server is allowed to continue.
+database only through the Rust migration service and an immutable, verified
+migration history. A candidate release must preserve every published
+migration and declare a compatibility matrix containing strictly older,
+production-shaped database fixtures. Before that path changes a non-empty
+database, Rust creates a recoverable pre-migration backup, serializes the
+complete startup migration flow, applies legacy normalization transactionally,
+and checks post-migration invariants before the server is allowed to continue.
 
 Unknown migration journal identifiers, changed historical SQL, missing recovery
 points, failed normalization, failed migrations, or failed invariants stop the
@@ -105,14 +112,15 @@ outside managed server startup own that recovery decision.
    than the candidate and verifies the fixture prefix and fingerprints. The
    historical runtime upgrades each fixture with shaped data, checks
    relationships and permissions, restarts, and verifies persistence.
-3. Before managed startup migration work, Rudder acquires the database
-   advisory lock, reads legacy-column drift and migration state, and captures a
+3. Before managed startup migration work, the Rust migration service reads
+   legacy-column drift and migration state. It acquires the database advisory
+   lock before a write, rechecks the state under that lock, and captures a
    recovery point for a non-empty database whenever normalization,
    reconciliation, or pending migrations may mutate it.
-4. Legacy column normalization runs in one transaction. The server then
-   reconciles only explicitly known historical journal identities and applies
-   pending migrations in journal order. Unknown identifiers fail closed.
-5. Rudder checks the final migration state and post-migration invariants even
+4. Rust applies legacy column normalization in one transaction, reconciles only
+   explicitly known historical journal identities, and applies pending
+   migrations in journal order. Unknown identifiers fail closed.
+5. Rust checks the final migration state and post-migration invariants even
    when the journal was already current. A failed check prevents normal
    managed server startup. If a recovery point was created before mutation,
    it remains available for operator recovery; otherwise the unchanged
@@ -125,10 +133,10 @@ outside managed server startup own that recovery decision.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Current and valid | Journal matches the manifest and invariants pass | Continue startup | Treat the migration count alone as proof | `validatePostMigrationInvariants` |
-| Pending managed upgrade | Candidate has newer migrations and a non-empty database | Capture recovery point, apply in order, then verify | Mutate without a restorable pre-change copy | `server/src/index.ts`, DB tests |
-| Legacy column drift | Known old column exists without its current name | Rename all required columns in one transaction | Leave a partially normalized schema | `normalizeLegacyColumnNames`, rollback test |
-| Unknown journal entry | Hash or identifier is not an explicit known historical identity | Fail closed with `migration_journal_invalid` | Accept arbitrary `legacy-*` prefixes | Client invariant test |
+| Current and valid | Journal matches the manifest and invariants pass | Continue startup | Treat the migration count alone as proof | `native/crates/migration-service/src/operator.rs`, `apply_cli.rs` |
+| Pending managed upgrade | Candidate has newer migrations and a non-empty database | Capture recovery point, apply in order, then verify | Mutate without a restorable pre-change copy | `server/src/index.ts`, migration-service tests |
+| Legacy column drift | Known old column exists without its current name | Rename all required columns in one transaction | Leave a partially normalized schema | `native/crates/migration-service/src/apply.rs`, rollback tests |
+| Unknown journal entry | Hash or identifier is not an explicit known historical identity | Fail closed with `migration_journal_invalid` | Accept arbitrary `legacy-*` prefixes | Migration-service apply tests |
 | Recovery failure | Backup cannot be created or configured | Refuse schema mutation and preserve the old schema | Normalize or migrate after backup failure | Recovery runtime evidence |
 | Migration or invariant failure | SQL, reconciliation, journal, foreign-key, or index check fails | Refuse normal startup; retain any existing recovery point or leave an unchanged database available | Start on a partially upgraded database | Historical matrix and startup checks |
 | Release gate failure | Any fixture, recovery, or packaged platform gate fails | Block public publication | Publish npm, tags, or Release first | Release workflow contract |

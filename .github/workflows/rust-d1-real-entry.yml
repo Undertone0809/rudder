@@ -8,6 +8,7 @@ on:
       - "server/**"
       - "packages/**"
       - "cli/**"
+      - "scripts/acceptance/**"
       - "scripts/smoke/rust-branding-real-entry.ts"
       - "scripts/smoke/rust-project-goal-real-entry.ts"
       - "scripts/smoke/rust-project-delete-real-entry.ts"
@@ -41,6 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify historical migration snapshot comparison
+        run: python3 -m unittest discover -s scripts/acceptance -p 'test_compare_snapshots.py' -v
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -60,17 +64,22 @@ jobs:
           set -o pipefail
           pnpm install --frozen-lockfile 2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
-      - name: Build Rust server foundation and migration preflight
+      - name: Build Rust server foundation and migration authorities
         run: |
           set -o pipefail
           cargo build --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation --bin rudder-server-foundation \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           cargo build --locked --manifest-path native/Cargo.toml \
-            --package rudder-migration-service --bin migration-preflight \
+            --package rudder-migration-service --bin migration-preflight --bin migration-apply \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           test -x native/target/debug/rudder-server-foundation
+          cargo build --locked --manifest-path native/Cargo.toml \
+            --package rudder-postgres-lifecycle --bin rudder-postgres-owner \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           test -x native/target/debug/migration-preflight
+          test -x native/target/debug/migration-apply
+          test -x native/target/debug/rudder-postgres-owner
 
       - name: Verify API-wide Rust Project reads against legacy data
         run: |

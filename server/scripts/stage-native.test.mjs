@@ -10,7 +10,9 @@ import {
   FOUNDATION_TARGETS,
   checkPackagedFoundationArtifacts,
   foundationBinaryName,
+  migrationApplyBinaryName,
   migrationPreflightBinaryName,
+  postgresOwnerBinaryName,
   processHostBinaryName,
   resolveCargoFoundationExecutable,
   resolveFoundationTarget,
@@ -50,7 +52,9 @@ function makeArtifactRoot(targets = Object.keys(FOUNDATION_TARGETS)) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, foundationBinaryName(target)), fakeBinary(target), { mode: 0o600 });
     writeFileSync(path.join(dir, migrationPreflightBinaryName(target)), fakeBinary(target), { mode: 0o600 });
+    writeFileSync(path.join(dir, migrationApplyBinaryName(target)), fakeBinary(target), { mode: 0o600 });
     writeFileSync(path.join(dir, processHostBinaryName(target)), fakeBinary(target), { mode: 0o600 });
+    writeFileSync(path.join(dir, postgresOwnerBinaryName(target)), fakeBinary(target), { mode: 0o600 });
   }
   return root;
 }
@@ -68,6 +72,29 @@ test("resolves all six generic server foundation target triples", () => {
   assert.equal(foundationBinaryName("aarch64-pc-windows-msvc"), "rudder-server-foundation.exe");
 });
 
+test("CI produces every native executable required by server artifact staging", () => {
+  const workflow = readFileSync(path.join(serverRoot, "..", ".github", "workflows", "ci.yml"), "utf8");
+  const start = workflow.indexOf("- name: Build server foundation artifact");
+  const end = workflow.indexOf("- uses: actions/upload-artifact", start);
+  assert.ok(start >= 0 && end > start, "server artifact producer step is missing");
+  const producer = workflow.slice(start, end);
+  const requested = new Set([...producer.matchAll(/--bin\s+([a-z0-9-]+)/gu)].map((match) => match[1]));
+  const target = "x86_64-unknown-linux-gnu";
+  for (const binary of [
+    foundationBinaryName(target),
+    migrationPreflightBinaryName(target),
+    migrationApplyBinaryName(target),
+    processHostBinaryName(target),
+    postgresOwnerBinaryName(target),
+  ]) {
+    assert.ok(requested.has(binary), `CI does not build required executable ${binary}`);
+    assert.ok(
+      producer.includes(`"$artifact_dir/${binary}$SERVER_FOUNDATION_EXTENSION"`),
+      `CI does not upload required executable ${binary}`,
+    );
+  }
+});
+
 test("uses Cargo's reported host executable instead of a stale target-triple artifact", () => {
   const artifactRoot = mkdtempSync(path.join(os.tmpdir(), "rudder-cargo-output-"));
   try {
@@ -81,14 +108,16 @@ test("uses Cargo's reported host executable instead of a stale target-triple art
     const output = [
       JSON.stringify({ reason: "compiler-artifact", target: { name: "another-bin", kind: ["bin"] }, executable: stale }),
       JSON.stringify({ reason: "compiler-artifact", target: { name: "rudder-server-foundation", kind: ["bin"] }, executable: fresh }),
+      JSON.stringify({ reason: "compiler-artifact", target: { name: "rudder-postgres-owner", kind: ["bin"] }, executable: path.join(artifactRoot, "debug", "rudder-postgres-owner") }),
     ].join("\n");
     assert.equal(resolveCargoFoundationExecutable(output), fresh);
+    assert.equal(resolveCargoFoundationExecutable(output, "rudder-postgres-owner"), path.join(artifactRoot, "debug", "rudder-postgres-owner"));
   } finally {
     rmSync(artifactRoot, { recursive: true, force: true });
   }
 });
 
-test("stages six correctly typed payloads into the generic server resource path", async () => {
+test("stages all required payloads into the generic server resource path", async () => {
   const artifactDir = makeArtifactRoot();
   const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-server-resources-"));
   try {
@@ -98,6 +127,10 @@ test("stages six correctly typed payloads into the generic server resource path"
       const filename = foundationBinaryName(target);
       const destination = path.join(resourcesDir, "native", target, filename);
       assert.deepEqual(readFileSync(destination), fakeBinary(target));
+      const migrationApplyPath = path.join(resourcesDir, "native", target, migrationApplyBinaryName(target));
+      assert.deepEqual(readFileSync(migrationApplyPath), fakeBinary(target));
+      const postgresOwnerPath = path.join(resourcesDir, "native", target, postgresOwnerBinaryName(target));
+      assert.deepEqual(readFileSync(postgresOwnerPath), fakeBinary(target));
       if (process.platform !== "win32") assert.notEqual(statSync(destination).mode & 0o111, 0);
     }
   } finally {
@@ -106,7 +139,7 @@ test("stages six correctly typed payloads into the generic server resource path"
   }
 });
 
-test("package verification requires all six target-correct executable payloads", async () => {
+test("package verification requires all target-correct executable payloads", async () => {
   const artifactDir = makeArtifactRoot();
   const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-server-resources-"));
   try {
@@ -151,7 +184,7 @@ test("replaces a staged executable without changing bytes seen by an existing re
     assert.deepEqual(readFileSync(destinationPath), replacementBytes);
     assert.deepEqual(await previousReader.readFile(), previousBytes);
     if (process.platform !== "win32") assert.notEqual(statSync(destinationPath).ino, previousStat.ino);
-    assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target), processHostBinaryName(target)].sort());
+     assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target), migrationApplyBinaryName(target), processHostBinaryName(target), postgresOwnerBinaryName(target)].sort());
 
     writeFileSync(sourcePath, Buffer.from("invalid replacement"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /Unrecognized/u);
@@ -204,7 +237,7 @@ test("rejects wrong-target and wrong-platform payloads", async () => {
   }
 });
 
-test("keeps all six payloads in the server npm package without adding install-time Rust compilation", async () => {
+test("keeps all required payloads in the server npm package without adding install-time Rust compilation", async () => {
   assert.ok(packageManifest.files.includes("resources"));
   assert.match(packageManifest.scripts.predev, /stage:native/u);
   assert.match(packageManifest.scripts["predev:watch"], /stage:native/u);
@@ -238,7 +271,9 @@ test("keeps all six payloads in the server npm package without adding install-ti
       const filename = `resources/native/${target}/${foundationBinaryName(target)}`;
       assert.ok(packagedPaths.has(filename));
       assert.ok(packagedPaths.has(`resources/native/${target}/${migrationPreflightBinaryName(target)}`));
+      assert.ok(packagedPaths.has(`resources/native/${target}/${migrationApplyBinaryName(target)}`));
       assert.ok(packagedPaths.has(`resources/native/${target}/${processHostBinaryName(target)}`));
+      assert.ok(packagedPaths.has(`resources/native/${target}/${postgresOwnerBinaryName(target)}`));
       if (process.platform !== "win32") {
         const entry = result.files.find(({ path: packagedPath }) => packagedPath === filename);
         assert.notEqual(entry.mode & 0o111, 0);
@@ -270,6 +305,10 @@ test("restores a normalized native mode through a real npm tarball install lifec
     writeFileSync(path.join(packageRoot, "resources", processHostRelativePath), fakeBinary(target), { mode: 0o644 });
     const preflightRelativePath = path.join("native", target, migrationPreflightBinaryName(target));
     writeFileSync(path.join(packageRoot, "resources", preflightRelativePath), fakeBinary(target), { mode: 0o644 });
+    const migrationApplyRelativePath = path.join("native", target, migrationApplyBinaryName(target));
+    writeFileSync(path.join(packageRoot, "resources", migrationApplyRelativePath), fakeBinary(target), { mode: 0o644 });
+    const postgresOwnerRelativePath = path.join("native", target, postgresOwnerBinaryName(target));
+    writeFileSync(path.join(packageRoot, "resources", postgresOwnerRelativePath), fakeBinary(target), { mode: 0o644 });
     for (const script of ["postinstall-native-mode.mjs", "postinstall-postgres-compat.mjs"]) {
       copyFileSync(path.join(serverRoot, "resources", script), path.join(packageRoot, "resources", script));
     }
@@ -310,8 +349,12 @@ test("restores a normalized native mode through a real npm tarball install lifec
     assert.notEqual(statSync(installedBinary).mode & 0o111, 0, "postinstall did not restore executable mode");
     const installedPreflight = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", preflightRelativePath);
     assert.notEqual(statSync(installedPreflight).mode & 0o111, 0, "postinstall did not restore migration preflight executable mode");
+    const installedMigrationApply = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", migrationApplyRelativePath);
+    assert.notEqual(statSync(installedMigrationApply).mode & 0o111, 0, "postinstall did not restore migration apply executable mode");
     const installedProcessHost = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", processHostRelativePath);
     assert.notEqual(statSync(installedProcessHost).mode & 0o111, 0, "postinstall did not restore native process host executable mode");
+    const installedPostgresOwner = path.join(installPrefix, "node_modules", "@rudderhq", "server", "resources", postgresOwnerRelativePath);
+    assert.notEqual(statSync(installedPostgresOwner).mode & 0o111, 0, "postinstall did not restore PostgreSQL owner executable mode");
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -370,9 +413,29 @@ test("selects the migration executable from Cargo output separately from foundat
   const output = [
     JSON.stringify({ reason: "compiler-artifact", target: { name: "rudder-server-foundation", kind: ["bin"] }, executable: "/fixture/foundation" }),
     JSON.stringify({ reason: "compiler-artifact", target: { name: "migration-preflight", kind: ["bin"] }, executable: "/fixture/migration" }),
+    JSON.stringify({ reason: "compiler-artifact", target: { name: "migration-apply", kind: ["bin"] }, executable: "/fixture/migration-apply" }),
   ].join("\n");
   assert.equal(resolveCargoFoundationExecutable(output, "migration-preflight"), "/fixture/migration");
+  assert.equal(resolveCargoFoundationExecutable(output, "migration-apply"), "/fixture/migration-apply");
   assert.throws(() => resolveCargoFoundationExecutable(output.split("\n")[0], "migration-preflight"), /0 migration-preflight/u);
+});
+
+test("rejects a missing or wrong-target Rust migration apply before publishing server artifacts", async () => {
+  const target = "x86_64-unknown-linux-gnu";
+  const artifactDir = makeArtifactRoot([target]);
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-migration-apply-stage-"));
+  try {
+    const source = path.join(artifactDir, target, migrationApplyBinaryName(target));
+    await unlink(source);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /migration-apply/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+    writeFileSync(source, fakeBinary("aarch64-unknown-linux-gnu"));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /does not match/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
 });
 
 test("rejects a missing or wrong-target process host before publishing server artifacts", async () => {
@@ -386,6 +449,24 @@ test("rejects a missing or wrong-target process host before publishing server ar
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
     writeFileSync(source, fakeBinary("aarch64-unknown-linux-gnu"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /does not match/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
+});
+
+test("rejects a missing or wrong-target PostgreSQL owner before publishing server artifacts", async () => {
+  const target = "x86_64-unknown-linux-gnu";
+  const artifactDir = makeArtifactRoot([target]);
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-postgres-owner-stage-"));
+  try {
+    const source = path.join(artifactDir, target, postgresOwnerBinaryName(target));
+    await unlink(source);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /rudder-postgres-owner/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+    writeFileSync(source, fakeBinary("aarch64-unknown-linux-gnu"));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /does not match x86_64-unknown-linux-gnu/u);
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
   } finally {
     rmSync(artifactDir, { recursive: true, force: true });

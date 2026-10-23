@@ -4,7 +4,7 @@ Rudder uses PostgreSQL via [Drizzle ORM](https://orm.drizzle.team/). There are t
 
 ## 1. Embedded PostgreSQL — zero config
 
-If you don't set `DATABASE_URL`, the server automatically starts an embedded PostgreSQL instance and manages a local data directory.
+If you don't set `DATABASE_URL`, the server delegates local PostgreSQL lifecycle to the Rust `rudder-postgres-owner` process and keeps its data in the current instance directory.
 
 ```sh
 pnpm dev
@@ -12,10 +12,14 @@ pnpm dev
 
 That's it. On first start the server:
 
-1. Creates the current instance database directory for storage
+1. Starts or safely reuses the PostgreSQL cluster for the current instance
 2. Ensures the `rudder` database exists
-3. Runs migrations automatically for empty databases
+3. Runs the Rust migration startup gate and operator
 4. Starts serving requests
+
+Node only sends the typed owner protocol and holds the returned connection
+details. Missing Rust owner or migration binaries stop startup; no Node database
+creation or migration fallback is available.
 
 Data persists across restarts in the current instance database directory. To reset local dev data, delete that instance's `db/` directory.
 
@@ -134,13 +138,25 @@ Production local and packaged Desktop builds should use PostgreSQL 18.4 producti
 RUDDER_POSTGRES_BIN_DIR=/path/to/postgresql-18.4/bin pnpm rudder run
 ```
 
-When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`,
-`postgres`, the initdb templates `postgres.bki` and
+When `RUDDER_POSTGRES_BIN_DIR` is set, the Rust owner validates `initdb`,
+`pg_ctl`, `postgres`, the initdb templates `postgres.bki` and
 `postgresql.conf.sample`, and runtime support files such as the timezone
-database; all three binaries must report PostgreSQL 18.4.
-Rudder then manages the local cluster with those production binaries. If the
-variable is unset, development shells can still fall back to the legacy
-`embedded-postgres` wrapper for compatibility.
+database; all three binaries must report PostgreSQL 18.4. It then manages the
+local cluster with those production binaries. Development can resolve binary
+assets from the installed `embedded-postgres` package when no explicit runtime
+directory is configured. The Rust owner manages cluster creation, reuse,
+application-database creation, and shutdown for this managed startup path. The
+legacy worktree initializer still calls the Node `ensurePostgresDatabase` helper;
+retiring that separate database-creation entry remains migration debt.
+
+The Rust owner attempts startup once and verifies readiness using the connected
+server identity. A log line saying the server is ready does not override a
+nonzero child exit or a mismatched data directory. Startup failures include a
+bounded, credential-redacted diagnostic tail in the structured owner error.
+The legacy Node recovery behavior that scans user-wide SysV shared-memory
+segments and retries startup is intentionally not copied: the Rust owner does
+not invoke `ipcs` or `ipcrm`, remove shared-memory segments, or retry automatically.
+Preserve the existing data directory and use explicit recovery when startup fails.
 
 Rudder owns one verified PostgreSQL 18.4 payload per platform and architecture at
 `~/.rudder/runtime-payloads/postgres-18.4/<platform>-<arch>/`. The CLI resolves
@@ -325,40 +341,58 @@ Inline secret migration command:
 pnpm secrets:migrate-inline-env --apply
 ```
 
-## Native migration operator (explicit opt-in)
+## Rust-owned migration startup and operator
 
-The Rust `migration-service` crate provides `migration-apply` as an explicit
-operator entrypoint. Normal server startup still uses the existing migration
-owner until the separate startup cutover is accepted. Building this binary does
-not change a running instance or migrate its database.
+Both normal server startup and `pnpm db:migrate` send the pinned migration
+source to the Rust `migration-service` operator. Node provides the database
+connection and trusted runtime facts such as migration and recovery paths,
+`pg_dump` path, and whether an interactive prompt is available. Rust inspects
+the Drizzle journal and schema and decides whether the database is current,
+needs migration, or is unsafe or inconsistent. Node does not plan migrations
+from database status and has no SQL-apply or recovery-write fallback.
 
-The command reads one bounded JSON request on stdin and obtains its connection
-only from `RUDDER_MIGRATION_APPLY_DATABASE_URL`. The request uses schema
-`rudder.migration-apply/v1`, `protocolVersion: 1`, `allowApply: true`, absolute
-`migrationsDir`, `recoveryDirectory`, and `pgDumpBinary` paths, and the exact
-`expectedFingerprint` from the inspected migration manifest. The explicit
-fingerprint pins the SQL and journal source; changing it during backup fails
-closed. Credentials are never command-line arguments or diagnostic output.
+Startup uses the bounded `rudder.migration-apply/v1` JSON request with
+`protocolVersion: 1`, `allowApply: true`, absolute `migrationsDir`,
+`recoveryDirectory`, and `pgDumpBinary` paths, and the exact
+`expectedFingerprint` from the inspected migration manifest. The source
+fingerprint pins the SQL and journal; a changed source fails closed. Credentials
+are supplied through the operator environment, never as command-line arguments
+or diagnostic output.
 
-The service takes the existing `rudder:database-migrations` advisory lock,
-rechecks the current journal, and requires a full recovery dump before upgrading
-a non-empty database. The binary runs the selected PostgreSQL `pg_dump` with
-all schemas and the migration journal included. Recovery files are private on
-Unix, checksummed, flushed, and published without overwriting existing files.
-Failed or interrupted dumps retain `.partial` files and are not accepted as
-recovery points. A completed SQL dump is retained for operator recovery.
-The current native recovery-file limit is 4 GiB and the dump timeout is ten
-minutes; exceeding either stops the operation before migrations are applied.
+Node passes the auto-apply request, `never` preference, TTY availability, and
+raw embedded-cluster/database-creation facts. Rust applies the compatibility
+priority: explicit auto-apply, then `RUDDER_MIGRATION_PROMPT=never`, then
+non-interactive auto-apply. For interactive startup, Rust may also auto-apply a
+fresh embedded setup only when those lifecycle facts coincide with Rust's own
+preflight finding an empty bootstrap database. Otherwise it returns an approval
+request containing its pending migration summary and a token bound to the
+configured database and migration snapshot. Node only displays the prompt and
+returns the user's choice. Rust does not hold the migration lock while waiting;
+after approval it reacquires the lock, rereads the database and source, and
+rejects a stale token before backup or mutation. Current databases are validated
+without requesting approval or creating a recovery dump. Unsafe legacy
+databases, malformed journals, and inconsistent history fail closed.
 
-Only use a PostgreSQL client version compatible with the target server. Validate
-recovery by restoring the completed SQL into a separate empty disposable database
-before accepting a new deployment's upgrade path. Never test restoration over
-an existing user instance. Historical SQL and Drizzle journal identities remain
-unchanged; unsupported or inconsistent legacy states are rejected for explicit
-recovery rather than guessed into a new schema.
+Before changing a non-empty database, the operator takes the existing
+`rudder:database-migrations` advisory lock, rechecks the migration state, and
+requires a full recovery dump. The selected PostgreSQL `pg_dump` includes all
+schemas and the migration journal. Recovery files are private on Unix,
+checksummed, flushed, and published without overwriting existing files. Failed
+or interrupted dumps retain `.partial` files and are not accepted as recovery
+points. Completed SQL dumps remain available for operator recovery. The native
+recovery-file limit is 4 GiB and the dump timeout is ten minutes; exceeding
+either stops the operation before migrations are applied.
 
-The real operator regression is `migration-service/tests/apply_cli.rs`. It
-creates its own databases in an explicitly supplied disposable PostgreSQL
-cluster, runs the executable, restores a real dump, checks data and journal
-preservation, repeats an already-current invocation, and proves a failed backup
-prevents mutation. This evidence is separate from packaged startup acceptance.
+Each migration retains the existing transaction behavior and Drizzle journal;
+the operator does not promise one automatic rollback spanning the full migration
+set. Historical SQL and journal identities remain unchanged. Unsupported or
+inconsistent legacy states are rejected for explicit recovery rather than
+rewritten into a new migration history. The separate identity-database writer
+has not yet moved to this operator.
+
+The disposable-PostgreSQL regression in
+`native/crates/migration-service/tests/apply_cli.rs` exercises the operator,
+including current-state handling, a pending prompt, lock release while waiting,
+stale approval rejection after a database change, a fresh approval, and dump
+restore/data/journal preservation. This source-level coverage is separate from
+verification of normal startup in a real or packaged runtime.

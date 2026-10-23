@@ -11,10 +11,10 @@ export {
 } from "./backup-lib.js";
 export {
   MIGRATION_ADVISORY_LOCK_NAME, applyPendingMigrations, assertPostMigrationInvariants, createDb, ensurePostgresDatabase,
-  ensurePostgresRolePassword, getMigrationSourcePaths, getPostgresDataDirectory, inspectMigrations, listLegacyColumnRenames, migratePostgresIfEmpty,
-  normalizeLegacyColumnNames, reconcilePendingMigrationHistory, validatePostMigrationInvariants, withMigrationAdvisoryLock,
-  type Db, type EnsurePostgresRolePasswordOptions, type EnsurePostgresRolePasswordResult, type MigrationBootstrapResult,
-  type MigrationHistoryReconcileResult, type MigrationSourcePaths, type MigrationState,
+  ensurePostgresRolePassword, getMigrationSourcePaths, getPostgresDataDirectory, inspectMigrations, listLegacyColumnRenames,
+  validatePostMigrationInvariants,
+  type Db, type EnsurePostgresRolePasswordOptions, type EnsurePostgresRolePasswordResult,
+  type MigrationSourcePaths, type MigrationState,
   type PostMigrationInvariantIssue, type PostMigrationInvariantReport
 } from "./client.js";
 export {
@@ -54,4 +54,7 @@ export {
   type MigrationManifestEntry,
   type MigrationManifestValidation
 } from "./migration-manifest.js";
+export { resolvePostgresOwnerBinary, resolvePostgresRuntimeDirectory, startPostgresOwner } from "./postgres-owner.js";
+export type { PostgresOwnerOptions, PostgresOwnerReady } from "./postgres-owner.js";
+export { resolveMigrationRecoveryDirectory } from "./runtime-config.js";
 export * from "./schema/index.js";

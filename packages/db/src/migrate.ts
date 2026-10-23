@@ -1,26 +1,25 @@
-import { applyPendingMigrations, inspectMigrations } from "./client.js";
+import { fileURLToPath } from "node:url";
+import { applyMigrationsWithRust } from "./migration-operator.js";
 import { resolveMigrationConnection } from "./migration-runtime.js";
 
 async function main(): Promise<void> {
   const resolved = await resolveMigrationConnection();
 
-  console.log(`Migrating database via ${resolved.source}`);
+  console.log(`Checking migrations via Rust for ${resolved.source}`);
 
   try {
-    const before = await inspectMigrations(resolved.connectionString);
-    if (before.status === "upToDate") {
+    const report = await applyMigrationsWithRust({
+      databaseUrl: resolved.connectionString,
+      migrationsDir: fileURLToPath(new URL("./migrations", import.meta.url)),
+      journalFile: fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url)),
+      recoveryDirectory: resolved.recoveryDirectory,
+      postgresBinDir: resolved.postgresBinDir,
+    });
+    if (report.alreadyCurrent) {
       console.log("No pending migrations");
-      return;
+    } else {
+      console.log(`Migrations complete (${report.appliedMigrations.length} applied)`);
     }
-
-    console.log(`Applying ${before.pendingMigrations.length} pending migration(s)...`);
-    await applyPendingMigrations(resolved.connectionString);
-
-    const after = await inspectMigrations(resolved.connectionString);
-    if (after.status !== "upToDate") {
-      throw new Error(`Migrations incomplete: ${after.pendingMigrations.join(", ")}`);
-    }
-    console.log("Migrations complete");
   } finally {
     await resolved.stop();
   }

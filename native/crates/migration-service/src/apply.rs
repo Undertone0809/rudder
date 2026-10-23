@@ -18,16 +18,229 @@ use rudder_migration_history_postgres::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{PgConnection, PgPool, Row, raw_sql};
+use sqlx::{Connection, PgConnection, PgPool, Row, raw_sql};
 use std::{
+    collections::HashSet,
     fs::{self, File},
     future::Future,
     io::Read,
     path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+
+mod catalog_history_repair;
+mod legacy_columns;
+
+pub(crate) async fn inspect_legacy_column_aliases(
+    connection: &mut PgConnection,
+) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
+    let snapshot = legacy_columns::inspect(connection).await?;
+    Ok((snapshot.pending_labels(), snapshot.collision_labels()))
+}
+
+fn map_legacy_column_apply_error(error: legacy_columns::ApplyError) -> MigrationApplyError {
+    match error {
+        legacy_columns::ApplyError::Database(error) => MigrationApplyError::Database(error),
+        legacy_columns::ApplyError::StateChanged => MigrationApplyError::LegacyColumnsChanged,
+        legacy_columns::ApplyError::Cancelled => MigrationApplyError::OperationCancelled,
+        legacy_columns::ApplyError::Collision(labels) => {
+            MigrationApplyError::LegacyColumnCollision(labels.join(", "))
+        }
+    }
+}
+
+async fn apply_catalog_history_repairs(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    manifest: &MigrationManifest,
+    source: &MigrationSource,
+    expected_snapshot: &MigrationHistorySnapshot,
+    expected_history: &MigrationHistoryPreflight,
+    expected_aliases: &legacy_columns::Snapshot,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>, MigrationApplyError> {
+    ensure_not_cancelled(cancellation)?;
+    let current_manifest = load_current_manifest(source).await?;
+    ensure_not_cancelled(cancellation)?;
+    if current_manifest != *manifest {
+        return Err(MigrationApplyError::ManifestChanged);
+    }
+    for candidate in &expected_history.catalog_repair_candidates {
+        let entry = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == candidate.file_name)
+            .filter(|entry| entry.order == candidate.order && entry.sha256 == candidate.sha256)
+            .ok_or_else(|| MigrationApplyError::ManifestChanged)?;
+        // Re-hash the exact source file after the backup and before opening a
+        // transaction that may rename aliases or insert history rows.
+        read_verified_migration_file(source, manifest, entry).await?;
+    }
+
+    ensure_not_cancelled(cancellation)?;
+    let mut transaction = connection.begin().await?;
+    let result = async {
+        ensure_not_cancelled(cancellation)?;
+        let snapshot = read_snapshot_on_connection(&mut transaction).await?;
+        if &snapshot != expected_snapshot {
+            return Err(MigrationApplyError::HistoryMismatch(
+                "migration history changed before catalog repair".to_owned(),
+            ));
+        }
+        let history = reconcile_migration_history(manifest, &snapshot)?;
+        if &history != expected_history || history.catalog_repair_candidates.is_empty() {
+            return Err(MigrationApplyError::HistoryMismatch(
+                "migration history repair candidates changed before catalog proof".to_owned(),
+            ));
+        }
+        let aliases = legacy_columns::inspect(&mut transaction).await?;
+        if &aliases != expected_aliases {
+            return Err(MigrationApplyError::LegacyColumnsChanged);
+        }
+        if !aliases.collisions.is_empty() {
+            return Err(MigrationApplyError::LegacyColumnCollision(
+                aliases.collision_labels().join(", "),
+            ));
+        }
+
+        ensure_not_cancelled(cancellation)?;
+        let normalized = if aliases.pending.is_empty() {
+            Vec::new()
+        } else {
+            legacy_columns::apply_in_transaction(&mut transaction, &aliases, cancellation)
+                .await
+                .map_err(map_legacy_column_apply_error)?
+        };
+        let normalized_aliases = legacy_columns::inspect(&mut transaction).await?;
+        if !normalized_aliases.pending.is_empty() || !normalized_aliases.collisions.is_empty() {
+            return Err(MigrationApplyError::LegacyColumnsChanged);
+        }
+
+        let table_schema = snapshot
+            .table_schema
+            .as_deref()
+            .ok_or(MigrationApplyError::InvalidJournalShape)?;
+        validate_journal_columns(snapshot.columns)?;
+        for candidate in &history.catalog_repair_candidates {
+            ensure_not_cancelled(cancellation)?;
+            let entry = manifest
+                .entries
+                .iter()
+                .find(|entry| entry.file_name == candidate.file_name)
+                .filter(|entry| entry.order == candidate.order && entry.sha256 == candidate.sha256)
+                .ok_or(MigrationApplyError::ManifestChanged)?;
+            if !catalog_history_repair::is_pinned(entry) {
+                return Err(MigrationApplyError::CatalogHistoryRepairRejected {
+                    file_name: entry.file_name.clone(),
+                    reason: "migration source is not pinned for catalog repair",
+                });
+            }
+            match catalog_history_repair::verify(&mut transaction, entry).await? {
+                catalog_history_repair::Proof::Verified => {}
+                catalog_history_repair::Proof::Rejected(reason) => {
+                    return Err(MigrationApplyError::CatalogHistoryRepairRejected {
+                        file_name: entry.file_name.clone(),
+                        reason,
+                    });
+                }
+            }
+            match find_history_entry(&mut transaction, table_schema, snapshot.columns, entry)
+                .await?
+            {
+                None => {
+                    insert_history_entry(&mut transaction, table_schema, snapshot.columns, entry)
+                        .await?
+                }
+                Some(true) => {
+                    return Err(MigrationApplyError::HistoryMismatch(format!(
+                        "{} appeared in migration history during catalog repair",
+                        entry.file_name
+                    )));
+                }
+                Some(false) => {
+                    return Err(MigrationApplyError::ConflictingHistory {
+                        file_name: entry.file_name.clone(),
+                    });
+                }
+            }
+        }
+
+        ensure_not_cancelled(cancellation)?;
+        let repaired_snapshot = read_snapshot_on_connection(&mut transaction).await?;
+        let expected_row_count = snapshot
+            .rows
+            .len()
+            .checked_add(history.catalog_repair_candidates.len())
+            .ok_or_else(|| {
+                MigrationApplyError::HistoryMismatch(
+                    "migration history row count overflowed during catalog repair".to_owned(),
+                )
+            })?;
+        if repaired_snapshot.table_schema != snapshot.table_schema
+            || repaired_snapshot.columns != snapshot.columns
+            || repaired_snapshot.rows.len() != expected_row_count
+            || snapshot
+                .rows
+                .iter()
+                .any(|row| !repaired_snapshot.rows.contains(row))
+        {
+            return Err(MigrationApplyError::HistoryMismatch(
+                "migration history changed beyond the catalog repair rows".to_owned(),
+            ));
+        }
+        for candidate in &history.catalog_repair_candidates {
+            let entry = manifest
+                .entries
+                .iter()
+                .find(|entry| entry.file_name == candidate.file_name)
+                .ok_or(MigrationApplyError::ManifestChanged)?;
+            if find_history_entry(
+                &mut transaction,
+                table_schema,
+                repaired_snapshot.columns,
+                entry,
+            )
+            .await?
+                != Some(true)
+            {
+                return Err(MigrationApplyError::HistoryMismatch(format!(
+                    "{} history row was not retained after catalog repair",
+                    entry.file_name
+                )));
+            }
+            if catalog_history_repair::verify(&mut transaction, entry).await?
+                != catalog_history_repair::Proof::Verified
+            {
+                return Err(MigrationApplyError::CatalogHistoryRepairRejected {
+                    file_name: entry.file_name.clone(),
+                    reason: "catalog proof changed before repair commit",
+                });
+            }
+        }
+        Ok(normalized)
+    }
+    .await;
+
+    match result {
+        Ok(normalized) => {
+            if let Err(error) = ensure_not_cancelled(cancellation) {
+                let _ = transaction.rollback().await;
+                Err(error)
+            } else {
+                transaction.commit().await?;
+                Ok(normalized)
+            }
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
 
 /// Node's currently deployed session advisory lock identity. Keep this exact
 /// value until the Node and Rust writers have a coordinated lock migration.
@@ -38,6 +251,10 @@ const MIGRATION_HISTORY_TABLE: &str = "__drizzle_migrations";
 const STATEMENT_BREAKPOINT: &str = "--> statement-breakpoint";
 const ADVISORY_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RECOVERY_POINT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const CANCEL_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+const CANCEL_ROLLBACK_TIMEOUT: Duration = Duration::from_secs(10);
+const BACKEND_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const BACKEND_IDENTITY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A backup provider's claim about one completed migration recovery point.
 /// The apply service independently checks the file, size, checksum, and plain
@@ -60,6 +277,10 @@ pub struct MigrationApplyReport {
     pub already_current: bool,
     pub applied_migrations: Vec<String>,
     pub reconciled_legacy_migrations: Vec<String>,
+    /// Fixed compatibility column renames completed under the migration lock.
+    /// Defaults when reading older serialized reports.
+    #[serde(default)]
+    pub normalized_legacy_columns: Vec<String>,
     pub recovery_point: Option<PathBuf>,
 }
 
@@ -84,6 +305,11 @@ pub enum MigrationApplyError {
     UnsafeLegacyDatabase,
     #[error("migration history is inconsistent: {0}")]
     HistoryMismatch(String),
+    #[error("migration history catalog proof failed for {file_name}: {reason}")]
+    CatalogHistoryRepairRejected {
+        file_name: String,
+        reason: &'static str,
+    },
     #[error("database claims migrations are current but required core tables are missing")]
     MissingCoreSchema,
     #[error("migration journal must have id, created_at, and hash or name columns")]
@@ -130,6 +356,364 @@ pub enum MigrationApplyError {
     AdvisoryLockTimeout,
     #[error("post-migration database invariants failed: {0}")]
     Invariants(String),
+    #[error("migration application is required before the database can be accepted")]
+    ApplyRequired,
+    #[error("database or migration state changed after startup approval was requested")]
+    ApprovalStateChanged,
+    #[error("timed out capturing the migration database session identity")]
+    BackendIdentityTimeout,
+    #[error("legacy column aliases conflict with canonical columns: {0}")]
+    LegacyColumnCollision(String),
+    #[error("legacy column state changed while the recovery point was being created")]
+    LegacyColumnsChanged,
+    #[error("migration application was cancelled after its owned database session was closed")]
+    OperationCancelled,
+    #[error("migration cancellation could not confirm cleanup of its owned database session")]
+    CancellationCleanupUnconfirmed,
+}
+
+#[derive(Clone, Debug)]
+struct MigrationBackendIdentity {
+    pid: i32,
+    backend_start: String,
+    database_oid: i64,
+    database_name: String,
+    user_oid: i64,
+    user_name: String,
+}
+
+/// An operation-specific tag used only to discover the exact PostgreSQL
+/// backend before its stable PID/start/database/role identity is captured.
+#[derive(Clone, Debug)]
+pub(crate) struct BackendCorrelation {
+    application_name: String,
+    database_oid: i64,
+    database_name: String,
+    user_oid: i64,
+    user_name: String,
+}
+
+async fn read_backend_identity(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<MigrationBackendIdentity, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT pg_backend_pid() AS pid,
+               backend_start::text AS backend_start,
+               datid::bigint AS database_oid,
+               datname AS database_name,
+               usesysid::bigint AS user_oid,
+               usename AS user_name
+        FROM pg_stat_activity
+        WHERE pid = pg_backend_pid()
+        "#,
+    )
+    .fetch_one(&mut **connection)
+    .await?;
+    Ok(MigrationBackendIdentity {
+        pid: row.try_get("pid")?,
+        backend_start: row.try_get("backend_start")?,
+        database_oid: row.try_get("database_oid")?,
+        database_name: row.try_get("database_name")?,
+        user_oid: row.try_get("user_oid")?,
+        user_name: row.try_get("user_name")?,
+    })
+}
+
+pub(crate) async fn assign_backend_correlation(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<BackendCorrelation, sqlx::Error> {
+    let application_name = format!("rudder-op-{}", uuid::Uuid::new_v4().simple());
+    let row = sqlx::query(
+        r#"
+        SELECT set_config('application_name', $1, false) AS application_name,
+               (SELECT oid::bigint FROM pg_database WHERE datname = current_database()) AS database_oid,
+               current_database() AS database_name,
+               (SELECT usesysid::bigint FROM pg_user WHERE usename = session_user) AS user_oid,
+               session_user::text AS user_name
+        "#,
+    )
+    .bind(&application_name)
+    .fetch_one(&mut **connection)
+    .await?;
+    let assigned_application_name: String = row.try_get("application_name")?;
+    if assigned_application_name != application_name {
+        return Err(sqlx::Error::Protocol(
+            "PostgreSQL did not retain the operation correlation name".to_owned(),
+        ));
+    }
+    Ok(BackendCorrelation {
+        application_name,
+        database_oid: row.try_get("database_oid")?,
+        database_name: row.try_get("database_name")?,
+        user_oid: row.try_get("user_oid")?,
+        user_name: row.try_get("user_name")?,
+    })
+}
+
+async fn correlated_backend_identity(
+    control_pool: &PgPool,
+    correlation: &BackendCorrelation,
+) -> Result<Option<MigrationBackendIdentity>, ()> {
+    let rows = sqlx::query(
+        r#"
+        SELECT current_database() AS control_database_name,
+               session_user::text AS control_user_name,
+               activity.pid,
+               activity.backend_start::text AS backend_start,
+               activity.datid::bigint AS database_oid,
+               activity.datname AS database_name,
+               activity.usesysid::bigint AS user_oid,
+               activity.usename AS user_name
+        FROM (VALUES (1)) AS control_session(marker)
+        LEFT JOIN pg_stat_activity AS activity
+          ON activity.application_name = $1
+         AND activity.datid::bigint = $2
+         AND activity.datname = $3
+         AND activity.usesysid::bigint = $4
+         AND activity.usename = $5
+        "#,
+    )
+    .bind(&correlation.application_name)
+    .bind(correlation.database_oid)
+    .bind(&correlation.database_name)
+    .bind(correlation.user_oid)
+    .bind(&correlation.user_name)
+    .fetch_all(control_pool)
+    .await
+    .map_err(|_| ())?;
+    if rows.len() != 1 {
+        return Err(());
+    }
+    let row = &rows[0];
+    let control_database_name: String = row.try_get("control_database_name").map_err(|_| ())?;
+    let control_user_name: String = row.try_get("control_user_name").map_err(|_| ())?;
+    if control_database_name != correlation.database_name
+        || control_user_name != correlation.user_name
+    {
+        return Err(());
+    }
+    let Some(pid) = row.try_get::<Option<i32>, _>("pid").map_err(|_| ())? else {
+        return Ok(None);
+    };
+    Ok(Some(MigrationBackendIdentity {
+        pid,
+        backend_start: row.try_get("backend_start").map_err(|_| ())?,
+        database_oid: row.try_get("database_oid").map_err(|_| ())?,
+        database_name: row.try_get("database_name").map_err(|_| ())?,
+        user_oid: row.try_get("user_oid").map_err(|_| ())?,
+        user_name: row.try_get("user_name").map_err(|_| ())?,
+    }))
+}
+
+async fn signal_owned_backend(
+    control_pool: &PgPool,
+    identity: &MigrationBackendIdentity,
+    terminate: bool,
+) -> Result<bool, sqlx::Error> {
+    // PID alone is unsafe because PostgreSQL can reuse it. Match the exact
+    // backend start, database, and role in the same statement that sends the
+    // signal. Application name is used only to discover the exact identity.
+    let function = if terminate {
+        "pg_terminate_backend"
+    } else {
+        "pg_cancel_backend"
+    };
+    let state_guard = if terminate {
+        ""
+    } else {
+        "AND activity.state = 'active'"
+    };
+    let statement = format!(
+        "SELECT {function}(activity.pid) AS signalled \
+         FROM pg_stat_activity AS activity \
+         WHERE activity.pid = $1 \
+           AND activity.backend_start = $2::text::timestamptz \
+           AND activity.datid::bigint = $3 \
+           AND activity.datname = $4 \
+           AND activity.usesysid::bigint = $5 \
+           AND activity.usename = $6 {state_guard}"
+    );
+    let row = sqlx::query(&statement)
+        .bind(identity.pid)
+        .bind(&identity.backend_start)
+        .bind(identity.database_oid)
+        .bind(&identity.database_name)
+        .bind(identity.user_oid)
+        .bind(&identity.user_name)
+        .fetch_optional(control_pool)
+        .await?;
+    match row {
+        Some(row) => row.try_get("signalled"),
+        None => Ok(false),
+    }
+}
+
+async fn owned_backend_exists(
+    control_pool: &PgPool,
+    identity: &MigrationBackendIdentity,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_stat_activity AS activity
+          WHERE activity.pid = $1
+            AND activity.backend_start = $2::text::timestamptz
+            AND activity.datid::bigint = $3
+            AND activity.datname = $4
+            AND activity.usesysid::bigint = $5
+            AND activity.usename = $6
+        )
+        "#,
+    )
+    .bind(identity.pid)
+    .bind(&identity.backend_start)
+    .bind(identity.database_oid)
+    .bind(&identity.database_name)
+    .bind(identity.user_oid)
+    .bind(&identity.user_name)
+    .fetch_one(control_pool)
+    .await
+}
+
+async fn wait_for_owned_backend_exit(
+    control_pool: &PgPool,
+    identity: &MigrationBackendIdentity,
+    timeout_duration: Duration,
+) -> bool {
+    timeout(timeout_duration, async {
+        loop {
+            match owned_backend_exists(control_pool, identity).await {
+                Ok(false) => return true,
+                Ok(true) => tokio::time::sleep(Duration::from_millis(50)).await,
+                Err(_) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
+fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<(), MigrationApplyError> {
+    if cancellation.is_cancelled() {
+        Err(MigrationApplyError::OperationCancelled)
+    } else {
+        Ok(())
+    }
+}
+
+async fn close_owned_backend(
+    connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    control_pool: &PgPool,
+    identity: &MigrationBackendIdentity,
+) -> Result<(), MigrationApplyError> {
+    let _ = timeout(CANCEL_QUERY_TIMEOUT, connection.close()).await;
+    if wait_for_owned_backend_exit(control_pool, identity, CANCEL_ROLLBACK_TIMEOUT).await {
+        Ok(())
+    } else {
+        Err(MigrationApplyError::CancellationCleanupUnconfirmed)
+    }
+}
+
+pub(crate) async fn close_unidentified_backend(
+    mut connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<(), MigrationApplyError> {
+    connection.close_on_drop();
+    let _ = timeout(CANCEL_QUERY_TIMEOUT, connection.close()).await;
+    Err(MigrationApplyError::CancellationCleanupUnconfirmed)
+}
+
+pub(crate) async fn close_correlated_backend(
+    mut connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    control_pool: &PgPool,
+    correlation: &BackendCorrelation,
+) -> Result<(), MigrationApplyError> {
+    connection.close_on_drop();
+    let _ = timeout(CANCEL_QUERY_TIMEOUT, connection.close()).await;
+    match timeout(CANCEL_ROLLBACK_TIMEOUT, async {
+        let identity = correlated_backend_identity(control_pool, correlation)
+            .await
+            .map_err(|_| MigrationApplyError::CancellationCleanupUnconfirmed)?;
+        let Some(identity) = identity else {
+            return Ok(());
+        };
+        let _ = signal_owned_backend(control_pool, &identity, false).await;
+        if wait_for_owned_backend_exit(control_pool, &identity, BACKEND_EXIT_TIMEOUT).await {
+            return Ok(());
+        }
+        let _ = signal_owned_backend(control_pool, &identity, true).await;
+        if wait_for_owned_backend_exit(control_pool, &identity, CANCEL_ROLLBACK_TIMEOUT).await {
+            Ok(())
+        } else {
+            Err(MigrationApplyError::CancellationCleanupUnconfirmed)
+        }
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(MigrationApplyError::CancellationCleanupUnconfirmed),
+    }
+}
+
+async fn finish_cancelled_operation<F>(
+    control_pool: &PgPool,
+    identity: &MigrationBackendIdentity,
+    mut operation: Pin<&mut F>,
+) -> Result<(), MigrationApplyError>
+where
+    F: Future<Output = Result<MigrationApplyReport, MigrationApplyError>>,
+{
+    let _ = timeout(
+        CANCEL_QUERY_TIMEOUT,
+        signal_owned_backend(control_pool, identity, false),
+    )
+    .await;
+
+    let mut operation_result = timeout(CANCEL_ROLLBACK_TIMEOUT, operation.as_mut())
+        .await
+        .ok();
+    let mut operation_finished = operation_result.is_some();
+    if !operation_finished {
+        let _ = timeout(
+            CANCEL_QUERY_TIMEOUT,
+            signal_owned_backend(control_pool, identity, true),
+        )
+        .await;
+        operation_result = timeout(CANCEL_ROLLBACK_TIMEOUT, operation.as_mut())
+            .await
+            .ok();
+        operation_finished = operation_result.is_some();
+    }
+
+    if !wait_for_owned_backend_exit(control_pool, identity, BACKEND_EXIT_TIMEOUT).await {
+        let _ = timeout(
+            CANCEL_QUERY_TIMEOUT,
+            signal_owned_backend(control_pool, identity, true),
+        )
+        .await;
+        if !wait_for_owned_backend_exit(control_pool, identity, CANCEL_ROLLBACK_TIMEOUT).await {
+            return Err(MigrationApplyError::CancellationCleanupUnconfirmed);
+        }
+    }
+
+    // A terminated PostgreSQL backend releases its transaction and advisory
+    // lock. Give SQLx time to observe the closed socket before dropping the
+    // still-pinned operation future.
+    if !operation_finished {
+        operation_result = timeout(CANCEL_QUERY_TIMEOUT, operation.as_mut()).await.ok();
+        operation_finished = operation_result.is_some();
+    }
+    if !operation_finished {
+        return Err(MigrationApplyError::CancellationCleanupUnconfirmed);
+    }
+    if matches!(
+        operation_result.as_ref(),
+        Some(Err(MigrationApplyError::CancellationCleanupUnconfirmed))
+    ) {
+        return Err(MigrationApplyError::CancellationCleanupUnconfirmed);
+    }
+    Ok(())
 }
 
 /// Pool-backed migration writer. Its lock, reads, and transactions all use one
@@ -163,10 +747,236 @@ impl MigrationApplyService {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
     {
-        let mut connection = self.pool.acquire().await?;
+        let connection = self.pool.acquire().await?;
+        self.apply_pending_migrations_on_connection(
+            connection,
+            manifest,
+            source,
+            CancellationToken::new(),
+            None,
+            create_recovery_point,
+        )
+        .await
+    }
+
+    /// Applies migrations while retaining the operation future across caller
+    /// cancellation. The separate control pool must connect to the same
+    /// database with the same database role and have a free connection.
+    ///
+    /// SQLx 0.8 does not expose PostgreSQL's protocol cancel request. Keep the
+    /// owning connection alive, send `pg_cancel_backend` for its captured
+    /// backend identity, then let the normal transaction path roll back and
+    /// release the advisory lock before confirming that the backend exited.
+    pub async fn apply_pending_migrations_cancellable<F, Fut>(
+        &self,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+        cancellation: CancellationToken,
+        control_pool: &PgPool,
+        create_recovery_point: F,
+    ) -> Result<MigrationApplyReport, MigrationApplyError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
+    {
+        self.apply_pending_migrations_cancellable_guarded(
+            manifest,
+            source,
+            cancellation,
+            control_pool,
+            None,
+            create_recovery_point,
+        )
+        .await
+    }
+
+    /// Applies only if the database state still matches the state for which
+    /// startup approval was requested. The approval wait happens outside this
+    /// method, so the advisory lock is never held while a person is deciding.
+    // Keep the approved state token and database identity explicit at this security boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply_pending_migrations_cancellable_after_approval<F, Fut>(
+        &self,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+        cancellation: CancellationToken,
+        control_pool: &PgPool,
+        expected_state_token: &str,
+        database_url: &str,
+        create_recovery_point: F,
+    ) -> Result<MigrationApplyReport, MigrationApplyError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
+    {
+        self.apply_pending_migrations_cancellable_guarded(
+            manifest,
+            source,
+            cancellation,
+            control_pool,
+            Some((expected_state_token, database_url)),
+            create_recovery_point,
+        )
+        .await
+    }
+
+    async fn apply_pending_migrations_cancellable_guarded<F, Fut>(
+        &self,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+        cancellation: CancellationToken,
+        control_pool: &PgPool,
+        expected_state_token: Option<(&str, &str)>,
+        create_recovery_point: F,
+    ) -> Result<MigrationApplyReport, MigrationApplyError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
+    {
+        if cancellation.is_cancelled() {
+            return Err(MigrationApplyError::OperationCancelled);
+        }
+        let mut connection = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(MigrationApplyError::OperationCancelled),
+            result = self.pool.acquire() => result?,
+        };
+        connection.close_on_drop();
+        let correlation_result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => None,
+            result = timeout(BACKEND_IDENTITY_TIMEOUT, assign_backend_correlation(&mut connection)) => Some(result),
+        };
+        let correlation = match correlation_result {
+            Some(Ok(Ok(correlation))) => correlation,
+            Some(Ok(Err(_))) | Some(Err(_)) | None => {
+                let _ = close_unidentified_backend(connection).await;
+                return Err(MigrationApplyError::CancellationCleanupUnconfirmed);
+            }
+        };
+        let identity_result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => None,
+            result = timeout(BACKEND_IDENTITY_TIMEOUT, read_backend_identity(&mut connection)) => Some(result),
+        };
+        let identity = match identity_result {
+            Some(Ok(Ok(identity))) => identity,
+            Some(Ok(Err(error))) => {
+                close_correlated_backend(connection, control_pool, &correlation).await?;
+                return Err(MigrationApplyError::Database(error));
+            }
+            Some(Err(_)) => {
+                close_correlated_backend(connection, control_pool, &correlation).await?;
+                return Err(MigrationApplyError::BackendIdentityTimeout);
+            }
+            None => {
+                close_correlated_backend(connection, control_pool, &correlation).await?;
+                return Err(MigrationApplyError::OperationCancelled);
+            }
+        };
+        if cancellation.is_cancelled() {
+            close_owned_backend(connection, control_pool, &identity).await?;
+            return Err(MigrationApplyError::OperationCancelled);
+        }
+
+        // Keep the checked-out connection outside the operation future until
+        // its first poll. If cancellation wins the biased select before that
+        // poll, close this captured session directly; polling the operation to
+        // "drain" it would otherwise begin migration work after cancellation.
+        let operation_connection = Arc::new(Mutex::new(Some(connection)));
+        let operation_connection_for_future = Arc::clone(&operation_connection);
+        let operation = async {
+            let connection = {
+                operation_connection_for_future
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                    .ok_or(MigrationApplyError::CancellationCleanupUnconfirmed)?
+            };
+            self.apply_pending_migrations_on_connection(
+                connection,
+                manifest,
+                source,
+                cancellation.clone(),
+                expected_state_token,
+                create_recovery_point,
+            )
+            .await
+        };
+        tokio::pin!(operation);
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                let unstarted_connection = operation_connection
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                if let Some(connection) = unstarted_connection {
+                    close_owned_backend(connection, control_pool, &identity).await?;
+                } else {
+                    finish_cancelled_operation(control_pool, &identity, operation.as_mut()).await?;
+                }
+                Err(MigrationApplyError::OperationCancelled)
+            }
+            result = operation.as_mut() => result,
+        }
+    }
+
+    async fn apply_pending_migrations_on_connection<F, Fut>(
+        &self,
+        mut connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+        cancellation: CancellationToken,
+        expected_state_token: Option<(&str, &str)>,
+        create_recovery_point: F,
+    ) -> Result<MigrationApplyReport, MigrationApplyError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
+    {
         // If this future is cancelled while the server is acquiring or holding
         // the session lock, close the physical connection instead of returning
         // a locked session to the pool.
+        connection.close_on_drop();
+        ensure_not_cancelled(&cancellation)?;
+        match timeout(
+            ADVISORY_LOCK_TIMEOUT,
+            acquire_node_migration_lock(&mut connection),
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => return Err(MigrationApplyError::AdvisoryLockTimeout),
+        }
+
+        let result = self
+            .apply_while_locked(
+                &mut connection,
+                manifest,
+                source,
+                &cancellation,
+                expected_state_token,
+                create_recovery_point,
+            )
+            .await;
+        let unlock = release_node_migration_lock(&mut connection).await;
+        match (result, unlock) {
+            (Ok(report), Ok(())) => Ok(report),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Validates that a database is current without changing it. This uses the
+    /// same session lock as application so the caller can safely skip the
+    /// backup/apply path only after Rust has checked current invariants.
+    pub async fn validate_current_state(
+        &self,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+    ) -> Result<MigrationApplyReport, MigrationApplyError> {
+        let mut connection = self.pool.acquire().await?;
         connection.close_on_drop();
         match timeout(
             ADVISORY_LOCK_TIMEOUT,
@@ -179,7 +989,7 @@ impl MigrationApplyService {
         }
 
         let result = self
-            .apply_while_locked(&mut connection, manifest, source, create_recovery_point)
+            .validate_current_while_locked(&mut connection, manifest, source)
             .await;
         let unlock = release_node_migration_lock(&mut connection).await;
         match (result, unlock) {
@@ -189,24 +999,98 @@ impl MigrationApplyService {
         }
     }
 
+    async fn validate_current_while_locked(
+        &self,
+        connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+        manifest: &MigrationManifest,
+        source: &MigrationSource,
+    ) -> Result<MigrationApplyReport, MigrationApplyError> {
+        let current_manifest = load_current_manifest(source).await?;
+        if current_manifest != *manifest {
+            return Err(MigrationApplyError::ManifestChanged);
+        }
+        let (snapshot, _database, history, aliases, report) =
+            inspect_with_manifest(connection, manifest).await?;
+        if snapshot.table_schema.is_some() {
+            validate_journal_columns(snapshot.columns)?;
+        }
+        if history.reason == MigrationHistoryReason::MigrationJournalInvalid {
+            return Err(MigrationApplyError::InvalidJournalShape);
+        }
+        if !aliases.pending.is_empty() || !aliases.collisions.is_empty() {
+            return Err(MigrationApplyError::ApplyRequired);
+        }
+        match report.status {
+            MigrationPreflightStatus::Current => {}
+            MigrationPreflightStatus::Bootstrap | MigrationPreflightStatus::Pending => {
+                return Err(MigrationApplyError::ApplyRequired);
+            }
+            MigrationPreflightStatus::MissingCoreSchema => {
+                return Err(MigrationApplyError::MissingCoreSchema);
+            }
+            MigrationPreflightStatus::UnsafeLegacy => {
+                return Err(MigrationApplyError::UnsafeLegacyDatabase);
+            }
+            MigrationPreflightStatus::Mismatch => {
+                return Err(MigrationApplyError::HistoryMismatch(
+                    history.diagnostics.join("; "),
+                ));
+            }
+        }
+        verify_post_migration_invariants(connection, manifest).await?;
+        Ok(MigrationApplyReport {
+            manifest_fingerprint: manifest.fingerprint.clone(),
+            already_current: true,
+            applied_migrations: Vec::new(),
+            reconciled_legacy_migrations: Vec::new(),
+            normalized_legacy_columns: Vec::new(),
+            recovery_point: None,
+        })
+    }
+
     async fn apply_while_locked<F, Fut>(
         &self,
         connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
         manifest: &MigrationManifest,
         source: &MigrationSource,
+        cancellation: &CancellationToken,
+        expected_state_token: Option<(&str, &str)>,
         create_recovery_point: F,
     ) -> Result<MigrationApplyReport, MigrationApplyError>
     where
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<MigrationRecoveryPointReceipt, String>> + Send,
     {
+        ensure_not_cancelled(cancellation)?;
         let current_manifest = load_current_manifest(source).await?;
+        ensure_not_cancelled(cancellation)?;
         if current_manifest != *manifest {
             return Err(MigrationApplyError::ManifestChanged);
         }
 
-        let (initial_snapshot, initial_database, initial_history, initial_report) =
-            inspect_with_manifest(connection, manifest).await?;
+        let (
+            initial_snapshot,
+            initial_database,
+            initial_history,
+            initial_legacy_columns,
+            initial_report,
+        ) = inspect_with_manifest(connection, manifest).await?;
+        ensure_not_cancelled(cancellation)?;
+        if let Some((expected_state_token, database_url)) = expected_state_token {
+            let mut approval_report = initial_report.clone();
+            approval_report.pending_legacy_column_renames = initial_legacy_columns.pending_labels();
+            approval_report.legacy_column_conflicts = initial_legacy_columns.collision_labels();
+            if crate::operator::startup_approval_token(database_url, &approval_report)
+                != expected_state_token
+            {
+                return Err(MigrationApplyError::ApprovalStateChanged);
+            }
+        }
+        if !initial_legacy_columns.collisions.is_empty() {
+            return Err(MigrationApplyError::LegacyColumnCollision(
+                initial_legacy_columns.collision_labels().join(", "),
+            ));
+        }
         if initial_snapshot.table_schema.is_some() {
             validate_journal_columns(initial_snapshot.columns)?;
         }
@@ -216,14 +1100,19 @@ impl MigrationApplyService {
         let mut reset_empty_history = false;
         match initial_report.status {
             MigrationPreflightStatus::Current => {
-                verify_post_migration_invariants(connection, manifest).await?;
-                return Ok(MigrationApplyReport {
-                    manifest_fingerprint: manifest.fingerprint.clone(),
-                    already_current: true,
-                    applied_migrations: Vec::new(),
-                    reconciled_legacy_migrations: Vec::new(),
-                    recovery_point: None,
-                });
+                if initial_legacy_columns.pending.is_empty() {
+                    ensure_not_cancelled(cancellation)?;
+                    verify_post_migration_invariants(connection, manifest).await?;
+                    ensure_not_cancelled(cancellation)?;
+                    return Ok(MigrationApplyReport {
+                        manifest_fingerprint: manifest.fingerprint.clone(),
+                        already_current: true,
+                        applied_migrations: Vec::new(),
+                        reconciled_legacy_migrations: Vec::new(),
+                        normalized_legacy_columns: Vec::new(),
+                        recovery_point: None,
+                    });
+                }
             }
             MigrationPreflightStatus::Bootstrap | MigrationPreflightStatus::Pending => {}
             MigrationPreflightStatus::MissingCoreSchema if initial_database.table_count == 0 => {
@@ -244,24 +1133,36 @@ impl MigrationApplyService {
 
         // Drizzle history alone is still recoverable state. Preserve it even
         // when the public application schema has not been created yet.
-        let must_back_up =
-            initial_database.table_count > 0 || initial_snapshot.table_schema.is_some();
+        let must_back_up = initial_database.table_count > 0
+            || initial_snapshot.table_schema.is_some()
+            || !initial_legacy_columns.pending.is_empty();
         let recovery_point = if must_back_up {
+            ensure_not_cancelled(cancellation)?;
             let receipt = create_recovery_point()
                 .await
                 .map_err(MigrationApplyError::RecoveryPointProvider)?;
+            ensure_not_cancelled(cancellation)?;
             validate_recovery_point_off_thread(receipt.clone()).await?;
+            ensure_not_cancelled(cancellation)?;
             Some(receipt.path)
         } else {
             None
         };
 
+        ensure_not_cancelled(cancellation)?;
         let reloaded_manifest = load_current_manifest(source).await?;
+        ensure_not_cancelled(cancellation)?;
         if reloaded_manifest != *manifest {
             return Err(MigrationApplyError::ManifestChanged);
         }
-        let (checked_snapshot, checked_database, checked_history, checked_report) =
-            inspect_with_manifest(connection, manifest).await?;
+        let (
+            checked_snapshot,
+            checked_database,
+            checked_history,
+            checked_legacy_columns,
+            checked_report,
+        ) = inspect_with_manifest(connection, manifest).await?;
+        ensure_not_cancelled(cancellation)?;
         if checked_snapshot != initial_snapshot || checked_database != initial_database {
             return Err(MigrationApplyError::HistoryMismatch(
                 "database state changed while the recovery point was being created".to_owned(),
@@ -272,7 +1173,35 @@ impl MigrationApplyService {
                 "migration history changed while the recovery point was being created".to_owned(),
             ));
         }
+        if checked_legacy_columns != initial_legacy_columns {
+            return Err(MigrationApplyError::LegacyColumnsChanged);
+        }
 
+        let catalog_repair_candidates = initial_history.catalog_repair_candidates.clone();
+        let normalized_legacy_columns = if !catalog_repair_candidates.is_empty() {
+            apply_catalog_history_repairs(
+                connection,
+                manifest,
+                source,
+                &initial_snapshot,
+                &initial_history,
+                &initial_legacy_columns,
+                cancellation,
+            )
+            .await?
+        } else if initial_legacy_columns.pending.is_empty() {
+            Vec::new()
+        } else {
+            ensure_not_cancelled(cancellation)?;
+            legacy_columns::apply(connection, &initial_legacy_columns, cancellation)
+                .await
+                .map_err(map_legacy_column_apply_error)?
+        };
+
+        let repaired_names = catalog_repair_candidates
+            .iter()
+            .map(|candidate| candidate.file_name.as_str())
+            .collect::<HashSet<_>>();
         let mut pending = if reset_empty_history
             || initial_report.status == MigrationPreflightStatus::Bootstrap
         {
@@ -281,6 +1210,7 @@ impl MigrationApplyService {
             initial_history
                 .pending_migrations
                 .iter()
+                .filter(|pending| !repaired_names.contains(pending.file_name.as_str()))
                 .map(|pending| {
                     manifest
                         .entries
@@ -298,12 +1228,15 @@ impl MigrationApplyService {
         pending.sort_by_key(|entry| entry.order);
 
         if reset_empty_history {
-            reset_empty_migration_history(connection, &initial_snapshot).await?;
+            ensure_not_cancelled(cancellation)?;
+            reset_empty_migration_history(connection, &initial_snapshot, cancellation).await?;
         } else if initial_snapshot.table_schema.is_none() {
-            create_migration_history_table(connection).await?;
+            ensure_not_cancelled(cancellation)?;
+            create_migration_history_table(connection, cancellation).await?;
         }
 
         let journal_snapshot = read_snapshot_on_connection(connection).await?;
+        ensure_not_cancelled(cancellation)?;
         let table_schema = journal_snapshot
             .table_schema
             .ok_or(MigrationApplyError::InvalidJournalShape)?;
@@ -313,9 +1246,18 @@ impl MigrationApplyService {
         let mut applied_migrations = Vec::new();
         let mut reconciled_legacy_migrations = Vec::new();
         for entry in pending {
+            ensure_not_cancelled(cancellation)?;
             let sql = read_verified_migration_file(source, manifest, entry).await?;
-            let (applied, reconciled) =
-                apply_one_migration(connection, &table_schema, columns, entry, &sql).await?;
+            ensure_not_cancelled(cancellation)?;
+            let (applied, reconciled) = apply_one_migration(
+                connection,
+                &table_schema,
+                columns,
+                entry,
+                &sql,
+                cancellation,
+            )
+            .await?;
             if applied {
                 applied_migrations.push(entry.file_name.clone());
             }
@@ -324,12 +1266,15 @@ impl MigrationApplyService {
             }
         }
 
+        ensure_not_cancelled(cancellation)?;
         verify_post_migration_invariants(connection, manifest).await?;
+        ensure_not_cancelled(cancellation)?;
         Ok(MigrationApplyReport {
             manifest_fingerprint: manifest.fingerprint.clone(),
-            already_current: false,
+            already_current: initial_report.status == MigrationPreflightStatus::Current,
             applied_migrations,
             reconciled_legacy_migrations,
+            normalized_legacy_columns,
             recovery_point,
         })
     }
@@ -421,9 +1366,12 @@ fn validate_journal_columns(
 
 async fn create_migration_history_table(
     connection: &mut PgConnection,
+    cancellation: &CancellationToken,
 ) -> Result<(), MigrationApplyError> {
+    ensure_not_cancelled(cancellation)?;
     sqlx::query("BEGIN").execute(&mut *connection).await?;
     let result = async {
+        ensure_not_cancelled(cancellation)?;
         raw_sql(
             r#"CREATE SCHEMA IF NOT EXISTS "drizzle";
                CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
@@ -434,17 +1382,28 @@ async fn create_migration_history_table(
         )
         .execute(&mut *connection)
         .await?;
-        Ok::<_, sqlx::Error>(())
+        ensure_not_cancelled(cancellation)?;
+        Ok::<_, MigrationApplyError>(())
     }
     .await;
+    let result = if result.is_ok() {
+        ensure_not_cancelled(cancellation)
+    } else {
+        result
+    };
     match result {
         Ok(()) => {
-            sqlx::query("COMMIT").execute(&mut *connection).await?;
+            if let Err(error) = sqlx::query("COMMIT").execute(&mut *connection).await {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+                return Err(MigrationApplyError::Database(error));
+            }
             Ok(())
         }
         Err(error) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
-            Err(MigrationApplyError::Database(error))
+            if let Err(rollback_error) = sqlx::query("ROLLBACK").execute(&mut *connection).await {
+                return Err(MigrationApplyError::Database(rollback_error));
+            }
+            Err(error)
         }
     }
 }
@@ -452,24 +1411,29 @@ async fn create_migration_history_table(
 async fn reset_empty_migration_history(
     connection: &mut PgConnection,
     snapshot: &MigrationHistorySnapshot,
+    cancellation: &CancellationToken,
 ) -> Result<(), MigrationApplyError> {
     let Some(schema) = snapshot.table_schema.as_deref() else {
-        return create_migration_history_table(connection).await;
+        return create_migration_history_table(connection, cancellation).await;
     };
     let quoted_schema = quote_identifier(schema)?;
     let quoted_table = quote_identifier(MIGRATION_HISTORY_TABLE)?;
+    ensure_not_cancelled(cancellation)?;
     sqlx::query("BEGIN").execute(&mut *connection).await?;
     let result = async {
+        ensure_not_cancelled(cancellation)?;
         raw_sql(&format!(
             "DROP TABLE IF EXISTS {quoted_schema}.{quoted_table};"
         ))
         .execute(&mut *connection)
         .await?;
+        ensure_not_cancelled(cancellation)?;
         if schema == DRIZZLE_SCHEMA {
             raw_sql("DROP SCHEMA IF EXISTS \"drizzle\";")
                 .execute(&mut *connection)
                 .await?;
         }
+        ensure_not_cancelled(cancellation)?;
         raw_sql(
             r#"CREATE SCHEMA IF NOT EXISTS "drizzle";
                CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
@@ -480,17 +1444,28 @@ async fn reset_empty_migration_history(
         )
         .execute(&mut *connection)
         .await?;
-        Ok::<_, sqlx::Error>(())
+        ensure_not_cancelled(cancellation)?;
+        Ok::<_, MigrationApplyError>(())
     }
     .await;
+    let result = if result.is_ok() {
+        ensure_not_cancelled(cancellation)
+    } else {
+        result
+    };
     match result {
         Ok(()) => {
-            sqlx::query("COMMIT").execute(&mut *connection).await?;
+            if let Err(error) = sqlx::query("COMMIT").execute(&mut *connection).await {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+                return Err(MigrationApplyError::Database(error));
+            }
             Ok(())
         }
         Err(error) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
-            Err(MigrationApplyError::Database(error))
+            if let Err(rollback_error) = sqlx::query("ROLLBACK").execute(&mut *connection).await {
+                return Err(MigrationApplyError::Database(rollback_error));
+            }
+            Err(error)
         }
     }
 }
@@ -579,7 +1554,7 @@ async fn validate_recovery_point_off_thread(
         .map_err(|error| MigrationApplyError::SourceWorkerFailed(error.to_string()))?
 }
 
-fn validate_recovery_point(
+pub(crate) fn validate_recovery_point(
     receipt: &MigrationRecoveryPointReceipt,
 ) -> Result<(), MigrationApplyError> {
     if !receipt.includes_migration_journal {
@@ -884,10 +1859,14 @@ async fn apply_one_migration(
     columns: rudder_migration_history_core::MigrationHistoryColumns,
     entry: &MigrationEntry,
     sql: &str,
+    cancellation: &CancellationToken,
 ) -> Result<(bool, bool), MigrationApplyError> {
+    ensure_not_cancelled(cancellation)?;
     sqlx::query("BEGIN").execute(&mut *connection).await?;
     let result = async {
+        ensure_not_cancelled(cancellation)?;
         let existing = find_history_entry(connection, table_schema, columns, entry).await?;
+        ensure_not_cancelled(cancellation)?;
         if let Some(matches) = existing {
             if !matches {
                 return Err(MigrationApplyError::ConflictingHistory {
@@ -910,9 +1889,11 @@ async fn apply_one_migration(
         } else {
             false
         };
+        ensure_not_cancelled(cancellation)?;
 
         if !already_applied {
             for statement in split_migration_statements(sql) {
+                ensure_not_cancelled(cancellation)?;
                 raw_sql(statement)
                     .execute(&mut *connection)
                     .await
@@ -920,17 +1901,40 @@ async fn apply_one_migration(
                         file_name: entry.file_name.clone(),
                         source,
                     })?;
+                ensure_not_cancelled(cancellation)?;
             }
         }
+        ensure_not_cancelled(cancellation)?;
         insert_history_entry(connection, table_schema, columns, entry).await?;
+        ensure_not_cancelled(cancellation)?;
         Ok((!already_applied, already_applied))
     }
     .await;
 
     match result {
         Ok(outcome) => {
-            sqlx::query("COMMIT").execute(&mut *connection).await?;
-            Ok(outcome)
+            if let Err(error) = ensure_not_cancelled(cancellation) {
+                return match sqlx::query("ROLLBACK").execute(&mut *connection).await {
+                    Ok(_) => Err(error),
+                    Err(source) => Err(MigrationApplyError::RollbackFailed {
+                        file_name: entry.file_name.clone(),
+                        source,
+                    }),
+                };
+            }
+            match sqlx::query("COMMIT").execute(&mut *connection).await {
+                Ok(_) => Ok(outcome),
+                Err(source) => match sqlx::query("ROLLBACK").execute(&mut *connection).await {
+                    Ok(_) => Err(MigrationApplyError::MigrationFailed {
+                        file_name: entry.file_name.clone(),
+                        source,
+                    }),
+                    Err(rollback_source) => Err(MigrationApplyError::RollbackFailed {
+                        file_name: entry.file_name.clone(),
+                        source: rollback_source,
+                    }),
+                },
+            }
         }
         Err(error) => match sqlx::query("ROLLBACK").execute(&mut *connection).await {
             Ok(_) => Err(error),
@@ -1183,7 +2187,8 @@ async fn verify_post_migration_invariants(
     connection: &mut PgConnection,
     manifest: &MigrationManifest,
 ) -> Result<(), MigrationApplyError> {
-    let (snapshot, database, history, report) = inspect_with_manifest(connection, manifest).await?;
+    let (snapshot, database, history, _aliases, report) =
+        inspect_with_manifest(connection, manifest).await?;
     if report.status != MigrationPreflightStatus::Current
         || history.status != MigrationHistoryStatus::UpToDate
         || history.reason != MigrationHistoryReason::ManifestMatch
@@ -1262,6 +2267,7 @@ async fn inspect_with_manifest(
         MigrationHistorySnapshot,
         MigrationPreflightDatabaseState,
         MigrationHistoryPreflight,
+        legacy_columns::Snapshot,
         crate::MigrationPreflightReport,
     ),
     MigrationApplyError,
@@ -1273,14 +2279,15 @@ async fn inspect_with_manifest(
         let snapshot = read_snapshot_on_connection(connection).await?;
         let database = read_database_state(connection).await?;
         let history = reconcile_migration_history(manifest, &snapshot)?;
-        Ok::<_, MigrationApplyError>((snapshot, database, history))
+        let aliases = legacy_columns::inspect(connection).await?;
+        Ok::<_, MigrationApplyError>((snapshot, database, history, aliases))
     }
     .await;
     match result {
-        Ok((snapshot, database, history)) => {
+        Ok((snapshot, database, history, aliases)) => {
             sqlx::query("COMMIT").execute(&mut *connection).await?;
             let report = classify_preflight(&snapshot, history.clone(), database);
-            Ok((snapshot, database, history, report))
+            Ok((snapshot, database, history, aliases, report))
         }
         Err(error) => {
             let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
@@ -1295,6 +2302,19 @@ mod tests {
     use rudder_migration_core::{MigrationManifestOptions, load_migration_manifest_with_options};
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn report_deserializes_without_the_added_legacy_column_field() {
+        let report: MigrationApplyReport = serde_json::from_value(serde_json::json!({
+            "manifestFingerprint": "abc",
+            "alreadyCurrent": true,
+            "appliedMigrations": [],
+            "reconciledLegacyMigrations": [],
+            "recoveryPoint": null
+        }))
+        .unwrap();
+        assert!(report.normalized_legacy_columns.is_empty());
+    }
 
     #[test]
     fn splits_only_on_the_existing_drizzle_breakpoint() {

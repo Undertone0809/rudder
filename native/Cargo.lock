@@ -2139,6 +2139,7 @@ dependencies = [
 name = "rudder-migration-service"
 version = "0.7.24"
 dependencies = [
+ "libc",
  "percent-encoding",
  "rudder-migration-core",
  "rudder-migration-history-core",
@@ -2150,7 +2151,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "url",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2258,6 +2262,21 @@ dependencies = [
  "serde_json",
  "tempfile",
  "zip",
+]
+
+[[package]]
+name = "rudder-postgres-lifecycle"
+version = "0.7.24"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

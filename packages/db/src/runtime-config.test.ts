@@ -84,6 +84,32 @@ describe("resolveDatabaseTarget", () => {
     });
   });
 
+  it("resolves the Rust migration recovery directory from env before config", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-db-runtime-"));
+    const configPath = path.join(tempDir, "instance", "config.json");
+    process.env.RUDDER_CONFIG = configPath;
+    process.env.RUDDER_DB_BACKUP_DIR = "~/operator-backups";
+    writeJson(configPath, {
+      database: { mode: "postgres", backup: { dir: "~/configured-backups" } },
+    });
+
+    const target = resolveDatabaseTarget();
+
+    expect(target.recoveryDirectory).toBe(path.resolve(os.homedir(), "operator-backups"));
+  });
+
+  it("uses the instance backup directory when no backup override is configured", () => {
+    delete process.env.RUDDER_DB_BACKUP_DIR;
+    delete process.env.RUDDER_CONFIG;
+    process.env.RUDDER_HOME = path.join(os.tmpdir(), "rudder-backup-home");
+    process.env.RUDDER_INSTANCE_ID = "migration-test";
+    process.env.DATABASE_URL = "postgres://env-user:env-pass@db.example.com:5432/rudder";
+
+    const target = resolveDatabaseTarget();
+
+    expect(target.recoveryDirectory).toBe(path.join(os.tmpdir(), "rudder-backup-home", "instances", "migration-test", "data", "backups"));
+  });
+
   it("falls back to embedded postgres settings from config", () => {
     delete process.env.RUDDER_EMBEDDED_POSTGRES_PORT;
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-db-runtime-"));

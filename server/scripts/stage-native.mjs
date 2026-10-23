@@ -34,10 +34,22 @@ export function migrationPreflightBinaryName(target) {
   return `migration-preflight${config.extension}`;
 }
 
+export function migrationApplyBinaryName(target) {
+  const config = FOUNDATION_TARGETS[target];
+  if (!config) throw new Error(`Unsupported server migration apply target: ${target}`);
+  return `migration-apply${config.extension}`;
+}
+
 export function processHostBinaryName(target) {
   const config = FOUNDATION_TARGETS[target];
   if (!config) throw new Error(`Unsupported server process host target: ${target}`);
   return `rudder-process-host${config.extension}`;
+}
+
+export function postgresOwnerBinaryName(target) {
+  const config = FOUNDATION_TARGETS[target];
+  if (!config) throw new Error(`Unsupported PostgreSQL owner target: ${target}`);
+  return `rudder-postgres-owner${config.extension}`;
 }
 
 function inspectBinary(buffer, target) {
@@ -119,12 +131,20 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
   const migrationSources = Object.fromEntries(targets.map((target) => [
     target, path.join(artifactDir, target, migrationPreflightBinaryName(target)),
   ]));
+  const migrationApplySources = Object.fromEntries(targets.map((target) => [
+    target, path.join(artifactDir, target, migrationApplyBinaryName(target)),
+  ]));
   const processHostSources = Object.fromEntries(targets.map((target) => [
     target, path.join(artifactDir, target, processHostBinaryName(target)),
   ]));
+  const postgresOwnerSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(artifactDir, target, postgresOwnerBinaryName(target)),
+  ]));
   await validateFoundationArtifacts(processHostSources);
+  await validateFoundationArtifacts(postgresOwnerSources);
   await validateFoundationArtifacts(sources);
   await validateFoundationArtifacts(migrationSources);
+  await validateFoundationArtifacts(migrationApplySources);
 
   const resourceRoot = path.resolve(resourcesDir);
   const staged = [];
@@ -134,9 +154,13 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
     await publishFoundationArtifact(sourcePath, destinationPath, target);
     const migrationPreflightPath = path.join(resourceRoot, "native", target, migrationPreflightBinaryName(target));
     await publishFoundationArtifact(migrationSources[target], migrationPreflightPath, target);
+    const migrationApplyPath = path.join(resourceRoot, "native", target, migrationApplyBinaryName(target));
+    await publishFoundationArtifact(migrationApplySources[target], migrationApplyPath, target);
     const processHostPath = path.join(resourceRoot, "native", target, processHostBinaryName(target));
     await publishFoundationArtifact(processHostSources[target], processHostPath, target);
-    staged.push({ target, path: destinationPath, migrationPreflightPath, processHostPath });
+    const postgresOwnerPath = path.join(resourceRoot, "native", target, postgresOwnerBinaryName(target));
+    await publishFoundationArtifact(postgresOwnerSources[target], postgresOwnerPath, target);
+    staged.push({ target, path: destinationPath, migrationPreflightPath, migrationApplyPath, processHostPath, postgresOwnerPath });
   }
   return staged;
 }
@@ -150,13 +174,21 @@ export async function checkPackagedFoundationArtifacts({ resourcesDir, targets =
   const migrationSources = Object.fromEntries(targets.map((target) => [
     target, path.join(resourceRoot, "native", target, migrationPreflightBinaryName(target)),
   ]));
+  const migrationApplySources = Object.fromEntries(targets.map((target) => [
+    target, path.join(resourceRoot, "native", target, migrationApplyBinaryName(target)),
+  ]));
   const processHostSources = Object.fromEntries(targets.map((target) => [
     target, path.join(resourceRoot, "native", target, processHostBinaryName(target)),
   ]));
+  const postgresOwnerSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(resourceRoot, "native", target, postgresOwnerBinaryName(target)),
+  ]));
   await validateFoundationArtifacts(processHostSources, { requireExecutable: true });
+  await validateFoundationArtifacts(postgresOwnerSources, { requireExecutable: true });
   await validateFoundationArtifacts(sources, { requireExecutable: true });
   await validateFoundationArtifacts(migrationSources, { requireExecutable: true });
-  return targets.map((target) => ({ target, path: sources[target], migrationPreflightPath: migrationSources[target], processHostPath: processHostSources[target] }));
+  await validateFoundationArtifacts(migrationApplySources, { requireExecutable: true });
+  return targets.map((target) => ({ target, path: sources[target], migrationPreflightPath: migrationSources[target], migrationApplyPath: migrationApplySources[target], processHostPath: processHostSources[target], postgresOwnerPath: postgresOwnerSources[target] }));
 }
 
 export function resolveCargoFoundationExecutable(output, binaryName = "rudder-server-foundation") {
@@ -199,7 +231,7 @@ function buildCargoFoundation(command, args) {
       if (signal) return reject(new Error(`${command} exited with signal ${signal}`));
       if (code !== 0) return reject(new Error(`${command} exited with code ${code ?? 1}`));
       try {
-        resolve(["rudder-server-foundation", "migration-preflight", "rudder-process-host"].map((name) => resolveCargoFoundationExecutable(stdout, name)));
+      resolve(["rudder-server-foundation", "migration-preflight", "migration-apply", "rudder-process-host", "rudder-postgres-owner"].map((name) => resolveCargoFoundationExecutable(stdout, name)));
       } catch (error) {
         reject(error);
       }
@@ -263,17 +295,21 @@ async function main() {
   if (cargoBuildTarget && cargoBuildTarget !== target) {
     throw new Error(`Cannot stage ${cargoBuildTarget} as the current host target ${target}`);
   }
-  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "-p", "rudder-migration-service", "--bin", "migration-preflight", "-p", "rudder-process-host", "--bin", "rudder-process-host", "--message-format=json-render-diagnostics"];
+  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "-p", "rudder-migration-service", "--bin", "migration-preflight", "--bin", "migration-apply", "-p", "rudder-process-host", "--bin", "rudder-process-host", "-p", "rudder-postgres-lifecycle", "--bin", "rudder-postgres-owner", "--message-format=json-render-diagnostics"];
   if (release) cargoArgs.push("--release");
-  const [sourcePath, migrationSourcePath, processHostSourcePath] = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
+  const [sourcePath, migrationSourcePath, migrationApplySourcePath, processHostSourcePath, postgresOwnerSourcePath] = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
   await inspectSource(sourcePath, target);
   await inspectSource(migrationSourcePath, target);
+  await inspectSource(migrationApplySourcePath, target);
   await inspectSource(processHostSourcePath, target);
+  await inspectSource(postgresOwnerSourcePath, target);
   const destinationPath = path.join(resourcesDir, "native", target, binaryName);
   await publishFoundationArtifact(sourcePath, destinationPath, target);
   await publishFoundationArtifact(migrationSourcePath, path.join(resourcesDir, "native", target, migrationPreflightBinaryName(target)), target);
+  await publishFoundationArtifact(migrationApplySourcePath, path.join(resourcesDir, "native", target, migrationApplyBinaryName(target)), target);
   await publishFoundationArtifact(processHostSourcePath, path.join(resourcesDir, "native", target, processHostBinaryName(target)), target);
-  console.log(`[server:stage-native] staged ${target}/${binaryName}, migration-preflight, and rudder-process-host`);
+  await publishFoundationArtifact(postgresOwnerSourcePath, path.join(resourcesDir, "native", target, postgresOwnerBinaryName(target)), target);
+  console.log(`[server:stage-native] staged ${target}/${binaryName}, migration-preflight, migration-apply, rudder-process-host, and rudder-postgres-owner`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
