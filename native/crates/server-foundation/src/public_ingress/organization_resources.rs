@@ -515,6 +515,8 @@ async fn read_body(payload: &mut web::Payload, max_bytes: usize) -> Result<Vec<u
     Ok(body)
 }
 
+// Keep the ready-to-send transport error at this narrow ingress boundary.
+#[allow(clippy::result_large_err)]
 fn parse_json(request: &HttpRequest, body: &[u8]) -> Result<Option<Value>, HttpResponse> {
     if body.is_empty() {
         return Ok(None);
