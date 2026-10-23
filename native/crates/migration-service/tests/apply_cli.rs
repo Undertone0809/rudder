@@ -9,11 +9,15 @@ use std::{
     path::Path,
     process::{Command, Stdio},
     str::FromStr,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::{fs::File, thread};
+use std::{
+    fs::File,
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(unix)]
 const MANAGED_PARENT_HELPER: &str = "RUDDER_MIGRATION_APPLY_TEST_PARENT_HELPER";
