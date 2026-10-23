@@ -86,7 +86,9 @@ export function registerApiRoutes(
   );
   api.use(
     "/orgs",
-    organizationRoutes(db, opts.storageService, workspacePreview, rustFoundationBridge),
+    organizationRoutes(db, opts.storageService, workspacePreview, rustFoundationBridge, {
+      nativeResourceRoutes: Boolean(opts.rustPublicIngress),
+    }),
   );
   api.use("/orgs", aiSearchRoutes(db));
   api.use(organizationSkillRoutes(db));
