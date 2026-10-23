@@ -401,6 +401,9 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
           expiresIn: 7 * 24 * 60 * 60,
           updateAge: 24 * 60 * 60,
           disableSessionRefresh: false,
+          trustedOrigins: Object.freeze(["http://127.0.0.1"]),
+          disableSignUp: false,
+          rateLimitEnabled: false,
         },
         identityAuth: {
           assertionKey: "44".repeat(32), agentJwtSecret: "codex-reader-agent-jwt-fixture-secret",

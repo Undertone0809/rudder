@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 mod agent_core;
 mod browser_session;
+mod email_auth;
 mod native_chat;
 mod runtime_bindings;
 
@@ -147,6 +148,7 @@ pub struct PublicIngressRuntime {
     local_implicit_enabled: bool,
     local_account_lifecycle_enabled: bool,
     browser_session_auth_enabled: bool,
+    better_auth_email_auth_enabled: bool,
 }
 
 impl PublicIngressRuntime {
@@ -174,6 +176,23 @@ impl PublicIngressRuntime {
                 .map_err(|error| {
                     ConfigError::invalid("RUDDER_NATIVE_BROWSER_AUTH_MODE", &error.to_string())
                 })?;
+            if browser_auth.better_auth_email_auth_enabled() {
+                let issuer_settings = browser_auth.better_auth_session_settings();
+                let supplied_session = config.session_auth.as_ref();
+                if issuer_settings.is_none_or(|(secret, secure)| {
+                    supplied_session.is_none_or(|session| {
+                        session.kind != NativeSessionAuthKind::BetterAuth
+                            || session.secure_cookie != secure
+                            || session.secret.as_bytes() != secret
+                    })
+                }) {
+                    return Err(ConfigError::invalid(
+                        "RUDDER_NATIVE_BROWSER_AUTH_ISSUER",
+                        "native email auth requires the matching Better Auth session issuer",
+                    )
+                    .into());
+                }
+            }
         }
         if config.native_chat_runtime.is_some()
             && (config.browser_auth.is_none() || config.native_chat_mutations.is_none())
@@ -188,6 +207,10 @@ impl PublicIngressRuntime {
         let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
         let browser_session_auth_enabled =
             config.browser_auth.is_some() || session_auth_kind.is_some();
+        let better_auth_email_auth_enabled = config
+            .browser_auth
+            .as_ref()
+            .is_some_and(|auth| auth.better_auth_email_auth_enabled());
         if config.identity_auth.as_ref().is_some_and(|identity| {
             identity.local_implicit_enabled && !listen_addr.ip().is_loopback()
         }) {
@@ -268,6 +291,18 @@ impl PublicIngressRuntime {
                             "/api/auth/get-session",
                             web::route().to(browser_session::get),
                         );
+                    }
+                    if better_auth_email_auth_enabled {
+                        routes
+                            .route(
+                                "/api/auth/sign-up/email",
+                                web::post().to(email_auth::sign_up),
+                            )
+                            .route(
+                                "/api/auth/sign-in/email",
+                                web::post().to(email_auth::sign_in),
+                            )
+                            .route("/api/auth/sign-out", web::post().to(email_auth::sign_out));
                     }
                 })
                 .route("/healthz", web::get().to(ingress_health))
@@ -357,6 +392,7 @@ impl PublicIngressRuntime {
             native_identity_enabled,
             local_account_lifecycle_enabled,
             browser_session_auth_enabled,
+            better_auth_email_auth_enabled,
             local_implicit_enabled,
         })
     }
@@ -371,6 +407,7 @@ impl PublicIngressRuntime {
             self.native_identity_enabled,
             self.local_implicit_enabled,
             self.browser_session_auth_enabled,
+            self.better_auth_email_auth_enabled,
         );
         if self.local_account_lifecycle_enabled {
             receipt["localAccountLifecycle"] = serde_json::json!({
@@ -398,6 +435,7 @@ fn public_ingress_startup_receipt(
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
     browser_session_auth_enabled: bool,
+    better_auth_email_auth_enabled: bool,
 ) -> serde_json::Value {
     let mut direct_routes = vec![
         "/api/orgs/:org_id/members/directory",
@@ -414,6 +452,13 @@ fn public_ingress_startup_receipt(
     if session_auth_kind.is_some() {
         direct_routes.push("/api/auth/get-session");
     }
+    if better_auth_email_auth_enabled {
+        direct_routes.extend([
+            "/api/auth/sign-up/email",
+            "/api/auth/sign-in/email",
+            "/api/auth/sign-out",
+        ]);
+    }
     let mut native_authentication = serde_json::json!({
         "authority": if native_identity_enabled { "native-managed-http-identity-resolver" } else { "native-pcp-bearer-resolver" },
         "recognizedBearerPrefix": if native_identity_enabled { serde_json::Value::Null } else { serde_json::json!("pcp_") },
@@ -424,7 +469,7 @@ fn public_ingress_startup_receipt(
         "localImplicitConstraint": if native_identity_enabled && local_implicit_enabled { "numeric_loopback_listener_and_actual_peer" } else { "disabled" },
         "identityAssertionTransport": if native_identity_enabled { "one_time_method_target_bound_loopback_hmac" } else { "disabled" },
         "nodeRechecksCurrentOrganizationRolesAndMemberships": true,
-        "unmigrated": ["auth_lifecycle_routes", "websocket_session_resolution"],
+        "unmigrated": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
     });
     if let Some(kind) = session_auth_kind {
         native_authentication["sessionCookieAuthority"] = serde_json::json!({
@@ -436,7 +481,7 @@ fn public_ingress_startup_receipt(
             "scope": "public_ingress_non_lifecycle_http_without_bearer",
             "assertionTransport": "one_time_method_target_bound_loopback_hmac",
             "nodeRechecksCurrentOrganizationRolesAndMemberships": true,
-            "unmigrated": ["auth_lifecycle_routes", "websocket_session_resolution"],
+            "unmigrated": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
         });
     }
     serde_json::json!({
@@ -465,10 +510,23 @@ fn public_ingress_startup_receipt(
                 "session-read-only; other compatibility routes retain their existing authentication"
             },
         },
+        "nativeEmailPasswordLifecycle": if better_auth_email_auth_enabled {
+            serde_json::json!({
+                "authority": "rust",
+                "routes": [
+                    "POST /api/auth/sign-up/email",
+                    "POST /api/auth/sign-in/email",
+                    "POST /api/auth/sign-out",
+                ],
+                "remainingAuthWildcard": "explicit-private-node-proxy",
+            })
+        } else {
+            serde_json::Value::Null
+        },
         "compatibilityAuthentication": {
             "authority": if native_identity_enabled { "none_for_managed_http_identity" } else { "private-node-adapter" },
             "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes", "websocket session resolution"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
-            "nodeOwnedRoutes": ["auth_lifecycle_routes", "websocket_session_resolution"],
+            "nodeOwnedRoutes": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
         },
         "unmigratedHttpAuthority": "explicit-private-node-proxy",
     })
@@ -546,6 +604,15 @@ async fn proxy_request(
     if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
         return crate::local_account_ingress::handle(state, request, payload, endpoint).await;
     }
+    if state
+        .config
+        .browser_auth
+        .as_ref()
+        .is_some_and(|auth| auth.better_auth_email_auth_enabled())
+        && let Some(endpoint) = email_auth::endpoint_for_path(request.uri().path())
+    {
+        return email_auth::handle(state, request, payload, endpoint).await;
+    }
 
     if is_get_session_path(&request) {
         if !matches!(*request.method(), Method::GET | Method::HEAD) {
@@ -579,6 +646,12 @@ async fn proxy_request(
     // fall back to Node in required-Rust mode: exact migrated routes are
     // handled above, and every remaining /llms path is deliberately closed.
     if (state.config.browser_auth.is_some() && browser_session::reserved_path(request.uri().path()))
+        || (state
+            .config
+            .browser_auth
+            .as_ref()
+            .is_some_and(|auth| auth.better_auth_email_auth_enabled())
+            && email_auth::reserved_path(request.uri().path()))
         || native_chat::capability_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
             && native_chat::reserved_path(request.uri().path()))
@@ -2263,7 +2336,7 @@ mod tests {
     #[actix_web::test]
     async fn startup_receipt_reports_only_the_configured_public_auth_authorities() {
         let address = "127.0.0.1:3100".parse().unwrap();
-        let bearer_only = public_ingress_startup_receipt(address, None, false, false, false);
+        let bearer_only = public_ingress_startup_receipt(address, None, false, false, false, false);
         assert_eq!(bearer_only["publicListener"], true);
         assert_eq!(
             bearer_only["nativeAuthentication"]["directRoutes"],
@@ -2276,7 +2349,7 @@ mod tests {
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
 
-        let managed_http = public_ingress_startup_receipt(address, None, true, true, false);
+        let managed_http = public_ingress_startup_receipt(address, None, true, true, false, false);
         assert_eq!(
             managed_http["nativeAuthentication"]["supportedCredentialStores"],
             serde_json::json!(["board_api_keys", "agent_api_keys", "agent_jwt"])
@@ -2292,6 +2365,7 @@ mod tests {
             true,
             false,
             true,
+            true,
         );
         assert_eq!(
             with_better_auth["nativeAuthentication"]["directRoutes"],
@@ -2302,7 +2376,10 @@ mod tests {
                 "/api/orgs/:org_id/goals/assigned",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
-                "/api/auth/get-session"
+                "/api/auth/get-session",
+                "/api/auth/sign-up/email",
+                "/api/auth/sign-in/email",
+                "/api/auth/sign-out"
             ])
         );
         assert_eq!(
@@ -2311,11 +2388,25 @@ mod tests {
         );
         assert_eq!(
             with_better_auth["nativeAuthentication"]["sessionCookieAuthority"]["unmigrated"],
-            serde_json::json!(["auth_lifecycle_routes", "websocket_session_resolution"])
+            serde_json::json!([
+                "remaining_auth_wildcard_routes",
+                "websocket_session_resolution"
+            ])
         );
         assert_eq!(
             with_better_auth["compatibilityAuthentication"]["nodeOwnedRoutes"],
-            serde_json::json!(["auth_lifecycle_routes", "websocket_session_resolution"])
+            serde_json::json!([
+                "remaining_auth_wildcard_routes",
+                "websocket_session_resolution"
+            ])
+        );
+        assert_eq!(
+            with_better_auth["nativeEmailPasswordLifecycle"],
+            serde_json::json!({
+                "authority": "rust",
+                "routes": ["POST /api/auth/sign-up/email", "POST /api/auth/sign-in/email", "POST /api/auth/sign-out"],
+                "remainingAuthWildcard": "explicit-private-node-proxy",
+            })
         );
         assert_eq!(
             with_better_auth["browserSessionAuthentication"],
@@ -2329,7 +2420,7 @@ mod tests {
             bearer_only["browserSessionAuthentication"]["enabled"],
             false
         );
-        let browser_only = public_ingress_startup_receipt(address, None, true, false, true);
+        let browser_only = public_ingress_startup_receipt(address, None, true, false, true, false);
         assert_eq!(
             browser_only["browserSessionAuthentication"]["authority"],
             "native-browser-session-resolver"

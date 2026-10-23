@@ -185,6 +185,9 @@ export async function createAuthRuntime(options: {
       expiresIn: context.sessionConfig.expiresIn,
       updateAge: context.sessionConfig.updateAge,
       disableSessionRefresh: issuerOptions.session?.disableSessionRefresh ?? false,
+      trustedOrigins: Object.freeze([...context.trustedOrigins]),
+      disableSignUp: issuerOptions.emailAndPassword?.disableSignUp === true,
+      rateLimitEnabled: context.rateLimit.enabled,
     });
     runtime.betterAuthHandler = createBetterAuthHandler(auth);
     runtime.resolveSession = (req) => resolveBetterAuthSession(auth, req);
