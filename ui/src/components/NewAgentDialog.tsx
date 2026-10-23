@@ -28,7 +28,7 @@ type AdvancedAdapterType =
   | "pi_local"
   | "cursor"
   | "openclaw_gateway"
-  | "hermes_gateway";
+  | "hermes_local";
 
 const ADVANCED_ADAPTER_OPTIONS: Array<{
   value: AdvancedAdapterType;
@@ -76,10 +76,10 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
     desc: "Invoke OpenClaw via gateway protocol",
   },
   {
-    value: "hermes_gateway",
-    label: "Hermes API Server",
+    value: "hermes_local",
+    label: "Hermes",
     icon: Bot,
-    desc: "Invoke Hermes over HTTP",
+    desc: "Local Hermes agent",
   },
 ];
 

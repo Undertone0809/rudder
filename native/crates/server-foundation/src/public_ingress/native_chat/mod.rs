@@ -10,6 +10,7 @@ use sqlx::PgPool;
 mod input;
 mod paths;
 mod reconcile;
+mod runtime_check;
 mod send;
 pub(super) fn reserved_path(path: &str) -> bool {
     paths::reserved_path(path)
@@ -19,9 +20,18 @@ pub(super) fn capability_path(path: &str) -> bool {
     paths::capability_path(path)
 }
 
+pub(super) fn runtime_check_path(path: &str) -> bool {
+    paths::runtime_check_path(path)
+}
+
 pub(super) fn configure(routes: &mut web::ServiceConfig, send_enabled: bool) {
     routes
         .service(web::resource("/api/native-chat/capabilities").route(web::get().to(capabilities)));
+    routes.service(
+        web::resource("/api/orgs/{org_id}/native-chat/runtime-check")
+            .app_data(web::PayloadConfig::new(64 * 1024))
+            .route(web::post().to(runtime_check::check)),
+    );
     // Recovery reads remain available when new provider dispatch is disabled.
     routes.service(
         web::resource("/api/orgs/{org_id}/chats/messages/stream/reconcile")
@@ -173,7 +183,7 @@ async fn browser_actor(
     chat: &str,
     mutation: bool,
 ) -> HttpResponseResult<(PgPool, BrowserActor, String)> {
-    let (pool, actor) = authenticate_browser_actor(state, request, mutation).await?;
+    let (pool, actor) = authenticate_browser_actor(state, request, mutation, None).await?;
     let org: Option<String> =
         sqlx::query_scalar("SELECT org_id::text FROM chat_conversations WHERE id=$1::uuid")
             .bind(chat)
@@ -190,7 +200,8 @@ pub(super) async fn browser_actor_for_org(
     organization_id: &str,
     mutation: bool,
 ) -> HttpResponseResult<(PgPool, BrowserActor, String)> {
-    let (pool, actor) = authenticate_browser_actor(state, request, mutation).await?;
+    let (pool, actor) =
+        authenticate_browser_actor(state, request, mutation, Some(organization_id)).await?;
     Ok((pool, actor, organization_id.to_owned()))
 }
 
@@ -198,6 +209,7 @@ async fn authenticate_browser_actor(
     state: &IngressState,
     request: &HttpRequest,
     mutation: bool,
+    organization_id: Option<&str>,
 ) -> HttpResponseResult<(PgPool, BrowserActor)> {
     if state.config.forwarding_policy.identity(request).is_err() {
         return Err(boxed(error(
@@ -217,9 +229,14 @@ async fn authenticate_browser_actor(
     // Origin authorization follows credential verification for cookie-backed
     // mutations. Keep this endpoint's resolver read-only with respect to
     // Better Auth session expiry so a rejected Origin cannot slide a session.
-    let actor = browser_auth::authenticate_without_refresh(config, request, &mut connection, None)
-        .await
-        .map_err(|error_| boxed(auth_error(error_)))?;
+    let actor = browser_auth::authenticate_without_refresh(
+        config,
+        request,
+        &mut connection,
+        organization_id,
+    )
+    .await
+    .map_err(|error_| boxed(auth_error(error_)))?;
     if mutation {
         state
             .config

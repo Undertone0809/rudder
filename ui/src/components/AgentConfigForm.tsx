@@ -189,7 +189,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   }, [isCreate, props.onDirtyChange, props.onSaveActionChange, props.onCancelActionChange]);
 
   // ---- Resolve values ----
-  const config = !isCreate ? ((props.agent.agentRuntimeConfig ?? {}) as Record<string, unknown>) : {};
+  const config = !isCreate && overlay.agentRuntimeType === undefined
+    ? ((props.agent.agentRuntimeConfig ?? {}) as Record<string, unknown>)
+    : {};
   const runtimeConfig = !isCreate ? ((props.agent.runtimeConfig ?? {}) as Record<string, unknown>) : {};
   const heartbeat = !isCreate ? ((runtimeConfig.heartbeat ?? {}) as Record<string, unknown>) : {};
 
@@ -253,7 +255,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       return uiAdapter.buildAdapterConfig(val!);
     }
     const base = config as Record<string, unknown>;
-    return { ...base, ...overlay.agentRuntimeConfig };
+    return overlay.agentRuntimeType !== undefined
+      ? { ...overlay.agentRuntimeConfig }
+      : { ...base, ...overlay.agentRuntimeConfig };
   }
 
   // Current model for display
@@ -314,7 +318,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
   function buildRuntimeEnvironmentTestTargets(): RuntimeEnvironmentTestTarget[] {
     const primaryConfig = { ...buildAdapterConfigForTest() };
-    delete primaryConfig.modelFallbacks;
+    if (agentRuntimeType !== "codex_local" && agentRuntimeType !== "hermes_local") {
+      delete primaryConfig.modelFallbacks;
+    }
     return [
       {
         key: "primary",
@@ -592,7 +598,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                             agentRuntimeType: nextRuntimeType,
                             agentRuntimeConfig: {
                               ...defaultConfigForRuntime(nextRuntimeType),
-                              modelFallbacks: [],
+                              ...(nextRuntimeType === "hermes_local" ? {} : { modelFallbacks: [] }),
                             },
                           }));
                         }}

@@ -289,6 +289,44 @@ pub async fn execute_agent_with_native_auth(
     execute_agent_inner(pool, actor, r, Some(native_auth)).await
 }
 
+/// Check whether an already authenticated browser user may inspect Agent
+/// runtime configuration in an organization. Public ingress performs the
+/// browser credential and organization-scope checks first; this function
+/// applies AgentCore's shared config-read permission rule in a read-only
+/// transaction for flows that do not have an Agent ID yet.
+pub async fn browser_user_can_read_configs(
+    pool: &PgPool,
+    organization_id: &str,
+    user_id: &str,
+    local_implicit: bool,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let organization_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+    )
+    .bind(organization_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !organization_exists {
+        tx.commit().await?;
+        return Ok(false);
+    }
+    let admin = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+           SELECT 1 FROM instance_user_roles
+           WHERE user_id=$1 AND role='instance_admin'
+         )",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let allowed =
+        common::can_user_read_configs(&mut tx, organization_id, user_id, local_implicit, admin)
+            .await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 async fn execute_agent_inner(
     pool: &PgPool,
     actor: &VerifiedActor,

@@ -31,6 +31,7 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
 | 运行工具 | Rudder 查找的命令 |
 | --- | --- |
 | Codex | `codex` |
+| Hermes | `hermes` |
 | Claude Code | `claude` |
 | Cursor | `cursor-agent` |
 | OpenCode | `opencode` |
@@ -49,12 +50,14 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
    默认值。
 5. 选择**测试运行时链路**。
 6. 阅读结果：
-   - `pass`：Rudder 可以启动运行工具。
+   - `pass`：运行工具的配置检查通过。
    - `warn`：可能可以使用，但需要先理解提示中的限制。
    - `fail`：修复提示中的命令、登录、模型、路径或网络问题。
 7. 保存 Agent。
 8. 在 Chat 中请求一个安全、明确的小结果，例如两行摘要。
 9. 打开 Agent 运行，确认所选工具确实产生了回复。
+
+Codex 和 Hermes 的环境检查由 Rust 校验本机安装、Profile 和原生配置，不会向模型发送消息。Hermes 默认复用本机默认 Profile；需要已有的命名 Profile 时，在 Agent 高级设置中选择。检查通过后仍需发送一条真实 Chat 消息，确认登录和模型可用。
 
 <a id="success-signal" />
 

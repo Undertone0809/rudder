@@ -33,6 +33,12 @@ pub struct HermesLocalConfig {
     pub env_revision: String,
 }
 
+pub(super) struct HermesRuntimeSettings {
+    pub(super) profile_id: String,
+    pub(super) model: Option<String>,
+    pub(super) env: Option<Value>,
+}
+
 /// Resolve one locked ordinary Chat's selected Hermes Agent. It intentionally
 /// does not invoke Codex profile, workspace-policy, or Thread validation.
 pub(crate) async fn resolve_hermes_config(
@@ -100,51 +106,20 @@ pub(crate) async fn resolve_hermes_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Agent runtime configuration is malformed"))?;
-    let object = config
-        .as_object()
-        .ok_or_else(|| invalid("Hermes Agent configuration must be an object"))?;
-    const ALLOWED: &[&str] = &["profileId", "model", "reasoningEffort", "env", "heartbeat"];
-    if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
-        return Err(unsupported(
-            "an unrecognized Hermes Agent runtime setting is present",
-        ));
-    }
-    let profile_id = bounded_string(object.get("profileId"), "profileId")?
-        .unwrap_or_else(|| "default".to_owned());
-    validate_profile_id(&profile_id)?;
     let model_override: Option<String> = row.try_get("model_override")?;
-    let model = model_override
-        .filter(|value| !value.trim().is_empty())
-        .or(bounded_string(object.get("model"), "model")?);
-    if let Some(model) = &model {
-        validate_model(model)?;
-    }
     let chat_effort: Option<String> = row.try_get("effort_override")?;
-    let effort = chat_effort
-        .filter(|value| !value.trim().is_empty())
-        .or(bounded_string(
-            object.get("reasoningEffort"),
-            "reasoningEffort",
-        )?);
-    if row.try_get::<bool, _>("plan_mode")? {
-        return Err(unsupported(
-            "Hermes ACP has no verified Chat plan-mode mapping",
-        ));
-    }
-    if let Some(effort) = &effort {
-        // The installed Hermes ACP server exposes set_model and approval modes,
-        // but no reasoning-effort setter. Reject instead of displaying an
-        // Agent setting that the native provider would silently ignore.
-        validate_effort(effort)?;
-        return Err(unsupported(
-            "the installed Hermes ACP protocol cannot apply reasoningEffort",
-        ));
-    }
-    if let Some(heartbeat) = object.get("heartbeat") {
-        validate_heartbeat(heartbeat)?;
-    }
-
-    let env = resolve_agent_env(tx, &organization_id, object.get("env")).await?;
+    let settings = parse_runtime_settings(
+        &config,
+        model_override,
+        chat_effort,
+        row.try_get::<bool, _>("plan_mode")?,
+    )?;
+    let profile_id = settings.profile_id;
+    let model = settings.model;
+    // `parse_runtime_settings` rejects every non-empty reasoning effort until
+    // Hermes ACP gains a verified setter mapping.
+    let effort: Option<String> = None;
+    let env = resolve_agent_env(tx, &organization_id, settings.env.as_ref()).await?;
     let env_facts: Vec<Value> = env
         .iter()
         .map(|(key, value)| json!({"name":key,"sha256":digest(value.as_bytes())}))
@@ -372,6 +347,77 @@ fn validate_heartbeat(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Shared strict Agent runtime-config admission for persisted Native Chat
+/// resolution and the public preflight endpoint used before an Agent ID exists.
+pub(super) fn parse_runtime_settings(
+    config: &Value,
+    model_override: Option<String>,
+    effort_override: Option<String>,
+    plan_mode: bool,
+) -> Result<HermesRuntimeSettings> {
+    let object = config
+        .as_object()
+        .ok_or_else(|| invalid("Hermes Agent configuration must be an object"))?;
+    const ALLOWED: &[&str] = &[
+        "profileId",
+        "model",
+        "modelFallbacks",
+        "reasoningEffort",
+        "env",
+        "heartbeat",
+    ];
+    if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(unsupported(
+            "an unrecognized Hermes Agent runtime setting is present",
+        ));
+    }
+    if object
+        .get("modelFallbacks")
+        .is_some_and(|fallbacks| !fallbacks.as_array().is_some_and(Vec::is_empty))
+    {
+        return Err(unsupported(
+            "configured Hermes model fallbacks are not enabled for native Chat",
+        ));
+    }
+    let profile_id = bounded_string(object.get("profileId"), "profileId")?
+        .unwrap_or_else(|| "default".to_owned());
+    validate_profile_id(&profile_id)?;
+    let model = model_override
+        .filter(|value| !value.trim().is_empty())
+        .or(bounded_string(object.get("model"), "model")?);
+    if let Some(model) = &model {
+        validate_model(model)?;
+    }
+    let effort = effort_override
+        .filter(|value| !value.trim().is_empty())
+        .or(bounded_string(
+            object.get("reasoningEffort"),
+            "reasoningEffort",
+        )?);
+    if plan_mode {
+        return Err(unsupported(
+            "Hermes ACP has no verified Chat plan-mode mapping",
+        ));
+    }
+    if let Some(effort) = &effort {
+        // The installed Hermes ACP server exposes set_model and approval modes,
+        // but no reasoning-effort setter. Reject instead of displaying an
+        // Agent setting that the native provider would silently ignore.
+        validate_effort(effort)?;
+        return Err(unsupported(
+            "the installed Hermes ACP protocol cannot apply reasoningEffort",
+        ));
+    }
+    if let Some(heartbeat) = object.get("heartbeat") {
+        validate_heartbeat(heartbeat)?;
+    }
+    Ok(HermesRuntimeSettings {
+        profile_id,
+        model,
+        env: object.get("env").cloned(),
+    })
+}
+
 fn bounded_string(value: Option<&Value>, label: &str) -> Result<Option<String>> {
     match value {
         None | Some(Value::Null) => Ok(None),
@@ -407,7 +453,7 @@ fn validate_effort(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_profile_id(value: &str) -> Result<()> {
+pub(super) fn validate_profile_id(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > 128
         || value == "."
@@ -421,7 +467,7 @@ fn validate_profile_id(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_profile_home(root: &Path, profile_id: &str) -> Result<PathBuf> {
+pub(super) fn resolve_profile_home(root: &Path, profile_id: &str) -> Result<PathBuf> {
     let expected = if profile_id == "default" {
         root.to_path_buf()
     } else {
@@ -444,7 +490,7 @@ fn resolve_profile_home(root: &Path, profile_id: &str) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-fn hermes_profile_revision(home: &Path) -> Result<String> {
+pub(super) fn hermes_profile_revision(home: &Path) -> Result<String> {
     const MAX: u64 = 1024 * 1024;
     let mut facts = Vec::new();
     for name in ["config.yaml", "config.yml"] {
@@ -626,4 +672,39 @@ fn digest(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn readiness_uses_the_same_strict_hermes_config_and_profile_rules() {
+        let accepted = parse_runtime_settings(
+            &json!({"profileId":"default","modelFallbacks":[]}),
+            None,
+            None,
+            false,
+        )
+        .expect("empty fallback metadata is a no-op in the shared runtime editor");
+        assert_eq!(accepted.profile_id, "default");
+
+        for config in [
+            json!({"profileId":"default","modelFallbacks":["other-model"]}),
+            json!({"profileId":"default","command":"hermes"}),
+            json!({"profileId":"../outside"}),
+        ] {
+            assert!(
+                parse_runtime_settings(&config, None, None, false).is_err(),
+                "unsupported Hermes config was accepted: {config}"
+            );
+        }
+
+        let root = tempfile::tempdir().expect("create profile fixture");
+        assert!(
+            resolve_profile_home(root.path(), "missing-profile").is_err(),
+            "a named profile absent from the trusted root must be rejected"
+        );
+    }
 }

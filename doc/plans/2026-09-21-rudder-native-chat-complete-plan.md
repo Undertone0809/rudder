@@ -3,7 +3,7 @@ title: Complete Plan for Rudder Native Chat Experience and Agent Run Execution A
 date: 2026-09-21
 kind: implementation
 status: in_progress
-updated_at: 2026-10-22
+updated_at: 2026-10-23
 area: agent_runtimes
 entities:
   - agent_run
@@ -13,6 +13,22 @@ entities:
 ---
 
 # Complete Plan for Rudder Native Chat Experience and Agent Run Execution Architecture
+
+## October 23 Configuration Journey Correction
+
+The native milestone must begin at the ordinary Agent configuration entry. Use
+one enabled **Hermes** choice backed by `hermes_local` in onboarding, New Agent,
+edit/fallback selectors, and invite setup. Hide the duplicate `hermes_gateway`
+choice while preserving existing remote configurations and identifying their
+HTTP gateway connection explicitly. Do not require users to preseed an Agent.
+
+Codex/Hermes configuration checks must validate the same trusted installation,
+Profile, and strict settings used by native dispatch in Rust. A read-only
+readiness pass does not claim provider authentication or a model reply; verify
+those through actual Chat. Include save/reopen, replacing another runtime,
+invalid Profile with draft preservation/Cancel/retry, real first and subsequent
+messages, and final screenshots in acceptance. Onboarding checks the default
+Profile; named Hermes Profiles are selected in Agent settings.
 
 ## October 17 Delivery Priority Correction
 
