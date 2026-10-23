@@ -43,6 +43,21 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     admission_label: "native identity proof",
     source_path: "server/src/bootstrap/create-http-app.ts",
     source_sha256: "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+    // This second exact source is a reviewed candidate variant, not a general
+    // exception. It admits only the private negative fence for the three Rust
+    // email-auth paths and only before the legacy Better Auth wildcard.
+    conditional_source_variants: Object.freeze([
+      Object.freeze({
+        source_sha256: "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
+        additional_mounts: Object.freeze([
+          Object.freeze({
+            expression: '(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); }',
+            guard: "opts.rustPublicIngress",
+            order_before: 'app.all("/api/auth/*authPath", opts.betterAuthHandler)',
+          }),
+        ]),
+      }),
+    ]),
     // The pinned caller also narrows an EXISTING actor mount to required auth.
     // This is an exact replacement, never permission to add another actor owner.
     existing_mount_replacement: Object.freeze({
@@ -254,6 +269,10 @@ const FAMILY_DEFINITIONS = [
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function conditionalTransportSourceVariant(policy, sourceHash) {
+  return policy.conditional_source_variants?.find((variant) => variant.source_sha256 === sourceHash) ?? null;
 }
 
 function compactInventoryRecord(record) {
@@ -730,12 +749,15 @@ function scanSource(relativePath, source) {
         }
       } else {
         const signature = `${relativePath}|middleware|${receiver}|<handler:${first.text}>`;
-        const admissionId = Object.entries(TRUSTED_TRANSPORT_ADMISSIONS).find(([id, policy]) =>
-          relativePath === policy.source_path
-          && receiver === policy.receiver
-          && args.argCount === 1
-          && first.text === policy.mount_expression
-        )?.[0];
+        const admissionId = Object.entries(TRUSTED_TRANSPORT_ADMISSIONS).find(([, policy]) => {
+          if (relativePath !== policy.source_path || receiver !== policy.receiver || args.argCount !== 1) return false;
+          if (first.text === policy.mount_expression) return true;
+          // Tag a narrowly recognized candidate so comparison can reject it
+          // explicitly when its source hash is not the approved conditional variant.
+          return policy.conditional_source_variants?.some((variant) =>
+            variant.additional_mounts.some((mount) => first.text === mount.expression)
+          ) ?? false;
+        })?.[0];
         addSurface("middleware_mount", signature, {
           receiver,
           expression: first.text,
@@ -1099,9 +1121,13 @@ function hasExactNamedImport(tokens, exportName, specifier) {
   return matchingImports === 1 && identifierOccurrences === 2;
 }
 
-function validateTransportAdmissionSource(policy, source, sourcePath) {
+function validateTransportAdmissionSource(policy, source, sourcePath, sourceHash = sha256(source)) {
   const problems = [];
   if (sourcePath !== policy.source_path) problems.push("mount source path does not match trusted policy");
+  const sourceVariant = conditionalTransportSourceVariant(policy, sourceHash);
+  if (policy.conditional_source_variants?.length && sourceHash !== policy.source_sha256 && !sourceVariant) {
+    problems.push("mount source hash does not match any trusted caller variant");
+  }
   const { tokens, calls } = findAppUseCalls(source, policy.receiver);
   const proofCalls = calls.filter((call) => call.expression === policy.mount_expression);
   if (policy.validation_kind === "compatibility_mount") {
@@ -1177,6 +1203,28 @@ function validateTransportAdmissionSource(policy, source, sourcePath) {
   if (actorCalls.length !== 1 || !proofCall || actorCalls[0].start <= proofCall.start) {
     problems.push("proof admission must precede the existing actor resolver");
   }
+  for (const mount of sourceVariant?.additional_mounts ?? []) {
+    const matches = calls.filter((call) => call.expression === mount.expression);
+    if (matches.length !== 1 || matches[0].argument_count !== 1) {
+      problems.push("conditional Rust email-auth fence must use its one exact single-argument app.use mount");
+      continue;
+    }
+    const mountTokenIndex = tokens.findIndex((token) => token.start === matches[0].start);
+    let exactGuardMatches = 0;
+    for (let index = 0; index < mountTokenIndex; index += 1) {
+      if (tokens[index].value !== "if" || tokens[index + 1]?.value !== "(") continue;
+      const conditionEnd = findMatchingToken(tokens, index + 1, "(", ")");
+      if (conditionEnd < 0 || normalizedTokens(tokens, source, index + 2, conditionEnd) !== mount.guard) continue;
+      if (tokens[conditionEnd + 1]?.value !== "{") continue;
+      const bodyEnd = findMatchingToken(tokens, conditionEnd + 1, "{", "}");
+      if (bodyEnd > mountTokenIndex) exactGuardMatches += 1;
+    }
+    if (exactGuardMatches !== 1) problems.push("conditional Rust email-auth fence must be inside the exact Rust public-ingress guard");
+    const wildcardIndex = findTokenSequence(tokens, mount.order_before);
+    if (wildcardIndex < 0 || mountTokenIndex >= wildcardIndex) {
+      problems.push("conditional Rust email-auth fence must precede the Better Auth wildcard handler");
+    }
+  }
   return problems;
 }
 
@@ -1207,7 +1255,7 @@ function validateTransportAdmissionRecord(record, policy, headInventory, headCon
       if (!manifestMountSource) problems.push("trusted mount source is absent from the candidate inventory");
       else if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
       if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
-      problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path));
+      problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path, mountSource.sha256));
     }
     return problems;
   }
@@ -1217,9 +1265,12 @@ function validateTransportAdmissionRecord(record, policy, headInventory, headCon
   if (!mountSource || !manifestMountSource) problems.push("trusted mount source is absent from the candidate inventory");
   else {
     if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
-    if (policy.source_sha256 && mountSource.sha256 !== policy.source_sha256) problems.push("mount source hash does not match the trusted allowlist");
+    if (policy.source_sha256 && mountSource.sha256 !== policy.source_sha256
+      && !conditionalTransportSourceVariant(policy, mountSource.sha256)) {
+      problems.push("mount source hash does not match the trusted allowlist");
+    }
     if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
-    problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path));
+    problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path, mountSource.sha256));
   }
   if (!factorySource || !manifestFactorySource) problems.push("trusted factory source is absent from the candidate inventory");
   else {
@@ -2358,18 +2409,36 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
   for (const [id, policy] of Object.entries(trustedAdmissions)) {
     const surfacesForId = admissionSurfacesById.get(id) ?? [];
     const record = transportRecordsById.get(id);
+    const mountSource = headContents.get(policy.source_path);
+    const sourceVariant = mountSource
+      ? conditionalTransportSourceVariant(policy, mountSource.sha256)
+      : null;
+    const requiredAdditionalMounts = sourceVariant?.additional_mounts ?? [];
+    const primarySurfaces = surfacesForId.filter((surface) => surface.expression === policy.mount_expression);
     if (surfacesForId.length === 0 && record) failures.push(`stale reviewed_transport_admissions record: ${id}`);
-    if (surfacesForId.length > 1) failures.push(`${id}: trusted transport-admission mount must appear exactly once`);
+    if (primarySurfaces.length > 1 || (surfacesForId.length > 0 && primarySurfaces.length !== 1)) {
+      failures.push(`${id}: trusted primary transport-admission mount must appear exactly once`);
+    }
+    if (surfacesForId.length !== (primarySurfaces.length === 1 ? 1 + requiredAdditionalMounts.length : 0)) {
+      failures.push(`${id}: only the source-pinned conditional middleware surfaces may accompany its primary mount`);
+    }
     if (surfacesForId.length === 0) continue;
     if (!record) {
       failures.push(`${id}: missing reviewed_transport_admissions record`);
       continue;
     }
     const problems = validateTransportAdmissionRecord(record, policy, headInventory, headContents);
-    const surface = surfacesForId[0];
-    if (surface.type !== "middleware_mount" || surface.source !== policy.source_path
+    const surface = primarySurfaces[0];
+    if (!surface || surface.type !== "middleware_mount" || surface.source !== policy.source_path
       || surface.receiver !== policy.receiver || surface.expression !== policy.mount_expression) {
       problems.push("generated middleware surface does not match the trusted mount identity");
+    }
+    for (const mount of requiredAdditionalMounts) {
+      const matchingSurfaces = surfacesForId.filter((entry) => entry.expression === mount.expression);
+      if (matchingSurfaces.length !== 1 || matchingSurfaces[0].type !== "middleware_mount"
+        || matchingSurfaces[0].source !== policy.source_path || matchingSurfaces[0].receiver !== policy.receiver) {
+        problems.push("conditional Rust email-auth fence surface does not match its exact trusted middleware identity");
+      }
     }
     let replacementSurface;
     if (policy.existing_mount_replacement) {
@@ -2395,7 +2464,21 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       allowedReplacementUnknown.add(`dynamic_middleware_mount|${replacementSurface.source}|${replacementSurface.expression}`);
     }
     allowedTransportSurfaceSignatures.add(surface.signature);
-    allowedTransportAdmissions.push({ id, source_path: policy.source_path, signature: surface.signature });
+    for (const mount of requiredAdditionalMounts) {
+      for (const additionalSurface of surfacesForId.filter((entry) => entry.expression === mount.expression)) {
+        allowedTransportSurfaceSignatures.add(additionalSurface.signature);
+      }
+    }
+    allowedTransportAdmissions.push({
+      id,
+      source_path: policy.source_path,
+      signature: surface.signature,
+      ...(requiredAdditionalMounts.length
+        ? { conditional_signatures: surfacesForId
+          .filter((entry) => requiredAdditionalMounts.some((mount) => entry.expression === mount.expression))
+          .map((entry) => entry.signature) }
+        : {}),
+    });
   }
   for (const record of normalizedTransportRecords) {
     if (typeof record?.id !== "string" || !Object.hasOwn(trustedAdmissions, record.id)) {
