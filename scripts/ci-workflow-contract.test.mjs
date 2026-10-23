@@ -53,6 +53,7 @@ test("policy-only qualification retains mandatory authority checks before planni
   const plan = workflowJob("plan");
   assert.doesNotMatch(plan, /^    if:/m);
   for (const check of [
+    "node --test scripts/ci-impact-plan.test.mjs scripts/ci-workflow-contract.test.mjs",
     "node --test scripts/rust-backend-authority-inventory.test.mjs",
     "node scripts/rust-backend-authority-inventory.mjs check",
     'git show "${BASE_SHA}:scripts/rust-backend-authority-inventory.mjs"',

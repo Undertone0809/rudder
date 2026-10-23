@@ -111,6 +111,7 @@ jobs:
           BASE_SHA: ${{ steps.comparison.outputs.sha }}
         run: |
           set -euo pipefail
+          node --test scripts/ci-impact-plan.test.mjs scripts/ci-workflow-contract.test.mjs
           node --test scripts/rust-backend-authority-inventory.test.mjs
           node scripts/rust-backend-authority-inventory.mjs check
           if [[ -z "$BASE_SHA" ]]; then
