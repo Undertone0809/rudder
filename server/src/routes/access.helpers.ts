@@ -57,10 +57,6 @@ export function requestBaseUrl(req: Request) {
   return `${proto}://${host}`;
 }
 
-export function buildCliAuthApprovalPath(challengeId: string, token: string) {
-  return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
-}
-
 export function readSkillMarkdown(skillName: string): string | null {
   const requested = skillName.trim().toLowerCase();
   const normalized = requested === "rudder" ? "rudder-docs" : requested;

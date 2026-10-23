@@ -1,6 +1,6 @@
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
-import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -8,7 +8,6 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthRuntime } from "../bootstrap/auth-runtime.js";
 import { createHttpApp, type HttpAppHandle } from "../bootstrap/create-http-app.js";
@@ -30,9 +29,72 @@ const issuerEnvironment = vi.hoisted(() => {
 type Pg = { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> };
 type PgConstructor = new (options: Record<string, unknown>) => Pg;
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const run = promisify(execFile);
 const secret = "  synthetic-launcher-issuer-secret-at-least-32-bytes  ";
 const envNames = ["RUDDER_HOME", "RUDDER_PUBLIC_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_SECRETS", "RUDDER_AGENT_JWT_SECRET", "NODE_ENV", "TEST"] as const;
+
+async function runBoundedBuild(command: string, args: string[]) {
+  const child = spawn(command, args, {
+    cwd: repositoryRoot,
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const maxOutputBytes = 32 * 1024 * 1024;
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let outputLimitExceeded = false;
+  let timedOut = false;
+  let spawnFailed = false;
+  const killOwnedProcessTree = () => {
+    if (child.pid !== undefined && process.platform !== "win32") {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+        return;
+      } catch {
+        // Fall back to the direct child if the process group has already gone.
+      }
+    }
+    child.kill("SIGKILL");
+  };
+  const collect = (chunks: Buffer[], currentBytes: number, chunk: Buffer) => {
+    if (currentBytes + chunk.length > maxOutputBytes) {
+      outputLimitExceeded = true;
+      killOwnedProcessTree();
+      return currentBytes;
+    }
+    chunks.push(chunk);
+    return currentBytes + chunk.length;
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutBytes = collect(stdout, stdoutBytes, chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrBytes = collect(stderr, stderrBytes, chunk);
+  });
+  let killTimer: ReturnType<typeof setTimeout>;
+  const completion = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    child.once("error", () => {
+      spawnFailed = true;
+    });
+    child.once("close", (code, signal) => {
+      clearTimeout(killTimer);
+      const stdoutText = Buffer.concat(stdout).toString("utf8");
+      const stderrText = Buffer.concat(stderr).toString("utf8");
+      if (spawnFailed) reject(new Error("cargo could not start"));
+      else if (timedOut) reject(new Error("cargo build exceeded its 300-second timeout"));
+      else if (outputLimitExceeded) reject(new Error("cargo build exceeded its output limit"));
+      else if (code !== 0) {
+        reject(new Error(`cargo build exited with ${code ?? signal}: ${stderrText.slice(-8_000)}`));
+      } else resolve({ stdout: stdoutText, stderr: stderrText });
+    });
+  });
+  killTimer = setTimeout(() => {
+    timedOut = true;
+    killOwnedProcessTree();
+  }, 300_000);
+  return completion;
+}
 
 async function freePort() {
   const listener = net.createServer().listen(0, "127.0.0.1");
@@ -47,7 +109,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
   const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
   previousEnv.NODE_ENV = issuerEnvironment.NODE_ENV;
   previousEnv.TEST = issuerEnvironment.TEST;
-  let temporary = "", binary = "", databaseUrl = "", rustDatabaseUrl = "";
+  let temporary = "", binary = "", cliBinary = "", databaseUrl = "", rustDatabaseUrl = "";
   let databaseProxy: net.Server | undefined;
   let databasePort = 0, proxyPort = 0;
   const proxySockets = new Set<net.Socket>();
@@ -102,15 +164,17 @@ describe("constructed issuer through the real Rust application launcher", () => 
     ({ createAuthRuntime } = await import("../bootstrap/auth-runtime.js"));
     temporary = await mkdtemp(path.join(os.tmpdir(), "rudder-auth-launcher-"));
     process.env.RUDDER_HOME = path.join(temporary, "home");
-    const args = ["build", "--locked", "--manifest-path", path.join(repositoryRoot, "native/Cargo.toml"), "--bin", "rudder-server-foundation", "--message-format=json"];
+    const args = ["build", "--locked", "--manifest-path", path.join(repositoryRoot, "native/Cargo.toml"), "--bin", "rudder-server-foundation", "--bin", "rudder-cli", "--message-format=json"];
     if (process.env.CI) args.push("--release");
-    const built = await run("cargo", args, { cwd: repositoryRoot, maxBuffer: 16 * 1024 * 1024 });
+    const built = await runBoundedBuild("cargo", args);
     for (const line of built.stdout.trim().split("\n")) {
       const artifact = JSON.parse(line);
       if (artifact.reason === "compiler-artifact" && artifact.target?.name === "rudder-server-foundation" && artifact.executable) binary = artifact.executable;
+      if (artifact.reason === "compiler-artifact" && artifact.target?.name === "rudder-cli" && artifact.executable) cliBinary = artifact.executable;
     }
-    if (!binary) throw new Error("No source-built Rust foundation binary");
+    if (!binary || !cliBinary) throw new Error("No source-built Rust foundation and CLI binaries");
     console.info("Auth launcher source binary", { binary, sha256: createHash("sha256").update(await readFile(binary)).digest("hex") });
+    console.info("Auth launcher source CLI", { binary: cliBinary, sha256: createHash("sha256").update(await readFile(cliBinary)).digest("hex") });
     const external = process.env.RUDDER_BROWSER_AUTH_LAUNCHER_TEST_DATABASE_URL?.trim();
     if (external) {
       const parsed = new URL(external);
@@ -134,7 +198,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
     const proxied = new URL(databaseUrl);
     proxied.port = String(proxyPort);
     rustDatabaseUrl = proxied.toString();
-  }, 180_000);
+  }, 420_000);
 
   afterEach(closeApp, 30_000);
   afterAll(async () => {
@@ -199,6 +263,384 @@ describe("constructed issuer through the real Rust application launcher", () => 
     return app.publicIngressBaseUrl!;
   }
 
+  async function exerciseCliAuthWorkflow(
+    base: string,
+    origin: string,
+    cookie: string,
+    userId: string,
+    noMembershipSession?: { cookie: string; userId: string },
+  ) {
+    let expectedCreatedEvents = 2;
+    const organizationId = randomUUID();
+    const issuePrefix = `CLI${randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase()}`;
+    await db.$client`INSERT INTO organizations (id, url_key, name, issue_prefix)
+      VALUES (${organizationId}, ${`cli-${organizationId}`}, 'CLI auth launcher', ${issuePrefix})`;
+    await db.$client`INSERT INTO organization_memberships
+      (org_id, principal_type, principal_id, status, membership_role)
+      VALUES (${organizationId}, 'user', ${userId}, 'active', 'owner')`;
+    const replayUserId = randomUUID();
+    const replayBoardToken = `pcp_board_${randomBytes(24).toString("hex")}`;
+    await db.$client`INSERT INTO "user" (id, name, email, email_verified, created_at, updated_at)
+      VALUES (${replayUserId}, 'CLI Replay User', ${`${replayUserId}@invalid.test`}, TRUE, now(), now())`;
+    await db.$client`INSERT INTO board_api_keys (user_id, name, key_hash, expires_at, created_at)
+      VALUES (${replayUserId}, 'CLI replay fixture', ${createHash("sha256").update(replayBoardToken).digest("hex")}, now()+interval '2 days', now())`;
+
+    const privatePaths = [
+      ["POST", "/api/cli-auth/challenges"],
+      ["GET", "/api/cli-auth/challenges/4a884c76-066a-4d80-800f-47c3c41a7562?token=synthetic-token"],
+      ["POST", "/api/cli-auth/challenges/4a884c76-066a-4d80-800f-47c3c41a7562/approve"],
+      ["POST", "/api/cli-auth/challenges/4a884c76-066a-4d80-800f-47c3c41a7562/cancel"],
+      ["GET", "/api/cli-auth/me"],
+      ["POST", "/api/cli-auth/revoke-current"],
+    ] as const;
+    const privateNodeStart = nodePaths.length;
+    for (const [method, pathname] of privatePaths) {
+      const response = await fetch(`${privateNodeBaseUrl}${pathname}`, {
+        method,
+        headers: {
+          cookie,
+          origin: privateNodeBaseUrl,
+          "content-type": "application/json",
+        },
+        ...(method === "POST" ? { body: JSON.stringify({ token: "synthetic-token" }) } : {}),
+      });
+      expect(response.status, `private Node ${method} ${pathname}`).toBe(404);
+    }
+    expect(nodePaths.slice(privateNodeStart)).toEqual(privatePaths.map(([, pathname]) => pathname));
+
+    const publicNodeStart = nodePaths.length;
+    const expectedPublicNodePaths: string[] = [];
+    const postJson = (pathname: string, body: unknown, headers: Record<string, string> = {}) =>
+      fetch(`${base}${pathname}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin, ...headers },
+        body: JSON.stringify(body),
+      });
+    const createChallenge = async (requestedAccess: "board" | "instance_admin_required" = "board") => {
+      const response = await postJson("/api/cli-auth/challenges", {
+        command: "rudder organization list",
+        clientName: "launcher cli",
+        requestedAccess,
+        requestedCompanyId: organizationId,
+      });
+      expect(response.status).toBe(201);
+      expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+      const value = await response.json() as {
+        id: string;
+        token: string;
+        boardApiToken: string;
+        approvalPath: string;
+        approvalUrl: string | null;
+        pollPath: string;
+      };
+      const generatedCredential = (credential: unknown, prefix: string) =>
+        typeof credential === "string"
+        && credential.startsWith(prefix)
+        && /^[0-9a-f]{48}$/.test(credential.slice(prefix.length));
+      expect(generatedCredential(value.token, "pcp_cli_auth_")).toBe(true);
+      expect(generatedCredential(value.boardApiToken, "pcp_board_")).toBe(true);
+      expect(value.approvalPath.startsWith(`/cli-auth/${value.id}?token=`)).toBe(true);
+      expect(new URL(value.approvalPath, "http://rudder.invalid").searchParams.get("token") === value.token).toBe(true);
+      expect(value.approvalUrl?.startsWith(new URL(base).origin)).toBe(true);
+      expect(value.approvalUrl && new URL(value.approvalUrl).searchParams.get("token") === value.token).toBe(true);
+      expect(value.pollPath).toBe(`/cli-auth/challenges/${value.id}`);
+      const [stored] = await db.$client`SELECT
+          secret_hash,
+          pending_key_hash,
+          pending_key_name,
+          command,
+          client_name,
+          requested_access,
+          requested_company_id::text AS requested_company_id,
+          expires_at BETWEEN now()+interval '9 minutes' AND now()+interval '11 minutes' AS ttl_ok
+        FROM cli_auth_challenges WHERE id=${value.id}::uuid`;
+      expect(stored.secret_hash === createHash("sha256").update(value.token).digest("hex")).toBe(true);
+      expect(stored.pending_key_hash === createHash("sha256").update(value.boardApiToken).digest("hex")).toBe(true);
+      expect(stored.pending_key_name).toBe(
+        requestedAccess === "instance_admin_required"
+          ? "launcher cli (instance admin)"
+          : "launcher cli (board)",
+      );
+      expect(stored.command).toBe("rudder organization list");
+      expect(stored.client_name).toBe("launcher cli");
+      expect(stored.requested_access).toBe(requestedAccess);
+      expect(stored.requested_company_id).toBe(organizationId);
+      expect(stored.ttl_ok).toBe(true);
+      return value;
+    };
+    const poll = (challenge: { id: string; token: string }, withCookie = false) =>
+      fetch(`${base}/api/cli-auth/challenges/${challenge.id}?token=${encodeURIComponent(challenge.token)}`, {
+        headers: withCookie ? { cookie } : {},
+      });
+    const approve = (challenge: { id: string; token: string }, requestOrigin = origin) =>
+      postJson(
+        `/api/cli-auth/challenges/${challenge.id}/approve`,
+        { token: challenge.token },
+        { cookie, origin: requestOrigin },
+      );
+    const approveAsReplayUser = (challenge: { id: string; token: string }) =>
+      postJson(
+        `/api/cli-auth/challenges/${challenge.id}/approve`,
+        { token: challenge.token },
+        { authorization: `Bearer ${replayBoardToken}` },
+      );
+
+    const first = await createChallenge();
+    const pending = await poll(first);
+    const pendingBody = await pending.json() as Record<string, unknown>;
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ status: "pending", requiresSignIn: true, canApprove: false });
+    expect(pending.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+
+    const rejectedOrigin = await approve(first, "https://attacker.invalid.test");
+    expect(rejectedOrigin.status).toBe(403);
+    expect((await poll(first)).status).toBe(200);
+
+    const firstApproved = await approve(first);
+    expect(firstApproved.status).toBe(200);
+    const firstApprovalBody = await firstApproved.json() as { approved: boolean; status: string; keyId: string };
+    expect(firstApprovalBody.approved).toBe(true);
+    expect(firstApprovalBody.status).toBe("approved");
+    const firstApprovedPoll = await poll(first, true);
+    expect((await firstApprovedPoll.json() as Record<string, unknown>).status).toBe("approved");
+    const replayed = await approveAsReplayUser(first);
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toMatchObject({
+      approved: true,
+      status: "approved",
+      userId,
+      keyId: firstApprovalBody.keyId,
+    });
+    const [firstOwner] = await db.$client`SELECT
+        c.approved_by_user_id,
+        c.board_api_key_id::text AS key_id,
+        k.user_id AS key_owner
+      FROM cli_auth_challenges c
+      JOIN board_api_keys k ON k.id=c.board_api_key_id
+      WHERE c.id=${first.id}::uuid`;
+    expect(firstOwner).toEqual({
+      approved_by_user_id: userId,
+      key_id: firstApprovalBody.keyId,
+      key_owner: userId,
+    });
+    const [firstEffects] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM activity_log WHERE action='board_api_key.created' AND details->>'challengeId'=${first.id}) AS activity_count,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE event_type='activity.logged' AND payload->'details'->>'challengeId'=${first.id}) AS event_count`;
+    expect(firstEffects).toEqual({ activity_count: 1, event_count: 1 });
+
+    const noMembership = await createChallenge();
+    const noMembershipApproval = await approveAsReplayUser(noMembership);
+    expect(noMembershipApproval.status).toBe(200);
+    const noMembershipBody = await noMembershipApproval.json() as { userId: string };
+    expect(noMembershipBody.userId).toBe(replayUserId);
+    const [noMembershipOwner] = await db.$client`SELECT c.approved_by_user_id, k.user_id AS key_owner
+      FROM cli_auth_challenges c JOIN board_api_keys k ON k.id=c.board_api_key_id
+      WHERE c.id=${noMembership.id}::uuid`;
+    expect(noMembershipOwner).toEqual({ approved_by_user_id: replayUserId, key_owner: replayUserId });
+    const [noMembershipEffects] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM activity_log WHERE details->>'challengeId'=${noMembership.id}) AS activity_count,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE payload->'details'->>'challengeId'=${noMembership.id}) AS event_count`;
+    expect(noMembershipEffects).toEqual({ activity_count: 0, event_count: 0 });
+
+    if (noMembershipSession) {
+      const [membershipRows] = await db.$client`SELECT COUNT(*)::int AS count
+        FROM organization_memberships
+        WHERE principal_type='user' AND principal_id=${noMembershipSession.userId} AND status='active'`;
+      expect(membershipRows.count).toBe(0);
+      const sessionChallenge = await createChallenge();
+      const sessionApproval = await postJson(
+        `/api/cli-auth/challenges/${sessionChallenge.id}/approve`,
+        { token: sessionChallenge.token },
+        { cookie: noMembershipSession.cookie, origin },
+      );
+      expect(sessionApproval.status).toBe(200);
+      expect(await sessionApproval.json()).toMatchObject({
+        approved: true,
+        status: "approved",
+        userId: noMembershipSession.userId,
+      });
+      const [sessionOwner] = await db.$client`SELECT
+          c.approved_by_user_id,
+          c.board_api_key_id::text AS key_id,
+          k.user_id AS key_owner
+        FROM cli_auth_challenges c
+        JOIN board_api_keys k ON k.id=c.board_api_key_id
+        WHERE c.id=${sessionChallenge.id}::uuid`;
+      expect(sessionOwner).toMatchObject({
+        approved_by_user_id: noMembershipSession.userId,
+        key_owner: noMembershipSession.userId,
+      });
+      const sessionKeyMe = await fetch(`${base}/api/cli-auth/me`, {
+        headers: { authorization: `Bearer ${sessionChallenge.boardApiToken}` },
+      });
+      expect(sessionKeyMe.status).toBe(200);
+      expect(await sessionKeyMe.json()).toMatchObject({
+        userId: noMembershipSession.userId,
+        orgIds: [],
+      });
+
+      const [foreignAccessBefore] = await db.$client`SELECT
+          (SELECT COUNT(*)::int FROM projects WHERE org_id=${organizationId}::uuid) AS project_count,
+          (SELECT COUNT(*)::int FROM activity_log WHERE org_id=${organizationId}::uuid) AS activity_count,
+          (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE org_id=${organizationId}::uuid) AS event_count`;
+      const foreignProject = await fetch(`${base}/api/orgs/${organizationId}/projects`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${sessionChallenge.boardApiToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: `forbidden-${randomUUID()}` }),
+      });
+      expectedPublicNodePaths.push(`/api/orgs/${organizationId}/projects`);
+      expect(foreignProject.status).toBe(403);
+      const [foreignAccessAfter] = await db.$client`SELECT
+          (SELECT COUNT(*)::int FROM projects WHERE org_id=${organizationId}::uuid) AS project_count,
+          (SELECT COUNT(*)::int FROM activity_log WHERE org_id=${organizationId}::uuid) AS activity_count,
+          (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE org_id=${organizationId}::uuid) AS event_count`;
+      expect(foreignAccessAfter).toEqual(foreignAccessBefore);
+      const [sessionEffects] = await db.$client`SELECT
+          (SELECT COUNT(*)::int FROM activity_log WHERE details->>'challengeId'=${sessionChallenge.id}) AS activity_count,
+          (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE payload->'details'->>'challengeId'=${sessionChallenge.id}) AS event_count`;
+      expect(sessionEffects).toEqual({ activity_count: 0, event_count: 0 });
+    }
+
+    const noMembershipMe = await fetch(`${base}/api/cli-auth/me`, {
+      headers: { authorization: `Bearer ${noMembership.boardApiToken}` },
+    });
+    expect(noMembershipMe.status).toBe(200);
+    expect(await noMembershipMe.json()).toMatchObject({ userId: replayUserId, orgIds: [] });
+    const noMembershipRevoke = await postJson("/api/cli-auth/revoke-current", {}, {
+      authorization: `Bearer ${noMembership.boardApiToken}`,
+    });
+    expect(noMembershipRevoke.status).toBe(200);
+    const [noMembershipRevokeEffects] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM activity_log WHERE details->>'challengeId'=${noMembership.id}) AS activity_count,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE payload->'details'->>'challengeId'=${noMembership.id}) AS event_count`;
+    expect(noMembershipRevokeEffects).toEqual({ activity_count: 0, event_count: 0 });
+
+    const concurrent = await createChallenge();
+    const concurrentResponses = await Promise.all([
+      approve(concurrent),
+      approveAsReplayUser(concurrent),
+    ]);
+    expect(concurrentResponses.map((response) => response.status)).toEqual([200, 200]);
+    const concurrentBodies = await Promise.all(
+      concurrentResponses.map((response) => response.json() as Promise<{ userId: string; keyId: string }>),
+    );
+    const [concurrentOwner] = await db.$client`SELECT
+        c.approved_by_user_id,
+        c.board_api_key_id::text AS key_id,
+        k.user_id AS key_owner
+      FROM cli_auth_challenges c
+      JOIN board_api_keys k ON k.id=c.board_api_key_id
+      WHERE c.id=${concurrent.id}::uuid`;
+    expect(concurrentBodies.every((body) => body.userId === concurrentOwner.approved_by_user_id)).toBe(true);
+    expect(concurrentBodies.every((body) => body.keyId === concurrentOwner.key_id)).toBe(true);
+    expect(concurrentOwner.key_owner).toBe(concurrentOwner.approved_by_user_id);
+    if (concurrentOwner.approved_by_user_id === userId) expectedCreatedEvents += 1;
+    const [concurrentEffects] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM activity_log WHERE action='board_api_key.created' AND details->>'challengeId'=${concurrent.id}) AS activity_count,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE event_type='activity.logged' AND payload->'details'->>'challengeId'=${concurrent.id}) AS event_count`;
+    const expectedConcurrentEffects = concurrentOwner.approved_by_user_id === userId ? 1 : 0;
+    expect(concurrentEffects).toEqual({ activity_count: expectedConcurrentEffects, event_count: expectedConcurrentEffects });
+
+    const elevated = await createChallenge("instance_admin_required");
+    const elevatedPoll = await poll(elevated, true);
+    expect((await elevatedPoll.json() as Record<string, unknown>).canApprove).toBe(false);
+    const denied = await approve(elevated);
+    expect(denied.status).toBe(403);
+    await db.$client`INSERT INTO instance_user_roles (user_id, role) VALUES (${userId}, 'instance_admin')`;
+    const elevatedApproved = await approve(elevated);
+    expect(elevatedApproved.status).toBe(200);
+    const elevatedApprovalBody = await elevatedApproved.json() as { approved: boolean; keyId: string };
+    expect(elevatedApprovalBody.approved).toBe(true);
+    expect(elevatedApprovalBody.keyId).not.toBe(firstApprovalBody.keyId);
+
+    const keyMe = (token: string) => fetch(`${base}/api/cli-auth/me`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const firstMe = await keyMe(first.boardApiToken);
+    expect(firstMe.status).toBe(200);
+    const firstMeBody = await firstMe.json() as { userId: string; source: string; keyId: string; orgIds: string[] };
+    expect(firstMeBody.userId).toBe(userId);
+    expect(firstMeBody.source).toBe("board_key");
+    expect(firstMeBody.keyId).toBe(firstApprovalBody.keyId);
+    expect(firstMeBody.orgIds).toContain(organizationId);
+
+    const firstKey = await db.$client`SELECT key_hash, expires_at FROM board_api_keys WHERE id=${firstApprovalBody.keyId}::uuid`;
+    expect(firstKey[0].key_hash === createHash("sha256").update(first.boardApiToken).digest("hex")).toBe(true);
+    expect(firstKey[0].expires_at > new Date(Date.now() + 29 * 24 * 60 * 60 * 1000)).toBe(true);
+
+    const cancelled = await createChallenge();
+    const cancel = () => postJson(
+      `/api/cli-auth/challenges/${cancelled.id}/cancel`,
+      { token: cancelled.token },
+    );
+    expect((await cancel()).status).toBe(200);
+    expect((await (await cancel()).json() as { status: string; cancelled: boolean }).status).toBe("cancelled");
+    expect((await (await poll(cancelled)).json() as Record<string, unknown>).status).toBe("cancelled");
+
+    const approveCancelRace = await createChallenge();
+    const [racedApproval, racedCancellation] = await Promise.all([
+      approve(approveCancelRace),
+      postJson(`/api/cli-auth/challenges/${approveCancelRace.id}/cancel`, { token: approveCancelRace.token }),
+    ]);
+    expect([racedApproval.status, racedCancellation.status]).toEqual([200, 200]);
+    const [racedApprovalBody, racedCancellationBody] = await Promise.all([
+      racedApproval.json() as Promise<{ approved: boolean; status: string; keyId: string | null }>,
+      racedCancellation.json() as Promise<{ cancelled: boolean; status: string }>,
+    ]);
+    const [approveCancelState] = await db.$client`SELECT
+        c.approved_by_user_id,
+        c.board_api_key_id::text AS key_id,
+        c.approved_at IS NOT NULL AS approved,
+        c.cancelled_at IS NOT NULL AS cancelled,
+        (SELECT COUNT(*)::int FROM activity_log WHERE action='board_api_key.created' AND details->>'challengeId'=${approveCancelRace.id}) AS activity_count,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox WHERE event_type='activity.logged' AND payload->'details'->>'challengeId'=${approveCancelRace.id}) AS event_count
+      FROM cli_auth_challenges c WHERE c.id=${approveCancelRace.id}::uuid`;
+    expect(Boolean(approveCancelState.approved) !== Boolean(approveCancelState.cancelled)).toBe(true);
+    const finalRaceStatus = approveCancelState.approved ? "approved" : "cancelled";
+    expect(racedApprovalBody.status).toBe(finalRaceStatus);
+    expect(racedApprovalBody.approved).toBe(approveCancelState.approved);
+    expect(racedCancellationBody.status).toBe(finalRaceStatus);
+    expect(racedCancellationBody.cancelled).toBe(approveCancelState.cancelled);
+    if (approveCancelState.approved) {
+      expect(approveCancelState.approved_by_user_id).toBe(userId);
+      expect(approveCancelState.key_id).not.toBeNull();
+      expect(approveCancelState.activity_count).toBe(1);
+      expect(approveCancelState.event_count).toBe(1);
+      expectedCreatedEvents += 1;
+    } else {
+      expect(approveCancelState.approved_by_user_id).toBeNull();
+      expect(approveCancelState.key_id).toBeNull();
+      expect(approveCancelState.activity_count).toBe(0);
+      expect(approveCancelState.event_count).toBe(0);
+    }
+
+    const expired = await createChallenge();
+    await db.$client`UPDATE cli_auth_challenges SET expires_at=now()-interval '1 second' WHERE id=${expired.id}::uuid`;
+    expect((await (await poll(expired)).json() as Record<string, unknown>).status).toBe("expired");
+
+    const revoke = await postJson("/api/cli-auth/revoke-current", {}, {
+      authorization: `Bearer ${first.boardApiToken}`,
+    });
+    expect(revoke.status).toBe(200);
+    expect(await revoke.json()).toEqual({ revoked: true, keyId: firstApprovalBody.keyId });
+    expect((await keyMe(first.boardApiToken)).status).toBe(401);
+    expect((await keyMe(elevated.boardApiToken)).status).toBe(200);
+
+    const auditRows = await db.$client`SELECT action, details->>'challengeId' AS challenge_id
+      FROM activity_log WHERE org_id=${organizationId}::uuid AND actor_id=${userId}`;
+    expect(auditRows.some((row) => row.action === "board_api_key.created" && row.challenge_id === first.id)).toBe(true);
+    expect(auditRows.some((row) => row.action === "board_api_key.created" && row.challenge_id === elevated.id)).toBe(true);
+    expect(auditRows.some((row) => row.action === "board_api_key.revoked")).toBe(true);
+    const liveEvents = await db.$client`SELECT event_type, payload->>'action' AS action
+      FROM organization_mutation_outbox WHERE org_id=${organizationId}::uuid`;
+    expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.created")).toHaveLength(expectedCreatedEvents);
+    expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.revoked")).toHaveLength(1);
+    expect(nodePaths.slice(publicNodeStart)).toEqual(expectedPublicNodePaths);
+  }
+
   for (const issuer of ["better_auth", "local_account"] as const) {
     for (const secure of [false, true]) {
       for (const remember of issuer === "better_auth" ? [true, false] : [true]) {
@@ -235,6 +677,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
             expect((await fetch(`${base}/api/${route}`)).status).toBe(401);
           }
           let cookie: string, userId: string;
+          let noMembershipSession: { cookie: string; userId: string } | undefined;
           let secondCookie: string | undefined;
           let primarySessionToken: string | undefined;
           let secondSessionToken: string | undefined;
@@ -378,6 +821,27 @@ describe("constructed issuer through the real Rust application launcher", () => 
               expect(issuedSession.remembered).toBe(remember);
               expect(issuedSession.short_lived).toBe(!remember);
             }
+            const noMembershipEmail = `${randomUUID()}@invalid.test`;
+            const noMembershipPassword = randomBytes(24).toString("base64url");
+            let noMembershipSignup: Response | undefined;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const response = await fetch(`${base}/api/auth/sign-up/email`, {
+                method: "POST", headers: { "content-type": "application/json", origin },
+                body: JSON.stringify({ name: "CLI No Membership", email: noMembershipEmail, password: noMembershipPassword }),
+              });
+              noMembershipSignup = response;
+              if (response.status !== 429 || attempt === 2) break;
+              const retrySeconds = Number(response.headers.get("x-retry-after") ?? response.headers.get("retry-after") ?? 10);
+              expect(retrySeconds).toBeGreaterThanOrEqual(0);
+              expect(retrySeconds).toBeLessThanOrEqual(15);
+              await new Promise((resolve) => setTimeout(resolve, (retrySeconds + 1) * 1000));
+            }
+            if (!noMembershipSignup) throw new Error("No-membership Better Auth signup was not attempted");
+            expect(noMembershipSignup.status).toBe(200);
+            const noMembershipCookie = noMembershipSignup.headers.getSetCookie()
+              .map((value) => value.split(";")[0]).join("; ");
+            const noMembershipBody = await noMembershipSignup.json() as { user: { id: string } };
+            noMembershipSession = { cookie: noMembershipCookie, userId: noMembershipBody.user.id };
             expect(nodePaths.length).toBe(emailAuthNodePathsAfterPrivateSignout);
           } else {
             const policy = runtime.localAccountExchangePolicy!;
@@ -386,6 +850,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
             const issued = await localAccountAuthService(db, { ...policy, verifier: { verify: async () => claims } }).redeem("synthetic-exchange-code");
             cookie = issued.session.setCookie.split(";")[0]; userId = issued.userId;
           }
+          await exerciseCliAuthWorkflow(base, origin, cookie, userId, noMembershipSession);
           await db.$client`UPDATE session SET expires_at=now()+interval '2 days' WHERE user_id=${userId}`;
           const beforeRead = nodePaths.length;
           const session = await fetch(`${base}/api/auth/get-session`, { headers: { cookie } });
@@ -480,4 +945,327 @@ describe("constructed issuer through the real Rust application launcher", () => 
       }
     }
   }
+
+  it("keeps anonymous challenge access and local-trusted approval without a browser session issuer", async () => {
+    const publicPort = await freePort();
+    const origin = `http://127.0.0.1:${publicPort}`;
+    process.env.RUDDER_PUBLIC_URL = origin;
+    delete process.env.BETTER_AUTH_SECRET;
+    delete process.env.BETTER_AUTH_SECRETS;
+    delete process.env.RUDDER_AGENT_JWT_SECRET;
+    const config = {
+      deploymentMode: "local_trusted",
+      deploymentExposure: "private",
+      host: "127.0.0.1",
+      allowedHostnames: [],
+      rustPublicIngressMode: "required",
+      authBaseUrlMode: "explicit",
+      authPublicBaseUrl: origin,
+      authDisableSignUp: false,
+    } as Config;
+    const runtime = await createAuthRuntime({
+      db,
+      config,
+      instanceId: "auth-launcher-local-trusted-test",
+      ensureLocalTrustedBoardPrincipal: async () => {},
+    });
+    expect(runtime.browserSessionAuth).toBeUndefined();
+
+    await db.$client`INSERT INTO "user" (id, name, email, email_verified, created_at, updated_at)
+      VALUES ('local-board', 'Board', 'local@rudder.local', TRUE, now(), now())
+      ON CONFLICT (id) DO NOTHING`;
+    await db.$client`INSERT INTO instance_user_roles (user_id, role)
+      VALUES ('local-board', 'instance_admin') ON CONFLICT (user_id, role) DO NOTHING`;
+    const organizationId = randomUUID();
+    const issuePrefix = `LCL${randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase()}`;
+    await db.$client`INSERT INTO organizations (id, url_key, name, issue_prefix)
+      VALUES (${organizationId}, ${`local-cli-${organizationId}`}, 'Local CLI auth', ${issuePrefix})`;
+    await db.$client`INSERT INTO organization_memberships
+      (org_id, principal_type, principal_id, status, membership_role)
+      VALUES (${organizationId}, 'user', 'local-board', 'active', 'owner')`;
+    const directoryMemberId = randomUUID();
+    await db.$client`INSERT INTO "user" (id, name, email, email_verified, created_at, updated_at)
+      VALUES (${directoryMemberId}, 'CLI Directory Member', ${`${directoryMemberId}@invalid.test`}, TRUE, now(), now())`;
+    await db.$client`INSERT INTO organization_memberships
+      (org_id, principal_type, principal_id, status, membership_role)
+      VALUES (${organizationId}, 'user', ${directoryMemberId}, 'active', 'member')`;
+
+    const base = await start(config, runtime, publicPort);
+    const nodeStart = nodePaths.length;
+    const created = await fetch(`${base}/api/cli-auth/challenges`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command: "rudder orgs list",
+        requestedAccess: "instance_admin_required",
+        requestedCompanyId: organizationId,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const challenge = await created.json() as { id: string; token: string; boardApiToken: string };
+    const looksGenerated = (value: string, prefix: string) =>
+      value.startsWith(prefix) && /^[0-9a-f]{48}$/.test(value.slice(prefix.length));
+    expect(looksGenerated(challenge.token, "pcp_cli_auth_")).toBe(true);
+    expect(looksGenerated(challenge.boardApiToken, "pcp_board_")).toBe(true);
+    const poll = await fetch(`${base}/api/cli-auth/challenges/${challenge.id}?token=${encodeURIComponent(challenge.token)}`);
+    expect(await poll.json()).toMatchObject({
+      status: "pending",
+      requiresSignIn: false,
+      canApprove: true,
+      currentUserId: "local-board",
+    });
+    const approval = await fetch(`${base}/api/cli-auth/challenges/${challenge.id}/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: challenge.token }),
+    });
+    expect(approval.status).toBe(200);
+    expect((await approval.json() as { approved: boolean }).approved).toBe(true);
+    const me = await fetch(`${base}/api/cli-auth/me`, {
+      headers: { authorization: `Bearer ${challenge.boardApiToken}` },
+    });
+    expect(me.status).toBe(200);
+    expect(await me.json()).toMatchObject({ userId: "local-board", isInstanceAdmin: true, orgIds: [organizationId] });
+    expect(nodePaths.length).toBe(nodeStart);
+
+    // Exercise the actual source-built CLI against the same public Rust
+    // listener. The CLI has no TTY and cannot launch a browser; this test
+    // approves the challenge through the public endpoint below.
+    const cliNodeStart = nodePaths.length;
+    const betterAuthStart = betterAuthRequests.length;
+    const cliHome = await mkdtemp(path.join(temporary, "rudder-cli-home-"));
+    const cliEnvironment = {
+      ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.WINDIR ? { WINDIR: process.env.WINDIR } : {}),
+      HOME: cliHome,
+      USERPROFILE: cliHome,
+      RUDDER_HOME: cliHome,
+      RUDDER_CLI_HTTP_TIMEOUT_MS: "5000",
+    };
+    const maxCliOutputBytes = 512 * 1024;
+    type CliResult = {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      stdout: string;
+      stderr: string;
+      timedOut: boolean;
+      outputLimitExceeded: boolean;
+      spawnFailed: boolean;
+    };
+    const startCli = (args: string[], timeoutMs = 70_000) => {
+      const child = spawn(cliBinary, [...args, "--api-base", base, "--json"], {
+        cwd: repositoryRoot,
+        env: cliEnvironment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let timedOut = false;
+      let outputLimitExceeded = false;
+      let spawnFailed = false;
+      const stderrWaiters = new Set<() => void>();
+      const appendBounded = (current: Buffer, chunk: Buffer) => {
+        if (current.length + chunk.length > maxCliOutputBytes) {
+          outputLimitExceeded = true;
+          child.kill("SIGKILL");
+          return current;
+        }
+        return Buffer.concat([current, chunk]);
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout = appendBounded(stdout, chunk);
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr = appendBounded(stderr, chunk);
+        for (const waiter of stderrWaiters) waiter();
+      });
+      let killTimer: ReturnType<typeof setTimeout>;
+      const completion = new Promise<CliResult>((resolve) => {
+        child.once("error", () => {
+          spawnFailed = true;
+        });
+        child.once("close", (code, signal) => {
+          clearTimeout(killTimer);
+          resolve({
+            code,
+            signal,
+            stdout: stdout.toString("utf8"),
+            stderr: stderr.toString("utf8"),
+            timedOut,
+            outputLimitExceeded,
+            spawnFailed,
+          });
+        });
+      });
+      killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs);
+
+      const waitForApprovalUrl = () => {
+        const findUrl = () => stderr.toString("utf8").match(/https?:\/\/[^\s]+\/cli-auth\/[^\s?#]+\?token=[^\s]+/)?.[0];
+        const existing = findUrl();
+        if (existing) return Promise.resolve(existing);
+        return new Promise<string>((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => {
+            clearTimeout(waitTimer);
+            stderrWaiters.delete(check);
+          };
+          const check = () => {
+            const found = findUrl();
+            if (found && !settled) {
+              settled = true;
+              cleanup();
+              resolve(found);
+            }
+          };
+          const waitTimer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              cleanup();
+              reject(new Error("CLI did not print its approval URL in time"));
+            }
+          }, 20_000);
+          stderrWaiters.add(check);
+          void completion.then(() => {
+            check();
+            if (!settled) {
+              settled = true;
+              cleanup();
+              reject(new Error("CLI exited before requesting approval"));
+            }
+          });
+        });
+      };
+      return { child, completion, waitForApprovalUrl };
+    };
+    const requireCliSuccess = (result: CliResult) => {
+      if (result.spawnFailed) throw new Error("source-built rudder-cli could not start");
+      if (result.timedOut) throw new Error("source-built rudder-cli exceeded its execution timeout");
+      if (result.outputLimitExceeded) throw new Error("source-built rudder-cli exceeded its output limit");
+      if (result.code !== 0) throw new Error(`source-built rudder-cli exited with status ${result.code ?? result.signal}`);
+      try {
+        return JSON.parse(result.stdout) as Record<string, unknown>;
+      } catch {
+        throw new Error("source-built rudder-cli did not return valid JSON");
+      }
+    };
+
+    const login = startCli(["auth", "login", "--no-browser"]);
+    try {
+      const approvalText = await login.waitForApprovalUrl();
+      const approvalUrl = new URL(approvalText);
+      expect(approvalUrl.origin === new URL(base).origin).toBe(true);
+      const challengeMatch = approvalUrl.pathname.match(/^\/cli-auth\/([0-9a-f-]+)$/i);
+      if (!challengeMatch) throw new Error("CLI printed an invalid challenge path");
+      const challengeId = challengeMatch[1];
+      if (!challengeId) throw new Error("CLI printed an invalid challenge id");
+      const challengeToken = approvalUrl.searchParams.get("token");
+      if (!challengeToken) throw new Error("CLI approval URL omitted its challenge token");
+
+      const cliApproval = await fetch(`${base}/api/cli-auth/challenges/${challengeId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: challengeToken }),
+      });
+      expect(cliApproval.status).toBe(200);
+      expect(await cliApproval.json()).toMatchObject({ approved: true, status: "approved" });
+
+      const loginResult = await login.completion;
+      const loginJson = requireCliSuccess(loginResult);
+      expect(loginJson.ok === true).toBe(true);
+      expect(loginJson.apiBase === base).toBe(true);
+      expect(loginJson.userId === "local-board").toBe(true);
+
+      const storePath = path.join(cliHome, "auth.json");
+      const saved = JSON.parse(await readFile(storePath, "utf8")) as {
+        credentials?: Record<string, { token?: string; userId?: string }>;
+      };
+      const boardToken = saved.credentials?.[base]?.token;
+      if (!boardToken) throw new Error("CLI did not persist its approved board credential");
+      expect(boardToken.startsWith("pcp_board_")).toBe(true);
+      expect(loginResult.stdout.includes(boardToken)).toBe(false);
+      expect(loginResult.stderr.includes(boardToken)).toBe(false);
+      const boardTokenHash = createHash("sha256").update(boardToken).digest("hex");
+      const issuedRows = await db.$client`SELECT c.pending_key_hash, c.board_api_key_id::text AS key_id,
+          c.approved_by_user_id, k.key_hash, k.user_id, k.revoked_at
+        FROM cli_auth_challenges c
+        JOIN board_api_keys k ON k.id = c.board_api_key_id
+        WHERE c.id = ${challengeId}::uuid`;
+      const issued = issuedRows[0];
+      if (!issued) throw new Error("CLI challenge did not persist an issued key");
+      expect(issued.pending_key_hash === boardTokenHash).toBe(true);
+      expect(issued.key_hash === boardTokenHash).toBe(true);
+      expect(issued.approved_by_user_id).toBe("local-board");
+      expect(issued.user_id).toBe("local-board");
+      expect(issued.revoked_at).toBeNull();
+
+      const whoami = startCli(["auth", "whoami"]);
+      const whoamiResult = await whoami.completion;
+      expect(requireCliSuccess(whoamiResult)).toMatchObject({
+        userId: "local-board",
+        isInstanceAdmin: true,
+        orgIds: [organizationId],
+      });
+
+      const members = startCli(["org", "members", "--org-id", organizationId, "--full-ids"]);
+      const membersResult = await members.completion;
+      const memberPage = requireCliSuccess(membersResult) as {
+        total?: number;
+        items?: Array<{ name?: string; type?: string; role?: string; ref?: string }>;
+      };
+      expect(memberPage.total).toBe(1);
+      expect(memberPage.items).toEqual([
+        expect.objectContaining({ name: "CLI Directory Member", type: "human", role: "member", ref: directoryMemberId }),
+      ]);
+
+      const logout = startCli(["auth", "logout"]);
+      const logoutResult = await logout.completion;
+      expect(requireCliSuccess(logoutResult)).toMatchObject({
+        ok: true,
+        revoked: true,
+        removedLocalCredential: true,
+      });
+      const afterLogout = JSON.parse(await readFile(storePath, "utf8")) as {
+        credentials?: Record<string, { token?: string }>;
+      };
+      expect(afterLogout.credentials?.[base]).toBeUndefined();
+      const revokedRows = await db.$client`SELECT revoked_at FROM board_api_keys WHERE id = ${issued.key_id}::uuid`;
+      expect(revokedRows.length).toBe(1);
+      expect(revokedRows[0]?.revoked_at == null).toBe(false);
+
+      // Local-trusted deliberately resolves missing browser credentials as
+      // its implicit Board identity. After logout the actual CLI has no stored
+      // credential, so whoami must fail locally instead of claiming auth or
+      // opening a browser. Issuer-backed revoked-key HTTP 401 is covered by
+      // the authenticated launcher cases above.
+      const missingCredential = startCli(["auth", "whoami"]);
+      const missingResult = await missingCredential.completion;
+      expect(missingResult.spawnFailed).toBe(false);
+      expect(missingResult.timedOut).toBe(false);
+      expect(missingResult.outputLimitExceeded).toBe(false);
+      expect(missingResult.code === 0).toBe(false);
+      let missingError: { error?: string; status?: number | null; code?: string };
+      try {
+        missingError = JSON.parse(missingResult.stderr) as { error?: string; status?: number | null; code?: string };
+      } catch {
+        throw new Error("CLI without a stored credential did not return a JSON error");
+      }
+      expect(missingError.status === null).toBe(true);
+      expect(missingError.code === "cli_error").toBe(true);
+      expect(missingError.error === "Board credential is required. Run rudder-cli auth login or supply --api-key.").toBe(true);
+
+      const nodeRequests = nodePaths.slice(cliNodeStart).map((requestPath) => requestPath.split("?", 1)[0]);
+      const betterAuthPaths = betterAuthRequests.slice(betterAuthStart).map((requestPath) => requestPath.split("?", 1)[0]);
+      expect(nodeRequests).toEqual([]);
+      expect(betterAuthPaths).toEqual([]);
+    } finally {
+      if (login.child.exitCode === null && login.child.signalCode === null) {
+        login.child.kill("SIGKILL");
+        await login.completion;
+      }
+    }
+  }, 120_000);
 });

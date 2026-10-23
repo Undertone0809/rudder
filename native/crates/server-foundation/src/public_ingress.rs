@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 mod agent_core;
 mod browser_session;
+mod cli_auth;
 mod email_auth;
 mod native_chat;
 mod runtime_bindings;
@@ -33,6 +34,7 @@ pub(super) struct IngressState {
     pub(super) foundation: Arc<AppState>,
     pub(super) config: PublicIngressConfig,
     pub(super) local_account: Option<crate::local_account_auth::LocalAccountAuthService>,
+    pub(super) cli_auth_browser_auth: Option<crate::browser_auth::BrowserAuthConfig>,
 }
 
 /// Apply the effective private-host policy before a public request enters a
@@ -249,10 +251,13 @@ impl PublicIngressRuntime {
         } else {
             None
         };
+        let cli_auth_browser_auth = cli_auth::browser_auth_from_config(&config)
+            .map_err(|reason| ConfigError::invalid("RUDDER_NATIVE_PUBLIC_INGRESS", reason))?;
         let data = web::Data::new(IngressState {
             foundation: foundation.clone(),
             config: config.clone(),
             local_account,
+            cli_auth_browser_auth,
         });
         let max_request_bytes = foundation.config.max_request_bytes;
         let workers = foundation.config.workers;
@@ -523,6 +528,20 @@ fn public_ingress_startup_receipt(
         } else {
             serde_json::Value::Null
         },
+        "nativeCliBoardAuthentication": {
+            "authority": "rust",
+            "protocolVersion": 1,
+            "routes": [
+                "POST /api/cli-auth/challenges",
+                "GET /api/cli-auth/challenges/:id",
+                "POST /api/cli-auth/challenges/:id/approve",
+                "POST /api/cli-auth/challenges/:id/cancel",
+                "GET /api/cli-auth/me",
+                "POST /api/cli-auth/revoke-current",
+            ],
+            "privateNodeFallback": false,
+            "usesExistingBoardApiKeys": true,
+        },
         "compatibilityAuthentication": {
             "authority": if native_identity_enabled { "none_for_managed_http_identity" } else { "private-node-adapter" },
             "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes", "websocket session resolution"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
@@ -613,6 +632,9 @@ async fn proxy_request(
     {
         return email_auth::handle(state, request, payload, endpoint).await;
     }
+    if let Some(endpoint) = cli_auth::endpoint_for_path(request.uri().path()) {
+        return cli_auth::handle(state, request, payload, endpoint).await;
+    }
 
     if is_get_session_path(&request) {
         if !matches!(*request.method(), Method::GET | Method::HEAD) {
@@ -652,6 +674,7 @@ async fn proxy_request(
             .as_ref()
             .is_some_and(|auth| auth.better_auth_email_auth_enabled())
             && email_auth::reserved_path(request.uri().path()))
+        || cli_auth::reserved_path(request.uri().path())
         || native_chat::capability_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
             && native_chat::reserved_path(request.uri().path()))
@@ -664,6 +687,9 @@ async fn proxy_request(
             .next()
             .is_some_and(|segment| segment.eq_ignore_ascii_case("llms"))
     {
+        if cli_auth::reserved_path(request.uri().path()) {
+            return cli_auth::reserved_not_found(&state);
+        }
         return state
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
@@ -2409,6 +2435,23 @@ mod tests {
             })
         );
         assert_eq!(
+            with_better_auth["nativeCliBoardAuthentication"],
+            serde_json::json!({
+                "authority": "rust",
+                "protocolVersion": 1,
+                "routes": [
+                    "POST /api/cli-auth/challenges",
+                    "GET /api/cli-auth/challenges/:id",
+                    "POST /api/cli-auth/challenges/:id/approve",
+                    "POST /api/cli-auth/challenges/:id/cancel",
+                    "GET /api/cli-auth/me",
+                    "POST /api/cli-auth/revoke-current",
+                ],
+                "privateNodeFallback": false,
+                "usesExistingBoardApiKeys": true,
+            })
+        );
+        assert_eq!(
             with_better_auth["browserSessionAuthentication"],
             serde_json::json!({
                 "enabled":true,"authority":"native-existing-session-cookie-resolver",
@@ -3371,6 +3414,7 @@ mod tests {
             config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
                 .unwrap(),
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let app = test::init_service(App::new().app_data(state).route(
             "/api/orgs/{org_id}/members/directory",
@@ -3404,6 +3448,7 @@ mod tests {
             )
             .unwrap(),
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let app = test::init_service(App::new().app_data(state).route(
             "/api/orgs/{org_id}/members/directory",

@@ -1984,6 +1984,7 @@ dependencies = [
  "rudder-agent-request-planner",
  "rudder-cli-mcp-contract-core",
  "serde_json",
+ "time",
  "url",
 ]
 

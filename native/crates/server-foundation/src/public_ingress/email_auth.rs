@@ -1874,6 +1874,7 @@ mod tests {
             foundation: foundation.clone(),
             config,
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let app = test::init_service(
             App::new()

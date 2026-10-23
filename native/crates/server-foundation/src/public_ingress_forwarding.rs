@@ -2,6 +2,7 @@
 use std::{collections::HashSet, net::IpAddr};
 
 use actix_web::{HttpRequest, http::header::HeaderMap};
+use url::{Host, Url};
 
 #[derive(Clone, Default)]
 pub(crate) struct ForwardingPolicy {
@@ -63,6 +64,27 @@ impl ForwardingPolicy {
     pub fn identity(&self, request: &HttpRequest) -> Result<ForwardingIdentity, &'static str> {
         let peer = request.peer_addr().ok_or("missing socket peer")?.ip();
         self.resolve_peer(peer, request.headers())
+    }
+
+    /// Return the request authority suitable for public links. Forwarded host
+    /// is considered only when the socket peer is a configured trusted proxy
+    /// and the rest of its forwarding identity is valid.
+    pub fn authority(&self, request: &HttpRequest) -> Option<String> {
+        let peer = request.peer_addr().map(|peer| normalize_ip(peer.ip()));
+        if peer.is_some_and(|peer| self.trusted_proxies.contains(&peer))
+            && self.identity(request).is_ok()
+        {
+            match single_header(request.headers(), "x-forwarded-host") {
+                Ok(Some(value)) => return validate_authority(value).ok(),
+                Ok(None) => {}
+                Err(_) => return None,
+            }
+        }
+        request
+            .headers()
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| validate_authority(value).ok())
     }
 
     fn resolve_peer(
@@ -135,6 +157,40 @@ fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a st
         .map_err(|_| "invalid forwarding header")
 }
 
+fn validate_authority(value: &str) -> Result<String, &'static str> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 512
+        || value.chars().any(|ch| {
+            ch.is_control()
+                || ch.is_whitespace()
+                || matches!(ch, ',' | '/' | '\\' | '?' | '#' | '@' | '%')
+        })
+    {
+        return Err("invalid host authority");
+    }
+    // Use a non-special scheme so `Url::port()` preserves explicitly supplied
+    // default HTTP/HTTPS ports; the actual external scheme is chosen separately.
+    let url = Url::parse(&format!("rudder://{value}/")).map_err(|_| "invalid host authority")?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("invalid host authority");
+    }
+    let host = match url.host().ok_or("invalid host authority")? {
+        Host::Domain(host) => host.to_owned(),
+        Host::Ipv4(host) => host.to_string(),
+        Host::Ipv6(host) => format!("[{host}]"),
+    };
+    Ok(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +224,73 @@ mod tests {
             .unwrap();
         assert_eq!(identity.client_ip, "198.51.100.7");
         assert_eq!(identity.scheme, "https");
+    }
+
+    #[test]
+    fn trusted_proxy_can_supply_a_valid_external_authority() {
+        let request = TestRequest::default()
+            .peer_addr("127.0.0.1:4000".parse().unwrap())
+            .insert_header(("host", "private.internal:3100"))
+            .insert_header(("x-forwarded-for", "198.51.100.7"))
+            .insert_header(("x-forwarded-proto", "https"))
+            .insert_header(("x-forwarded-host", "Board.example.test:8443"))
+            .to_http_request();
+        let policy = ForwardingPolicy::parse("127.0.0.1").unwrap();
+        assert_eq!(policy.identity(&request).unwrap().scheme, "https");
+        assert_eq!(
+            policy.authority(&request).as_deref(),
+            Some("board.example.test:8443")
+        );
+
+        let default_port = TestRequest::default()
+            .peer_addr("127.0.0.1:4000".parse().unwrap())
+            .insert_header(("host", "private.internal:3100"))
+            .insert_header(("x-forwarded-for", "198.51.100.7"))
+            .insert_header(("x-forwarded-proto", "https"))
+            .insert_header(("x-forwarded-host", "board.example.test:80"))
+            .to_http_request();
+        assert_eq!(
+            policy.authority(&default_port).as_deref(),
+            Some("board.example.test:80")
+        );
+    }
+
+    #[test]
+    fn untrusted_peer_cannot_choose_external_authority() {
+        let request = TestRequest::default()
+            .peer_addr("192.0.2.7:4000".parse().unwrap())
+            .insert_header(("host", "private.internal:3100"))
+            .insert_header(("x-forwarded-for", "198.51.100.7"))
+            .insert_header(("x-forwarded-proto", "https"))
+            .insert_header(("x-forwarded-host", "attacker.example.test"))
+            .to_http_request();
+        let policy = ForwardingPolicy::parse("127.0.0.1").unwrap();
+        assert_eq!(policy.identity(&request).unwrap().scheme, "http");
+        assert_eq!(
+            policy.authority(&request).as_deref(),
+            Some("private.internal:3100")
+        );
+    }
+
+    #[test]
+    fn trusted_forwarded_authority_rejects_ambiguous_or_invalid_values() {
+        let policy = ForwardingPolicy::parse("127.0.0.1").unwrap();
+        for host in [
+            "board.example.test/path",
+            "board.example.test,attacker.example.test",
+            "user@board.example.test",
+            "board.example.test:99999",
+            "board.example.test%2f.attacker.test",
+        ] {
+            let request = TestRequest::default()
+                .peer_addr("127.0.0.1:4000".parse().unwrap())
+                .insert_header(("host", "private.internal:3100"))
+                .insert_header(("x-forwarded-for", "198.51.100.7"))
+                .insert_header(("x-forwarded-proto", "https"))
+                .insert_header(("x-forwarded-host", host))
+                .to_http_request();
+            assert_eq!(policy.authority(&request), None, "{host}");
+        }
     }
 
     #[test]
