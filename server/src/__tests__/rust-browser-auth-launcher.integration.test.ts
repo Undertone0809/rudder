@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { signNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import type { AuthRuntime } from "../bootstrap/auth-runtime.js";
 import { createHttpApp, type HttpAppHandle } from "../bootstrap/create-http-app.js";
 import { preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
@@ -119,6 +120,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
   let app: HttpAppHandle | undefined;
   let server: Server | undefined;
   let privateNodeBaseUrl = "";
+  let privateNodeAssertionConfig: { assertionKey: string; authorizationKey: string } | undefined;
   const nodePaths: string[] = [];
   const betterAuthRequests: string[] = [];
 
@@ -145,6 +147,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
 
   async function closeApp() {
     await app?.close(); app = undefined;
+    privateNodeAssertionConfig = undefined;
     if (server) {
       const owned = server; server = undefined;
       if (!owned.listening) return;
@@ -232,6 +235,14 @@ describe("constructed issuer through the real Rust application launcher", () => 
       issuer,
       localAccountLifecycle,
     );
+    const rustIngress = ingress.appOptions.rustPublicIngress;
+    if (!rustIngress?.identityAuth) {
+      throw new Error("CLI private-hop regression requires the configured Rust identity assertion");
+    }
+    privateNodeAssertionConfig = {
+      assertionKey: rustIngress.identityAuth.assertionKey,
+      authorizationKey: rustIngress.authorizationKey,
+    };
     // Reserve the selected compatibility port before Rust binds an ephemeral
     // private bridge port; macOS can otherwise assign that same next port.
     server = createServer((req, res) => {
@@ -268,6 +279,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
     origin: string,
     cookie: string,
     userId: string,
+    nativeSessionId: string,
     noMembershipSession?: { cookie: string; userId: string },
   ) {
     let expectedCreatedEvents = 2;
@@ -294,8 +306,25 @@ describe("constructed issuer through the real Rust application launcher", () => 
       ["POST", "/api/cli-auth/revoke-current"],
     ] as const;
     const privateNodeStart = nodePaths.length;
+    const publicSession = await fetch(`${base}/api/auth/get-session`, { headers: { cookie } });
+    expect(publicSession.status).toBe(200);
+    const publicSessionBody = await publicSession.json() as { session: { userId: string }; user: { id: string } };
+    expect(publicSessionBody.session.userId).toBe(userId);
+    expect(publicSessionBody.user.id).toBe(userId);
+    const privateAuthConfig = privateNodeAssertionConfig;
+    if (!privateAuthConfig) throw new Error("Rust private-hop assertion config is unavailable");
+    const [effectsBeforePrivateRequests] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM "user") AS users,
+        (SELECT COUNT(*)::int FROM account) AS accounts,
+        (SELECT COUNT(*)::int FROM session) AS sessions,
+        (SELECT COUNT(*)::int FROM board_api_keys) AS board_api_keys,
+        (SELECT COUNT(*)::int FROM cli_auth_challenges) AS cli_auth_challenges,
+        (SELECT COUNT(*)::int FROM activity_log) AS activity_log,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox) AS outbox`;
+    const betterAuthCallsBeforePrivateRequests = betterAuthRequests.length;
+    const expectedPrivateNodePaths: string[] = [];
     for (const [method, pathname] of privatePaths) {
-      const response = await fetch(`${privateNodeBaseUrl}${pathname}`, {
+      const cookieOnly = await fetch(`${privateNodeBaseUrl}${pathname}`, {
         method,
         headers: {
           cookie,
@@ -304,9 +333,45 @@ describe("constructed issuer through the real Rust application launcher", () => 
         },
         ...(method === "POST" ? { body: JSON.stringify({ token: "synthetic-token" }) } : {}),
       });
-      expect(response.status, `private Node ${method} ${pathname}`).toBe(404);
+      expect(cookieOnly.status, `cookie-only private Node ${method} ${pathname}`).toBe(401);
+      expect(await cookieOnly.json()).toMatchObject({ code: "native_session_proof_required" });
+      expectedPrivateNodePaths.push(pathname);
+
+      // The session identity was accepted by Rust's public get-session route.
+      // Sign the same method/target-bound private-hop protocol with the key
+      // shared by this launcher instance, then prove the retired route itself
+      // returns 404 after the private proof guard admits that identity.
+      const proof = signNativeSessionAssertion({
+        key: privateAuthConfig.assertionKey,
+        method,
+        target: pathname,
+        identity: { kind: "session", session_id: nativeSessionId, user_id: userId },
+      });
+      const authenticated = await fetch(`${privateNodeBaseUrl}${pathname}`, {
+        method,
+        headers: {
+          cookie,
+          origin: privateNodeBaseUrl,
+          "content-type": "application/json",
+          "x-rudder-native-session-proof": proof,
+          "x-rudder-ingress-auth": privateAuthConfig.authorizationKey,
+        },
+        ...(method === "POST" ? { body: JSON.stringify({ token: "synthetic-token" }) } : {}),
+      });
+      expect(authenticated.status, `authenticated private Node ${method} ${pathname}`).toBe(404);
+      expectedPrivateNodePaths.push(pathname);
     }
-    expect(nodePaths.slice(privateNodeStart)).toEqual(privatePaths.map(([, pathname]) => pathname));
+    expect(nodePaths.slice(privateNodeStart)).toEqual(expectedPrivateNodePaths);
+    expect(betterAuthRequests).toHaveLength(betterAuthCallsBeforePrivateRequests);
+    const [effectsAfterPrivateRequests] = await db.$client`SELECT
+        (SELECT COUNT(*)::int FROM "user") AS users,
+        (SELECT COUNT(*)::int FROM account) AS accounts,
+        (SELECT COUNT(*)::int FROM session) AS sessions,
+        (SELECT COUNT(*)::int FROM board_api_keys) AS board_api_keys,
+        (SELECT COUNT(*)::int FROM cli_auth_challenges) AS cli_auth_challenges,
+        (SELECT COUNT(*)::int FROM activity_log) AS activity_log,
+        (SELECT COUNT(*)::int FROM organization_mutation_outbox) AS outbox`;
+    expect(effectsAfterPrivateRequests).toEqual(effectsBeforePrivateRequests);
 
     const publicNodeStart = nodePaths.length;
     const expectedPublicNodePaths: string[] = [];
@@ -676,7 +741,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
           for (const route of ["orgs", "agents"]) {
             expect((await fetch(`${base}/api/${route}`)).status).toBe(401);
           }
-          let cookie: string, userId: string;
+          let cookie: string, userId: string, nativeSessionId: string;
           let noMembershipSession: { cookie: string; userId: string } | undefined;
           let secondCookie: string | undefined;
           let primarySessionToken: string | undefined;
@@ -732,6 +797,9 @@ describe("constructed issuer through the real Rust application launcher", () => 
             const signupBody = await signup.json() as { token: string; user: { id: string } };
             primarySessionToken = signupBody.token;
             userId = signupBody.user.id;
+            const [nativeSession] = await db.$client`SELECT id FROM session WHERE token=${primarySessionToken} AND user_id=${userId}`;
+            if (!nativeSession?.id) throw new Error("Native session row was not created for the signed-up user");
+            nativeSessionId = nativeSession.id;
 
             const privateNodePathsBeforeSignout = nodePaths.length;
             const betterAuthCallsBeforePrivateSignout = betterAuthRequests.length;
@@ -848,9 +916,9 @@ describe("constructed issuer through the real Rust application launcher", () => 
             const claims = { issuer: policy.expectedIssuer, subject: randomUUID(), audience: policy.audience, installationId: "auth-launcher-test", jti: randomUUID(), expiresAt: new Date(Date.now() + 60_000), email: `${randomUUID()}@invalid.test`, emailVerified: true, name: "Native Local Launcher" };
             // Controlled exchange verifier, actual existing local session issuer.
             const issued = await localAccountAuthService(db, { ...policy, verifier: { verify: async () => claims } }).redeem("synthetic-exchange-code");
-            cookie = issued.session.setCookie.split(";")[0]; userId = issued.userId;
+            cookie = issued.session.setCookie.split(";")[0]; userId = issued.userId; nativeSessionId = issued.session.id;
           }
-          await exerciseCliAuthWorkflow(base, origin, cookie, userId, noMembershipSession);
+          await exerciseCliAuthWorkflow(base, origin, cookie, userId, nativeSessionId, noMembershipSession);
           await db.$client`UPDATE session SET expires_at=now()+interval '2 days' WHERE user_id=${userId}`;
           const beforeRead = nodePaths.length;
           const session = await fetch(`${base}/api/auth/get-session`, { headers: { cookie } });
