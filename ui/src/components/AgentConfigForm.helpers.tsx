@@ -163,6 +163,7 @@ export function defaultModelForRuntime(agentRuntimeType: string) {
 }
 
 export function defaultCommandForRuntime(agentRuntimeType: string) {
+  if (agentRuntimeType === "hermes_local") return "hermes";
   if (agentRuntimeType === "codex_local") return "codex";
   if (agentRuntimeType === "pi_local") return "pi";
   if (agentRuntimeType === "cursor") return "cursor-agent";
@@ -176,7 +177,9 @@ export function createValuesForRuntime(agentRuntimeType: string): CreateConfigVa
     agentRuntimeType,
     model: defaultModelForRuntime(agentRuntimeType),
     modelFallbacks: [],
-    command: defaultCommandForRuntime(agentRuntimeType),
+    command: agentRuntimeType === "codex_local" || agentRuntimeType === "hermes_local"
+      ? ""
+      : defaultCommandForRuntime(agentRuntimeType),
   };
   if (agentRuntimeType === "codex_local") {
     values.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
@@ -454,7 +457,9 @@ export function normalizeRuntimeEnvironmentDisplayStatus(
 export function filterRuntimeEnvironmentDisplayChecks(
   result: Pick<AgentRuntimeEnvironmentTestResult, "checks">,
 ) {
-  return result.checks.filter((check) => check.level === "warn" || check.level === "error");
+  return result.checks.filter((check) =>
+    check.level === "warn" || check.level === "error" || check.code === "native_chat_provider_not_probed",
+  );
 }
 
 /* ---- Form ---- */

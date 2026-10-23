@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RuntimeProviderCard } from "./AgentConfigForm.environment";
+import { AdapterEnvironmentResult, RuntimeProviderCard } from "./AgentConfigForm.environment";
 import { TooltipProvider } from "./ui/tooltip";
 
 (
@@ -66,4 +66,13 @@ describe("RuntimeProviderCard", () => {
     expect(container.textContent).not.toContain("Command");
     expect(onRuntimeTypeChange).not.toHaveBeenCalled();
   });
+  it("keeps the native readiness scope visible when local checks pass", () => {
+    const container = render(<AdapterEnvironmentResult result={{
+      agentRuntimeType: "hermes_local", status: "pass", testedAt: "2026-10-23T00:00:00Z",
+      checks: [{ code: "native_chat_provider_not_probed", level: "info", message: "Provider connectivity and model credentials were not tested." }],
+    }} />);
+    expect(container.textContent).toContain("Passed");
+    expect(container.textContent).toContain("Provider connectivity and model credentials were not tested.");
+  });
+
 });

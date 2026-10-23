@@ -231,11 +231,14 @@ pub(super) async fn has_grant(
 }
 pub(super) async fn can_read_configs(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result<bool> {
     if ctx.user().is_some() {
-        return if ctx.local() || ctx.admin {
-            Ok(true)
-        } else {
-            has_grant(tx, ctx, "agents:create").await
-        };
+        return can_user_read_configs(
+            tx,
+            ctx.org,
+            ctx.user().expect("checked above"),
+            ctx.local(),
+            ctx.admin,
+        )
+        .await;
     }
     let row = stored(
         tx,
@@ -248,6 +251,41 @@ pub(super) async fn can_read_configs(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Resu
         return Ok(false);
     }
     Ok(has_grant(tx, ctx, "agents:create").await? || can_create(&row))
+}
+
+/// Apply the same organization-scoped config-read rule to a browser user whose
+/// credential was verified by public ingress. `authorize_org` remains a
+/// separate prerequisite for ordinary AgentCore commands; standalone native
+/// readiness checks also require active membership here.
+pub(super) async fn can_user_read_configs(
+    tx: &mut Tx<'_>,
+    org_id: &str,
+    user_id: &str,
+    local_implicit: bool,
+    admin: bool,
+) -> Result<bool> {
+    if local_implicit || admin {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+           SELECT 1
+           FROM organization_memberships m
+           JOIN principal_permission_grants g
+             ON g.org_id=m.org_id
+            AND g.principal_type=m.principal_type
+            AND g.principal_id=m.principal_id
+           WHERE m.org_id=$1::uuid
+             AND m.principal_type='user'
+             AND m.principal_id=$2
+             AND m.status='active'
+             AND g.permission_key='agents:create'
+         )",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await?)
 }
 pub(super) async fn require_configs(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result<()> {
     if can_read_configs(tx, ctx).await? {

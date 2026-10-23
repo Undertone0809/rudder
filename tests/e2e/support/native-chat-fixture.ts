@@ -150,6 +150,8 @@ async function waitForHealth(url: string, process_: ReturnType<typeof launch>) {
  * unmigrated UI reads; it is not a mock or a Native Chat business writer.
  */
 export async function startNativeChatFixture(options: FixtureOptions) {
+  const serverRoot = path.resolve(process.env.RUDDER_NATIVE_CHAT_E2E_SERVER_SOURCE_ROOT?.trim() || REPO);
+  await access(path.join(serverRoot, "server/src/index.ts"));
   for (const executable of [options.exampleBinary, options.processHost, options.foundationBinary,
     path.join(options.postgresBinDir, "initdb"), path.join(options.postgresBinDir, "pg_ctl")]) {
     await access(executable);
@@ -290,9 +292,9 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       secrets: { provider: "local_encrypted", strictMode: false, localEncrypted: { keyFilePath: path.join(instanceRoot, "secrets/master.key") } },
     }));
     const nodeUrl = `http://127.0.0.1:${nodePort}`;
-    node = launch(process.execPath, [path.join(REPO, "server/node_modules/tsx/dist/cli.mjs"), "--tsconfig", path.join(REPO, "server/tsconfig.json"), path.join(REPO, "server/src/index.ts")], root, "node-ancillary", {
+    node = launch(process.execPath, [path.join(serverRoot, "server/node_modules/tsx/dist/cli.mjs"), "--tsconfig", path.join(serverRoot, "server/tsconfig.json"), path.join(serverRoot, "server/src/index.ts")], root, "node-ancillary", {
       ...env, DATABASE_URL: databaseUrl, RUDDER_HOME: path.join(root, "rudder-home"), RUDDER_CONFIG: configPath,
-      RUDDER_INSTANCE_ID: "browser-fixture", RUDDER_LOCAL_ENV: "e2e", RUDDER_UI_DEV_MIDDLEWARE: "true",
+      RUDDER_INSTANCE_ID: "browser-fixture", RUDDER_LOCAL_ENV: "e2e", RUDDER_UI_DEV_MIDDLEWARE: process.env.RUDDER_E2E_PRODUCTION_UI === "1" ? "false" : "true",
       RUDDER_LISTEN_HOST: "127.0.0.1", RUDDER_LISTEN_PORT: String(nodePort),
       RUDDER_MIGRATION_PROMPT: "never", RUDDER_MIGRATION_AUTO_APPLY: "true", RUDDER_FEISHU_LONG_CONNECTION_ENABLED: "false",
       RUDDER_SERVER_FOUNDATION_PATH: options.foundationBinary,
@@ -301,7 +303,22 @@ export async function startNativeChatFixture(options: FixtureOptions) {
     const fixtureConfigPath = path.join(root, "native-fixture.json");
     await writeFile(fixtureConfigPath, JSON.stringify({ fixtureRoot: root, databaseUrl, nodeUpstream: nodeUrl,
       listenAddr: `127.0.0.1:${publicPort}`, processHost: options.processHost, runtimeType: options.runtimeType }));
-    rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority", env);
+    const identityEnvironment = {
+      ...env,
+      RUDDER_NATIVE_PUBLIC_LISTEN: `127.0.0.1:${publicPort}`,
+      RUDDER_NATIVE_NODE_UPSTREAM: nodeUrl,
+      RUDDER_NATIVE_INGRESS_AUTH_KEY: randomUUID() + randomUUID(),
+      RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
+      RUDDER_NATIVE_IDENTITY_ASSERTION_KEY: randomUUID() + randomUUID(),
+      RUDDER_NATIVE_AGENT_JWT_SECRET: randomUUID() + randomUUID(),
+      RUDDER_NATIVE_AGENT_JWT_ISSUER: "rudder-fixture",
+      RUDDER_NATIVE_AGENT_JWT_AUDIENCE: "rudder-fixture-api",
+      RUDDER_NATIVE_LOCAL_IMPLICIT: "true",
+      RUDDER_NATIVE_DEPLOYMENT_MODE: "local_trusted",
+      RUDDER_NATIVE_HOST_RUDDER_HOME: path.join(root, "rudder-home"),
+      RUDDER_NATIVE_HOST_INSTANCE_ID: "browser-fixture",
+    };
+    rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority", identityEnvironment);
     const lines = createInterface({ input: rust.child.stdout! });
     const startup = await new Promise<{ publicUrl: string; providerFixtureSha256: string }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Rust browser fixture startup timed out")), 20_000);
@@ -316,7 +333,7 @@ export async function startNativeChatFixture(options: FixtureOptions) {
     }).finally(() => lines.close());
     const restartRust = async () => {
       await stopChild("rust-authority", rust?.child);
-      rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority-restarted", env);
+      rust = launch(options.exampleBinary, [fixtureConfigPath], root, "rust-authority-restarted", identityEnvironment);
       await waitForHealth(startup.publicUrl, rust);
     };
     return { root, databaseUrl, orgId, agentId, chatId, restartRust, issuePrefix: "NCE", publicUrl: startup.publicUrl,

@@ -676,6 +676,7 @@ async fn proxy_request(
             && email_auth::reserved_path(request.uri().path()))
         || cli_auth::reserved_path(request.uri().path())
         || native_chat::capability_path(request.uri().path())
+        || native_chat::runtime_check_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
             && native_chat::reserved_path(request.uri().path()))
         || runtime_bindings::reserved_path(request.uri().path())
