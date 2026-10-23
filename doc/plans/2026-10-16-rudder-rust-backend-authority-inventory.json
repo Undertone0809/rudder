@@ -27,7 +27,7 @@
         "server/src/bootstrap"
       ],
       "source_files": 23,
-      "structural_surfaces": 64
+      "structural_surfaces": 65
     },
     {
       "id": "websocket_and_streaming",
@@ -4331,7 +4331,7 @@
     },
     {
       "path": "server/src/bootstrap/auth-runtime.ts",
-      "sha256": "33c3788ed3ad6f1a55c84faa96907c28864c4127b595d104c6c8ae194266d156",
+      "sha256": "118ab9c225d04e7180ddb8dd07fc9215e027e6b8fb88af4f296f9f1fd67b42c8",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -4340,7 +4340,7 @@
     },
     {
       "path": "server/src/bootstrap/create-http-app.ts",
-      "sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "sha256": "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
       "families": [
         "database_queries_and_writers",
         "http_middleware_and_auth",
@@ -6962,7 +6962,7 @@
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "dff008782ee71cafce558597fa052e58500500dbe4c9843e357c14dbb10a38be",
+      "sha256": "355ddaa8d4248cca1bed9f76401bc7892e56f16d53def85f051f572c9ed0cc02",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -8900,7 +8900,7 @@
     "http_route": 534,
     "http_server_construction": 6,
     "listener_start": 5,
-    "middleware_mount": 64,
+    "middleware_mount": 65,
     "runtime_resource_ownership": 14,
     "sql_dml_candidate": 38,
     "websocket_event": 3,
@@ -14698,7 +14698,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 291,
+      "line": 339,
       "signature": "server/src/bootstrap/create-http-app.ts|db-call|db|transaction|async (tx) => { if (rustFoundationBridge.organizationBrandingMode === \"required\" && organizationB… [sha256:e9d605f1cc73ce914bab97f4f5b91a596949268b2e01488f30ef022684d409a4]",
       "receiver": "db",
       "method": "transaction",
@@ -14709,7 +14709,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 196,
+      "line": 244,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|ALL|/api/auth/*authPath",
       "receiver": "app",
       "method": "ALL",
@@ -14719,7 +14719,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 237,
+      "line": 285,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14729,7 +14729,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 269,
+      "line": 317,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/.*/",
       "receiver": "app",
       "method": "GET",
@@ -14739,7 +14739,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 178,
+      "line": 226,
       "signature": "server/src/bootstrap/create-http-app.ts|http-route|app|GET|/api/auth/get-session",
       "receiver": "app",
       "method": "GET",
@@ -14749,7 +14749,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 177,
+      "line": 225,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14758,7 +14758,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 210,
+      "line": 258,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14767,7 +14767,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 223,
+      "line": 271,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/api",
       "receiver": "app",
       "mount_path": "/api"
@@ -14776,7 +14776,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 130,
+      "line": 166,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|/workspace-preview",
       "receiver": "app",
       "mount_path": "/workspace-preview"
@@ -14785,7 +14785,17 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 176,
+      "line": 202,
+      "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: \"API route not found\" }); return; } next(); }>",
+      "receiver": "app",
+      "expression": "(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: \"API route not found\" }); return; } next(); }",
+      "transport_admission": "rust-native-identity-proof-v1"
+    },
+    {
+      "type": "middleware_mount",
+      "family": "http_middleware_and_auth",
+      "source": "server/src/bootstrap/create-http-app.ts",
+      "line": 224,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:accountSessionRequired(authRequirement)>",
       "receiver": "app",
       "expression": "accountSessionRequired(authRequirement)"
@@ -14794,7 +14804,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 169,
+      "line": 217,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })>",
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })"
@@ -14803,7 +14813,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 126,
+      "line": 162,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }>",
       "receiver": "app",
       "expression": "async (req, res, next) => { if (await workspacePreview.handlePreviewHostRequest(req, res)) return; next(); }"
@@ -14812,7 +14822,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 285,
+      "line": 333,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:errorHandler>",
       "receiver": "app",
       "expression": "errorHandler"
@@ -14821,7 +14831,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 146,
+      "line": 182,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.json({ // Organization import/export payloads can inline full portable packages. limit: … [sha256:dbf52b14b8832a75108643dba62fa1c21b97f91122eb6e20cbbc9004f69c636d]",
       "receiver": "app",
       "expression": "express.json({ // Organization import/export payloads can inline full portable packages. limit: \"10mb\", verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf; }, })"
@@ -14830,7 +14840,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 236,
+      "line": 284,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:express.static(uiDist)>",
       "receiver": "app",
       "expression": "express.static(uiDist)"
@@ -14839,7 +14849,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 154,
+      "line": 190,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:httpLogger>",
       "receiver": "app",
       "expression": "httpLogger"
@@ -14848,7 +14858,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 198,
+      "line": 246,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:llmRoutes(db)>",
       "receiver": "app",
       "expression": "llmRoutes(db)"
@@ -14857,7 +14867,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 153,
+      "line": 189,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:markBrowserHttpRequestBodySensitive>",
       "receiver": "app",
       "expression": "markBrowserHttpRequestBodySensitive"
@@ -14866,7 +14876,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 141,
+      "line": 177,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })>",
       "receiver": "app",
       "expression": "nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })",
@@ -14876,7 +14886,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 155,
+      "line": 191,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })>",
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
@@ -14885,7 +14895,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 268,
+      "line": 316,
       "signature": "server/src/bootstrap/create-http-app.ts|middleware|app|<handler:vite.middlewares>",
       "receiver": "app",
       "expression": "vite.middlewares"
@@ -59100,28 +59110,28 @@
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 237,
+      "line": 285,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_http_route_path",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 269,
+      "line": 317,
       "method": "GET",
       "expression": "/.*/"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 155,
+      "line": 191,
       "receiver": "app",
       "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
     },
     {
       "type": "dynamic_middleware_mount",
       "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 169,
+      "line": 217,
       "receiver": "app",
       "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })"
     },
@@ -59142,186 +59152,64 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "packages/db/src/client.ts",
-      "base_sha256": "62ca52814349683536a739699ff0967a95124fad324c47290f7b5accb68482f8",
-      "head_sha256": "724887e89b71231634bbda4611c11593a5da669089b8a637131730b121ec33d5",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
-      "compatibility_boundary": "The legacy migration apply export delegates to the Rust operator; Node migration SQL writing and history repair are removed. Existing read-only inspection and the separate ensurePostgresDatabase database-creation path remain outside this record and are still Node migration debt.",
-      "retirement_criterion": "Remove the compatibility export after callers use the Rust operator directly; migrate ensurePostgresDatabase separately before claiming Node database creation is retired.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r8.md: Node client.ts delta reviewed; only two synthetic identifiers removed. Overall migration stage remains NEEDS MORE EVIDENCE.",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/index.ts",
-      "base_sha256": "0589cb5be13c94557d8a2d8ff194ebcbe90e28d0e2d0e887ed0d983825ff1930",
-      "head_sha256": "e38555562a24f9f9b005f4d07406b816e1939d310a36f5cc2f6db2c51764c2e8",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/postgres-lifecycle/src/lib.rs",
-      "compatibility_boundary": "This package barrel exports typed Rust migration and PostgreSQL owner transports for first-party callers; it does not itself own lifecycle or migration decisions.",
-      "retirement_criterion": "Remove package-level Node exports when first-party callers use direct Rust-owned interfaces and the compatibility package surface is deleted.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/migrate.ts",
-      "base_sha256": "d1cf14c256a9a9241fb7d08162389d941e288ffe98320eca149915e500294827",
-      "head_sha256": "1fcd308723581bdd29a9bc92f35017378885f51a049533995b2d8b3df7a423bd",
+      "path": "server/src/bootstrap/auth-runtime.ts",
+      "base_sha256": "33c3788ed3ad6f1a55c84faa96907c28864c4127b595d104c6c8ae194266d156",
+      "head_sha256": "118ab9c225d04e7180ddb8dd07fc9215e027e6b8fb88af4f296f9f1fd67b42c8",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
-      "compatibility_boundary": "The first-party db:migrate CLI resolves the target and invokes the Rust migration operator; Node does not inspect migration state, repair history, create backups, acquire the migration lock, or apply SQL.",
-      "retirement_criterion": "Remove the Node CLI launcher when the first-party CLI invokes the Rust migration operator directly.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/migration-operator.ts",
-      "base_sha256": null,
-      "head_sha256": "f9a5f20555bb6b4942adadf5c249c86469de5b11ba6dd671da87409565b3fce5",
-      "change_kind": "new_transport_adapter",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
-      "compatibility_boundary": "This exact package module resolves and invokes the Rust migration operator over its typed process protocol. It does not connect to PostgreSQL or decide, inspect, back up, lock, repair, or apply migration state in Node.",
-      "retirement_criterion": "Retire this Node process adapter when all first-party callers invoke the Rust migration operator through the shared native transport and this package module is deleted.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth/config.rs, native/crates/server-foundation/src/public_ingress.rs, and native/crates/server-foundation/src/public_ingress/email_auth.rs",
+      "compatibility_boundary": "Node constructs Better Auth from validated startup configuration and transports immutable resolved issuer facts to Rust. For POST /api/auth/sign-up/email, POST /api/auth/sign-in/email, and POST /api/auth/sign-out, Rust owns request-time origin/CSRF checks, signup policy, rate limiting, credential/session persistence, and responses; Node has no fallback. Remaining Better Auth wildcard endpoints remain explicit legacy Node migration debt.",
+      "retirement_criterion": "Remove Node-produced issuer configuration when Rust startup constructs equivalent Better Auth-compatible issuer facts and supported default public ingress runs without Node backend artifacts, preserving the resolved trusted-origin set and current auth contracts.",
+      "reviewer": "independent descriptor transport reviewer r33-r1",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-descriptor-transport-recheck-r33-r1.json: ACCEPT scoped to R33-ORIGIN-01 and its focused regression; not full candidate or runtime/PAV acceptance",
       "review_status": "reviewed",
-      "transport_admission_id": "rust-migration-operator-process-transport-v1",
       "allowed_node_duties": [
-        "resolve the installed Rust migration executable and migration source paths",
-        "build the deterministic source manifest fingerprint and send the typed bounded process request",
-        "parse the typed response and bound cancellation, timeout, and process cleanup"
+        "Construct Better Auth from validated startup configuration.",
+        "Transport its immutable resolved startup issuer facts to Rust."
       ],
       "prohibited_node_duties": [
-        "SQL execution or database inspection",
-        "deciding whether migrations are needed or whether approval is required",
-        "migration history repair, backup, locking, or apply fallback in Node"
+        "No Node request-time sign-up, sign-in, sign-out, CSRF/origin, rate-limit, or signup-policy decision for Rust-owned email routes.",
+        "No Node password/session persistence or hidden fallback for those routes."
       ]
     },
     {
-      "path": "packages/db/src/migration-runtime.ts",
-      "base_sha256": "607cba96459c12e9bed87003aa8ba374212e8cf7c64925a26ea6b4762c6675df",
-      "head_sha256": "a4343d5e4b8e90954bdbe6421d64835eeb46bfb1519518659bfd0eab29b37170",
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "base_sha256": "dff008782ee71cafce558597fa052e58500500dbe4c9843e357c14dbb10a38be",
+      "head_sha256": "355ddaa8d4248cca1bed9f76401bc7892e56f16d53def85f051f572c9ed0cc02",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
-      "compatibility_boundary": "Runtime assembly resolves configuration and starts the Rust managed PostgreSQL owner and Rust migration operator. Node retains only typed transport and does not initialize, inspect, or mutate PostgreSQL.",
-      "retirement_criterion": "Remove the Node lifecycle assembly after the Rust server owns managed PostgreSQL startup and migration invocation end to end.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "packages/db/src/postgres-owner.ts",
-      "base_sha256": null,
-      "head_sha256": "3868134ff321bb2212dcf5a40812aa088e09fc0ced114046bf4f7540bd1e4895",
-      "change_kind": "new_transport_adapter",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/postgres-lifecycle/src/bin/rudder-postgres-owner.rs",
-      "compatibility_boundary": "This exact package module resolves and invokes the Rust PostgreSQL owner over its typed process protocol. PostgreSQL initialization, supervision policy, database operations, and failure handling remain Rust-owned; Node fallback is forbidden.",
-      "retirement_criterion": "Retire this Node process adapter when all first-party callers consume the Rust owner through the shared native transport and this package module is deleted.",
-      "reviewer": "independent gpt-6-luna/xhigh stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/delta-stage-review-r15a.json: exact transport source accepted with bound source fingerprint; final runtime acceptance still pending",
+      "rust_authority": "native/crates/server-foundation/src/browser_auth/config.rs, native/crates/server-foundation/src/public_ingress.rs, and native/crates/server-foundation/src/public_ingress/email_auth.rs",
+      "compatibility_boundary": "This file declares the typed transport shape for immutable Better Auth issuer facts. It adds no request-time policy or business behavior. Rust owns the three direct email auth routes; remaining Better Auth wildcard endpoints remain explicit legacy Node migration debt.",
+      "retirement_criterion": "Delete this TypeScript descriptor when Rust startup owns public-ingress configuration and no TypeScript ingress transport remains.",
+      "reviewer": "independent descriptor transport reviewer r33-r1",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-descriptor-transport-recheck-r33-r1.json: ACCEPT scoped to the descriptor delta and its origin regression; not full candidate or runtime/PAV acceptance",
       "review_status": "reviewed",
-      "transport_admission_id": "rust-postgres-owner-process-transport-v1",
       "allowed_node_duties": [
-        "resolve the installed Rust owner executable and packaged PostgreSQL runtime directory",
-        "spawn the typed bounded owner protocol and project readiness and shutdown messages",
-        "bound process lifetime and report the Rust owner endpoint to existing callers"
+        "Declare TypeScript fields for immutable Better Auth startup issuer facts transported to Rust."
       ],
       "prohibited_node_duties": [
-        "initdb, pg_ctl, SQL, or PostgreSQL data-directory mutation",
-        "database creation, readiness policy, lifecycle decisions, or migration decisions",
-        "fallback to a Node-managed PostgreSQL owner when Rust is missing or fails"
+        "No Node request-time sign-up, sign-in, sign-out, CSRF/origin, rate-limit, or signup-policy decision for Rust-owned email routes.",
+        "No Node password/session persistence or hidden fallback for those routes."
       ]
     },
     {
-      "path": "packages/db/src/runtime-config.ts",
-      "base_sha256": "ea6e335ee6ef97d26957ec26d3b7804a928c549e2284726205e6fdc2f7f3c310",
-      "head_sha256": "d7d49ed7c1c41faaf52e44163cdc8b4077f125d46dda5ca1d5ee55a1c36049de",
       "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
-      "compatibility_boundary": "Node resolves profile and environment configuration into explicit runtime facts for the Rust owners. It does not derive migration state, choose an apply policy, or create a database.",
-      "retirement_criterion": "Move profile/runtime configuration resolution to Rust when all first-party entrypoints use the native runtime configuration contract.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/index.ts",
-      "base_sha256": "ec6a362d1b12c76c86da78d9987848778fe8fbb3c373c4a37b3b5cf4c1da8a77",
-      "head_sha256": "c9765482067498cb3ef43a878f7b6199097b578b641e05cb76679118c1ebbfc0",
-      "change_kind": "modified_node_compatibility",
+      "compatibility_boundary": "In Rust public-ingress mode, reject only the three native-owned email POST routes on the private Node listener before actor/session resolution and the Better Auth wildcard; preserve all other legacy Node auth endpoints and legacy Node mode.",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
-      "compatibility_boundary": "Default server startup delegates managed PostgreSQL lifecycle and migration state decisions to Rust, while Node relays typed process outcomes and displays the explicit interactive approval request. It does not inspect migration state, choose migration policy, or apply a Node fallback.",
-      "retirement_criterion": "Retire the Node startup coordinator when the Rust server process owns managed PostgreSQL startup and the migration approval flow end to end.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/runtime/postgres-owner-exit.ts",
-      "base_sha256": null,
-      "head_sha256": "aaedfc7e7aff51ac8d9ed75969e7d5280d36f5ba1ef0cf1f9a9c2038634b0359",
-      "change_kind": "new_transport_adapter",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/postgres-lifecycle/src/bin/rudder-postgres-owner.rs",
-      "compatibility_boundary": "This narrow lifecycle adapter observes the Rust PostgreSQL owner process exit and asks the existing runtime supervisor to dispose registered resources. It does not start PostgreSQL, run SQL, classify database state, or choose recovery behavior.",
-      "retirement_criterion": "Remove this Node exit adapter when the Rust server process owns PostgreSQL owner supervision and resource cleanup directly.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/runtime/runtime-supervisor.ts",
-      "base_sha256": "52f18e1346cfc63bacd30e097b3639eac5ae605963844654b6a9357b0b8193a7",
-      "head_sha256": "02bd496a00fd28b756477f3da07c468648408da69223c36b29a36e070ba35f15",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
-      "compatibility_boundary": "The existing Node supervisor tracks the Rust PostgreSQL owner process and requests bounded cleanup on exit. It does not own initdb, database state, migration planning, or migration writes.",
-      "retirement_criterion": "Remove this compatibility supervisor path when Rust owns the server and child-process lifecycle directly.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/services/migration-apply.ts",
-      "base_sha256": null,
-      "head_sha256": "099c58f1cefaad044880ea7d80b1c8e3832e903132174f6ee30f944893d1c806",
-      "change_kind": "new_transport_adapter",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
-      "compatibility_boundary": "This server adapter invokes the Rust migration startup operator, validates its typed response, and carries an explicit user approval response. It does not inspect PostgreSQL state, plan or approve a migration, execute SQL, or fall back to Node.",
-      "retirement_criterion": "Remove this server process adapter when the Rust server lifecycle directly invokes the migration operator and owns the approval UI protocol.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/services/migration-preflight.ts",
-      "base_sha256": "994ae2c7a70d6a136e2d4afa5776e922d087c94ecb24094310a594f65a4b2a47",
-      "head_sha256": "3f140195cfd75250bbe9e19a7928c27ba7eea35f89c2114a88961f4f1264c7e9",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/bin/migration-preflight.rs",
-      "compatibility_boundary": "This module is a bounded child-process transport for Rust preflight. The exact timeout/escalation timer terminates the owned native child and preserves cleanup errors; it is not a domain worker. Node does not inspect PostgreSQL or select migration outcomes.",
-      "retirement_criterion": "Remove the preflight process adapter and its cleanup timer when the Rust server owns migration preflight directly.",
-      "reviewer": "independent stage reviewer",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "path": "server/src/bootstrap/create-http-app.ts",
+      "retirement_criterion": "Remove this fence when the private Node Better Auth wildcard is retired or no longer reachable for these Rust-owned routes.",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-auth-stage-review-r36-r2.json",
       "review_status": "reviewed",
-      "allowed_transport_surfaces": [
-        "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { if (pendingFailure) { pendingFailure = new MigrationPreflightAdapterErro… [sha256:622fdb8c7f383d5a4265b4e5db2c04120c48d226d2e2713f8dc981cdeac95e3c]"
+      "reviewer": "independent auth stage reviewer r36-r2",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress.rs and native/crates/server-foundation/src/public_ingress/email_auth.rs",
+      "base_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "head_sha256": "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
+      "allowed_node_duties": [
+        "Only reject the three Rust-owned email POST operations on the private Node listener when rustPublicIngress is enabled; this is a negative transport fence, not an auth implementation."
       ],
-      "transport_surface_owner": "server/src/services/migration-preflight.ts::runMigrationProcess"
+      "prohibited_node_duties": [
+        "signup/signin/signout policy, password or session writes, origin/CSRF decisions, rate limiting, or hidden fallback for these Rust-owned routes"
+      ]
     }
   ],
   "reviewed_legacy_fence_changes": [],
@@ -59329,7 +59217,7 @@
     {
       "id": "rust-native-identity-proof-v1",
       "mount_source_path": "server/src/bootstrap/create-http-app.ts",
-      "mount_source_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
+      "mount_source_sha256": "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
       "mount_receiver": "app",
       "mount_expression": "nativeSessionAssertionMiddleware({ key: nativeIdentityAssertionKey, })",
       "mount_guard": "nativeIdentityAssertionKey",
@@ -59341,8 +59229,8 @@
       "rust_proof_owner": "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion",
       "compatibility_boundary": "Node validates only the Rust-signed identity envelope and binds its resolved identity to the exact request. Rust owns public credential resolution/proof issuance. Node retains existing req.actor/current-permission projection and legacy non-Rust auth as separately visible debt; this record grants no second actor owner.",
       "retirement_criterion": "Remove verifier when Node no longer receives Rust public-ingress private-hop requests; retire actorMiddleware/direct Node auth only through separate scoped review.",
-      "reviewer": "independent agent /root/auth_next_integration_review",
-      "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json",
+      "reviewer": "independent agent /root/auth_next_integration_review; independent auth stage reviewer r36-r2 (caller fence only)",
+      "review_reference": "doc/plans/artifacts/2026-10-17-rust-identity-transport-stage-review.json; /private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-auth-stage-review-r36-r2.json (proof mount/factory/order unchanged; negative fence source accepted, broader stage still NME)",
       "review_status": "reviewed"
     },
     {
