@@ -169,11 +169,10 @@ async fn managed_operator_helper() {
     let supervisor = rudder_migration_service::ParentProcessMonitor::from_env()
         .expect("managed parent handle is available")
         .expect("helper receives a managed parent PID");
-    assert_eq!(
-        supervisor
+    assert!(
+        !supervisor
             .has_exited()
             .expect("synchronous parent process poll should succeed"),
-        false,
         "managed parent should still be alive before its operator is killed"
     );
     let dump = Command::new(env::current_exe().unwrap())
@@ -264,9 +263,9 @@ fn managed_cli_parent_helper() {
     // Keep stdin open: parent-death monitoring must work while the operator is
     // still waiting for its request, before it can connect to PostgreSQL.
     let _open_stdin = operator.stdin.take().expect("operator stdin pipe");
-    loop {
-        thread::sleep(Duration::from_secs(1));
-    }
+    operator
+        .wait()
+        .expect("reap operator after its managed parent exits");
 }
 
 #[test]
