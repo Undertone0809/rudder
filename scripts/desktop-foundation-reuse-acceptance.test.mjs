@@ -99,7 +99,7 @@ test("terminal evidence keeps actual timeout/skipped results and timings but no 
 });
 
 const workflowText = readFileSync(new URL("../.github/workflows/desktop-foundation-reuse-acceptance.yml", import.meta.url), "utf8");
-function jobSection(id) { return workflowText.split(`  ${id}:\n`)[1]?.split(/^  [a-z]+:\n/m)[0] ?? ""; }
+function jobSection(id, source = workflowText) { return source.split(`  ${id}:\n`)[1]?.split(/^  [a-z][a-z0-9_-]*:\n/m)[0] ?? ""; }
 test("workflow is PR-only, read-only, no secrets/OIDC/environment, with checkout credentials disabled", () => {
   assert.match(workflowText, /on:\n  pull_request:/);
   assert.doesNotMatch(workflowText, /workflow_dispatch:|workflow_run:|pull_request_target:|\bwrite\b|secrets\.|id-token:|environment:|npm publish|gh (?:release|run rerun|workflow run)/);
@@ -129,8 +129,8 @@ test("workflow keeps every canonical macOS x64 release gate in order", () => {
   const lane = jobSection("package");
   const gates = [
     'node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"',
-    "pnpm install --frozen-lockfile", "node scripts/lint-imports.mjs", "release-compatibility-runtime.ts", "pnpm exec playwright install chromium",
-    "node desktop/scripts/prepare-postgres-runtime.mjs", "acceptance.mjs prepare",
+    "pnpm install --frozen-lockfile", "node scripts/lint-imports.mjs", "node desktop/scripts/prepare-postgres-runtime.mjs",
+    "release-compatibility-runtime.ts", "pnpm exec playwright install chromium", "acceptance.mjs prepare",
     'node scripts/release-package-map.mjs set-version "$RELEASE_VERSION"',
     "pnpm desktop:dist", "acceptance.mjs inspect", "node desktop/scripts/app-builder-smoke.mjs --packaged",
     '"$staged_runtime/bin/initdb"', '"$staged_runtime/bin/pg_ctl" --pgdata="$smoke_data" --options="-h 127.0.0.1 -p 55432" --wait start',
@@ -154,6 +154,16 @@ test("workflow keeps every canonical macOS x64 release gate in order", () => {
   assert.match(lintStep, /node scripts\/lint-imports\.mjs\n/);
   assert.doesNotMatch(lintStep, /--changed|--fix|--skip-dirty/);
   assert.doesNotMatch(lane, /continue-on-error:|RUDDER_.*(?:SKIP|TIMEOUT)/);
+});
+test("qualification and release prepare verified writable recovery backups before historical migrations", () => {
+  const releaseText = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  for (const lane of [jobSection("package"), jobSection("desktop-candidate", releaseText)]) {
+    const historical = lane.indexOf("release-compatibility-runtime.ts");
+    for (const prerequisite of ["node desktop/scripts/prepare-postgres-runtime.mjs", '"$pg_dump_binary" --version', 'install -d -m 700 "$backup_dir"', 'mktemp "$backup_dir/.preflight.XXXXXX"', "RUDDER_NATIVE_MIGRATIONS_PG_DUMP=%s", "RUDDER_DB_BACKUP_DIR=%s"]) {
+      const found = lane.indexOf(prerequisite);
+      assert(found >= 0 && found < historical, `Missing backup prerequisite before upgrade: ${prerequisite}`);
+    }
+  }
 });
 test("workflow downloads the revalidated artifact IDs and uploads only explicit bounded JSON evidence", () => {
   assert.match(workflowText, /artifact-ids: \$\{\{ steps\.recheck\.outputs\.artifact_ids \}\}/);
