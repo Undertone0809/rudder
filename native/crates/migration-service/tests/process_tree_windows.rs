@@ -254,15 +254,14 @@ fn managed_cli_parent_helper() {
     let mut operator = Command::new(env!("CARGO_BIN_EXE_migration-apply"))
         .env(SUPERVISOR_PID, std::process::id().to_string())
         .env_remove("RUDDER_MIGRATION_APPLY_DATABASE_URL")
-        .stdin(Stdio::piped())
+        .stdin(Stdio::inherit())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file))
         .spawn()
         .expect("spawn actual migration operator with a managed parent");
     fs::write(operator_pid_file, operator.id().to_string()).expect("publish operator PID");
-    // Keep stdin open: parent-death monitoring must work while the operator is
-    // still waiting for its request, before it can connect to PostgreSQL.
-    let _open_stdin = operator.stdin.take().expect("operator stdin pipe");
+    // The outer test owns the inherited pipe's writer until this parent has
+    // exited, so EOF cannot race ahead of the supervisor process-object signal.
     operator
         .wait()
         .expect("reap operator after its managed parent exits");
@@ -334,11 +333,15 @@ fn actual_cli_handles_parent_death_during_supervisor_startup_race() {
         .env(OPERATOR_PID_FILE, &operator_pid_file)
         .env(CLI_STDOUT_FILE, &stdout_file)
         .env(CLI_STDERR_FILE, &stderr_file)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn managed Node-shaped parent");
+    let parent_stdin = parent
+        .stdin
+        .take()
+        .expect("retain the operator input writer");
 
     let started = Instant::now();
     while !operator_pid_file.is_file() {
@@ -361,14 +364,19 @@ fn actual_cli_handles_parent_death_during_supervisor_startup_race() {
     parent.kill().expect("terminate managed parent abruptly");
     let parent_status = parent.wait().expect("wait for terminated parent");
     assert!(!parent_status.success(), "parent was externally terminated");
+    drop(parent_stdin);
     assert_process_exited(operator, "actual migration CLI");
 
     let body: serde_json::Value = serde_json::from_slice(&fs::read(stdout_file).unwrap())
         .expect("operator emits structured cancellation output");
-    assert!(matches!(
-        body["error"]["code"].as_str(),
-        Some("supervisor_exited" | "supervisor_monitor_unavailable")
-    ));
+    let error_code = body["error"]["code"].as_str();
+    assert!(
+        matches!(
+            error_code,
+            Some("supervisor_exited" | "supervisor_monitor_unavailable")
+        ),
+        "unexpected managed-parent startup error code: {error_code:?}"
+    );
     assert!(fs::read(stderr_file).unwrap().is_empty());
 }
 

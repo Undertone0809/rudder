@@ -182,7 +182,7 @@ async fn run(cancellation: CancellationToken) -> Result<serde_json::Value, &'sta
     // `Read::read_to_end` blocks the async executor while stdin is open. Read
     // on Tokio's blocking pool so the managed-parent monitor remains live even
     // before the request arrives (or if a caller leaves stdin open).
-    let input = tokio::task::spawn_blocking(|| {
+    let input_read = tokio::task::spawn_blocking(|| {
         let mut input = Vec::new();
         io::stdin()
             .lock()
@@ -194,8 +194,14 @@ async fn run(cancellation: CancellationToken) -> Result<serde_json::Value, &'sta
         }
         Ok(input)
     })
-    .await
-    .map_err(|_| "stdin_read_failed")??;
+    .await;
+    // Parent death can close stdin while the supervisor monitor cancels us.
+    // Do not replace that observed cancellation with an empty/failed request;
+    // no database work or cleanup has started at this point.
+    if cancellation.is_cancelled() {
+        return Err("operation_aborted");
+    }
+    let input = input_read.map_err(|_| "stdin_read_failed")??;
     // Validate the request and inspect its pinned source before consulting
     // database credentials so malformed or unsafe input has deterministic
     // precedence over a missing runtime configuration.

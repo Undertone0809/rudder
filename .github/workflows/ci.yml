@@ -428,6 +428,33 @@ jobs:
           echo "RUDDER_NATIVE_ARCHIVE_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
           echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
 
+      # Embedded fixtures use PostgreSQL 18; the runner's first PATH client
+      # need not be compatible. Select only the migration backup client, leaving
+      # the fixtures' server/runtime selection unchanged.
+      - name: Prepare migration backup prerequisites
+        if: matrix.test == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          if ! apt-cache show postgresql-client-18 > /dev/null 2>&1; then
+            # https://www.postgresql.org/download/linux/ubuntu/
+            sudo install -d /usr/share/postgresql-common/pgdg
+            sudo curl --fail --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            rudder_ci_ubuntu_codename="$(lsb_release -cs)"
+            printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n' "$rudder_ci_ubuntu_codename" | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+            sudo apt-get update
+          fi
+          sudo apt-get install --yes --no-install-recommends postgresql-client-18
+          rudder_ci_pg_dump=/usr/lib/postgresql/18/bin/pg_dump
+          "$rudder_ci_pg_dump" --version
+          rudder_ci_backup_dir="$RUNNER_TEMP/rudder-migration-backups"
+          install -d -m 700 "$rudder_ci_backup_dir"
+          rudder_ci_backup_probe="$(mktemp "$rudder_ci_backup_dir/.preflight.XXXXXX")"
+          rm -- "$rudder_ci_backup_probe"
+          printf 'Migration backup client: %s\nBackup directory: %s (writable)\n' "$rudder_ci_pg_dump" "$rudder_ci_backup_dir"
+          printf 'RUDDER_NATIVE_MIGRATIONS_PG_DUMP=%s\nRUDDER_DB_BACKUP_DIR=%s\n' "$rudder_ci_pg_dump" "$rudder_ci_backup_dir" >> "$GITHUB_ENV"
+
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=2
@@ -542,6 +569,10 @@ jobs:
       - name: Windows native admission preflight
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test native_chat -- --test-threads=1
+
+      - name: Windows migration parent-death preflight
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-migration-service --test process_tree_windows -- --test-threads=1
 
       - name: Rust tests serially
         run: cargo test --locked --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
