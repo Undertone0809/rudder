@@ -49,6 +49,26 @@ test("keeps the full graph behind planner outputs and affected checks separate",
   }
 });
 
+test("policy-only qualification retains mandatory authority checks before planning and the aggregate gate", () => {
+  const plan = workflowJob("plan");
+  assert.doesNotMatch(plan, /^    if:/m);
+  for (const check of [
+    "node --test scripts/rust-backend-authority-inventory.test.mjs",
+    "node scripts/rust-backend-authority-inventory.mjs check",
+    'git show "${BASE_SHA}:scripts/rust-backend-authority-inventory.mjs"',
+    'node "$checker" compare --root "$GITHUB_WORKSPACE" --compare-ref "$BASE_SHA"',
+    "node scripts/release-compatibility-matrix.mjs",
+  ]) assert.ok(plan.includes(check), check);
+  const authorityStart = plan.indexOf("- name: Verify Rust backend authority inventory and ratchet");
+  const authorityEnd = plan.indexOf("- name: Select deterministic qualification profile", authorityStart);
+  assert.ok(authorityStart >= 0 && authorityEnd > authorityStart);
+  assert.doesNotMatch(plan.slice(authorityStart, authorityEnd), /^        if:/m);
+  const summary = workflowJob("qualification-summary");
+  assert.match(summary, /if: always\(\)/);
+  assert.match(summary, /intentionally skipped/);
+  assert.match(summary, /Non-required qualification family/);
+});
+
 test("caches native PostgreSQL runtime payloads by runner and architecture", () => {
   const native = workflowJob("native-foundations");
   assert.match(native, /name: Cache PostgreSQL runtime payload/);

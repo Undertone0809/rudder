@@ -11,6 +11,16 @@ export const FULL_QUALIFICATION_FAMILIES = [
   "desktop",
 ];
 
+// The mandatory plan job already tests this checker, checks its inventory,
+// and compares the candidate with the trusted checker from the base revision.
+// Keep this exception to the exact three-file policy/metadata change; adding
+// any runtime or CI control path must retain the ordinary fail-closed rules.
+const AUTHORITY_POLICY_PATHS = [
+  "doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json",
+  "scripts/rust-backend-authority-inventory.mjs",
+  "scripts/rust-backend-authority-inventory.test.mjs",
+];
+
 const PATH_RULES = [
   ["workflow", (file) => file.startsWith(".github/") || file === "AGENTS.md"],
   ["release", (file) => file.startsWith("scripts/release") || file.startsWith("scripts/collect-desktop-release") || file.startsWith("scripts/publish-github-release")],
@@ -154,6 +164,24 @@ export function createImpactPlan({ event, files, baseSha = "", headSha = "", hea
       areas,
       reasons: ["changed-file scope is empty and cannot be bounded"],
     }));
+  }
+
+  if (changedPaths.length === AUTHORITY_POLICY_PATHS.length
+    && changedPaths.every((file, index) => file === AUTHORITY_POLICY_PATHS[index])) {
+    return withDigest({
+      profile: "pr_affected",
+      qualification: "affected",
+      event: normalizedEvent,
+      sourceSha: headSha || "unknown",
+      sourceTreeSha: headTreeSha || "unknown",
+      comparisonSha: baseSha || "unknown",
+      changedPaths,
+      changedAreas: ["authority-policy"],
+      requiredFamilies: ["architecture"],
+      affectedScopes: [],
+      escalationReasons: [],
+      fullQualification: false,
+    });
   }
 
   const escalationReasons = HIGH_RISK_RULES
