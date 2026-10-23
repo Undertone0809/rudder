@@ -4,6 +4,10 @@
 //! Board API tokens are returned only at issuance; persistence receives SHA-256
 //! digests and compares challenge digests in constant time.
 
+// Actix responses are the error contract at this HTTP boundary. Boxing them
+// would add an allocation without reducing handlers whose success is a response.
+#![allow(clippy::result_large_err)]
+
 mod persistence;
 
 use crate::browser_auth::{self, BrowserActor, BrowserAuthConfig, BrowserAuthError, SessionPolicy};

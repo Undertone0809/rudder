@@ -932,7 +932,7 @@ fn decode_hex_64(value: &str) -> Option<[u8; 64]> {
         return None;
     }
     let mut decoded = [0u8; 64];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         decoded[index] = (hex_digit(pair[0])? << 4) | hex_digit(pair[1])?;
     }
     Some(decoded)
