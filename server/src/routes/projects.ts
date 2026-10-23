@@ -66,7 +66,16 @@ async function readProjectDeleteReceiptOrganizationScope(
   return organizationIds[0] ?? null;
 }
 
-export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
+export interface ProjectRouteOptions {
+  /** The public Rust listener owns Project list/detail in required mode. */
+  nativeProjectReads?: boolean;
+}
+
+export function projectRoutes(
+  db: Db,
+  rustFoundationBridge?: RustFoundationBridge,
+  options: ProjectRouteOptions = {},
+) {
   const router = Router();
   const svc = projectService(db, rustFoundationBridge);
   const resources = resourceCatalogService(db);
@@ -245,22 +254,27 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     }
   });
 
-  router.get("/orgs/:orgId/projects", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await forwardProjectRead(req, res, orgId, null);
-  });
+  // Keep the existing Rust bridge routes in private-listener mode for
+  // compatibility. When the public Rust ingress is required, the native
+  // listener owns these paths and Node must not expose a fallback.
+  if (!options.nativeProjectReads) {
+    router.get("/orgs/:orgId/projects", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await forwardProjectRead(req, res, orgId, null);
+    });
 
-  router.get("/projects/:id", async (req, res) => {
-    const id = req.params.id as string;
-    const orgId = await svc.getOrganizationId(id);
-    if (!orgId) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, orgId);
-    await forwardProjectRead(req, res, orgId, id);
-  });
+    router.get("/projects/:id", async (req, res) => {
+      const id = req.params.id as string;
+      const orgId = await svc.getOrganizationId(id);
+      if (!orgId) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      assertCompanyAccess(req, orgId);
+      await forwardProjectRead(req, res, orgId, id);
+    });
+  }
 
   router.get("/projects/:id/resources", async (req, res) => {
     const id = req.params.id as string;

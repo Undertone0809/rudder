@@ -588,7 +588,9 @@ fn query_value(query: &str) -> Value {
     Value::Object(object)
 }
 
-fn actor_and_session(identity: &NativeIngressIdentity) -> Option<(ActorIdentity, String)> {
+pub(super) fn actor_and_session(
+    identity: &NativeIngressIdentity,
+) -> Option<(ActorIdentity, String)> {
     match identity {
         NativeIngressIdentity::None => None,
         NativeIngressIdentity::LocalImplicit => Some((
@@ -618,7 +620,7 @@ fn actor_and_session(identity: &NativeIngressIdentity) -> Option<(ActorIdentity,
     }
 }
 
-fn native_authorizer<'a>(
+pub(super) fn native_authorizer<'a>(
     identity: &'a NativeIngressIdentity,
     actor: &'a ActorIdentity,
     session_id: &'a str,
@@ -647,6 +649,21 @@ fn native_authorizer<'a>(
             Some(MemberDirectoryNativeAuth::AgentJwt { identity })
         }
     }
+}
+
+pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = &facts.instructions_host;
+    rudder_d1_persistence::agent_core::resolve_organization_workspace_root(
+        &host.instance_root,
+        &host.workspace_home,
+        &host.previous_documents_root,
+        host.friendly_workspace_home,
+        &host.hostname,
+        org_id,
+    )
+    .map(|path| path.to_string_lossy().into_owned())
+    .map_err(|_| ())
 }
 
 fn response_error(error: AgentCoreError) -> HttpResponse {

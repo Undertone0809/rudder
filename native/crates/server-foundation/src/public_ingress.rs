@@ -22,6 +22,7 @@ mod browser_session;
 mod cli_auth;
 mod email_auth;
 mod native_chat;
+mod project_reads;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -350,6 +351,18 @@ impl PublicIngressRuntime {
                     web::get().to(goal_assigned_collection),
                 )
                 .route(
+                    "/api/orgs/{org_id}/projects",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(project_reads::collection),
+                )
+                .route(
+                    "/api/projects/{project_ref}",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(project_reads::detail),
+                )
+                .route(
                     "/llms/agent-configuration.txt",
                     web::route()
                         .guard(guard::Any(guard::Get()).or(guard::Head()))
@@ -614,6 +627,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
+    if project_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return project_reads::dispatch_alias(state, request, payload).await;
+    }
     if agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()
             && agent_core::is_reserved_path(request.uri().path(), request.method()))

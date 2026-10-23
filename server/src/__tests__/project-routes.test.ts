@@ -96,6 +96,7 @@ async function createApp(
   actor: Record<string, unknown>,
   rustFoundationBridge?: RustFoundationBridge,
   db: Record<string, unknown> = {},
+  nativeProjectReads = false,
 ) {
   const app = express();
   app.use(express.json());
@@ -103,7 +104,7 @@ async function createApp(
     (req as typeof req & { actor: Record<string, unknown> }).actor = actor;
     next();
   });
-  app.use("/api", projectRoutes(db as any, rustFoundationBridge));
+  app.use("/api", projectRoutes(db as any, rustFoundationBridge, { nativeProjectReads }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -340,6 +341,28 @@ describe("POST /api/orgs/:orgId/projects", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Agent key cannot access another organization");
+  });
+
+  it("does not register private Node Project list/detail when required public ingress owns them", async () => {
+    const projectRead = vi.fn();
+    const bridge = { projectRead } as unknown as RustFoundationBridge;
+    const app = await createApp(
+      { type: "board", userId: "user-1", source: "local_implicit" },
+      bridge,
+      {},
+      true,
+    );
+
+    for (const path of [
+      "/api/orgs/organization-1/projects",
+      `/api/projects/${RUST_OWNED_PROJECT_ID}`,
+    ]) {
+      const response = await request(app).get(path);
+      expect(response.status).toBe(404);
+    }
+    expect(projectRead).not.toHaveBeenCalled();
+    expect(mockProjectService.list).not.toHaveBeenCalled();
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
   });
 
   it.each([
