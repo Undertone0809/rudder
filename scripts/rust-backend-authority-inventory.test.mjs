@@ -718,7 +718,7 @@ function compareSessionAdmissionFixture(t, options = {}) {
   return { result, base, head, trustedPolicy, admissionRecord };
 }
 
-function identityAdmissionAppSource({ mount = true, mountAfterParser = false, extra = "" } = {}) {
+function identityAdmissionAppSource({ mount = true, mountAfterParser = false, extra = "", emailFence = false, fenceExpression, fenceGuard = "opts.rustPublicIngress" } = {}) {
   const middlewareMount = `const nativeIdentityAssertionKey =
   opts.rustPublicIngress?.identityAuth?.assertionKey
     ?? opts.rustPublicIngress?.sessionAuth?.assertionKey;
@@ -732,6 +732,11 @@ if (nativeIdentityAssertionKey) {
   const orderedBody = mountAfterParser
     ? `${bodyParser}${mount ? middlewareMount : ""}`
     : `${mount ? middlewareMount : ""}${bodyParser}`;
+  const fenceHandler = fenceExpression ?? '(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); }';
+  const emailAuthFence = emailFence ? `if (${fenceGuard}) {
+  app.use(${fenceHandler});
+}
+` : "";
   return `import { nativeSessionAssertionMiddleware } from "../auth/native-session-assertion.js";
 const app = express();
 app.use(async (req, res, next) => {
@@ -739,7 +744,8 @@ app.use(async (req, res, next) => {
   next();
 });
 app.use("/workspace-preview", (_req, res) => res.status(404).send("Not found"));
-${orderedBody}app.use(${TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID].existing_mount_replacement[mount ? "after" : "before"]},);
+${orderedBody}${emailAuthFence}app.use(${TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID].existing_mount_replacement[mount ? "after" : "before"]},);
+app.all("/api/auth/*authPath", opts.betterAuthHandler);
 ${extra}
 `;
 }
@@ -773,11 +779,21 @@ function compareIdentityAdmissionFixture(t, options = {}) {
   const sourcePath = "server/src/bootstrap/create-http-app.ts";
   const factoryPath = "server/src/auth/native-session-assertion.ts";
   const baseSource = options.baseSource ?? identityAdmissionAppSource({ mount: false });
-  const headSource = options.headSource ?? identityAdmissionAppSource(options.appOptions);
+  const headSource = options.headSource ?? identityAdmissionAppSource({ ...options.appOptions, emailFence: options.emailFence });
   const factorySource = options.factorySource ?? identityAdmissionFixtureFactory;
+  const baseIdentitySource = identityAdmissionAppSource();
+  const fencedIdentitySource = identityAdmissionAppSource({ emailFence: true });
   const trustedPolicy = {
     ...TRUSTED_TRANSPORT_ADMISSIONS[IDENTITY_ADMISSION_ID],
-    source_sha256: sha256(identityAdmissionAppSource()),
+    source_sha256: sha256(baseIdentitySource),
+    conditional_source_variants: [{
+      source_sha256: options.emailFenceHash ?? sha256(fencedIdentitySource),
+      additional_mounts: [{
+        expression: '(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); }',
+        guard: "opts.rustPublicIngress",
+        order_before: 'app.all("/api/auth/*authPath", opts.betterAuthHandler)',
+      }],
+    }],
     factory_sha256: sha256(identityAdmissionFixtureFactory),
   };
 
@@ -792,8 +808,9 @@ function compareIdentityAdmissionFixture(t, options = {}) {
     }),
     boundaryRecord(factoryPath, null, sha256(factorySource)),
   ];
+  if (options.extraSourcePath) put(headRoot, options.extraSourcePath, options.extraSource ?? "");
   const admissionRecord = identityAdmissionReviewRecord(trustedPolicy, headSource, options.recordOverrides);
-  const head = buildInventory(headRoot, nodeRecords, options.omitAdmissionRecord ? [] : [admissionRecord]);
+  const head = buildInventory(headRoot, options.omitNodeRecord ? [] : nodeRecords, options.omitAdmissionRecord ? [] : [admissionRecord]);
   const result = compareInventoriesWithTransportPolicyForTests(
     base,
     head,
@@ -1266,6 +1283,14 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   assert.equal(identityPolicy.order_after, "workspace_preview_reserved_404");
   assert.equal(identityPolicy.order_before, "express_json_body_parser");
   assert.equal(identityPolicy.rust_proof_owner, "native/crates/server-foundation/src/native_session_auth.rs::issue_assertion");
+  assert.deepEqual(identityPolicy.conditional_source_variants.map((variant) => variant.source_sha256), [
+    "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
+  ]);
+  assert.deepEqual(identityPolicy.conditional_source_variants[0].additional_mounts, [{
+    expression: '(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); }',
+    guard: "opts.rustPublicIngress",
+    order_before: 'app.all("/api/auth/*authPath", opts.betterAuthHandler)',
+  }]);
 
   const sessionPolicy = TRUSTED_TRANSPORT_ADMISSIONS[SESSION_ADMISSION_ID];
   assert.equal(sessionPolicy.factory_sha256, "f020323ee03bc0a8f38bb04d47b58b443afe07f93cefacdfc13cf8d46bebced5");
@@ -1318,6 +1343,44 @@ test("exact Rust identity-proof mount is admitted while its source and factory h
     headSource: `${identityAdmissionAppSource()}// unrelated source change\n`,
   });
   assert(changedMountSource.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+});
+
+test("the exact source-pinned Rust email-auth negative fence is the only conditional identity-proof surface", (t) => {
+  const accepted = compareIdentityAdmissionFixture(t, { emailFence: true });
+  assert.deepEqual(accepted.result.failures, []);
+  assert.deepEqual(accepted.result.allowed_transport_admissions.map((entry) => entry.id), [IDENTITY_ADMISSION_ID]);
+  assert.deepEqual(accepted.result.allowed_transport_admissions[0].conditional_signatures, [
+    'server/src/bootstrap/create-http-app.ts|middleware|app|<handler:(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); }>',
+  ]);
+  assert.equal(accepted.result.added_surfaces.filter((surface) => surface.signature.includes("isNativeEmailAuthRequest")).length, 1);
+  assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.expression?.includes("isNativeEmailAuthRequest")).length, 1);
+
+  const unreviewedSource = compareIdentityAdmissionFixture(t, { emailFence: true, omitNodeRecord: true });
+  assert(unreviewedSource.result.failures.some((failure) => failure.includes("server/src/bootstrap/create-http-app.ts: missing reviewed_node_changes record")));
+  assert(unreviewedSource.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")) === false);
+
+  const wrongHash = compareIdentityAdmissionFixture(t, { emailFence: true, emailFenceHash: "0".repeat(64) });
+  assert(wrongHash.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+  assert(wrongHash.result.failures.some((failure) => failure.includes("only the source-pinned conditional middleware surfaces")));
+
+  const wrongBody = compareIdentityAdmissionFixture(t, {
+    headSource: identityAdmissionAppSource({ emailFence: true, fenceExpression: '(req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(200).json({ error: "API route not found" }); return; } next(); }' }),
+  });
+  assert(wrongBody.result.failures.some((failure) => failure.includes("mount source hash does not match the trusted allowlist")));
+  assert(wrongBody.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const wrongPath = compareIdentityAdmissionFixture(t, {
+    extraSourcePath: "server/src/bootstrap/untrusted-email-fence.ts",
+    extraSource: `const app = express();\nif (opts.rustPublicIngress) {\n  app.use((req, res, next) => { if (isNativeEmailAuthRequest(req.method, req.originalUrl)) { res.status(404).json({ error: "API route not found" }); return; } next(); });\n}\n`,
+  });
+  assert(wrongPath.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const extraSurface = compareIdentityAdmissionFixture(t, {
+    emailFence: true,
+    appOptions: { extra: 'app.use("/unrelated", unrelatedMiddleware);\n' },
+  });
+  assert(extraSurface.result.failures.some((failure) => failure.includes("only the source-pinned conditional middleware surfaces")));
+  assert(extraSurface.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
 });
 
 test("identity transport admission rejects import, callee, key, guard, and pre-body-order variations", (t) => {

@@ -111,6 +111,17 @@ workspace-preview handling and before body parsing, Rust proof owner,
 retirement criterion, and reviewer reference. Each mount remains visible in the
 structural inventory and comparison output.
 
+The identity-proof caller pin retains the current-main source hash and permits
+one separately pinned future caller hash for the email-auth cutover. That
+conditional hash admits exactly one additional single-argument `app.use`
+middleware: the Rust-mode negative fence for the fixed email sign-up, sign-in,
+and sign-out paths, before the Better Auth wildcard. The fence must use the
+exact reviewed middleware signature and Rust-ingress guard. A candidate still
+needs matching base/head `reviewed_node_changes` evidence; inventory metadata
+cannot create or widen this static checker allowance. No general middleware or
+Node auth-handler exception is implied, and the current-main source pin remains
+valid until the cutover candidate is based on it.
+
 The session adapter verifies the Rust assertion's method, target, signature,
 and freshness; consumes a bounded in-memory nonce; binds its session identity
 to the request; strips the proof header; rejects unsupported methods for the
