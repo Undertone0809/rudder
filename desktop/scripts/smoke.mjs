@@ -3,7 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import { constants as fsConstants, createReadStream } from "node:fs";
+import { createReadStream, constants as fsConstants } from "node:fs";
 import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -8376,6 +8376,93 @@ async function runWindowsShellScenario(mode) {
   }
 }
 
+async function runUpdateCheckScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "update-check");
+  let unavailable = false;
+  const requests = [];
+  const fixture = http.createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    requests.push(url.pathname);
+    if (url.pathname.startsWith("/repos/")) {
+      response.writeHead(403).end("API rate limit exceeded");
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    if (url.pathname.includes("/expanded_assets/")) {
+      if (unavailable) { response.writeHead(503).end("temporarily unavailable"); return; }
+      const version = decodeURIComponent(url.pathname).split("/v").at(-1);
+      const platformAsset = process.platform === "darwin"
+        ? `Rudder-${version}-macos-${process.arch}-portable.zip`
+        : process.platform === "win32" ? `Rudder-${version}-windows-x64-portable.zip`
+          : `Rudder-${version}-linux-x64.AppImage`;
+      const assets = version.endsWith(".49") ? [platformAsset] : [platformAsset, "SHASUMS256.txt"];
+      response.end(assets.map((asset) => `<a href="/Undertone0809/rudder/releases/download/canary%2Fv${version}/${asset}">${asset}</a>`).join(""));
+      return;
+    }
+    response.end([48, 49].map((number) => `<a href="/Undertone0809/rudder/releases/tag/canary%2Fv99.0.0-canary.${number}">release</a>`).join(""));
+  });
+  await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+  const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
+  let run;
+  try {
+    const packagedSmokeExecutable = mode === "packaged"
+      ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+      : null;
+    run = await launchDesktop(scenarioRoot, mode, await allocateSmokePorts(), {
+      ...(mode === "packaged" ? resolveMacPackagedSmokeHomeEnv() : {}),
+      RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+      RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+    }, packagedSmokeExecutable);
+    await createCompany(run.baseUrl);
+    await run.electronApp.evaluate(({ session }, origin) => {
+      session.defaultSession.webRequest.onBeforeRequest({ urls: [
+        "https://api.github.com/repos/Undertone0809/rudder/*",
+        "https://github.com/Undertone0809/rudder/releases*",
+      ] }, (details, callback) => {
+        const url = new URL(details.url);
+        callback({ redirectURL: `${origin}${url.pathname}${url.search}` });
+      });
+    }, fixtureOrigin);
+    await run.page.evaluate(() => window.desktopShell.setUpdateChannel("canary"));
+    await run.page.goto(`${run.baseUrl}/instance/settings/about`);
+    const check = run.page.getByRole("button", { name: "Check for updates", exact: true });
+    const available = run.page.getByText("Stable + Canary release available: v99.0.0-canary.48.", { exact: true });
+    await check.click();
+    await available.waitFor({ state: "visible", timeout: 30_000 });
+    const checkToast = run.page.locator('[data-toast-id="desktop-update-check"]');
+    await checkToast.getByText("New version available", { exact: true }).waitFor({ state: "visible" });
+    assert.ok(requests.some((url) => url.startsWith("/repos/")), "the public check must exercise the REST failure");
+    assert.ok(requests.some((url) => url.includes("expanded_assets/canary%2Fv99.0.0-canary.49")), "the newer partial release must be checked");
+    assert.ok(requests.some((url) => url.includes("expanded_assets/canary%2Fv99.0.0-canary.48")), "the complete platform inventory must be checked");
+    unavailable = true;
+    await check.click();
+    await run.page.getByText("Stable + Canary release comparison is not available right now.", { exact: true })
+      .waitFor({ state: "visible", timeout: 30_000 });
+    assert.equal(await available.count(), 0, "a failed retry must not retain stale update availability");
+    await checkToast.getByText("Update check unavailable", { exact: true }).waitFor({ state: "visible" });
+    assert.equal(await run.page.getByRole("button", { name: "Download update", exact: true }).count(), 0,
+      "a failed retry must remove the previous persistent download action");
+    unavailable = false;
+    await check.click();
+    await available.waitFor({ state: "visible", timeout: 30_000 });
+    await checkToast.getByText("New version available", { exact: true }).waitFor({ state: "visible" });
+    assert.equal(await run.page.getByText("Update check unavailable", { exact: true }).count(), 0,
+      "a successful retry must replace the previous unavailable notification");
+    const screenshot = path.join(os.tmpdir(), `rudder-update-check-${mode}.png`);
+    await run.page.screenshot({ path: screenshot });
+    await run.electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1080, 720);
+    });
+    await available.waitFor({ state: "visible" });
+    await checkToast.getByText("New version available", { exact: true }).waitFor({ state: "visible" });
+    await run.page.screenshot({ path: screenshot.replace(".png", "-constrained.png") });
+    console.log(`[desktop-smoke] About update check passed API 403, partial assets, failure and retry: ${screenshot}`);
+  } finally {
+    if (run) await closeDesktop(run.electronApp);
+    await new Promise((resolve) => fixture.close(resolve));
+  }
+}
+
 function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
@@ -8383,18 +8470,19 @@ function resolveScenarioList(mode, scenario) {
       ? ["auto-update-public"]
       : [];
     return mode === "packaged"
-      ? ["account-gate", ...packagedPublicUpdate]
-      : ["startup-recovery", "app-builder", "clean", ...localApps];
+      ? ["account-gate", "update-check", ...packagedPublicUpdate]
+      : ["startup-recovery", "update-check", "app-builder", "clean", ...localApps];
   }
   if (scenario === "all") {
     const packagedPublicUpdate = process.platform === "darwin" && process.arch === "arm64"
       ? ["auto-update-public"]
       : [];
     return mode === "packaged"
-      ? ["account-gate", ...packagedPublicUpdate]
-      : ["startup-recovery", "postgres-runtime-handoff", "app-builder", "clean", "local-apps", "agent-browser", "upgrade"];
+      ? ["account-gate", "update-check", ...packagedPublicUpdate]
+      : ["startup-recovery", "update-check", "postgres-runtime-handoff", "app-builder", "clean", "local-apps", "agent-browser", "upgrade"];
   }
   if (scenario === "account-gate"
+    || scenario === "update-check"
     || scenario === "auto-update"
     || scenario === "auto-update-public"
     || scenario === "windows-shell"
@@ -8419,7 +8507,9 @@ try {
   executedScenarios = resolveScenarioList(smokeMode, smokeScenario);
   for (const scenario of executedScenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
-    if (scenario === "windows-shell") {
+    if (scenario === "update-check") {
+      await runUpdateCheckScenario(smokeMode);
+    } else if (scenario === "windows-shell") {
       await runWindowsShellScenario(smokeMode);
     } else if (scenario === "account-gate") {
       await runAccountGateScenario(smokeMode);
