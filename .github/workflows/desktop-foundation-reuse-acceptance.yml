@@ -156,7 +156,7 @@ jobs:
           # Pin its backup client instead of relying on the runner's PATH client.
           pg_dump_binary="${bin_dir}/pg_dump"
           "$pg_dump_binary" --version | tee "$RUNNER_TEMP/migration-pg-dump-version.txt"
-          grep -Eq 'PostgreSQL\)?[[:space:]]+18\.4' "$RUNNER_TEMP/migration-pg-dump-version.txt"
+          grep -Eq 'PostgreSQL\)?[[:space:]]+18\.4([[:space:]]|$)' "$RUNNER_TEMP/migration-pg-dump-version.txt"
           backup_dir="$RUNNER_TEMP/foundation-reuse-migration-backups"
           install -d -m 700 "$backup_dir"
           backup_probe="$(mktemp "$backup_dir/.preflight.XXXXXX")"
