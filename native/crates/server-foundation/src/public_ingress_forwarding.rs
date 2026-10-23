@@ -181,7 +181,7 @@ fn validate_authority(value: &str) -> Result<String, &'static str> {
         return Err("invalid host authority");
     }
     let host = match url.host().ok_or("invalid host authority")? {
-        Host::Domain(host) => host.to_owned(),
+        Host::Domain(host) => host.to_ascii_lowercase(),
         Host::Ipv4(host) => host.to_string(),
         Host::Ipv6(host) => format!("[{host}]"),
     };
