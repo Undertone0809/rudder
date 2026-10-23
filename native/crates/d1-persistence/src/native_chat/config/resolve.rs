@@ -240,20 +240,13 @@ pub(crate) async fn resolve_codex_config(
     .map_err(|_| invalid("Agent instruction bundle cannot be resolved safely"))?;
 
     let (profile_home, profile_config_fingerprint) = if native_managed_profile {
-        let home = match settings.profile_id.as_str() {
-            "default" => {
-                existing_agent_codex_home(host.instance_root(), &organization_id, &agent_id)?
-            }
-            "operator-default" => host
-                .operator_codex_home()
-                .ok_or_else(|| unsupported("the existing operator Codex Profile is unavailable"))?
-                .to_path_buf(),
-            _ => {
-                return Err(unsupported(
-                    "the selected native Codex Profile is unavailable",
-                ));
-            }
-        };
+        let home = resolve_native_codex_profile_home(
+            host,
+            &settings.profile_id,
+            Some(&organization_id),
+            Some(&agent_id),
+        )?
+        .ok_or_else(|| unsupported("the selected native Codex Profile is unavailable"))?;
         let revision = codex_profile_config_revision(&home)?;
         (home, Some(revision))
     } else {
@@ -362,6 +355,51 @@ fn existing_agent_codex_home(
     Ok(canonical)
 }
 
+/// Resolve the production Native Chat Codex profile selector. Readiness checks
+/// omit the not-yet-created Agent identity, so the per-Agent `default` profile
+/// is reported as deferred until creation provisions that directory.
+pub(super) fn resolve_native_codex_profile_home(
+    host: &LocalHostContext,
+    profile_id: &str,
+    organization_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Option<PathBuf>> {
+    match profile_id {
+        "default" => match (organization_id, agent_id) {
+            (Some(organization_id), Some(agent_id)) => Ok(Some(existing_agent_codex_home(
+                host.instance_root(),
+                organization_id,
+                agent_id,
+            )?)),
+            (None, None) => Ok(None),
+            _ => Err(invalid("managed Codex profile identity is incomplete")),
+        },
+        "operator-default" => {
+            let home = host
+                .operator_codex_home()
+                .ok_or_else(|| unsupported("the existing operator Codex Profile is unavailable"))?
+                .to_path_buf();
+            let metadata = fs::symlink_metadata(&home)
+                .map_err(|_| invalid("the existing operator Codex Profile is unavailable"))?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(invalid(
+                    "the existing operator Codex Profile is unavailable",
+                ));
+            }
+            let canonical = home
+                .canonicalize()
+                .map_err(|_| invalid("the existing operator Codex Profile is unavailable"))?;
+            if canonical != home {
+                return Err(invalid("the operator Codex Profile path is invalid"));
+            }
+            Ok(Some(canonical))
+        }
+        _ => Err(unsupported(
+            "the selected native Codex Profile is unavailable",
+        )),
+    }
+}
+
 /// Resolve an already persisted Codex RuntimeBinding profile without reading
 /// the conversation's currently selected Agent. Transcript readers use this
 /// only after D1 has authorized and pinned the historical binding identity.
@@ -384,16 +422,8 @@ pub fn historical_codex_profile_home(
     }
 
     let path = if host.uses_native_codex_profile() {
-        match profile_id {
-            "default" => {
-                existing_agent_codex_home(host.instance_root(), organization_id, agent_id)?
-            }
-            "operator-default" => host
-                .operator_codex_home()
-                .ok_or_else(|| invalid("historical operator Codex profile is unavailable"))?
-                .to_path_buf(),
-            _ => return Err(unsupported("historical Codex profile is unavailable")),
-        }
+        resolve_native_codex_profile_home(host, profile_id, Some(organization_id), Some(agent_id))?
+            .ok_or_else(|| invalid("historical Codex profile is unavailable"))?
     } else {
         managed_profile_home(
             host.managed_profiles_root(),
@@ -419,7 +449,7 @@ pub fn historical_codex_profile_home(
 /// Bind the selected profile's non-secret Codex configuration bytes into the
 /// existing capability revision. Never read auth.json or return/log config
 /// values; only the digest leaves this resolver.
-fn codex_profile_config_revision(home: &Path) -> Result<String> {
+pub(super) fn codex_profile_config_revision(home: &Path) -> Result<String> {
     const MAX_CONFIG_BYTES: usize = 1024 * 1024;
     let path = home.join("config.toml");
     let bytes = match read_codex_config_nofollow(&path, MAX_CONFIG_BYTES) {

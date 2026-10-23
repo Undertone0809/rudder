@@ -39,6 +39,19 @@ pub(super) fn capability_path(path: &str) -> bool {
         && part(&parts, 2, "capabilities")
 }
 
+/// Runtime readiness is Rust-owned even when the optional Native Chat send
+/// route is disabled. Never let this organization-scoped API reach Node.
+pub(super) fn runtime_check_path(path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+    let parts: Vec<_> = decoded.split('/').filter(|part| !part.is_empty()).collect();
+    parts.len() == 5
+        && part(&parts, 0, "api")
+        && part(&parts, 1, "orgs")
+        && !parts[2].is_empty()
+        && part(&parts, 3, "native-chat")
+        && part(&parts, 4, "runtime-check")
+}
+
 fn part(parts: &[&str], index: usize, expected: &str) -> bool {
     parts
         .get(index)
@@ -86,6 +99,25 @@ mod tests {
             "",
         ] {
             assert!(!reserved_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn native_runtime_check_is_reserved_across_route_aliases() {
+        for path in [
+            "/api/orgs/00000000-0000-4000-8000-000000000001/native-chat/runtime-check",
+            "/API/ORGS/org/NATIVE-CHAT/RUNTIME-CHECK/",
+            "/%61pi/orgs/org/native-chat/runtime%2dcheck",
+        ] {
+            assert!(runtime_check_path(path), "{path}");
+        }
+        for path in [
+            "/api/orgs/org/native-chat/runtime-check/extra",
+            "/api/native-chat/runtime-check",
+            "/api/orgs/org/native-chat/runtime-checks",
+            "/other/api/orgs/org/native-chat/runtime-check",
+        ] {
+            assert!(!runtime_check_path(path), "{path}");
         }
     }
 }

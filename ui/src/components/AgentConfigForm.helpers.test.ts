@@ -34,6 +34,12 @@ describe("AgentConfigForm runtime defaults", () => {
     expect(adapterLabels.claude_local).toBe("Claude Code (local)");
   });
 
+  it("inherits the installed Codex and Hermes commands for native configuration", () => {
+    expect(defaultConfigForRuntime("codex_local")).not.toHaveProperty("command");
+    expect(defaultConfigForRuntime("hermes_local")).toEqual({});
+    expect(defaultCommandForRuntime("hermes_local")).toBe("hermes");
+  });
+
   it("uses cursor-agent for new Cursor agents", () => {
     expect(defaultCommandForRuntime("cursor")).toBe("cursor-agent");
     expect(defaultConfigForRuntime("cursor")).toMatchObject({

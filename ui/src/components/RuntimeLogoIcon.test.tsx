@@ -46,6 +46,7 @@ function sha256ForPublicAsset(src: string) {
 describe("RuntimeLogoIcon", () => {
   it("renders original brand assets for every enabled local runtime shown in the adapter menu", () => {
     const expectedSources = {
+      hermes_local: "/brands/hermes-logo.png",
       claude_local: "/brands/claude-logo.svg",
       codex_local: "/brands/openai-logo.svg",
       pi_local: "/brands/pi-logo.svg",

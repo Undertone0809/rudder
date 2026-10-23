@@ -280,3 +280,61 @@ test("stops after a correlated Hermes prompt error and ignores late provider out
     passed = true;
   } finally { await f.stop({ preserveRoot: !passed }); }
 });
+
+test("configures Hermes through the runtime picker, checks native readiness and preserves a failed Profile draft", async ({ page }, testInfo) => {
+  const f = await fixture();
+  let passed = false;
+  try {
+    // Existing Codex data is setup only; the tested replacement is performed in UI.
+    const setup = await page.request.patch(`${f.publicUrl}/api/agents/${f.agentId}`, {
+      data: { agentRuntimeType: "codex_local", agentRuntimeConfig: { profileId: "operator-default", model: "gpt-5.4", search: true } },
+    });
+    expect(setup.ok()).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const detailResponse = page.waitForResponse((response) => response.url().includes(`/api/agents/${f.agentId}`) && response.request().method() === "GET");
+    await page.goto(`${f.publicUrl}/native-${f.orgId}/agents/${f.agentId}/configuration`);
+    const detail = await detailResponse;
+    expect(detail.ok(), `Agent detail failed: ${await detail.text()}`).toBe(true);
+    await page.getByRole("button", { name: "Codex (local)", exact: true }).click();
+    const hermes = page.getByRole("button", { name: "Hermes", exact: true });
+    await expect(hermes).toBeEnabled();
+    await expect(page.getByRole("button", { name: /Hermes.*(?:legacy|API Server|HTTP gateway)/ })).toHaveCount(0);
+    await hermes.click();
+    await page.getByRole("button", { name: "Advanced options", exact: true }).click();
+    const profile = page.getByPlaceholder("default", { exact: true });
+    await expect(profile).toHaveValue("");
+    await expect(page.getByText("Command", { exact: true })).toHaveCount(0);
+
+    const check = async (status: "pass" | "fail") => {
+      const responsePromise = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/api/orgs/${f.orgId}/native-chat/runtime-check`));
+      await page.getByRole("button", { name: "Test runtime chain", exact: true }).click();
+      const response = await responsePromise;
+      expect(response.ok()).toBe(true);
+      const result = await response.json();
+      expect(result.agentRuntimeType).toBe("hermes_local");
+      expect(result.status).toBe(status);
+      await expect(page.getByText("Provider connectivity and model credentials were not tested.", { exact: true })).toBeVisible();
+      return result;
+    };
+    await check("pass");
+    const savedPromise = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().includes(`/api/agents/${f.agentId}`));
+    await page.getByRole("button", { name: "Save", exact: true }).first().click();
+    expect((await savedPromise).ok()).toBe(true);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Hermes", exact: true })).toBeVisible();
+    const readback = await page.request.get(`${f.publicUrl}/api/agents/${f.agentId}`);
+    const agent = await readback.json();
+    expect(agent.agentRuntimeType).toBe("hermes_local");
+    expect(agent.agentRuntimeConfig).toEqual({});
+    await page.getByRole("button", { name: "Advanced options", exact: true }).click();
+    await profile.fill("missing-profile-for-native-check");
+    const failed = await check("fail");
+    expect(failed.checks.some((item: { code: string }) => /profile/.test(item.code))).toBe(true);
+    await expect(profile).toHaveValue("missing-profile-for-native-check");
+    await page.screenshot({ path: testInfo.outputPath("hermes-invalid-profile-draft.png"), fullPage: true });
+    await page.getByRole("button", { name: "Cancel", exact: true }).first().click();
+    await expect(profile).toHaveValue("");
+    await check("pass");
+    passed = true;
+  } finally { await f.stop({ preserveRoot: !passed }); }
+});

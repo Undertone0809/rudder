@@ -318,10 +318,13 @@ export function OnboardingWizard() {
     agentRuntimeType === "codex_local" ||
     agentRuntimeType === "opencode_local" ||
     agentRuntimeType === "pi_local" ||
-    agentRuntimeType === "cursor";
+    agentRuntimeType === "cursor" ||
+    agentRuntimeType === "hermes_local";
   const effectiveAdapterCommand =
     command.trim() ||
-    (agentRuntimeType === "codex_local"
+    (agentRuntimeType === "hermes_local"
+      ? "hermes"
+      : agentRuntimeType === "codex_local"
       ? "codex"
       : agentRuntimeType === "pi_local"
       ? "pi"
@@ -974,6 +977,12 @@ export function OnboardingWizard() {
                             desc: "Local Cursor agent"
                           },
                           {
+                            value: "hermes_local" as const,
+                            label: "Hermes",
+                            icon: Bot,
+                            desc: "Local Hermes agent"
+                          },
+                          {
                             value: "openclaw_gateway" as const,
                             label: "OpenClaw Gateway",
                             icon: Bot,
@@ -1007,7 +1016,8 @@ export function OnboardingWizard() {
                     agentRuntimeType === "codex_local" ||
                     agentRuntimeType === "opencode_local" ||
                     agentRuntimeType === "pi_local" ||
-                    agentRuntimeType === "cursor") && (
+                    agentRuntimeType === "cursor" ||
+                    agentRuntimeType === "hermes_local") && (
                     <div className="space-y-3">
                       <ModelDropdown
                         label="Model"
@@ -1090,8 +1100,9 @@ export function OnboardingWizard() {
                             Runtime environment check
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            Runs a live probe that asks the runtime CLI to
-                            respond with hello.
+                            {agentRuntimeType === "codex_local" || agentRuntimeType === "hermes_local"
+                              ? "Checks the installed native runtime and default Profile."
+                              : "Runs a live probe that asks the runtime CLI to respond with hello."}
                           </p> </div>
                         <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!organizationReady || adapterEnvLoading} onClick={() => void runAdapterEnvironmentTest()} >
                           {adapterEnvLoading ? "Testing..." : "Test now"}

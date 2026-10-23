@@ -94,4 +94,27 @@ describe("AdapterTypeDropdown", () => {
     expect(document.body.textContent).toContain("Default CLI missing");
     expect(document.body.textContent).toContain("OpenClaw Gateway");
   });
+  it("offers one selectable native Hermes and hides the retired gateway choice", async () => {
+    const onChange = vi.fn();
+    const container = render(<AdapterTypeDropdown value="codex_local" onChange={onChange} />);
+    await act(async () => container.querySelector("button")!.click());
+    const choices = Array.from(document.body.querySelectorAll("button")).filter((button) => button.textContent === "Hermes");
+    expect(choices).toHaveLength(1);
+    expect(choices[0].disabled).toBe(false);
+    expect(document.body.textContent).not.toMatch(/Hermes API Server|Hermes \(legacy|Hermes \(HTTP/);
+    await act(async () => choices[0].click());
+    expect(onChange).toHaveBeenCalledWith("hermes_local");
+    expect(document.body.querySelector("[data-radix-popper-content-wrapper]")).toBeNull();
+  });
+
+  it("closes the current choice without resetting its saved configuration", async () => {
+    const onChange = vi.fn();
+    const container = render(<AdapterTypeDropdown value="hermes_local" onChange={onChange} />);
+    await act(async () => container.querySelector("button")!.click());
+    const current = Array.from(document.body.querySelectorAll("[data-radix-popper-content-wrapper] button")).find((button) => button.textContent === "Hermes") as HTMLButtonElement;
+    await act(async () => current.click());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.body.querySelector("[data-radix-popper-content-wrapper]")).toBeNull();
+  });
+
 });

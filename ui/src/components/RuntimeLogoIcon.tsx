@@ -14,6 +14,11 @@ export type RuntimeLogoSource = {
 };
 
 export const runtimeLogoSources: Record<string, RuntimeLogoSource> = {
+  hermes_local: {
+    src: "/brands/hermes-logo.png",
+    sourceUrl: "https://raw.githubusercontent.com/NousResearch/hermes-agent/b499ab11fe8b081470e269f2fb27abae03000da5/apps/desktop/assets/icon.png",
+    sourceSha256: "d60d164e24fdcf6532133b8ea43c77a201e4b9e9dbc396187b58d51d8590ef52",
+  },
   claude_local: {
     src: "/brands/claude-logo.svg",
     sourceUrl: "https://cdn.simpleicons.org/claude",
