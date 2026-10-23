@@ -82,6 +82,14 @@ features must keep business authority in Rust even when a transport adapter is
 required. Do not hide a residual policy decision, session reducer, database
 write, or fallback behind names such as bridge, gateway, adapter, or compatibility.
 
+The two package-level Rust migration and PostgreSQL-owner process transports
+require fixed path and source-hash admissions in the trusted checker. The
+checker also pins the migration-preflight child-escalation timer to one source
+hash, helper owner and signature. These allowances grant no Node SQL or
+lifecycle policy authority. Deliver admission policy through its own protected
+PR before adding those adapters: CI evaluates a candidate with the checker
+from its comparison base, so a candidate cannot approve its own allowance.
+
 The source-backed authority ratchet is lexical evidence, not a semantic proof:
 it hashes runtime files and recognizes structural candidates, but cannot prove
 the behavior of arbitrary call graphs. `reviewed_node_changes` records cover

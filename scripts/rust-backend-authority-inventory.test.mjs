@@ -13,6 +13,10 @@ import {
   scanSource,
   sha256,
   TRUSTED_TRANSPORT_ADMISSIONS,
+  TRUSTED_NODE_TRANSPORT_SOURCES,
+  TRUSTED_TRANSPORT_SURFACES,
+  consumeReviewedTransportSurfaces,
+  validateTrustedNodeTransportSourceRecord,
 } from "./rust-backend-authority-inventory.mjs";
 
 
@@ -1500,4 +1504,69 @@ test("guard targets stay bound to the fixed reviewed caller, independently for o
     contentsFor(fixture.baseRoot, fixture.base), contentsFor(fixture.headRoot, fixture.head));
   assert(result.failures.some((failure) => failure.includes("guard-to-writer target contract")),
     "inventory records cannot self-admit a caller missing from the production policy table");
+});
+
+// These rules must be testable before the future production adapters exist.
+// The later adapter PR is checked with this trusted-base policy against its
+// actual Git source hashes; a candidate cannot admit its own new policy.
+test("package Rust transport admissions are fixed by path, digest and boundary metadata", (t) => {
+  assert.deepEqual(Object.keys(TRUSTED_NODE_TRANSPORT_SOURCES).sort(), [
+    "packages/db/src/migration-operator.ts", "packages/db/src/postgres-owner.ts",
+  ]);
+  for (const [sourcePath, policy] of Object.entries(TRUSTED_NODE_TRANSPORT_SOURCES)) {
+    const record = boundaryRecord(sourcePath, null, policy.source_sha256, {
+      transport_admission_id: policy.id,
+      rust_authority: policy.rust_authority,
+      allowed_node_duties: [...policy.allowed_node_duties],
+      prohibited_node_duties: [...policy.prohibited_node_duties],
+      compatibility_boundary: policy.compatibility_boundary,
+      retirement_criterion: policy.retirement_criterion,
+    });
+    assert.deepEqual(validateTrustedNodeTransportSourceRecord(record, sourcePath, policy.source_sha256), []);
+    const mutations = {
+      transport_admission_id: "unreviewed", rust_authority: "Node",
+      allowed_node_duties: ["execute SQL"], prohibited_node_duties: [],
+      compatibility_boundary: "self attested", retirement_criterion: "never",
+      allowed_transport_surfaces: [],
+    };
+    for (const [key, value] of Object.entries(mutations)) {
+      assert(validateTrustedNodeTransportSourceRecord({ ...record, [key]: value }, sourcePath, policy.source_sha256).length > 0, key);
+    }
+    assert(validateTrustedNodeTransportSourceRecord(record, sourcePath, "0".repeat(64)).length > 0);
+    assert(validateTrustedNodeTransportSourceRecord(record, "packages/db/src/arbitrary.ts", policy.source_sha256).length > 0);
+
+    const baseRoot = temporaryTree(t), headRoot = temporaryTree(t);
+    const unreviewed = "export async function migrate(db) { await db.execute('select 1'); }\n";
+    put(headRoot, sourcePath, unreviewed);
+    const base = buildInventory(baseRoot);
+    const head = buildInventory(headRoot, [{ ...record, head_sha256: sha256(unreviewed) }]);
+    const rejected = compareProductionInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+    assert(rejected.failures.some((failure) => failure.includes("statically trusted transport-source digest")));
+    assert(rejected.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  }
+});
+
+test("transport timer admission binds the exact source hash, owner and added signature", () => {
+  const sourcePath = "server/src/services/migration-preflight.ts";
+  assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_SURFACES), [sourcePath]);
+  const policy = TRUSTED_TRANSPORT_SURFACES[sourcePath];
+  const [signature] = policy.signatures;
+  const record = { transport_surface_owner: policy.owner, allowed_transport_surfaces: [signature] };
+  const evaluate = ({ path = sourcePath, entry = record, digest = policy.source_sha256,
+    surfaces = [{ source: sourcePath, signature }], added = new Map([[signature, 1]]) } = {}) => {
+    const failures = [];
+    consumeReviewedTransportSurfaces(entry, path, surfaces, new Map([[path, { sha256: digest }]]), added, failures);
+    return { failures, added };
+  };
+  const accepted = evaluate();
+  assert.deepEqual(accepted.failures, []);
+  assert.equal(accepted.added.size, 0);
+  assert(evaluate({ digest: "0".repeat(64) }).failures.length > 0);
+  assert(evaluate({ path: "server/src/unreviewed-worker.ts" }).failures.length > 0);
+  assert(evaluate({ entry: { ...record, transport_surface_owner: "unrelatedWorker" } }).failures.length > 0);
+  assert(evaluate({ entry: { ...record, allowed_transport_surfaces: ["fabricated worker"] } }).failures.length > 0);
+  assert(evaluate({ entry: { ...record, allowed_transport_surfaces: [signature, signature] } }).failures.length > 0);
+  assert(evaluate({ surfaces: [] }).failures.length > 0);
+  assert(evaluate({ added: new Map() }).failures.length > 0);
+  assert(evaluate({ entry: { ...record, allowed_transport_surfaces: [""] } }).failures.length > 0);
 });
