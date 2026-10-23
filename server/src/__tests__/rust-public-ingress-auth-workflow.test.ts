@@ -8,7 +8,7 @@ import {
 } from "@rudderhq/db";
 import express, { type Request } from "express";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
@@ -31,6 +31,8 @@ import {
   publicIngressAuthRoutes,
 } from "../routes/public-ingress-auth.js";
 import { hashBearerToken } from "../services/board-auth.js";
+import { projectService } from "../services/projects.js";
+import { resourceCatalogService } from "../services/resource-catalog.js";
 import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
 
 const organizationId = "10000000-0000-0000-0000-000000000001";
@@ -606,6 +608,314 @@ describe("source-binary public Actix authentication workflow", () => {
     expect(boardKeyLookupCalls).toBe(0);
     expect(agentKeyLookupCalls).toBe(0);
   }, 20_000);
+
+  it("serves organization Resource CRUD on Rust while preserving Project-owned legacy edges", async () => {
+    const port = publicPort;
+    if (port === undefined) throw new Error("Public Actix listener is not started");
+    const host = `public.example:${port}`;
+    const resourcePath = `/api/orgs/${organizationId}/resources`;
+    const headers = {
+      host,
+      origin: `https://${host}`,
+      cookie: signedSessionCookie(),
+      ...forgedForwardingHeaders,
+    };
+    const originlessHeaders = {
+      host,
+      cookie: signedSessionCookie(),
+      ...forgedForwardingHeaders,
+    };
+    const historicalResourceId = randomUUID();
+    const nodeProjectId = randomUUID();
+    await fixtureSql!`
+      INSERT INTO projects (id, org_id, name, status)
+      VALUES (${nodeProjectId}::uuid, ${organizationId}::uuid, 'Legacy Node Project', 'planned')
+    `;
+    await fixtureSql!`
+      INSERT INTO organization_resources
+        (id, org_id, name, kind, source_type, locator, description, metadata)
+      VALUES (
+        ${historicalResourceId}::uuid, ${organizationId}::uuid, 'Historical Node resource',
+        'file', 'external', 'https://example.test/historical', 'legacy description', NULL
+      )
+    `;
+    await fixtureSql!`
+      INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      VALUES (${historicalResourceId}::uuid, ${organizationId}::uuid)
+    `;
+    await fixtureSql!`
+      INSERT INTO project_resource_attachments
+        (org_id, project_id, resource_id, role, note, sort_order, is_primary)
+      VALUES (
+        ${organizationId}::uuid, ${nodeProjectId}::uuid, ${historicalResourceId}::uuid,
+        'reference', 'historical attachment', 0, false
+      )
+    `;
+
+    const guardKeys = [
+      "resource-origin-guard-no-origin-create",
+      "resource-origin-guard-wrong-origin-create",
+      "resource-origin-guard-no-origin-update",
+      "resource-origin-guard-wrong-origin-update",
+      "resource-origin-guard-no-origin-delete",
+      "resource-origin-guard-wrong-origin-delete",
+    ];
+    const guardResponses = await Promise.all([
+      getPublicIngress(resourcePath, {
+        ...originlessHeaders,
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": guardKeys[0]!,
+      }, "POST", JSON.stringify({
+        name: "Originless resource",
+        kind: "file",
+        sourceType: "external",
+        locator: "https://example.test/originless",
+      })),
+      getPublicIngress(resourcePath, {
+        ...headers,
+        origin: "https://untrusted.example",
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": guardKeys[1]!,
+      }, "POST", JSON.stringify({
+        name: "Wrong-origin resource",
+        kind: "file",
+        sourceType: "external",
+        locator: "https://example.test/wrong-origin",
+      })),
+      getPublicIngress(`${resourcePath}/${historicalResourceId}`, {
+        ...originlessHeaders,
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": guardKeys[2]!,
+      }, "PATCH", JSON.stringify({ name: "Originless update" })),
+      getPublicIngress(`${resourcePath}/${historicalResourceId}`, {
+        ...headers,
+        origin: "https://untrusted.example",
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": guardKeys[3]!,
+      }, "PATCH", JSON.stringify({ name: "Wrong-origin update" })),
+      getPublicIngress(`${resourcePath}/${historicalResourceId}`, {
+        ...originlessHeaders,
+        "x-rudder-idempotency-key": guardKeys[4]!,
+      }, "DELETE"),
+      getPublicIngress(`${resourcePath}/${historicalResourceId}`, {
+        ...headers,
+        origin: "https://untrusted.example",
+        "x-rudder-idempotency-key": guardKeys[5]!,
+      }, "DELETE"),
+    ]);
+    for (const response of guardResponses) {
+      expect(response.status, response.body).toBe(403);
+      expect(JSON.parse(response.body)).toEqual({
+        error: "Board mutation requires trusted browser origin",
+      });
+    }
+    expect(await fixtureSql!`
+      SELECT name, description FROM organization_resources
+      WHERE id = ${historicalResourceId}::uuid
+    `).toEqual([{ name: "Historical Node resource", description: "legacy description" }]);
+    expect(await fixtureSql!`
+      SELECT owner, mutation_version::text AS version, fence_epoch::text AS epoch
+      FROM organization_resource_mutation_state
+      WHERE resource_id = ${historicalResourceId}::uuid
+    `).toEqual([{ owner: "node", version: "0", epoch: "0" }]);
+    expect(await fixtureSql!`
+      SELECT count(*)::int AS count FROM activity_log
+      WHERE org_id = ${organizationId}::uuid
+        AND entity_type = 'organization_resource'
+        AND entity_id = ${historicalResourceId}
+    `).toEqual([{ count: 0 }]);
+    expect(await fixtureSql!`
+      SELECT count(*)::int AS count FROM organization_mutation_receipts
+      WHERE org_id = ${organizationId}::uuid
+        AND command_kind = 'organization_resource'
+        AND idempotency_key = ANY(${guardKeys})
+    `).toEqual([{ count: 0 }]);
+    expect(await fixtureSql!`
+      SELECT count(*)::int AS count FROM organization_mutation_outbox
+      WHERE org_id = ${organizationId}::uuid
+        AND payload->>'entityId' = ${historicalResourceId}
+    `).toEqual([{ count: 0 }]);
+
+    const initialCatalog = await getPublicIngress(resourcePath, headers);
+    expect(initialCatalog.status, initialCatalog.body).toBe(200);
+    expect(JSON.parse(initialCatalog.body)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: historicalResourceId,
+        orgId: organizationId,
+        name: "Historical Node resource",
+        description: "legacy description",
+      }),
+    ]));
+
+    const createKey = "resource-public-workflow-create";
+    const createdResponse = await getPublicIngress(resourcePath, {
+      ...headers,
+      "content-type": "application/json",
+      "x-rudder-idempotency-key": createKey,
+    }, "POST", JSON.stringify({
+      name: "Native-created resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "https://example.test/native-created",
+      description: "created on Rust ingress",
+    }));
+    expect(createdResponse.status, createdResponse.body).toBe(201);
+    const created = JSON.parse(createdResponse.body) as { id: string; orgId: string; name: string };
+    expect(created).toMatchObject({ orgId: organizationId, name: "Native-created resource" });
+
+    const nodeUpdate = resourceCatalogService(db!).updateOrganizationResource(
+      organizationId,
+      historicalResourceId,
+      { description: "Node write serialized with claim" },
+    );
+    const publicPatch = getPublicIngress(`${resourcePath}/${historicalResourceId}`, {
+      ...headers,
+      "content-type": "application/json",
+      "x-rudder-idempotency-key": "resource-public-workflow-claim",
+    }, "PATCH", JSON.stringify({ name: "Claimed by Rust" }));
+    const [nodeUpdateResult, patchResponse] = await Promise.allSettled([nodeUpdate, publicPatch]);
+    expect(patchResponse.status).toBe("fulfilled");
+    if (patchResponse.status !== "fulfilled") throw patchResponse.reason;
+    expect(patchResponse.value.status, patchResponse.value.body).toBe(200);
+    if (nodeUpdateResult.status === "rejected") {
+      expect(nodeUpdateResult.reason).toMatchObject({ status: 409 });
+    }
+
+    const historicalState = await fixtureSql!`
+      SELECT state.owner, state.mutation_version::text AS version,
+        state.fence_epoch::text AS epoch, resource.name
+      FROM organization_resource_mutation_state state
+      JOIN organization_resources resource ON resource.id = state.resource_id
+      WHERE state.resource_id = ${historicalResourceId}::uuid
+    `;
+    expect(historicalState).toEqual([expect.objectContaining({
+      owner: "rust",
+      version: "1",
+      epoch: "1",
+      name: "Claimed by Rust",
+    })]);
+    const historicalAttachment = await fixtureSql!`
+      SELECT attachment.project_id::text AS project_id,
+        project_state.owner AS project_owner
+      FROM project_resource_attachments attachment
+      JOIN project_goal_mutation_state project_state
+        ON project_state.project_id = attachment.project_id
+      WHERE attachment.resource_id = ${historicalResourceId}::uuid
+    `;
+    expect(historicalAttachment).toEqual([{ project_id: nodeProjectId, project_owner: "node" }]);
+
+    const catalog = resourceCatalogService(db!);
+    const updatedAttachment = await catalog.updateProjectResourceAttachment(
+      nodeProjectId,
+      (await catalog.listProjectResourceAttachments(nodeProjectId))[0]!.id,
+      { note: "Project relation remains Node-owned" },
+    );
+    expect(updatedAttachment).toMatchObject({ note: "Project relation remains Node-owned" });
+    expect(await catalog.removeProjectResourceAttachment(nodeProjectId, updatedAttachment!.id))
+      .toMatchObject({ resourceId: historicalResourceId });
+    await catalog.createProjectResourceAttachment(nodeProjectId, {
+      resourceId: historicalResourceId,
+      note: "reattached by Node project owner",
+    });
+    expect(await projectService(db!).remove(nodeProjectId)).toMatchObject({ id: nodeProjectId });
+    expect(await fixtureSql!`
+      SELECT name, owner FROM organization_resources resource
+      JOIN organization_resource_mutation_state state ON state.resource_id = resource.id
+      WHERE resource.id = ${historicalResourceId}::uuid
+    `).toEqual([{ name: "Claimed by Rust", owner: "rust" }]);
+
+    const sameOrganizationAgentRead = await getPublicIngress(resourcePath, {
+      host,
+      origin: "https://public.example",
+      authorization: `Bearer ${agentToken}`,
+      "x-rudder-agent-id": agentId,
+    });
+    expect(sameOrganizationAgentRead.status, sameOrganizationAgentRead.body).toBe(200);
+    expect(JSON.parse(sameOrganizationAgentRead.body)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: historicalResourceId, name: "Claimed by Rust" }),
+    ]));
+    const agentMutation = await getPublicIngress(resourcePath, {
+      ...headers,
+      "content-type": "application/json",
+      "x-rudder-idempotency-key": "resource-public-workflow-agent-denied",
+      authorization: `Bearer ${agentToken}`,
+      "x-rudder-agent-id": agentId,
+    }, "POST", JSON.stringify({
+      name: "Agent cannot create",
+      kind: "file",
+      locator: "https://example.test/forbidden",
+    }));
+    expect(agentMutation.status).toBe(403);
+    const agentCrossOrganizationRead = await getPublicIngress(
+      `/api/orgs/${otherOrganizationId}/resources`,
+      {
+        host,
+        origin: "https://public.example",
+        authorization: `Bearer ${agentToken}`,
+        "x-rudder-agent-id": agentId,
+      },
+    );
+    expect(agentCrossOrganizationRead.status).toBe(403);
+    const boardCrossOrganizationRead = await getPublicIngress(
+      `/api/orgs/${otherOrganizationId}/resources`, headers,
+    );
+    expect(boardCrossOrganizationRead.status).toBe(403);
+    const profiles = await getPublicIngress(
+      `/api/orgs/${organizationId}/intelligence-profiles`, headers,
+    );
+    expect(profiles.status, profiles.body).toBe(200);
+
+    const deleteKey = "resource-public-workflow-delete";
+    const deletePath = `${resourcePath}/${created.id}`;
+    const deleted = await getPublicIngress(deletePath, {
+      ...headers,
+      "x-rudder-idempotency-key": deleteKey,
+    }, "DELETE");
+    expect(deleted.status, deleted.body).toBe(200);
+    expect(JSON.parse(deleted.body)).toMatchObject({ id: created.id, orgId: organizationId });
+    const deletedReplay = await getPublicIngress(deletePath, {
+      ...headers,
+      "x-rudder-idempotency-key": deleteKey,
+    }, "DELETE");
+    expect(deletedReplay.status, deletedReplay.body).toBe(200);
+    expect(JSON.parse(deletedReplay.body)).toEqual(JSON.parse(deleted.body));
+
+    const createdEffects = await fixtureSql!`
+      SELECT action FROM activity_log
+      WHERE org_id = ${organizationId}::uuid
+        AND entity_type = 'organization_resource' AND entity_id = ${created.id}
+      ORDER BY action
+    `;
+    expect(createdEffects.map((row) => row.action)).toEqual([
+      "organization.resource.created",
+      "organization.resource.deleted",
+    ]);
+    const createdOutbox = await fixtureSql!`
+      SELECT payload->>'action' AS action FROM organization_mutation_outbox
+      WHERE org_id = ${organizationId}::uuid AND payload->>'entityId' = ${created.id}
+      ORDER BY payload->>'action'
+    `;
+    expect(createdOutbox.map((row) => row.action)).toEqual([
+      "organization.resource.created",
+      "organization.resource.deleted",
+    ]);
+    const receipts = await fixtureSql!`
+      SELECT idempotency_key FROM organization_mutation_receipts
+      WHERE org_id = ${organizationId}::uuid AND command_kind = 'organization_resource'
+        AND idempotency_key = ANY(${[createKey, "resource-public-workflow-claim", deleteKey]})
+      ORDER BY idempotency_key
+    `;
+    expect(receipts.map((row) => row.idempotency_key)).toEqual([
+      "resource-public-workflow-claim",
+      createKey,
+      deleteKey,
+    ]);
+    expect(authorizationObservations).toHaveLength(0);
+    expect(privateRequestCalls).toBe(0);
+    expect(sessionResolverCalls).toBe(0);
+    expect(boardKeyLookupCalls).toBe(0);
+    expect(agentKeyLookupCalls).toBe(0);
+  }, 30_000);
 
   it("serves root LLM documents through Rust and the private Node actor/registry adapter", async () => {
     const port = publicPort;

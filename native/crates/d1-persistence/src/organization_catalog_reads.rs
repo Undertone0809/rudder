@@ -1,5 +1,6 @@
 //! Organization resource catalogs and effective intelligence defaults. The
 //! default profile migration is a read projection only; it never persists state.
+use crate::agent_core::{NativeAgentAccess, NativeAgentAuthorizer};
 use crate::{
     StoreError,
     issue_metadata_reads::{
@@ -9,7 +10,7 @@ use crate::{
 };
 use serde::Deserialize;
 use serde::de::Error as _;
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -35,6 +36,10 @@ impl OrganizationCatalogReadInput {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum OrganizationCatalogReadError {
+    #[error("the current identity is unauthorized")]
+    Unauthorized,
+    #[error("the current identity is forbidden from this organization")]
+    Forbidden,
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
@@ -299,10 +304,51 @@ pub async fn read_organization_catalog(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
+    let output = read_organization_catalog_on_connection(&mut *tx, org, input).await?;
+    tx.commit().await?;
+    Ok(output)
+}
+
+/// Read the existing catalog projection only after revalidating the native
+/// public identity in the same repeatable-read, read-only database snapshot.
+pub async fn read_organization_catalog_public(
+    pool: &PgPool,
+    org: &str,
+    input: &OrganizationCatalogReadInput,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<String, OrganizationCatalogReadError> {
+    let mut input = input.clone();
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    if input.legacy_date_timezone.is_none() {
+        input.legacy_date_timezone = Some(
+            sqlx::query_scalar("SELECT current_setting('TimeZone')")
+                .fetch_one(&mut *tx)
+                .await?,
+        );
+    }
+    input.validate()?;
+    match authorizer.revalidate(&mut *tx, org).await? {
+        NativeAgentAccess::Authorized => {}
+        NativeAgentAccess::Unauthorized => return Err(OrganizationCatalogReadError::Unauthorized),
+        NativeAgentAccess::Forbidden => return Err(OrganizationCatalogReadError::Forbidden),
+    }
+    let output = read_organization_catalog_on_connection(&mut *tx, org, &input).await?;
+    tx.commit().await?;
+    Ok(output)
+}
+
+async fn read_organization_catalog_on_connection(
+    connection: &mut PgConnection,
+    org: &str,
+    input: &OrganizationCatalogReadInput,
+) -> Result<String, OrganizationCatalogReadError> {
     if let Some(zone) = &input.legacy_date_timezone {
         sqlx::query("SELECT set_config('TimeZone',$1,true)")
             .bind(zone)
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await?;
     }
     let output = match input.operation {
@@ -323,7 +369,11 @@ pub async fn read_organization_catalog(
                 "SELECT {value} AS value,t.metadata::text AS metadata FROM organization_resources t WHERE t.org_id=$1::uuid ORDER BY t.created_at ASC,t.id ASC"
             );
             let mut values = Vec::new();
-            for row in sqlx::query(&query).bind(org).fetch_all(&mut *tx).await? {
+            for row in sqlx::query(&query)
+                .bind(org)
+                .fetch_all(&mut *connection)
+                .await?
+            {
                 let raw: String = row.try_get("value")?;
                 let metadata: Option<String> = row.try_get("metadata")?;
                 values.push(append_field(
@@ -356,7 +406,7 @@ pub async fn read_organization_catalog(
             );
             if let Some(row) = sqlx::query(&query)
                 .bind(org)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut *connection)
                 .await?
             {
                 let raw: String = row.try_get("value")?;
@@ -385,7 +435,6 @@ pub async fn read_organization_catalog(
             }
         }
     };
-    tx.commit().await?;
     Ok(output)
 }
 

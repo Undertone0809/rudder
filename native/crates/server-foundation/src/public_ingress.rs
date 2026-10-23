@@ -22,6 +22,7 @@ mod browser_session;
 mod cli_auth;
 mod email_auth;
 mod native_chat;
+mod organization_resources;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -447,6 +448,9 @@ fn public_ingress_startup_receipt(
         "/api/orgs/:org_id/goals",
         "/api/orgs/:org_id/goals/workspace",
         "/api/orgs/:org_id/goals/assigned",
+        "/api/orgs/:org_id/resources",
+        "/api/orgs/:org_id/resources/:resource_id",
+        "/api/orgs/:org_id/intelligence-profiles",
     ];
     if native_identity_enabled {
         direct_routes.extend([
@@ -632,6 +636,11 @@ async fn proxy_request(
     {
         return email_auth::handle(state, request, payload, endpoint).await;
     }
+    if let Some(endpoint) =
+        organization_resources::endpoint_for_path(request.uri().path(), request.method())
+    {
+        return organization_resources::handle(state, request, payload, endpoint).await;
+    }
     if let Some(endpoint) = cli_auth::endpoint_for_path(request.uri().path()) {
         return cli_auth::handle(state, request, payload, endpoint).await;
     }
@@ -675,6 +684,7 @@ async fn proxy_request(
             .is_some_and(|auth| auth.better_auth_email_auth_enabled())
             && email_auth::reserved_path(request.uri().path()))
         || cli_auth::reserved_path(request.uri().path())
+        || organization_resources::reserved_path(request.uri().path())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
@@ -2371,7 +2381,10 @@ mod tests {
                 "/api/orgs/:org_id/members/directory",
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",
-                "/api/orgs/:org_id/goals/assigned"
+                "/api/orgs/:org_id/goals/assigned",
+                "/api/orgs/:org_id/resources",
+                "/api/orgs/:org_id/resources/:resource_id",
+                "/api/orgs/:org_id/intelligence-profiles"
             ])
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
@@ -2401,6 +2414,9 @@ mod tests {
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",
                 "/api/orgs/:org_id/goals/assigned",
+                "/api/orgs/:org_id/resources",
+                "/api/orgs/:org_id/resources/:resource_id",
+                "/api/orgs/:org_id/intelligence-profiles",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
                 "/api/auth/get-session",

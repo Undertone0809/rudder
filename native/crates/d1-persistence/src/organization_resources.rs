@@ -1,10 +1,13 @@
+use crate::agent_core::{NativeAgentAccess, NativeAgentAuthorizer};
 use crate::{
     COMMAND_KIND_ORGANIZATION_RESOURCE, CommittedMutation, OrganizationResourceCommand,
-    OrganizationResourceOperation, Outcome, Receipt, ResultState, StoreError, transaction,
+    OrganizationResourceCreateCommand, OrganizationResourceOperation, Outcome,
+    PublicOrganizationResourceError, Receipt, ResultState, StoreError, transaction,
 };
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 const RECEIPT_FORMAT: i32 = 1;
 const MAX_COMMAND_BYTES: usize = transaction::MAX_RESULT_BYTES / 2;
@@ -45,6 +48,16 @@ struct ResourcePatch {
 }
 
 #[derive(Clone, Debug)]
+struct ResourceCreate {
+    name: String,
+    kind: String,
+    source_type: String,
+    locator: String,
+    description: Option<String>,
+    metadata: Option<Value>,
+}
+
+#[derive(Clone, Debug)]
 struct ResourceRow {
     id: String,
     org_id: String,
@@ -69,6 +82,24 @@ struct ResourceAuthority {
 pub(crate) async fn mutate(
     pool: &PgPool,
     command: OrganizationResourceCommand,
+) -> Result<CommittedMutation, StoreError> {
+    mutate_with_authorizer(pool, command, None).await
+}
+
+pub(crate) async fn mutate_public(
+    pool: &PgPool,
+    command: OrganizationResourceCommand,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<CommittedMutation, PublicOrganizationResourceError> {
+    mutate_with_authorizer(pool, command, Some(authorizer))
+        .await
+        .map_err(PublicOrganizationResourceError::from)
+}
+
+async fn mutate_with_authorizer(
+    pool: &PgPool,
+    command: OrganizationResourceCommand,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<CommittedMutation, StoreError> {
     let organization_id = canonical_uuid(&command.organization_id)?;
     let resource_id = canonical_uuid(&command.resource_id)?;
@@ -125,9 +156,215 @@ pub(crate) async fn mutate(
         run_id.as_deref(),
         patch,
         &fingerprint,
+        authorizer,
     )
     .await;
     transaction::finish(tx, result).await
+}
+
+pub(crate) async fn create_public(
+    pool: &PgPool,
+    command: OrganizationResourceCreateCommand,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<CommittedMutation, PublicOrganizationResourceError> {
+    let organization_id = canonical_uuid(&command.organization_id)?;
+    if command.actor_kind != "board" || command.actor_id.is_empty() {
+        return Err(StoreError::Unauthorized.into());
+    }
+    validate_bounded_text(&command.actor_id, 256)?;
+    validate_bounded_text(&command.idempotency_key, 256)?;
+    let input = ResourceCreate::parse(&command.data)?;
+    let fingerprint = create_command_fingerprint(
+        &organization_id,
+        &command.actor_id,
+        &command.idempotency_key,
+        &input,
+    )?;
+
+    let mut tx = transaction::begin(pool).await?;
+    let result = create_public_in_transaction(
+        &mut tx,
+        &command,
+        &organization_id,
+        &input,
+        &fingerprint,
+        authorizer,
+    )
+    .await;
+    transaction::finish(tx, result).await.map_err(Into::into)
+}
+
+async fn create_public_in_transaction(
+    tx: &mut transaction::Tx<'_>,
+    command: &OrganizationResourceCreateCommand,
+    organization_id: &str,
+    input: &ResourceCreate,
+    fingerprint: &str,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<CommittedMutation, StoreError> {
+    lock_organization(tx, organization_id).await?;
+    authorize_public(tx, organization_id, authorizer).await?;
+    if let Some(receipt) =
+        replay_create(tx, organization_id, &command.idempotency_key, fingerprint).await?
+    {
+        return Ok(receipt);
+    }
+
+    let existing_id = if input.source_type == "library" {
+        sqlx::query_scalar::<_, String>(
+            "SELECT id::text FROM organization_resources
+             WHERE org_id=$1::uuid AND source_type='library' AND locator=$2
+             ORDER BY created_at ASC,id ASC LIMIT 1 FOR UPDATE",
+        )
+        .bind(organization_id)
+        .bind(&input.locator)
+        .fetch_optional(&mut **tx)
+        .await?
+    } else {
+        None
+    };
+
+    let resource_id = match existing_id {
+        Some(id) => id,
+        None => {
+            let id = Uuid::new_v4().to_string();
+            let metadata = input
+                .metadata
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| StoreError::InvalidResource)?;
+            sqlx::query(
+                "INSERT INTO organization_resources
+                  (id,org_id,name,kind,source_type,locator,description,metadata)
+                 VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::jsonb)",
+            )
+            .bind(&id)
+            .bind(organization_id)
+            .bind(&input.name)
+            .bind(&input.kind)
+            .bind(&input.source_type)
+            .bind(&input.locator)
+            .bind(&input.description)
+            .bind(metadata)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO organization_resource_mutation_state
+                  (resource_id,org_id,owner,mutation_version,fence_epoch)
+                 VALUES ($1::uuid,$2::uuid,'rust',0,1)",
+            )
+            .bind(&id)
+            .bind(organization_id)
+            .execute(&mut **tx)
+            .await?;
+            id
+        }
+    };
+
+    let authority = lock_resource_authority(tx, organization_id, &resource_id).await?;
+    // Lock every attached Project fence before claiming the canonical row.
+    // Node-owned Project ownership stays unchanged; the resource's own fence
+    // prevents Node from changing its fields after this transaction commits.
+    lock_attached_project_owners(tx, organization_id, &resource_id, false).await?;
+    let current = load_resource(tx, organization_id, &resource_id)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    let next_version = authority
+        .version
+        .checked_add(1)
+        .ok_or(StoreError::VersionRange)?;
+    let next_epoch = if authority.owner == "rust" {
+        authority.fence_epoch
+    } else {
+        authority
+            .fence_epoch
+            .checked_add(1)
+            .ok_or(StoreError::VersionRange)?
+    };
+    let updated = sqlx::query(
+        "UPDATE organization_resource_mutation_state
+         SET owner='rust', mutation_version=$4, fence_epoch=$5,
+             fence_token=CASE WHEN owner <> 'rust' THEN gen_random_uuid() ELSE fence_token END,
+             updated_at=now()
+         WHERE resource_id=$1::uuid AND org_id=$2::uuid AND owner=$3
+           AND mutation_version=$6 AND fence_epoch=$7 AND fence_token=$8::uuid",
+    )
+    .bind(&resource_id)
+    .bind(organization_id)
+    .bind(&authority.owner)
+    .bind(transaction::signed(next_version)?)
+    .bind(transaction::signed(next_epoch)?)
+    .bind(transaction::signed(authority.version)?)
+    .bind(transaction::signed(authority.fence_epoch)?)
+    .bind(&authority.fence_token)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(StoreError::StaleFence);
+    }
+
+    let response = resource_response(&current);
+    let details = json!({"name": current.name, "kind": current.kind, "locator": current.locator});
+    let activity_id = insert_activity(
+        tx,
+        organization_id,
+        &command.actor_id,
+        "organization.resource.created",
+        &resource_id,
+        None,
+        &details,
+        &command.idempotency_key,
+    )
+    .await?;
+    let receipt = Receipt {
+        organization_id: organization_id.to_owned(),
+        version: next_version,
+        fence_epoch: next_epoch,
+        fingerprint: fingerprint.to_owned(),
+        activity_id: Some(activity_id.clone()),
+        outcome: Outcome::Applied,
+        result: ResultState::OrganizationResourceCreated {
+            resource_id: resource_id.clone(),
+            response,
+        },
+    };
+    validate_create_receipt(&receipt, organization_id, &resource_id, fingerprint)?;
+    persist_receipt(
+        tx,
+        organization_id,
+        &command.idempotency_key,
+        fingerprint,
+        &receipt,
+    )
+    .await?;
+    insert_activity_outbox(
+        tx,
+        organization_id,
+        &activity_id,
+        &command.actor_id,
+        "organization.resource.created",
+        &resource_id,
+        None,
+        &details,
+    )
+    .await?;
+    Ok(CommittedMutation {
+        replayed: false,
+        receipt,
+    })
+}
+
+async fn authorize_public(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<(), StoreError> {
+    match authorizer.revalidate(&mut **tx, organization_id).await? {
+        NativeAgentAccess::Authorized => Ok(()),
+        NativeAgentAccess::Unauthorized => Err(StoreError::PublicIdentityUnauthorized),
+        NativeAgentAccess::Forbidden => Err(StoreError::PublicIdentityForbidden),
+    }
 }
 
 async fn apply(
@@ -138,8 +375,12 @@ async fn apply(
     run_id: Option<&str>,
     patch: Option<ResourcePatch>,
     fingerprint: &str,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<CommittedMutation, StoreError> {
     lock_organization(tx, organization_id).await?;
+    if let Some(authorizer) = authorizer {
+        authorize_public(tx, organization_id, authorizer).await?;
+    }
     if let Some(receipt) = replay(
         tx,
         organization_id,
@@ -161,7 +402,7 @@ async fn apply(
         command.operation == OrganizationResourceOperation::Delete,
     )
     .await?;
-    if authority.owner != "rust" && !rust_project_attached {
+    if authority.owner != "rust" && authorizer.is_none() && !rust_project_attached {
         return Err(StoreError::NotOwned);
     }
 
@@ -366,6 +607,48 @@ impl ResourcePatch {
             Some(Value::Object(value)) => PatchField::Set(Some(Value::Object(value.clone()))),
             _ => return Err(StoreError::InvalidResource),
         };
+        Ok(Self {
+            name,
+            kind,
+            source_type,
+            locator,
+            description,
+            metadata,
+        })
+    }
+}
+
+impl ResourceCreate {
+    fn parse(data: &Value) -> Result<Self, StoreError> {
+        let object = data.as_object().ok_or(StoreError::InvalidResource)?;
+        let required_text = |key: &str| match object.get(key) {
+            Some(Value::String(value)) if !value.is_empty() => Ok(value.trim().to_owned()),
+            _ => Err(StoreError::InvalidResource),
+        };
+        let name = required_text("name")?;
+        let kind = match object.get("kind").and_then(Value::as_str) {
+            Some(value) if ["file", "directory", "url", "connector_object"].contains(&value) => {
+                value.to_owned()
+            }
+            _ => return Err(StoreError::InvalidResource),
+        };
+        let source_type = match object.get("sourceType").and_then(Value::as_str) {
+            None => "external".to_owned(),
+            Some(value) if ["external", "library"].contains(&value) => value.to_owned(),
+            _ => return Err(StoreError::InvalidResource),
+        };
+        let locator = required_text("locator")?;
+        let description = match object.get("description") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => normalize_nullable_text(value),
+            _ => return Err(StoreError::InvalidResource),
+        };
+        let metadata = match object.get("metadata") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(value)) => Some(Value::Object(value.clone())),
+            _ => return Err(StoreError::InvalidResource),
+        };
+        validate_library_resource(&source_type, &kind, &locator)?;
         Ok(Self {
             name,
             kind,
@@ -805,6 +1088,233 @@ fn validate_receipt(
     Ok(())
 }
 
+async fn replay_create(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    idempotency_key: &str,
+    fingerprint: &str,
+) -> Result<Option<CommittedMutation>, StoreError> {
+    let row = sqlx::query(
+        "SELECT command_kind,command_fingerprint,receipt_format,outcome,
+                resulting_version,fence_epoch,activity_id::text AS activity_id,
+                CASE WHEN octet_length(result::text) <= $3 THEN result::text ELSE NULL END AS result_text
+         FROM organization_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(organization_id)
+    .bind(idempotency_key)
+    .bind(i64::try_from(transaction::MAX_RESULT_BYTES).expect("receipt bound fits BIGINT"))
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if row.try_get::<String, _>("command_kind")? != COMMAND_KIND_ORGANIZATION_RESOURCE
+        || row.try_get::<String, _>("command_fingerprint")? != fingerprint
+    {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    if row.try_get::<i32, _>("receipt_format")? != RECEIPT_FORMAT {
+        return Err(StoreError::InvalidReceipt);
+    }
+    let result_text: Option<String> = row.try_get("result_text")?;
+    let stored: Value = serde_json::from_str(&result_text.ok_or(StoreError::InvalidReceipt)?)
+        .map_err(|_| StoreError::InvalidReceipt)?;
+    let receipt: Receipt =
+        serde_json::from_value(stored.clone()).map_err(|_| StoreError::InvalidReceipt)?;
+    if serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)? != stored
+        || receipt.activity_id.as_deref()
+            != row.try_get::<Option<String>, _>("activity_id")?.as_deref()
+        || receipt.version != transaction::unsigned(row.try_get("resulting_version")?)?
+        || receipt.fence_epoch != transaction::unsigned(row.try_get("fence_epoch")?)?
+        || receipt.outcome != Outcome::Applied
+    {
+        return Err(StoreError::InvalidReceipt);
+    }
+    let result_resource_id = match &receipt.result {
+        ResultState::OrganizationResourceCreated {
+            resource_id,
+            response,
+        } if response.get("id").and_then(Value::as_str) == Some(resource_id)
+            && response.get("orgId").and_then(Value::as_str) == Some(organization_id) =>
+        {
+            resource_id
+        }
+        _ => return Err(StoreError::InvalidReceipt),
+    };
+    validate_create_receipt(&receipt, organization_id, result_resource_id, fingerprint)?;
+    Ok(Some(CommittedMutation {
+        replayed: true,
+        receipt,
+    }))
+}
+
+fn validate_create_receipt(
+    receipt: &Receipt,
+    organization_id: &str,
+    resource_id: &str,
+    fingerprint: &str,
+) -> Result<(), StoreError> {
+    let ResultState::OrganizationResourceCreated {
+        resource_id: result_id,
+        response,
+    } = &receipt.result
+    else {
+        return Err(StoreError::InvalidReceipt);
+    };
+    if receipt.organization_id != organization_id
+        || receipt.fingerprint != fingerprint
+        || receipt.activity_id.as_deref().is_none_or(str::is_empty)
+        || result_id != resource_id
+        || response.get("id").and_then(Value::as_str) != Some(resource_id)
+        || response.get("orgId").and_then(Value::as_str) != Some(organization_id)
+        || receipt.version == 0
+        || receipt.fence_epoch == 0
+    {
+        return Err(StoreError::InvalidReceipt);
+    }
+    ensure_json_size(response)?;
+    Ok(())
+}
+
+fn create_command_fingerprint(
+    organization_id: &str,
+    actor_id: &str,
+    idempotency_key: &str,
+    input: &ResourceCreate,
+) -> Result<String, StoreError> {
+    let identity = json!({
+        "adapter_format": 1,
+        "kind": COMMAND_KIND_ORGANIZATION_RESOURCE,
+        "organization_id": organization_id,
+        "actor_kind": "board",
+        "actor_id": actor_id,
+        "idempotency_key": idempotency_key,
+        "operation": "create",
+        "data": {
+            "name": input.name,
+            "kind": input.kind,
+            "sourceType": input.source_type,
+            "locator": input.locator,
+            "description": input.description,
+            "metadata": input.metadata,
+        },
+    });
+    ensure_command_size(&identity)?;
+    Ok(hex_digest(Sha256::digest(
+        serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
+    )))
+}
+
+fn validate_bounded_text(value: &str, max_bytes: usize) -> Result<(), StoreError> {
+    if value.is_empty()
+        || value.len() > max_bytes
+        || value
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok(())
+}
+
+async fn insert_activity(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    actor_id: &str,
+    action: &str,
+    resource_id: &str,
+    run_id: Option<&str>,
+    details: &Value,
+    idempotency_key: &str,
+) -> Result<String, StoreError> {
+    ensure_json_size(details)?;
+    Ok(sqlx::query_scalar(
+        "INSERT INTO activity_log
+          (org_id,actor_type,actor_id,action,entity_type,entity_id,agent_id,run_id,details,idempotency_key)
+         VALUES ($1::uuid,'user',$2,$3,'organization_resource',$4,NULL,$5::uuid,$6::jsonb,$7)
+         RETURNING id::text",
+    )
+    .bind(organization_id)
+    .bind(actor_id)
+    .bind(action)
+    .bind(resource_id)
+    .bind(run_id)
+    .bind(serde_json::to_string(details).map_err(|_| StoreError::InvalidReceipt)?)
+    .bind(activity_idempotency_key(idempotency_key))
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+async fn persist_receipt(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    idempotency_key: &str,
+    fingerprint: &str,
+    receipt: &Receipt,
+) -> Result<(), StoreError> {
+    let serialized = serde_json::to_string(receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if serialized.len() > transaction::MAX_RESULT_BYTES {
+        return Err(StoreError::InvalidInput);
+    }
+    sqlx::query(
+        "INSERT INTO organization_mutation_receipts
+          (org_id,idempotency_key,command_kind,command_fingerprint,receipt_format,outcome,
+           resulting_version,fence_epoch,activity_id,result)
+         VALUES ($1::uuid,$2,$3,$4,$5,'applied',$6,$7,$8::uuid,$9::jsonb)",
+    )
+    .bind(organization_id)
+    .bind(idempotency_key)
+    .bind(COMMAND_KIND_ORGANIZATION_RESOURCE)
+    .bind(fingerprint)
+    .bind(RECEIPT_FORMAT)
+    .bind(transaction::signed(receipt.version)?)
+    .bind(transaction::signed(receipt.fence_epoch)?)
+    .bind(
+        receipt
+            .activity_id
+            .as_deref()
+            .ok_or(StoreError::InvalidReceipt)?,
+    )
+    .bind(serialized)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn insert_activity_outbox(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    activity_id: &str,
+    actor_id: &str,
+    action: &str,
+    resource_id: &str,
+    run_id: Option<&str>,
+    details: &Value,
+) -> Result<(), StoreError> {
+    let event_payload = json!({
+        "actorType": "user",
+        "actorId": actor_id,
+        "action": action,
+        "entityType": "organization_resource",
+        "entityId": resource_id,
+        "agentId": null,
+        "runId": run_id,
+        "details": details,
+    });
+    ensure_json_size(&event_payload)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_outbox (org_id,activity_id,event_type,payload)
+         VALUES ($1::uuid,$2::uuid,'activity.logged',$3::jsonb)",
+    )
+    .bind(organization_id)
+    .bind(activity_id)
+    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 fn command_fingerprint(
     organization_id: &str,
     resource_id: &str,
@@ -876,7 +1386,10 @@ fn activity_idempotency_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResourcePatch, command_fingerprint, validate_library_resource};
+    use super::{
+        ResourceCreate, ResourcePatch, command_fingerprint, create_command_fingerprint,
+        validate_library_resource,
+    };
     use crate::OrganizationResourceOperation;
     use serde_json::json;
 
@@ -892,6 +1405,93 @@ mod tests {
     fn resource_patch_rejects_unknown_fields_and_non_object_metadata() {
         assert!(ResourcePatch::parse(&json!({ "metadata": [] })).is_err());
         assert!(ResourcePatch::parse(&json!({ "unexpected": true })).is_err());
+    }
+
+    #[test]
+    fn resource_create_normalizes_legacy_fields_and_defaults_source_type() {
+        let create = ResourceCreate::parse(&json!({
+            "name": "  Guide  ",
+            "kind": "file",
+            "locator": "  https://example.test/guide  ",
+            "description": "  ",
+            "metadata": {"source":"legacy"},
+            "unknownLegacyField": true
+        }))
+        .unwrap();
+        assert_eq!(create.name, "Guide");
+        assert_eq!(create.kind, "file");
+        assert_eq!(create.source_type, "external");
+        assert_eq!(create.locator, "https://example.test/guide");
+        assert_eq!(create.description, None);
+        assert_eq!(create.metadata, Some(json!({"source":"legacy"})));
+    }
+
+    #[test]
+    fn resource_create_applies_the_existing_library_validation_contract() {
+        assert!(
+            ResourceCreate::parse(&json!({
+                "name": "source",
+                "kind": "file",
+                "sourceType": "library",
+                "locator": "projects/shared/README.md"
+            }))
+            .is_ok()
+        );
+        assert!(
+            ResourceCreate::parse(&json!({
+                "name": "source",
+                "kind": "url",
+                "sourceType": "library",
+                "locator": "projects/shared/README.md"
+            }))
+            .is_err()
+        );
+        assert!(
+            ResourceCreate::parse(&json!({
+                "name": "source",
+                "kind": "file",
+                "sourceType": "library",
+                "locator": "projects/../secret"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn resource_create_fingerprint_binds_actor_and_normalized_payload() {
+        let input = ResourceCreate::parse(&json!({
+            "name": "  Docs  ",
+            "kind": "directory",
+            "locator": " https://example.test/docs "
+        }))
+        .unwrap();
+        let fingerprint = create_command_fingerprint(
+            "11111111-1111-4111-8111-111111111111",
+            "user-1",
+            "create-key",
+            &input,
+        )
+        .unwrap();
+        assert_eq!(
+            fingerprint,
+            create_command_fingerprint(
+                "11111111-1111-4111-8111-111111111111",
+                "user-1",
+                "create-key",
+                &input,
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            fingerprint,
+            create_command_fingerprint(
+                "11111111-1111-4111-8111-111111111111",
+                "user-2",
+                "create-key",
+                &input,
+            )
+            .unwrap()
+        );
     }
 
     #[test]

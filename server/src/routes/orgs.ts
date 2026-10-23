@@ -2,7 +2,6 @@ import type { Db } from "@rudderhq/db";
 import {
   copyOrganizationWorkspaceEntrySchema,
   createLibraryDocumentSchema,
-  createOrganizationResourceSchema,
   createOrganizationSchema,
   createOrganizationWorkspaceDirectorySchema,
   createOrganizationWorkspaceFileSchema,
@@ -17,7 +16,6 @@ import {
   restoreLibraryDocumentRevisionSchema,
   restoreWorkspaceBackupSchema,
   updateLibraryDocumentSchema,
-  updateOrganizationResourceSchema,
   updateOrganizationWorkspaceFileSchema,
   upsertOrganizationIntelligenceProfileSchema,
 } from "@rudderhq/shared";
@@ -39,13 +37,10 @@ import {
   organizationPortabilityService,
   organizationService,
   organizationSkillService,
-  resourceCatalogService,
   secretService,
   workspaceBackupService,
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
-import { sendOrganizationCatalogRead } from "../services/organization-catalog-read-bridge.js";
-import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import { RustFoundationBridgeError, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { sendWorkspaceBackupRead } from "../services/workspace-backup-read-bridge.js";
@@ -150,7 +145,6 @@ export function organizationRoutes(
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
   const access = accessService(db);
   const budgets = budgetService(db);
-  const resources = resourceCatalogService(db);
   const documents = documentService(db);
   const libraryEntries = libraryEntryService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
@@ -427,22 +421,6 @@ export function organizationRoutes(
     },
   );
 
-  router.get("/:orgId/resources", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    if (req.actor.type !== "agent") {
-      assertBoard(req);
-    }
-    await sendOrganizationCatalogRead(res, rustFoundationBridge, req.actor, orgId, { operation: "resources" }, db);
-  });
-
-  router.get("/:orgId/intelligence-profiles", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
-    await sendOrganizationCatalogRead(res, rustFoundationBridge, req.actor, orgId, { operation: "intelligence-profiles" }, db);
-  });
-
   router.put(
     "/:orgId/intelligence-profiles/:purpose",
     validate(upsertOrganizationIntelligenceProfileSchema),
@@ -486,96 +464,6 @@ export function organizationRoutes(
       res.json(profile);
     },
   );
-
-  router.post("/:orgId/resources", validate(createOrganizationResourceSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
-    const resource = await resources.createOrganizationResource(orgId, req.body);
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      action: "organization.resource.created",
-      entityType: "organization_resource",
-      entityId: resource.id,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      details: {
-        name: resource.name,
-        kind: resource.kind,
-        locator: resource.locator,
-      },
-    });
-    res.status(201).json(resource);
-  });
-
-  router.patch("/:orgId/resources/:resourceId", validate(updateOrganizationResourceSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    const resourceId = req.params.resourceId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
-    const rustResponse = await forwardRustOrganizationResourceMutation(
-      db, rustFoundationBridge, req, orgId, resourceId, "update", req.body,
-    );
-    if (rustResponse) {
-      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
-      return;
-    }
-    const resource = await resources.updateOrganizationResource(orgId, resourceId, req.body);
-    if (!resource) {
-      res.status(404).json({ error: "Resource not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      action: "organization.resource.updated",
-      entityType: "organization_resource",
-      entityId: resource.id,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      details: req.body,
-    });
-    res.json(resource);
-  });
-
-  router.delete("/:orgId/resources/:resourceId", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    const resourceId = req.params.resourceId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
-    const rustResponse = await forwardRustOrganizationResourceMutation(
-      db, rustFoundationBridge, req, orgId, resourceId, "delete", {},
-    );
-    if (rustResponse) {
-      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
-      return;
-    }
-    const resource = await resources.removeOrganizationResource(orgId, resourceId);
-    if (!resource) {
-      res.status(404).json({ error: "Resource not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      action: "organization.resource.deleted",
-      entityType: "organization_resource",
-      entityId: resource.id,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      details: {
-        name: resource.name,
-      },
-    });
-    res.json(resource);
-  });
 
   router.get("/:orgId/workspace/files", async (req, res) => {
     const orgId = req.params.orgId as string;
