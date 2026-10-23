@@ -329,8 +329,11 @@ mod tests {
                 applied_migrations: Vec::new(),
                 pending_migrations: Vec::new(),
                 diagnostics: Vec::new(),
+                catalog_repair_candidates: Vec::new(),
             },
             diagnostics: Vec::new(),
+            pending_legacy_column_renames: Vec::new(),
+            legacy_column_conflicts: Vec::new(),
         }
     }
 
@@ -381,8 +384,28 @@ mod tests {
                 response["report"]["status"],
                 Value::String(status_name(status).to_owned())
             );
+            assert_eq!(
+                response["report"]["pendingLegacyColumnRenames"],
+                Value::Array(Vec::new())
+            );
+            assert_eq!(
+                response["report"]["legacyColumnConflicts"],
+                Value::Array(Vec::new())
+            );
             assert!(response.get("error").is_none());
         }
+    }
+
+    #[test]
+    fn older_preflight_reports_default_new_alias_fields() {
+        let mut report =
+            serde_json::to_value(sample_report(MigrationPreflightStatus::Current)).unwrap();
+        let object = report.as_object_mut().unwrap();
+        object.remove("pendingLegacyColumnRenames");
+        object.remove("legacyColumnConflicts");
+        let report: MigrationPreflightReport = serde_json::from_value(report).unwrap();
+        assert!(report.pending_legacy_column_renames.is_empty());
+        assert!(report.legacy_column_conflicts.is_empty());
     }
 
     #[test]

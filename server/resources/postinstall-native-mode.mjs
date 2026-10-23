@@ -34,4 +34,6 @@ export function restoreFoundationExecutableMode({
 
 restoreFoundationExecutableMode();
 restoreFoundationExecutableMode({ binaryName: "migration-preflight" });
+restoreFoundationExecutableMode({ binaryName: "migration-apply" });
 restoreFoundationExecutableMode({ binaryName: "rudder-process-host" });
+restoreFoundationExecutableMode({ binaryName: "rudder-postgres-owner" });

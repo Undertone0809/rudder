@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -128,6 +128,65 @@ test("the runner does not add the no-tests success escape hatch", async () => {
   assert.equal(result.code, 0);
   assert.ok(!argv.includes("--passWithNoTests"));
   assert.ok(argv.includes("--passWithNoTests=false"));
+});
+
+test("migration test writes use isolated profiles and failed evidence is retained", async (t) => {
+  const originalProfile = mkdtempSync(join(tmpdir(), "rudder-original-profile-"));
+  t.after(() => rmSync(originalProfile, { recursive: true, force: true }));
+  const originalBackup = join(originalProfile, "existing-backup.sql");
+  writeFileSync(originalBackup, "existing recovery data");
+  const profiles = [];
+
+  for (const code of [0, 7]) {
+    let profile;
+    const result = await runProject("server", ["migration.test.ts"], {
+      env: {
+        HOME: "canonical-home-sentinel",
+        RUDDER_HOME: originalProfile,
+        RUDDER_CONFIG: join(originalProfile, "config.json"),
+        RUDDER_DB_BACKUP_DIR: originalProfile,
+        DATABASE_URL: "postgresql://non-test.invalid/production",
+        RUDDER_NATIVE_DATABASE_URL: "postgresql://non-test.invalid/native-production",
+        RUDDER_MIGRATION_APPLY_DATABASE_URL: "postgresql://non-test.invalid/migration-production",
+        RUDDER_MIGRATION_PREFLIGHT_DATABASE_URL: "postgresql://non-test.invalid/preflight-production",
+        RUDDER_ORGANIZATION_WORKSPACE_HOME: originalProfile,
+        RUDDER_NATIVE_MIGRATION_APPLY_PATH: "frozen-native-sentinel",
+      },
+      spawnChild: (_command, _args, { env }) => {
+        profile = env.HOME;
+        assert.equal(profile, realpathSync(profile));
+        profiles.push(profile);
+        t.after(() => rmSync(profile, { recursive: true, force: true }));
+        assert.notEqual(profile, originalProfile);
+        assert.equal(env.RUDDER_CONFIG, join(profile, "config.json"));
+        assert.equal(env.DATABASE_URL, undefined);
+        assert.equal(env.RUDDER_NATIVE_DATABASE_URL, undefined);
+        assert.equal(env.RUDDER_MIGRATION_APPLY_DATABASE_URL, undefined);
+        assert.equal(env.RUDDER_MIGRATION_PREFLIGHT_DATABASE_URL, undefined);
+        assert.equal(env.RUDDER_DB_BACKUP_DIR, undefined);
+        assert.equal(env.RUDDER_ORGANIZATION_WORKSPACE_HOME, undefined);
+        assert.equal(env.RUDDER_HOME, undefined);
+        assert.equal(env.USERPROFILE, profile);
+        assert.equal(env.RUSTUP_HOME, join("canonical-home-sentinel", ".rustup"));
+        assert.equal(env.CARGO_HOME, join("canonical-home-sentinel", ".cargo"));
+        assert.equal(env.COREPACK_HOME, join("canonical-home-sentinel", process.platform === "win32" ? "AppData/Local" : ".cache", "node/corepack"));
+        assert.equal(env.RUDDER_NATIVE_MIGRATION_APPLY_PATH, "frozen-native-sentinel");
+        writeFileSync(join(profile, "simulated-backup.sql.partial"), "test evidence");
+        const child = new EventEmitter();
+        queueMicrotask(() => child.emit("exit", code, null));
+        return child;
+      },
+    });
+    assert.equal(result.code, code);
+    assert.equal(existsSync(profile), code !== 0);
+    if (code !== 0) {
+      assert.equal(readFileSync(join(profile, "simulated-backup.sql.partial"), "utf8"), "test evidence");
+    }
+  }
+
+  assert.notEqual(profiles[0], profiles[1]);
+  assert.equal(readFileSync(originalBackup, "utf8"), "existing recovery data");
+  assert.equal(existsSync(join(originalProfile, "simulated-backup.sql.partial")), false);
 });
 
 test("Node-native suites are explicitly dispatched outside Vitest", async () => {

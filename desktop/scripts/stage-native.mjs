@@ -53,6 +53,7 @@ export async function stageDesktopNative({
   hostArch = process.arch,
   targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || hostArch,
   nativeTarget = process.env.RUDDER_NATIVE_TARGET,
+  cargoTargetDir = process.env.CARGO_TARGET_DIR,
   artifactDir = process.env.RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR,
   runCommand = run,
 } = {}) {
@@ -67,8 +68,12 @@ export async function stageDesktopNative({
   const archiveBinaryName = `rudder-native${extension}`;
   const updateHelperBinaryName = `rudder-update-helper${extension}`;
   const migrationPreflightBinaryName = `migration-preflight${extension}`;
+  const migrationApplyBinaryName = `migration-apply${extension}`;
+  const postgresOwnerBinaryName = `rudder-postgres-owner${extension}`;
   const serverFoundationBinaryName = `rudder-server-foundation${extension}`;
   const targetRoot = path.join(stagedNativeRoot, target);
+  // Cargo resolves a relative CARGO_TARGET_DIR against its invocation directory.
+  const cargoTargetRoot = cargoTargetDir ? path.resolve(root, cargoTargetDir) : path.join(nativeRoot, "target");
   const requestedTarget = nativeTarget || (target === resolveNativeTarget(platform, hostArch) ? null : target);
   if (artifactDir && requestedTarget && requestedTarget !== target) {
     throw new Error("Desktop foundation artifact target conflicts with the requested Cargo target");
@@ -83,34 +88,48 @@ export async function stageDesktopNative({
     "build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "--release",
   ];
   if (foundationArtifact) {
-    for (const [packageName, binary] of [
-      ["rudder-process-host", "rudder-process-host"], ["rudder-native", "rudder-native"],
-      ["rudder-update-helper", "rudder-update-helper"], ["rudder-migration-service", "migration-preflight"],
-    ]) cargoArgs.push("-p", packageName, "--bin", binary);
+    const versionedBinaries = [
+      ["rudder-process-host", ["rudder-process-host"]],
+      ["rudder-native", ["rudder-native"]],
+      ["rudder-update-helper", ["rudder-update-helper"]],
+      ["rudder-migration-service", ["migration-preflight", "migration-apply"]],
+      ["rudder-postgres-lifecycle", ["rudder-postgres-owner"]],
+    ];
+    for (const [packageName, binaries] of versionedBinaries) {
+      cargoArgs.push("-p", packageName);
+      for (const binary of binaries) cargoArgs.push("--bin", binary);
+    }
   } else {
     cargoArgs.push("--bin", "rudder-process-host", "--bin", "rudder-native", "--bin", "rudder-update-helper",
-      "--bin", "migration-preflight", "--bin", "rudder-server-foundation");
+      "--bin", "migration-preflight", "--bin", "migration-apply", "--bin", "rudder-postgres-owner", "--bin", "rudder-server-foundation");
   }
+  if (cargoTargetDir) cargoArgs.push("--target-dir", cargoTargetRoot);
   if (requestedTarget) cargoArgs.push("--target", requestedTarget);
   await runCommand(platform === "win32" ? "cargo.exe" : "cargo", cargoArgs, root);
 
   const profileRoot = requestedTarget
-    ? path.join(nativeRoot, "target", requestedTarget, "release")
-    : path.join(nativeRoot, "target", "release");
+    ? path.join(cargoTargetRoot, requestedTarget, "release")
+    : path.join(cargoTargetRoot, "release");
   const sourcePath = path.join(profileRoot, binaryName);
   const archiveSourcePath = path.join(profileRoot, archiveBinaryName);
   const updateHelperSourcePath = path.join(profileRoot, updateHelperBinaryName);
   const migrationPreflightSourcePath = path.join(profileRoot, migrationPreflightBinaryName);
+  const migrationApplySourcePath = path.join(profileRoot, migrationApplyBinaryName);
+  const postgresOwnerSourcePath = path.join(profileRoot, postgresOwnerBinaryName);
   const serverFoundationSourcePath = path.join(profileRoot, serverFoundationBinaryName);
   const destinationPath = path.join(targetRoot, binaryName);
   const archiveDestinationPath = path.join(targetRoot, archiveBinaryName);
   const updateHelperDestinationPath = path.join(targetRoot, updateHelperBinaryName);
   const migrationPreflightDestinationPath = path.join(targetRoot, migrationPreflightBinaryName);
+  const migrationApplyDestinationPath = path.join(targetRoot, migrationApplyBinaryName);
+  const postgresOwnerDestinationPath = path.join(targetRoot, postgresOwnerBinaryName);
   const serverFoundationDestinationPath = path.join(targetRoot, serverFoundationBinaryName);
   await fs.access(sourcePath);
   await fs.access(archiveSourcePath);
   await fs.access(updateHelperSourcePath);
   await fs.access(migrationPreflightSourcePath);
+  await fs.access(migrationApplySourcePath);
+  await fs.access(postgresOwnerSourcePath);
   if (!foundationArtifact) await fs.access(serverFoundationSourcePath);
   await fs.rm(targetRoot, { recursive: true, force: true });
   await fs.mkdir(targetRoot, { recursive: true });
@@ -118,14 +137,18 @@ export async function stageDesktopNative({
   await fs.copyFile(archiveSourcePath, archiveDestinationPath);
   await fs.copyFile(updateHelperSourcePath, updateHelperDestinationPath);
   await fs.copyFile(migrationPreflightSourcePath, migrationPreflightDestinationPath);
+  await fs.copyFile(migrationApplySourcePath, migrationApplyDestinationPath);
+  await fs.copyFile(postgresOwnerSourcePath, postgresOwnerDestinationPath);
   if (foundationArtifact) await fs.writeFile(serverFoundationDestinationPath, foundationArtifact);
   else await fs.copyFile(serverFoundationSourcePath, serverFoundationDestinationPath);
   if (platform !== "win32") await fs.chmod(destinationPath, 0o755);
   if (platform !== "win32") await fs.chmod(archiveDestinationPath, 0o755);
   if (platform !== "win32") await fs.chmod(updateHelperDestinationPath, 0o755);
   if (platform !== "win32") await fs.chmod(migrationPreflightDestinationPath, 0o755);
+  if (platform !== "win32") await fs.chmod(migrationApplyDestinationPath, 0o755);
+  if (platform !== "win32") await fs.chmod(postgresOwnerDestinationPath, 0o755);
   if (platform !== "win32") await fs.chmod(serverFoundationDestinationPath, 0o755);
-  console.log(`[desktop:stage-native] staged ${target}/${binaryName}, ${updateHelperBinaryName}, ${migrationPreflightBinaryName}, and ${serverFoundationBinaryName}`);
+  console.log(`[desktop:stage-native] staged ${target}/${binaryName}, ${updateHelperBinaryName}, ${migrationPreflightBinaryName}, ${migrationApplyBinaryName}, ${postgresOwnerBinaryName}, and ${serverFoundationBinaryName}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

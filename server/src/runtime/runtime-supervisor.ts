@@ -5,6 +5,7 @@ export type RuntimeDisposer = () => void | Promise<void>;
 type RuntimeResource = {
   name: string;
   dispose: RuntimeDisposer;
+  critical: boolean;
 };
 
 type RuntimeSupervisorOptions = {
@@ -22,11 +23,11 @@ export class RuntimeSupervisor {
     this.onDisposeError = options.onDisposeError;
   }
 
-  own(name: string, dispose: RuntimeDisposer): void {
+  own(name: string, dispose: RuntimeDisposer, options: { critical?: boolean } = {}): void {
     if (this.disposeInFlight) {
       throw new Error("Cannot own runtime resource after disposal has started");
     }
-    this.resources.push({ name, dispose });
+    this.resources.push({ name, dispose, critical: options.critical === true });
   }
 
   dispose(): Promise<void> {
@@ -41,6 +42,7 @@ export class RuntimeSupervisor {
   }
 
   private async disposeResources(): Promise<void> {
+    const criticalFailures: unknown[] = [];
     try {
       while (this.resources.length > 0) {
         const resource = this.resources.pop();
@@ -50,6 +52,7 @@ export class RuntimeSupervisor {
         try {
           await this.disposerContext.run(disposerToken, resource.dispose);
         } catch (error) {
+          if (resource.critical) criticalFailures.push(error);
           try {
             this.onDisposeError?.({ name: resource.name, error });
           } catch {
@@ -63,6 +66,9 @@ export class RuntimeSupervisor {
       this.activeDisposerTokens.clear();
       this.disposerContext.disable();
     }
+    if (criticalFailures.length > 0) {
+      throw new AggregateError(criticalFailures, "Critical runtime cleanup failed");
+    }
   }
 }
 
@@ -73,7 +79,11 @@ export async function supervisedStart<T>(
   try {
     return await start();
   } catch (error) {
-    await supervisor.dispose();
+    try {
+      await supervisor.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Startup failed and runtime cleanup was not confirmed");
+    }
     throw error;
   }
 }

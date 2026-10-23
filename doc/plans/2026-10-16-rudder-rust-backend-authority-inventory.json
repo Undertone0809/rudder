@@ -46,7 +46,7 @@
         "server/src",
         "identity/src"
       ],
-      "source_files": 388,
+      "source_files": 390,
       "structural_surfaces": 90
     },
     {
@@ -56,7 +56,7 @@
         "packages/db/src",
         "packages/identity-db/src"
       ],
-      "source_files": 286,
+      "source_files": 288,
       "structural_surfaces": 3729
     },
     {
@@ -67,7 +67,7 @@
         "packages/identity-db/src",
         "identity/src"
       ],
-      "source_files": 156,
+      "source_files": 158,
       "structural_surfaces": 0
     },
     {
@@ -2858,7 +2858,7 @@
     },
     {
       "path": "packages/db/src/client.ts",
-      "sha256": "62ca52814349683536a739699ff0967a95124fad324c47290f7b5accb68482f8",
+      "sha256": "724887e89b71231634bbda4611c11593a5da669089b8a637131730b121ec33d5",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -2874,7 +2874,7 @@
     },
     {
       "path": "packages/db/src/index.ts",
-      "sha256": "0589cb5be13c94557d8a2d8ff194ebcbe90e28d0e2d0e887ed0d983825ff1930",
+      "sha256": "e38555562a24f9f9b005f4d07406b816e1939d310a36f5cc2f6db2c51764c2e8",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -2890,7 +2890,7 @@
     },
     {
       "path": "packages/db/src/migrate.ts",
-      "sha256": "d1cf14c256a9a9241fb7d08162389d941e288ffe98320eca149915e500294827",
+      "sha256": "1fcd308723581bdd29a9bc92f35017378885f51a049533995b2d8b3df7a423bd",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -2905,8 +2905,16 @@
       ]
     },
     {
+      "path": "packages/db/src/migration-operator.ts",
+      "sha256": "f9a5f20555bb6b4942adadf5c249c86469de5b11ba6dd671da87409565b3fce5",
+      "families": [
+        "database_queries_and_writers",
+        "schema_and_migration_apply"
+      ]
+    },
+    {
       "path": "packages/db/src/migration-runtime.ts",
-      "sha256": "607cba96459c12e9bed87003aa8ba374212e8cf7c64925a26ea6b4762c6675df",
+      "sha256": "a4343d5e4b8e90954bdbe6421d64835eeb46bfb1519518659bfd0eab29b37170",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -2921,8 +2929,16 @@
       ]
     },
     {
+      "path": "packages/db/src/postgres-owner.ts",
+      "sha256": "3868134ff321bb2212dcf5a40812aa088e09fc0ced114046bf4f7540bd1e4895",
+      "families": [
+        "database_queries_and_writers",
+        "schema_and_migration_apply"
+      ]
+    },
+    {
       "path": "packages/db/src/runtime-config.ts",
-      "sha256": "ea6e335ee6ef97d26957ec26d3b7804a928c549e2284726205e6fdc2f7f3c310",
+      "sha256": "d7d49ed7c1c41faaf52e44163cdc8b4077f125d46dda5ca1d5ee55a1c36049de",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -4426,7 +4442,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "ec6a362d1b12c76c86da78d9987848778fe8fbb3c373c4a37b3b5cf4c1da8a77",
+      "sha256": "c9765482067498cb3ef43a878f7b6199097b578b641e05cb76679118c1ebbfc0",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -5243,8 +5259,15 @@
       ]
     },
     {
+      "path": "server/src/runtime/postgres-owner-exit.ts",
+      "sha256": "aaedfc7e7aff51ac8d9ed75969e7d5280d36f5ba1ef0cf1f9a9c2038634b0359",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
       "path": "server/src/runtime/runtime-supervisor.ts",
-      "sha256": "52f18e1346cfc63bacd30e097b3639eac5ae605963844654b6a9357b0b8193a7",
+      "sha256": "02bd496a00fd28b756477f3da07c468648408da69223c36b29a36e070ba35f15",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -6426,8 +6449,15 @@
       ]
     },
     {
+      "path": "server/src/services/migration-apply.ts",
+      "sha256": "099c58f1cefaad044880ea7d80b1c8e3832e903132174f6ee30f944893d1c806",
+      "families": [
+        "server_lifecycle_and_workers"
+      ]
+    },
+    {
       "path": "server/src/services/migration-preflight.ts",
-      "sha256": "994ae2c7a70d6a136e2d4afa5776e922d087c94ecb24094310a594f65a4b2a47",
+      "sha256": "3f140195cfd75250bbe9e19a7928c27ba7eea35f89c2114a88961f4f1264c7e9",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -15236,7 +15266,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 196,
+      "line": 180,
       "signature": "server/src/index.ts|db-call|db|execute|SELECT 1",
       "receiver": "db",
       "method": "execute",
@@ -15247,7 +15277,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 647,
+      "line": 552,
       "signature": "server/src/index.ts|db-call|db|insert|authUsers",
       "receiver": "db",
       "method": "insert",
@@ -15258,7 +15288,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 664,
+      "line": 569,
       "signature": "server/src/index.ts|db-call|db|insert|instanceUserRoles",
       "receiver": "db",
       "method": "insert",
@@ -15269,7 +15299,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 246,
+      "line": 230,
       "signature": "server/src/index.ts|db-call|db|insert|invites",
       "receiver": "db",
       "method": "insert",
@@ -15280,7 +15310,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 684,
+      "line": 589,
       "signature": "server/src/index.ts|db-call|db|insert|organizationMemberships",
       "receiver": "db",
       "method": "insert",
@@ -15291,7 +15321,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 221,
+      "line": 205,
       "signature": "server/src/index.ts|db-call|db|select|",
       "receiver": "db",
       "method": "select",
@@ -15302,7 +15332,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 641,
+      "line": 546,
       "signature": "server/src/index.ts|db-call|db|select|{ id: authUsers.id }",
       "receiver": "db",
       "method": "select",
@@ -15313,7 +15343,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 659,
+      "line": 564,
       "signature": "server/src/index.ts|db-call|db|select|{ id: instanceUserRoles.id }",
       "receiver": "db",
       "method": "select",
@@ -15324,7 +15354,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 673,
+      "line": 578,
       "signature": "server/src/index.ts|db-call|db|select|{ id: organizationMemberships.id }",
       "receiver": "db",
       "method": "select",
@@ -15335,7 +15365,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 670,
+      "line": 575,
       "signature": "server/src/index.ts|db-call|db|select|{ id: organizations.id }",
       "receiver": "db",
       "method": "select",
@@ -15346,7 +15376,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 914,
+      "line": 662,
       "signature": "server/src/index.ts|db-call|db|select|{ id: organizations.id, name: organizations.name, urlKey: organizations.urlKey }",
       "receiver": "db",
       "method": "select",
@@ -15357,7 +15387,7 @@
       "type": "database_call_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 232,
+      "line": 216,
       "signature": "server/src/index.ts|db-call|db|update|invites",
       "receiver": "db",
       "method": "update",
@@ -15368,7 +15398,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 196,
+      "line": 180,
       "signature": "server/src/index.ts|db-write-candidate|db|execute|SELECT 1",
       "receiver": "db",
       "method": "execute",
@@ -15379,7 +15409,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 647,
+      "line": 552,
       "signature": "server/src/index.ts|db-write-candidate|db|insert|authUsers",
       "receiver": "db",
       "method": "insert",
@@ -15390,7 +15420,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 664,
+      "line": 569,
       "signature": "server/src/index.ts|db-write-candidate|db|insert|instanceUserRoles",
       "receiver": "db",
       "method": "insert",
@@ -15401,7 +15431,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 246,
+      "line": 230,
       "signature": "server/src/index.ts|db-write-candidate|db|insert|invites",
       "receiver": "db",
       "method": "insert",
@@ -15412,7 +15442,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 684,
+      "line": 589,
       "signature": "server/src/index.ts|db-write-candidate|db|insert|organizationMemberships",
       "receiver": "db",
       "method": "insert",
@@ -15423,7 +15453,7 @@
       "type": "database_write_candidate",
       "family": "database_queries_and_writers",
       "source": "server/src/index.ts",
-      "line": 232,
+      "line": 216,
       "signature": "server/src/index.ts|db-write-candidate|db|update|invites",
       "receiver": "db",
       "method": "update",
@@ -15434,7 +15464,7 @@
       "type": "http_server_construction",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1165,
+      "line": 913,
       "signature": "server/src/index.ts|http-server|appHandle.app as unknown as Parameters<typeof createServer>[0]",
       "expression": "appHandle.app as unknown as Parameters<typeof createServer>[0]"
     },
@@ -15442,7 +15472,7 @@
       "type": "listener_start",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1497,
+      "line": 1246,
       "signature": "server/src/index.ts|listener|server|ingress.nodeListenPort",
       "receiver": "server",
       "expression": "ingress.nodeListenPort"
@@ -15451,7 +15481,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 909,
+      "line": 657,
       "signature": "server/src/index.ts|supervisor-own|database-pool",
       "receiver": "supervisor",
       "resource": "database-pool"
@@ -15460,7 +15490,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 697,
+      "line": 634,
       "signature": "server/src/index.ts|supervisor-own|embedded-postgres",
       "receiver": "supervisor",
       "resource": "embedded-postgres"
@@ -15469,7 +15499,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1230,
+      "line": 978,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime",
       "receiver": "supervisor",
       "resource": "feishu-runtime"
@@ -15478,7 +15508,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1236,
+      "line": 984,
       "signature": "server/src/index.ts|supervisor-own|feishu-runtime-registry",
       "receiver": "supervisor",
       "resource": "feishu-runtime-registry"
@@ -15487,7 +15517,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1552,
+      "line": 1301,
       "signature": "server/src/index.ts|supervisor-own|http-ingress",
       "receiver": "supervisor",
       "resource": "http-ingress"
@@ -15496,7 +15526,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1174,
+      "line": 922,
       "signature": "server/src/index.ts|supervisor-own|http-server-drain",
       "receiver": "supervisor",
       "resource": "http-server-drain"
@@ -15505,7 +15535,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1190,
+      "line": 938,
       "signature": "server/src/index.ts|supervisor-own|live-events-websocket",
       "receiver": "supervisor",
       "resource": "live-events-websocket"
@@ -15514,7 +15544,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1224,
+      "line": 972,
       "signature": "server/src/index.ts|supervisor-own|managed-mcp-oauth-session-gc",
       "receiver": "supervisor",
       "resource": "managed-mcp-oauth-session-gc"
@@ -15523,7 +15553,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1206,
+      "line": 954,
       "signature": "server/src/index.ts|supervisor-own|name",
       "receiver": "supervisor",
       "resource": "name"
@@ -15532,7 +15562,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1610,
+      "line": 1359,
       "signature": "server/src/index.ts|supervisor-own|process-signal-listeners",
       "receiver": "supervisor",
       "resource": "process-signal-listeners"
@@ -15541,7 +15571,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 415,
+      "line": 414,
       "signature": "server/src/index.ts|supervisor-own|runtime-descriptor",
       "receiver": "supervisor",
       "resource": "runtime-descriptor"
@@ -15550,7 +15580,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1264,
+      "line": 1012,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .recoverNetworkWaitingRuns() .then(() => heartbeat.reapTimedOutRuns({ maxRuntim… [sha256:4ff3e87ec312f4bb922fe31fc5993b706c9a650f75df88884c1fb686c67f57bf]",
       "receiver": null,
       "method": "setInterval",
@@ -15560,7 +15590,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1279,
+      "line": 1027,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .tickTimers(new Date()) .then((result) => { if (result.enqueued > 0) { logger.i… [sha256:836394bb771c6983d27882ad1a77902f9b5b4b9d448a4d8b3ab46fc1871ff562]",
       "receiver": null,
       "method": "setInterval",
@@ -15570,7 +15600,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1351,
+      "line": 1099,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledBackup(); }",
       "receiver": null,
       "method": "setInterval",
@@ -15580,7 +15610,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1484,
+      "line": 1232,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledWorkspaceBackups(\"running\"); }",
       "receiver": null,
       "method": "setInterval",
@@ -46748,21 +46778,21 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/migration-preflight.ts",
-      "line": 526,
-      "signature": "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { terminate(); settleError(new MigrationPreflightAdapterError(\"process\", \"timeout\")); }",
+      "line": 301,
+      "signature": "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { if (pendingFailure) { pendingFailure = new MigrationPreflightAdapterErro… [sha256:622fdb8c7f383d5a4265b4e5db2c04120c48d226d2e2713f8dc981cdeac95e3c]",
       "receiver": null,
       "method": "setTimeout",
-      "expression": "() => { terminate(); settleError(new MigrationPreflightAdapterError(\"process\", \"timeout\")); }"
+      "expression": "() => { if (pendingFailure) { pendingFailure = new MigrationPreflightAdapterError( \"process\", \"cancellation_cleanup_unconfirmed\", ); } try { child.kill(\"SIGKILL\"); } catch { // The process may already have exited. } forceKill = undefined; }"
     },
     {
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/migration-preflight.ts",
-      "line": 482,
-      "signature": "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { try { child.kill(\"SIGKILL\"); } catch { // The process may already have exited. } forceKill = undefined; }",
+      "line": 364,
+      "signature": "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { terminate(); settleError(new MigrationPreflightAdapterError(\"process\", \"timeout\")); }",
       "receiver": null,
       "method": "setTimeout",
-      "expression": "() => { try { child.kill(\"SIGKILL\"); } catch { // The process may already have exited. } forceKill = undefined; }"
+      "expression": "() => { terminate(); settleError(new MigrationPreflightAdapterError(\"process\", \"timeout\")); }"
     },
     {
       "type": "database_call_candidate",
@@ -59106,11 +59136,194 @@
   "completion_gate": {
     "blocked": true,
     "blocking_unknown_count": 10,
-    "remaining_backend_node_source_files": 799,
+    "remaining_backend_node_source_files": 803,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "packages/db/src/client.ts",
+      "base_sha256": "62ca52814349683536a739699ff0967a95124fad324c47290f7b5accb68482f8",
+      "head_sha256": "724887e89b71231634bbda4611c11593a5da669089b8a637131730b121ec33d5",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
+      "compatibility_boundary": "The legacy migration apply export delegates to the Rust operator; Node migration SQL writing and history repair are removed. Existing read-only inspection and the separate ensurePostgresDatabase database-creation path remain outside this record and are still Node migration debt.",
+      "retirement_criterion": "Remove the compatibility export after callers use the Rust operator directly; migrate ensurePostgresDatabase separately before claiming Node database creation is retired.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r8.md: Node client.ts delta reviewed; only two synthetic identifiers removed. Overall migration stage remains NEEDS MORE EVIDENCE.",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/index.ts",
+      "base_sha256": "0589cb5be13c94557d8a2d8ff194ebcbe90e28d0e2d0e887ed0d983825ff1930",
+      "head_sha256": "e38555562a24f9f9b005f4d07406b816e1939d310a36f5cc2f6db2c51764c2e8",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/postgres-lifecycle/src/lib.rs",
+      "compatibility_boundary": "This package barrel exports typed Rust migration and PostgreSQL owner transports for first-party callers; it does not itself own lifecycle or migration decisions.",
+      "retirement_criterion": "Remove package-level Node exports when first-party callers use direct Rust-owned interfaces and the compatibility package surface is deleted.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/migrate.ts",
+      "base_sha256": "d1cf14c256a9a9241fb7d08162389d941e288ffe98320eca149915e500294827",
+      "head_sha256": "1fcd308723581bdd29a9bc92f35017378885f51a049533995b2d8b3df7a423bd",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
+      "compatibility_boundary": "The first-party db:migrate CLI resolves the target and invokes the Rust migration operator; Node does not inspect migration state, repair history, create backups, acquire the migration lock, or apply SQL.",
+      "retirement_criterion": "Remove the Node CLI launcher when the first-party CLI invokes the Rust migration operator directly.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/migration-operator.ts",
+      "base_sha256": null,
+      "head_sha256": "f9a5f20555bb6b4942adadf5c249c86469de5b11ba6dd671da87409565b3fce5",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
+      "compatibility_boundary": "This exact package module resolves and invokes the Rust migration operator over its typed process protocol. It does not connect to PostgreSQL or decide, inspect, back up, lock, repair, or apply migration state in Node.",
+      "retirement_criterion": "Retire this Node process adapter when all first-party callers invoke the Rust migration operator through the shared native transport and this package module is deleted.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed",
+      "transport_admission_id": "rust-migration-operator-process-transport-v1",
+      "allowed_node_duties": [
+        "resolve the installed Rust migration executable and migration source paths",
+        "build the deterministic source manifest fingerprint and send the typed bounded process request",
+        "parse the typed response and bound cancellation, timeout, and process cleanup"
+      ],
+      "prohibited_node_duties": [
+        "SQL execution or database inspection",
+        "deciding whether migrations are needed or whether approval is required",
+        "migration history repair, backup, locking, or apply fallback in Node"
+      ]
+    },
+    {
+      "path": "packages/db/src/migration-runtime.ts",
+      "base_sha256": "607cba96459c12e9bed87003aa8ba374212e8cf7c64925a26ea6b4762c6675df",
+      "head_sha256": "a4343d5e4b8e90954bdbe6421d64835eeb46bfb1519518659bfd0eab29b37170",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
+      "compatibility_boundary": "Runtime assembly resolves configuration and starts the Rust managed PostgreSQL owner and Rust migration operator. Node retains only typed transport and does not initialize, inspect, or mutate PostgreSQL.",
+      "retirement_criterion": "Remove the Node lifecycle assembly after the Rust server owns managed PostgreSQL startup and migration invocation end to end.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "packages/db/src/postgres-owner.ts",
+      "base_sha256": null,
+      "head_sha256": "3868134ff321bb2212dcf5a40812aa088e09fc0ced114046bf4f7540bd1e4895",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/postgres-lifecycle/src/bin/rudder-postgres-owner.rs",
+      "compatibility_boundary": "This exact package module resolves and invokes the Rust PostgreSQL owner over its typed process protocol. PostgreSQL initialization, supervision policy, database operations, and failure handling remain Rust-owned; Node fallback is forbidden.",
+      "retirement_criterion": "Retire this Node process adapter when all first-party callers consume the Rust owner through the shared native transport and this package module is deleted.",
+      "reviewer": "independent gpt-6-luna/xhigh stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/delta-stage-review-r15a.json: exact transport source accepted with bound source fingerprint; final runtime acceptance still pending",
+      "review_status": "reviewed",
+      "transport_admission_id": "rust-postgres-owner-process-transport-v1",
+      "allowed_node_duties": [
+        "resolve the installed Rust owner executable and packaged PostgreSQL runtime directory",
+        "spawn the typed bounded owner protocol and project readiness and shutdown messages",
+        "bound process lifetime and report the Rust owner endpoint to existing callers"
+      ],
+      "prohibited_node_duties": [
+        "initdb, pg_ctl, SQL, or PostgreSQL data-directory mutation",
+        "database creation, readiness policy, lifecycle decisions, or migration decisions",
+        "fallback to a Node-managed PostgreSQL owner when Rust is missing or fails"
+      ]
+    },
+    {
+      "path": "packages/db/src/runtime-config.ts",
+      "base_sha256": "ea6e335ee6ef97d26957ec26d3b7804a928c549e2284726205e6fdc2f7f3c310",
+      "head_sha256": "d7d49ed7c1c41faaf52e44163cdc8b4077f125d46dda5ca1d5ee55a1c36049de",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
+      "compatibility_boundary": "Node resolves profile and environment configuration into explicit runtime facts for the Rust owners. It does not derive migration state, choose an apply policy, or create a database.",
+      "retirement_criterion": "Move profile/runtime configuration resolution to Rust when all first-party entrypoints use the native runtime configuration contract.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/index.ts",
+      "base_sha256": "ec6a362d1b12c76c86da78d9987848778fe8fbb3c373c4a37b3b5cf4c1da8a77",
+      "head_sha256": "c9765482067498cb3ef43a878f7b6199097b578b641e05cb76679118c1ebbfc0",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
+      "compatibility_boundary": "Default server startup delegates managed PostgreSQL lifecycle and migration state decisions to Rust, while Node relays typed process outcomes and displays the explicit interactive approval request. It does not inspect migration state, choose migration policy, or apply a Node fallback.",
+      "retirement_criterion": "Retire the Node startup coordinator when the Rust server process owns managed PostgreSQL startup and the migration approval flow end to end.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/runtime/postgres-owner-exit.ts",
+      "base_sha256": null,
+      "head_sha256": "aaedfc7e7aff51ac8d9ed75969e7d5280d36f5ba1ef0cf1f9a9c2038634b0359",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/postgres-lifecycle/src/bin/rudder-postgres-owner.rs",
+      "compatibility_boundary": "This narrow lifecycle adapter observes the Rust PostgreSQL owner process exit and asks the existing runtime supervisor to dispose registered resources. It does not start PostgreSQL, run SQL, classify database state, or choose recovery behavior.",
+      "retirement_criterion": "Remove this Node exit adapter when the Rust server process owns PostgreSQL owner supervision and resource cleanup directly.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/runtime/runtime-supervisor.ts",
+      "base_sha256": "52f18e1346cfc63bacd30e097b3639eac5ae605963844654b6a9357b0b8193a7",
+      "head_sha256": "02bd496a00fd28b756477f3da07c468648408da69223c36b29a36e070ba35f15",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/postgres-lifecycle/src/lib.rs and native/crates/migration-service/src/operator.rs",
+      "compatibility_boundary": "The existing Node supervisor tracks the Rust PostgreSQL owner process and requests bounded cleanup on exit. It does not own initdb, database state, migration planning, or migration writes.",
+      "retirement_criterion": "Remove this compatibility supervisor path when Rust owns the server and child-process lifecycle directly.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/migration-apply.ts",
+      "base_sha256": null,
+      "head_sha256": "099c58f1cefaad044880ea7d80b1c8e3832e903132174f6ee30f944893d1c806",
+      "change_kind": "new_transport_adapter",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
+      "compatibility_boundary": "This server adapter invokes the Rust migration startup operator, validates its typed response, and carries an explicit user approval response. It does not inspect PostgreSQL state, plan or approve a migration, execute SQL, or fall back to Node.",
+      "retirement_criterion": "Remove this server process adapter when the Rust server lifecycle directly invokes the migration operator and owns the approval UI protocol.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/migration-preflight.ts",
+      "base_sha256": "994ae2c7a70d6a136e2d4afa5776e922d087c94ecb24094310a594f65a4b2a47",
+      "head_sha256": "3f140195cfd75250bbe9e19a7928c27ba7eea35f89c2114a88961f4f1264c7e9",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "rust_authority": "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/bin/migration-preflight.rs",
+      "compatibility_boundary": "This module is a bounded child-process transport for Rust preflight. The exact timeout/escalation timer terminates the owned native child and preserves cleanup errors; it is not a domain worker. Node does not inspect PostgreSQL or select migration outcomes.",
+      "retirement_criterion": "Remove the preflight process adapter and its cleanup timer when the Rust server owns migration preflight directly.",
+      "reviewer": "independent stage reviewer",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/stage-review-r1.md: reviewed migration and PostgreSQL process transports; no runtime acceptance claim",
+      "review_status": "reviewed",
+      "allowed_transport_surfaces": [
+        "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { if (pendingFailure) { pendingFailure = new MigrationPreflightAdapterErro… [sha256:622fdb8c7f383d5a4265b4e5db2c04120c48d226d2e2713f8dc981cdeac95e3c]"
+      ],
+      "transport_surface_owner": "server/src/services/migration-preflight.ts::runMigrationProcess"
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {

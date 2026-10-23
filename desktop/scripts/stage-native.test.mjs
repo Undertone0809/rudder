@@ -8,7 +8,7 @@ import { stageDesktopNative } from "./stage-native.mjs";
 const script = readFileSync(new URL("./stage-native.mjs", import.meta.url), "utf8");
 const rootPackage = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
-const nativeNames = ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight", "rudder-server-foundation"];
+const nativeNames = ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner", "rudder-server-foundation"];
 
 function macho(machine = 0x01000007) {
   const bytes = Buffer.alloc(32);
@@ -37,7 +37,7 @@ async function withStagingFixture(callback) {
       if (args[index] === "--bin") await fs.writeFile(path.join(profile, args[index + 1]), `release-version ${args[index + 1]}`);
     }
   };
-  const options = { root, platform: "darwin", hostArch: "x64", targetArch: "x64", nativeTarget: null, artifactDir, runCommand };
+  const options = { root, platform: "darwin", hostArch: "x64", targetArch: "x64", nativeTarget: null, cargoTargetDir: null, artifactDir, runCommand };
   try { await callback({ root, target, targetRoot, artifactDir, artifactPath, previous, calls, runCommand, options }); }
   finally { await fs.rm(root, { recursive: true, force: true }); }
 }
@@ -64,6 +64,8 @@ describe("Desktop native staging contract", () => {
       "rudder-native",
       "rudder-update-helper",
       "migration-preflight",
+      "migration-apply",
+      "rudder-postgres-owner",
       "rudder-server-foundation",
     ]) {
       expect(script).toContain(binary);
@@ -112,7 +114,9 @@ describe("Desktop qualified foundation reuse", () => {
           if (targetIndex !== -1) expect(args[targetIndex + 1]).toBe(target);
           const profile = path.join(root, "native", "target", ...(targetIndex !== -1 ? [target] : []), "release");
           await fs.mkdir(profile, { recursive: true });
-          for (const name of nativeNames.slice(0, 4)) await fs.writeFile(path.join(profile, `${name}${extension}`), `release-version ${name}`);
+          for (const name of nativeNames.slice(0, 6)) {
+            await fs.writeFile(path.join(profile, `${name}${extension}`), `release-version ${name}`);
+          }
         } });
         const destination = path.join(root, "desktop", ".packaged", "native", target, `rudder-server-foundation${extension}`);
         expect(await fs.readFile(destination)).toEqual(bytes);
@@ -120,7 +124,7 @@ describe("Desktop qualified foundation reuse", () => {
     });
   }
 
-  it("preserves the default five-binary build when no artifact directory is provided", async () => {
+  it("preserves the default six-binary build when no artifact directory is provided", async () => {
     await withStagingFixture(async ({ options, calls, targetRoot }) => {
       await stageDesktopNative({ ...options, artifactDir: null });
       expect(calls).toHaveLength(1);
@@ -130,19 +134,60 @@ describe("Desktop qualified foundation reuse", () => {
     });
   });
 
-  it("reuses only foundation while explicitly building all four versioned binaries", async () => {
+  for (const relative of [false, true]) {
+    it(`stages binaries from a ${relative ? "relative cross-target" : "absolute"} Cargo output directory`, async () => {
+      await withStagingFixture(async ({ root, options }) => {
+        const cargoTargetDir = relative ? "custom-output" : path.join(root, "shared-output");
+        const targetArch = relative ? "arm64" : "x64";
+        const target = relative ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+        await stageDesktopNative({ ...options, artifactDir: null, cargoTargetDir, targetArch, runCommand: async (_command, args) => {
+          expect(args[args.indexOf("--target-dir") + 1]).toBe(path.resolve(root, cargoTargetDir));
+          const targetIndex = args.indexOf("--target");
+          expect(targetIndex !== -1).toBe(relative);
+          const profile = path.join(path.resolve(root, cargoTargetDir), ...(relative ? [target] : []), "release");
+          await fs.mkdir(profile, { recursive: true });
+          for (const name of nativeNames) await fs.writeFile(path.join(profile, name), `custom-output ${name}`);
+        } });
+        for (const name of nativeNames) {
+          expect(await fs.readFile(path.join(root, "desktop", ".packaged", "native", target, name), "utf8")).toBe(`custom-output ${name}`);
+        }
+      });
+    });
+  }
+
+  it("preserves staging when a custom Cargo output is incomplete instead of copying stale default outputs", async () => {
+    await withStagingFixture(async ({ root, options, runCommand, previous }) => {
+      await runCommand("cargo", nativeNames.flatMap((name) => ["--bin", name]));
+      const cargoTargetDir = path.join(root, "shared-output");
+      await expect(stageDesktopNative({ ...options, artifactDir: null, cargoTargetDir, runCommand: async () => {
+        const profile = path.join(cargoTargetDir, "release");
+        await fs.mkdir(profile, { recursive: true });
+        for (const name of nativeNames.filter((name) => name !== "migration-apply")) {
+          await fs.writeFile(path.join(profile, name), `custom-output ${name}`);
+        }
+      } })).rejects.toThrow();
+      expect(await fs.readFile(previous, "utf8")).toBe("preserve until every source is ready");
+    });
+  });
+
+  it("reuses only foundation while explicitly building all six versioned binaries", async () => {
     await withStagingFixture(async ({ options, calls, artifactDir, target, targetRoot }) => {
       await fs.writeFile(path.join(artifactDir, target, "migration-preflight"), "base-version preflight must not be staged");
+      await fs.writeFile(path.join(artifactDir, target, "migration-apply"), "base-version apply must not be staged");
       await stageDesktopNative(options);
       expect(calls).toHaveLength(1);
-      expect(calls[0].args.filter((_, index, args) => args[index - 1] === "--bin")).toEqual(nativeNames.slice(0, 4));
+      expect(calls[0].args.filter((_, index, args) => args[index - 1] === "--bin")).toEqual(nativeNames.slice(0, 6));
       expect(calls[0].args.filter((_, index, args) => args[index - 1] === "-p")).toEqual([
-        "rudder-process-host", "rudder-native", "rudder-update-helper", "rudder-migration-service",
+        "rudder-process-host", "rudder-native", "rudder-update-helper", "rudder-migration-service", "rudder-postgres-lifecycle",
       ]);
       expect(await fs.readFile(path.join(targetRoot, "rudder-server-foundation"))).toEqual(macho());
       expect(await fs.readFile(path.join(targetRoot, "migration-preflight"), "utf8")).toBe("release-version migration-preflight");
+      expect(await fs.readFile(path.join(targetRoot, "migration-apply"), "utf8")).toBe("release-version migration-apply");
+      expect(await fs.readFile(path.join(targetRoot, "rudder-postgres-owner"), "utf8")).toBe("release-version rudder-postgres-owner");
       if (process.platform !== "win32") {
         expect((await fs.stat(path.join(targetRoot, "rudder-server-foundation"))).mode & 0o777).toBe(0o755);
+        expect((await fs.stat(path.join(targetRoot, "migration-apply"))).mode & 0o777).toBe(0o755);
+        expect((await fs.stat(path.join(targetRoot, "rudder-postgres-owner"))).mode & 0o777).toBe(0o755);
       }
     });
   });
@@ -206,13 +251,13 @@ describe("Desktop qualified foundation reuse", () => {
     });
   });
 
-  it("preserves existing staging on Cargo failure or a missing compiled preflight", async () => {
+  it("preserves existing staging on Cargo failure or a missing compiled migration binary", async () => {
     await withStagingFixture(async ({ options, previous, runCommand, root }) => {
       await expect(stageDesktopNative({ ...options, runCommand: async () => { throw new Error("Cargo fixture failure"); } })).rejects.toThrow(/Cargo fixture/u);
       expect(await fs.readFile(previous, "utf8")).toBe("preserve until every source is ready");
       await expect(stageDesktopNative({ ...options, runCommand: async (...args) => {
         await runCommand(...args);
-        await fs.rm(path.join(root, "native", "target", "release", "migration-preflight"));
+        await fs.rm(path.join(root, "native", "target", "release", "migration-apply"));
       } })).rejects.toThrow();
       expect(await fs.readFile(previous, "utf8")).toBe("preserve until every source is ready");
     });

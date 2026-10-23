@@ -541,7 +541,7 @@ jobs:
           targets: ${{ matrix.native_target }}
 
       # Reuse dependency compilation from qualification, never its versioned
-      # executables. Cargo still rebuilds the four helpers at RELEASE_VERSION.
+      # executables. Cargo still rebuilds the versioned helpers at RELEASE_VERSION.
       - name: Restore qualified Cargo dependency build
         uses: actions/cache/restore@v5
         with:

@@ -27,6 +27,7 @@ members = [
   "crates/migration-history-core",
   "crates/migration-history-postgres",
   "crates/migration-service",
+  "crates/postgres-lifecycle",
   "crates/native-process-transport",
   "crates/pi-rpc",
   "crates/runtime-attempt-core",

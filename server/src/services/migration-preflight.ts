@@ -1,11 +1,4 @@
 import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
-import {
-  createMigrationManifest,
-  getMigrationSourcePaths,
-  type MigrationSourcePaths,
-  type MigrationState,
-} from "@rudderhq/db";
-import { resolveRudderNativeCapability } from "@rudderhq/shared";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -83,6 +76,8 @@ export interface MigrationHistoryPreflight {
 }
 
 export interface MigrationPreflightReport {
+  pendingLegacyColumnRenames?: string[];
+  legacyColumnConflicts?: string[];
   status: MigrationPreflightStatus;
   tableCount: number;
   journalPresent: boolean;
@@ -99,6 +94,13 @@ export interface MigrationPreflightAdapterOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   spawnProcess?: MigrationPreflightSpawn;
+  /** Mutating operators must finish process cleanup before startup unwinds. */
+  waitForCloseOnFailure?: boolean;
+  terminationGraceMs?: number;
+  /** Sends a cross-platform cooperative cancellation request before process escalation. */
+  requestCancellation?: () => void | Promise<void>;
+  /** Preserves a specific structured native failure when the caller requested cancellation. */
+  preserveStructuredFailure?: { schema: string; code: string };
 }
 
 export type MigrationPreflightSpawn = (
@@ -115,203 +117,6 @@ export class MigrationPreflightAdapterError extends Error {
     super(`Migration preflight failed: ${code}`);
     this.name = "MigrationPreflightAdapterError";
   }
-}
-
-type MigrationPreflightLogger = {
-  info(fields: Record<string, unknown>, message: string): void;
-  warn(fields: Record<string, unknown>, message: string): void;
-};
-
-export type MigrationPreflightStartupResult = Readonly<{
-  report: MigrationPreflightReport | null;
-  required: boolean;
-  manifestFingerprint: string | null;
-  manifestMigrationFileNames: readonly string[] | null;
-}>;
-
-function expectedMigrationPreflightStatus(state: MigrationState): MigrationPreflightStatus {
-  if (state.status === "upToDate") return "current";
-  switch (state.reason) {
-    case "no-migration-journal-empty-db":
-      return "bootstrap";
-    case "no-migration-journal-non-empty-db":
-      return "unsafe-legacy";
-    case "pending-migrations":
-      return "pending";
-    case "missing-core-schema":
-      return "missing-core-schema";
-  }
-}
-
-function migrationPreflightSummary(report: MigrationPreflightReport) {
-  return {
-    status: report.status,
-    tableCount: report.tableCount,
-    journalPresent: report.journalPresent,
-    journalSchema: report.journalSchema,
-    coreSchemaPresent: report.coreSchemaPresent,
-    organizationsTablePresent: report.organizationsTablePresent,
-    historyStatus: report.history.status,
-    historyReason: report.history.reason,
-    manifestFingerprint: report.history.manifestFingerprint,
-  };
-}
-
-export async function runMigrationPreflightBeforeNodeInspection(options: {
-  connectionString: string;
-  label: string;
-  logger: MigrationPreflightLogger;
-  env?: NodeJS.ProcessEnv;
-  sourcePaths?: MigrationSourcePaths;
-}): Promise<MigrationPreflightStartupResult> {
-  const policy = resolveRudderNativeCapability({
-    capability: "migration-preflight",
-    env: options.env ?? process.env,
-  });
-  if (!policy.enabled) {
-    return {
-      report: null,
-      required: policy.required,
-      manifestFingerprint: null,
-      manifestMigrationFileNames: null,
-    };
-  }
-
-  const sourcePaths = options.sourcePaths ?? getMigrationSourcePaths();
-  const migrationManifest = await createMigrationManifest({
-    migrationsFolder: sourcePaths.migrationsFolder,
-    journalFile: sourcePaths.journalFile,
-  });
-  try {
-    const report = await runMigrationPreflight({
-      databaseUrl: options.connectionString,
-      source: {
-        migrationsDir: sourcePaths.migrationsFolder,
-        journalFile: sourcePaths.journalFile,
-        expectedFingerprint: migrationManifest.fingerprint,
-      },
-    });
-    options.logger.info(
-      { label: options.label, ...migrationPreflightSummary(report) },
-      `${options.label} Rust migration preflight completed before Node migration inspection`,
-    );
-    return {
-      report,
-      required: policy.required,
-      manifestFingerprint: migrationManifest.fingerprint,
-      manifestMigrationFileNames: migrationManifest.entries.map(({ fileName }) => fileName),
-    };
-  } catch (error) {
-    const code = error instanceof MigrationPreflightAdapterError ? error.code : "unknown";
-    if (policy.required) {
-      throw new Error(
-        `${options.label} Rust migration preflight is required but failed (${code}); refusing to inspect or mutate migration state.`,
-        { cause: error },
-      );
-    }
-    options.logger.warn(
-      { label: options.label, code },
-      `${options.label} Rust migration preflight unavailable; continuing with the Node migration authority`,
-    );
-    return {
-      report: null,
-      required: false,
-      manifestFingerprint: null,
-      manifestMigrationFileNames: null,
-    };
-  }
-}
-
-export function assertMigrationPreflightAgreement(options: {
-  label: string;
-  state: MigrationState;
-  report: MigrationPreflightReport | null;
-  required: boolean;
-  manifestFingerprint: string | null;
-  manifestMigrationFileNames?: readonly string[] | null;
-  logger: MigrationPreflightLogger;
-}): void {
-  if (!options.report) return;
-  const expectedStatus = expectedMigrationPreflightStatus(options.state);
-  if (options.report.status !== expectedStatus) {
-    const detail = `${options.report.status} != ${expectedStatus}`;
-    if (options.required) {
-      throw new Error(
-        `${options.label} Rust migration preflight disagreed with the Node migration inspection (${detail}); refusing to mutate migration state.`,
-      );
-    }
-    options.logger.warn(
-      { label: options.label, nativeStatus: options.report.status, nodeStatus: expectedStatus },
-      `${options.label} Rust migration preflight disagreed with the Node migration inspection; continuing with the Node migration authority`,
-    );
-    return;
-  }
-
-  const nodeAppliedMigrations = options.state.appliedMigrations;
-  const nodePendingMigrations = options.state.status === "needsMigrations"
-    ? options.state.pendingMigrations
-    : [];
-  const orderedNodePendingMigrations = options.manifestMigrationFileNames
-    ? orderMigrationsByManifest(nodePendingMigrations, options.manifestMigrationFileNames)
-    : nodePendingMigrations;
-  const nativeAppliedMigrations = options.report.history.appliedMigrations.map(({ fileName }) => fileName);
-  const nativePendingMigrations = options.report.history.pendingMigrations.map(({ fileName }) => fileName);
-  const expectedNativePendingMigrations = options.state.status === "needsMigrations"
-    && options.state.reason === "missing-core-schema"
-    ? []
-    : orderedNodePendingMigrations;
-  const disagreements: string[] = [];
-  if (options.manifestFingerprint === null
-    || options.report.history.manifestFingerprint !== options.manifestFingerprint) {
-    disagreements.push("manifest-fingerprint");
-  }
-  if (!sameMigrationPlan(nativeAppliedMigrations, nodeAppliedMigrations)) {
-    disagreements.push("applied-migrations");
-  }
-  if (!sameMigrationPlan(nativePendingMigrations, expectedNativePendingMigrations)) {
-    disagreements.push("pending-migrations");
-  }
-  if (disagreements.length === 0) return;
-
-  const detail = disagreements.join(", ");
-  if (options.required) {
-    throw new Error(
-      `${options.label} Rust migration preflight disagreed with the Node migration plan (${detail}); refusing to mutate migration state.`,
-    );
-  }
-  options.logger.warn(
-    {
-      label: options.label,
-      nativeStatus: options.report.status,
-      nodeStatus: expectedStatus,
-      disagreements,
-    },
-    `${options.label} Rust migration preflight disagreed with the Node migration plan (${detail}); continuing with the Node migration authority`,
-  );
-}
-
-function sameMigrationPlan(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((fileName, index) => fileName === right[index]);
-}
-
-function orderMigrationsByManifest(
-  migrations: readonly string[],
-  manifestFileNames: readonly string[],
-): string[] {
-  const orderByFileName = new Map(manifestFileNames.map((fileName, order) => [fileName, order]));
-  return migrations
-    .map((fileName, originalOrder) => ({ fileName, originalOrder }))
-    .sort((left, right) => {
-      const leftOrder = orderByFileName.get(left.fileName);
-      const rightOrder = orderByFileName.get(right.fileName);
-      if (leftOrder === undefined && rightOrder === undefined) {
-        return left.originalOrder - right.originalOrder;
-      }
-      if (leftOrder === undefined) return 1;
-      if (rightOrder === undefined) return -1;
-      return leftOrder - rightOrder;
-    })
-    .map(({ fileName }) => fileName);
 }
 
 export function resolveMigrationPreflightBinary(env: NodeJS.ProcessEnv = process.env): string {
@@ -356,7 +161,7 @@ export async function runMigrationPreflight(
     [MIGRATION_PREFLIGHT_DATABASE_URL_ENV]: input.databaseUrl,
   };
   const timeoutMs = validateTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const result = await runPreflightProcess(
+  const result = await runMigrationProcess(
     command.command,
     command.args,
     request,
@@ -427,7 +232,7 @@ interface PreflightProcessResult {
   stderr: Buffer;
 }
 
-async function runPreflightProcess(
+export async function runMigrationProcess(
   command: string,
   args: readonly string[],
   input: string,
@@ -455,6 +260,7 @@ async function runPreflightProcess(
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let settled = false;
+    let pendingFailure: MigrationPreflightAdapterError | undefined;
     let processClosed = false;
     let terminationRequested = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -465,7 +271,11 @@ async function runPreflightProcess(
       options.signal?.removeEventListener("abort", onAbort);
     };
     const settleError = (error: MigrationPreflightAdapterError) => {
-      if (settled) return;
+      if (settled || pendingFailure) return;
+      if (options.waitForCloseOnFailure && !processClosed) {
+        pendingFailure = error;
+        return;
+      }
       settled = true;
       cleanup();
       reject(error);
@@ -473,20 +283,35 @@ async function runPreflightProcess(
     const terminate = () => {
       if (terminationRequested) return;
       terminationRequested = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // The process may already have exited; the original failure is enough.
+      if (options.requestCancellation) {
+        try {
+          void Promise.resolve(options.requestCancellation()).catch(() => undefined);
+        } catch {
+          // Escalation below remains bounded if cooperative cancellation fails.
+        }
+      }
+      if (!options.requestCancellation || process.platform !== "win32") {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // The process may already have exited; the original failure is enough.
+        }
       }
       if (processClosed) return;
       forceKill = setTimeout(() => {
+        if (pendingFailure) {
+          pendingFailure = new MigrationPreflightAdapterError(
+            "process",
+            "cancellation_cleanup_unconfirmed",
+          );
+        }
         try {
           child.kill("SIGKILL");
         } catch {
           // The process may already have exited.
         }
         forceKill = undefined;
-      }, 250);
+      }, options.terminationGraceMs ?? 250);
       forceKill.unref?.();
     };
     const onAbort = () => {
@@ -494,11 +319,14 @@ async function runPreflightProcess(
       settleError(new MigrationPreflightAdapterError("process", "aborted"));
     };
     const appendOutput = (target: "stdout" | "stderr", chunk: Buffer | string) => {
+      if (settled) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const next = Buffer.concat([target === "stdout" ? stdout : stderr, bytes]);
       if (next.byteLength > MAX_OUTPUT_BYTES) {
-        terminate();
-        settleError(new MigrationPreflightAdapterError("protocol", "output_too_large"));
+        if (!pendingFailure) {
+          terminate();
+          settleError(new MigrationPreflightAdapterError("protocol", "output_too_large"));
+        }
         return;
       }
       if (target === "stdout") stdout = next;
@@ -519,9 +347,19 @@ async function runPreflightProcess(
       cleanup();
       if (forceKill) clearTimeout(forceKill);
       forceKill = undefined;
-      resolve({ stdout, stderr, exitCode, signal });
+      if (pendingFailure) {
+        if (options.preserveStructuredFailure && hasStructuredFailure(stdout, options.preserveStructuredFailure)) {
+          reject(new MigrationPreflightAdapterError("process", options.preserveStructuredFailure.code));
+        } else {
+          reject(pendingFailure);
+        }
+      }
+      else resolve({ stdout, stderr, exitCode, signal });
     });
-    child.stdin.once("error", () => settleError(new MigrationPreflightAdapterError("process", "stdin_write_failed")));
+    child.stdin.once("error", () => {
+      if (options.waitForCloseOnFailure) terminate();
+      settleError(new MigrationPreflightAdapterError("process", "stdin_write_failed"));
+    });
 
     timeout = setTimeout(() => {
       terminate();
@@ -537,9 +375,27 @@ async function runPreflightProcess(
     try {
       child.stdin.end(input, "utf8");
     } catch {
+      if (options.waitForCloseOnFailure) terminate();
       settleError(new MigrationPreflightAdapterError("process", "stdin_write_failed"));
     }
   });
+}
+
+function hasStructuredFailure(
+  stdout: Buffer,
+  expected: { schema: string; code: string },
+): boolean {
+  try {
+    const value: unknown = JSON.parse(stdout.toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const body = value as Record<string, unknown>;
+    if (body.schema !== expected.schema || !body.error || typeof body.error !== "object" || Array.isArray(body.error)) {
+      return false;
+    }
+    return (body.error as Record<string, unknown>).code === expected.code;
+  } catch {
+    return false;
+  }
 }
 
 function parsePreflightResponse(
@@ -609,6 +465,8 @@ function parseRemoteError(value: unknown): MigrationPreflightAdapterError {
 function parseReport(value: unknown): MigrationPreflightReport {
   const report = asObject(value, "report_envelope_mismatch");
   assertKeys(report, [
+    "pendingLegacyColumnRenames",
+    "legacyColumnConflicts",
     "status",
     "tableCount",
     "journalPresent",
@@ -624,12 +482,16 @@ function parseReport(value: unknown): MigrationPreflightReport {
     || !isStringOrNull(report.journalSchema)
     || typeof report.coreSchemaPresent !== "boolean"
     || typeof report.organizationsTablePresent !== "boolean"
-    || !Array.isArray(report.diagnostics)) {
+    || !Array.isArray(report.diagnostics)
+    || (report.pendingLegacyColumnRenames !== undefined && !Array.isArray(report.pendingLegacyColumnRenames))
+    || (report.legacyColumnConflicts !== undefined && !Array.isArray(report.legacyColumnConflicts))) {
     throw new MigrationPreflightAdapterError("protocol", "report_envelope_mismatch");
   }
   const diagnostics = parseStringList(report.diagnostics, "report_diagnostics_invalid");
   const history = parseHistory(report.history);
   return {
+    ...(report.pendingLegacyColumnRenames === undefined ? {} : { pendingLegacyColumnRenames: parseStringList(report.pendingLegacyColumnRenames, "legacy_renames_invalid") }),
+    ...(report.legacyColumnConflicts === undefined ? {} : { legacyColumnConflicts: parseStringList(report.legacyColumnConflicts, "legacy_conflicts_invalid") }),
     status: report.status,
     tableCount: report.tableCount,
     journalPresent: report.journalPresent,

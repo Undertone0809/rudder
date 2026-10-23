@@ -64,6 +64,16 @@ jobs:
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
           pnpm install --frozen-lockfile
+      - name: Build native fixture migration authority
+        run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/rudder-native-auth-boundaries"
+          cargo build --locked --manifest-path native/Cargo.toml \
+            -p rudder-migration-service --bin migration-apply \
+            2>&1 | tee "$log_dir/build-migration-apply.log"
+          test -x native/target/debug/migration-apply
+          printf 'RUDDER_NATIVE_MIGRATION_APPLY_PATH=%s/native/target/debug/migration-apply\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          printf 'RUDDER_NATIVE_MIGRATIONS_PG_DUMP=/usr/lib/postgresql/16/bin/pg_dump\n' >> "$GITHUB_ENV"
       - name: Start isolated loopback PostgreSQL
         run: |
           set -euo pipefail

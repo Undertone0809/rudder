@@ -1,10 +1,28 @@
-//! PostgreSQL migration preflight and an explicit opt-in migration writer.
+//! PostgreSQL migration preflight and Rust-owned startup/operator decisions.
 //!
-//! The writer preserves the existing Drizzle journal and safety sequence. It
-//! is not wired into production startup; Node remains the startup migration
-//! owner until a separately reviewed integration switches that boundary.
+//! The writer preserves the existing Drizzle journal and safety sequence. The
+//! startup gate decides whether to no-op, refuse, request human approval, or
+//! apply; it never holds the migration lock while approval is pending.
 
 mod apply;
+mod operator;
+#[cfg(windows)]
+mod process_tree;
+#[cfg(unix)]
+mod supervisor_unix;
+
+pub use operator::{
+    OperatorInputMode, StartupMigrationOutcome, StartupMigrationPolicy, apply_operator,
+    apply_operator_cancellable, apply_operator_cancellable_after_approval, is_startup_gate_input,
+    startup_operator_cancellable, validate_operator, validate_operator_input,
+    validate_operator_mode,
+};
+#[cfg(windows)]
+#[doc(hidden)]
+pub use process_tree::{ParentProcessMonitor, ensure_installed as ensure_process_tree_guard};
+#[cfg(unix)]
+#[doc(hidden)]
+pub use supervisor_unix::ParentProcessMonitor;
 
 pub use apply::{
     MigrationApplyError, MigrationApplyReport, MigrationApplyService,
@@ -56,6 +74,14 @@ pub struct MigrationPreflightReport {
     pub organizations_table_present: bool,
     pub history: MigrationHistoryPreflight,
     pub diagnostics: Vec<String>,
+    /// Fixed Node-era aliases that can be safely renamed by the locked writer.
+    /// Defaults when reading reports produced before this field was added.
+    #[serde(default)]
+    pub pending_legacy_column_renames: Vec<String>,
+    /// Fixed old/target column pairs that both exist and require explicit
+    /// recovery; these are never renamed automatically.
+    #[serde(default)]
+    pub legacy_column_conflicts: Vec<String>,
 }
 
 /// Errors returned by the read-only preflight boundary.
@@ -113,7 +139,12 @@ async fn preflight_in_transaction(
     let snapshot = read_snapshot_in_transaction(transaction).await?;
     let database = read_database_state(transaction).await?;
     let history = reconcile_migration_history(manifest, &snapshot)?;
-    Ok(classify_preflight(&snapshot, history, database))
+    let (pending_legacy_column_renames, legacy_column_conflicts) =
+        crate::apply::inspect_legacy_column_aliases(transaction).await?;
+    let mut report = classify_preflight(&snapshot, history, database);
+    report.pending_legacy_column_renames = pending_legacy_column_renames;
+    report.legacy_column_conflicts = legacy_column_conflicts;
+    Ok(report)
 }
 
 async fn read_database_state(
@@ -203,6 +234,8 @@ pub fn classify_preflight(
         organizations_table_present: database.organizations_table_present,
         history,
         diagnostics,
+        pending_legacy_column_renames: Vec::new(),
+        legacy_column_conflicts: Vec::new(),
     }
 }
 
@@ -238,6 +271,7 @@ mod tests {
             applied_migrations: Vec::new(),
             pending_migrations: Vec::new(),
             diagnostics: Vec::new(),
+            catalog_repair_candidates: Vec::new(),
         }
     }
 

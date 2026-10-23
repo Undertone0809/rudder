@@ -24,12 +24,62 @@ const KNOWN_LEGACY_MIGRATION_HISTORY_HASHES: &[&str] = &[
     "a531d1d8383becb9090492d1b763aeb11a4c2ade4f325a29500511900b29888d",
     "cbf2988159818d54929cda6119f3ca3b6cd6d265c08fb73c6221198ff99d070e",
     "0ba359cdf4244b5509bd9c8d7f9dee91e8d8e3967d56771770ecfc6114e0c958",
-    "legacy-0100-hash",
-    "legacy-conflicting-0100-hash",
+];
+
+// These shipped migrations have explicit history-gap recovery coverage. The
+// current SQL hash is part of the allowlist so editing a migration closes the
+// exception until its replay safety is reviewed again.
+const SAFE_HISTORICAL_GAP_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0044_illegal_toad.sql",
+        "d0dda5d7787eff4aefe1ece4e6d25b7947acd08c95e80fa34b170fd1474a04ab",
+    ),
+    (
+        "0063_flawless_toad.sql",
+        "5ee91be1af9a41beaa9e1fce8dbe1b05e787c065d236dcc8a6141cb52a859318",
+    ),
+    (
+        "0100_mean_richard_fisk.sql",
+        "2adf379d4bdd34ad092f4a2bfa186994724170f56b0ec20f92e32896fd8a85da",
+    ),
+    (
+        "0102_complex_retro_girl.sql",
+        "2376722081bca60f0b6f6f6182bdd1102ebf0797a909154029a8c3174e422bc8",
+    ),
+    (
+        "0103_cute_colonel_america.sql",
+        "7ad6b24791f1fd2290558c10a5a9bbaf04d3ef209ca35c9dd810ac0e157b9c94",
+    ),
+];
+
+// These non-idempotent migrations may only have their missing journal row
+// repaired after the PostgreSQL adapter proves every catalog effect. This is
+// separate from the SQL replay allowlist above.
+const CATALOG_HISTORY_REPAIR_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0021_chief_vindicator.sql",
+        "1278c77d7de2ad85c4d740092bfd97b1fedb7848bec5a09fc0f72443ffae3daa",
+    ),
+    (
+        "0031_zippy_magma.sql",
+        "f1af3a309420879d2a98783650b6389a5b1569b5d21beb053780b26c92de3a13",
+    ),
 ];
 
 fn is_known_legacy_migration_history_hash(hash: &str) -> bool {
     KNOWN_LEGACY_MIGRATION_HISTORY_HASHES.contains(&hash)
+}
+
+fn is_safe_historical_gap(entry: &rudder_migration_core::MigrationEntry) -> bool {
+    SAFE_HISTORICAL_GAP_MIGRATIONS
+        .iter()
+        .any(|(file_name, sha256)| entry.file_name == *file_name && entry.sha256 == *sha256)
+}
+
+fn is_catalog_history_repair_migration(entry: &rudder_migration_core::MigrationEntry) -> bool {
+    CATALOG_HISTORY_REPAIR_MIGRATIONS
+        .iter()
+        .any(|(file_name, sha256)| entry.file_name == *file_name && entry.sha256 == *sha256)
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -99,6 +149,11 @@ pub struct MigrationHistoryPreflight {
     pub applied_migrations: Vec<MigrationHistoryIdentity>,
     pub pending_migrations: Vec<MigrationHistoryIdentity>,
     pub diagnostics: Vec<String>,
+    /// Internal Rust-only candidates; the locked PostgreSQL writer must prove
+    /// the complete catalog effect before it may repair any journal row.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub catalog_repair_candidates: Vec<MigrationHistoryIdentity>,
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -121,6 +176,10 @@ struct Resolution {
     unmatched_rows: usize,
     diagnostics: Vec<String>,
     mismatch: bool,
+    /// True when at least one current migration was identified by its
+    /// manifest name or content hash. Positional ID matches cannot authorize
+    /// a known historical gap recovery.
+    verified_current_identity: bool,
 }
 
 fn pending_identity(manifest: &MigrationManifest, entry_index: usize) -> MigrationHistoryIdentity {
@@ -153,11 +212,33 @@ fn applied_identity(
     }
 }
 
+fn row_has_exact_current_identity(
+    columns: MigrationHistoryColumns,
+    row: &MigrationHistoryRow,
+    entry: &rudder_migration_core::MigrationEntry,
+) -> bool {
+    if columns.hash {
+        row.hash.as_deref() == Some(entry.sha256.as_str())
+            && row
+                .name
+                .as_deref()
+                .is_none_or(|name| name == entry.file_name)
+    } else {
+        columns.name && row.name.as_deref() == Some(entry.file_name.as_str())
+    }
+}
+
 fn validate_snapshot(snapshot: &MigrationHistorySnapshot) -> Result<(), MigrationHistoryError> {
+    let mut seen_ids = HashSet::new();
     for (index, row) in snapshot.rows.iter().enumerate() {
         if row.id == 0 {
             return Err(MigrationHistoryError::HistoryRowInvalid(format!(
                 "row {index} id must be positive"
+            )));
+        }
+        if !seen_ids.insert(row.id) {
+            return Err(MigrationHistoryError::HistoryRowInvalid(format!(
+                "row {index} id must be unique"
             )));
         }
         if row.created_at.is_some_and(|value| value < 0) {
@@ -196,19 +277,27 @@ fn resolve_by_name(
             ));
             continue;
         };
-        if let Some(hash) = row.hash.as_deref()
-            && hash != manifest.entries[entry_index].sha256
+        if snapshot.columns.hash
+            && row.hash.as_deref() != Some(manifest.entries[entry_index].sha256.as_str())
         {
             resolution.mismatch = true;
-            resolution.diagnostics.push(format!(
-                "migration history hash does not match {}",
-                manifest.entries[entry_index].file_name
-            ));
+            resolution.diagnostics.push(if row.hash.is_some() {
+                format!(
+                    "migration history hash does not match {}",
+                    manifest.entries[entry_index].file_name
+                )
+            } else {
+                format!(
+                    "migration history hash is missing for {}",
+                    manifest.entries[entry_index].file_name
+                )
+            });
         }
         resolution.matches.push(Match {
             row: row.clone(),
             entry_index,
         });
+        resolution.verified_current_identity = true;
     }
     resolution
 }
@@ -304,6 +393,7 @@ fn resolve_by_hash(
         }
     }
     if !resolution.matches.is_empty() || snapshot.rows.is_empty() {
+        resolution.verified_current_identity = !resolution.matches.is_empty();
         if resolution.unmatched_rows > 0 {
             resolution
                 .diagnostics
@@ -372,9 +462,11 @@ fn classify(
     let mut matched_orders = HashSet::new();
     let mut diagnostics = std::mem::take(&mut resolution.diagnostics);
     let mut mismatch = resolution.mismatch;
+    let mut repeated_migration = false;
     for matched in &resolution.matches {
         if !matched_orders.insert(matched.entry_index) {
             mismatch = true;
+            repeated_migration = true;
             diagnostics.push("migration history repeats a manifest migration".to_owned());
         }
     }
@@ -387,24 +479,71 @@ fn classify(
         .iter()
         .filter(|matched| !manifest.entries[matched.entry_index].is_legacy_unjournaled())
         .collect::<Vec<_>>();
-    for pair in journal_matches.windows(2) {
+    let expected_journaled_count = manifest
+        .entries
+        .iter()
+        .filter(|entry| !entry.is_legacy_unjournaled())
+        .count();
+    let complete_current_set = resolution.verified_current_identity
+        && journal_matches.len() == expected_journaled_count
+        && manifest
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.is_legacy_unjournaled())
+            .all(|(index, _)| matched_orders.contains(&index));
+    let mut out_of_order = false;
+    // Catalog-repair and approved historical rows are appended when
+    // recovered, so their relative journal IDs cannot represent manifest
+    // order. Exclude only exact hash/name identities from the order check;
+    // unknown, positional, or mismatched rows stay in the strict sequence.
+    let ordered_journal_matches = journal_matches
+        .iter()
+        .filter(|matched| {
+            let entry = &manifest.entries[matched.entry_index];
+            let exact_current_identity =
+                row_has_exact_current_identity(snapshot.columns, &matched.row, entry);
+            !exact_current_identity
+                || (!is_safe_historical_gap(entry) && !is_catalog_history_repair_migration(entry))
+        })
+        .collect::<Vec<_>>();
+    for pair in ordered_journal_matches.windows(2) {
         if pair[0].entry_index >= pair[1].entry_index {
             mismatch = true;
+            out_of_order = true;
             diagnostics.push("migration history order does not match manifest order".to_owned());
             break;
         }
     }
-    if manifest
-        .entries
-        .iter()
-        .filter(|entry| !entry.is_legacy_unjournaled())
-        .take(journal_matches.len())
-        .any(|entry| !matched_orders.contains(&entry.order))
+    if !complete_current_set
+        && let Some(last_applied_index) = journal_matches
+            .iter()
+            .map(|matched| matched.entry_index)
+            .max()
     {
-        mismatch = true;
-        diagnostics.push(
-            "migration history applied migrations are not a contiguous manifest prefix".to_owned(),
-        );
+        let interior_gaps = manifest
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(index, entry)| {
+                *index < last_applied_index
+                    && !entry.is_legacy_unjournaled()
+                    && !matched_orders.contains(index)
+            })
+            .map(|(_, entry)| entry)
+            .collect::<Vec<_>>();
+        if !interior_gaps.is_empty()
+            && (!resolution.verified_current_identity
+                || interior_gaps.iter().any(|entry| {
+                    !is_safe_historical_gap(entry) && !is_catalog_history_repair_migration(entry)
+                }))
+        {
+            mismatch = true;
+            diagnostics.push(
+                "migration history contains a gap outside the approved historical replay set"
+                    .to_owned(),
+            );
+        }
     }
     if resolution.unmatched_rows > 0 {
         mismatch = true;
@@ -412,6 +551,49 @@ fn classify(
             "migration history has {} unmatched row(s)",
             resolution.unmatched_rows
         ));
+    }
+
+    // Surface exact catalog-repair candidates only when every existing row
+    // has one matching current identity and there are no duplicate, unknown,
+    // hash, or ordering conflicts. The service still verifies PostgreSQL's
+    // complete catalog shape before any journal or schema mutation.
+    let current_rows_have_exact_identity = resolution.matches.iter().all(|matched| {
+        let entry = &manifest.entries[matched.entry_index];
+        row_has_exact_current_identity(snapshot.columns, &matched.row, entry)
+    });
+    let structurally_clean = resolution.verified_current_identity
+        && current_rows_have_exact_identity
+        && !resolution.mismatch
+        && !repeated_migration
+        && !out_of_order
+        && resolution.unmatched_rows == 0;
+    let mut catalog_repair_candidates = Vec::new();
+    let mut unsupported_interior_gap = false;
+    if structurally_clean
+        && !complete_current_set
+        && let Some(last_applied_index) = journal_matches
+            .iter()
+            .map(|matched| matched.entry_index)
+            .max()
+    {
+        for (index, entry) in manifest.entries.iter().enumerate() {
+            if index >= last_applied_index
+                || entry.is_legacy_unjournaled()
+                || matched_orders.contains(&index)
+                || is_safe_historical_gap(entry)
+            {
+                continue;
+            }
+            if is_catalog_history_repair_migration(entry) {
+                catalog_repair_candidates.push(pending_identity(manifest, index));
+            } else {
+                unsupported_interior_gap = true;
+            }
+        }
+    }
+    if unsupported_interior_gap {
+        catalog_repair_candidates.clear();
+        mismatch = true;
     }
     diagnostics.sort();
     diagnostics.dedup();
@@ -454,6 +636,7 @@ fn classify(
         applied_migrations,
         pending_migrations,
         diagnostics,
+        catalog_repair_candidates,
     }
 }
 
@@ -484,6 +667,7 @@ pub fn reconcile_migration_history(
                 .map(|(index, _)| pending_identity(manifest, index))
                 .collect(),
             diagnostics: vec!["migration journal table was not found".to_owned()],
+            catalog_repair_candidates: Vec::new(),
         });
     }
     if !snapshot.columns.id {
@@ -501,6 +685,7 @@ pub fn reconcile_migration_history(
                 .map(|(index, _)| pending_identity(manifest, index))
                 .collect(),
             diagnostics: vec!["migration journal must contain an id column".to_owned()],
+            catalog_repair_candidates: Vec::new(),
         });
     }
     if snapshot.rows.is_empty() {
@@ -535,6 +720,7 @@ pub fn reconcile_migration_history(
             } else {
                 vec!["migration journal history is empty".to_owned()]
             },
+            catalog_repair_candidates: Vec::new(),
         });
     }
 

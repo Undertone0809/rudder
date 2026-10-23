@@ -15,6 +15,9 @@ type PartialConfig = {
     embeddedPostgresPort?: number;
     pgliteDataDir?: string;
     pglitePort?: number;
+    backup?: {
+      dir?: string;
+    };
   };
 };
 
@@ -25,6 +28,7 @@ export type ResolvedDatabaseTarget =
       source: "DATABASE_URL" | "rudder-env" | "config.database.connectionString";
       configPath: string;
       envPath: string;
+      recoveryDirectory: string;
     }
   | {
       mode: "embedded-postgres";
@@ -33,6 +37,7 @@ export type ResolvedDatabaseTarget =
       source: `embedded-postgres@${number}`;
       configPath: string;
       envPath: string;
+      recoveryDirectory: string;
     };
 
 function expandHomePrefix(value: string): string {
@@ -66,6 +71,10 @@ function resolveDefaultConfigPath(): string {
 
 function resolveDefaultEmbeddedPostgresDir(): string {
   return path.resolve(resolveRudderHomeDir(), "instances", resolveRudderInstanceId(), "db");
+}
+
+function resolveDefaultBackupDirectory(): string {
+  return path.resolve(resolveRudderHomeDir(), "instances", resolveRudderInstanceId(), "data", "backups");
 }
 
 function resolveHomeAwarePath(value: string): string {
@@ -212,15 +221,51 @@ function readConfig(configPath: string): PartialConfig | null {
           embeddedPostgresPort: asPositiveInt(database.embeddedPostgresPort) ?? undefined,
           pgliteDataDir: typeof database.pgliteDataDir === "string" ? database.pgliteDataDir : undefined,
           pglitePort: asPositiveInt(database.pglitePort) ?? undefined,
+          backup: typeof database.backup === "object" && database.backup !== null && !Array.isArray(database.backup)
+            ? { dir: typeof database.backup.dir === "string" ? database.backup.dir : undefined }
+            : undefined,
         }
       : undefined,
   };
+}
+
+function resolveRecoveryDirectory(
+  envEntries: Record<string, string>,
+  config: PartialConfig | null,
+): string {
+  const backupDirectorySetting = process.env.RUDDER_DB_BACKUP_DIR
+    ?? envEntries.RUDDER_DB_BACKUP_DIR
+    ?? config?.database?.backup?.dir;
+  return backupDirectorySetting === undefined
+    ? resolveDefaultBackupDirectory()
+    : resolveHomeAwarePath(backupDirectorySetting);
+}
+
+export function resolveMigrationRecoveryDirectory(): string {
+  const configPath = resolveRudderConfigPath();
+  const envPath = resolveRudderEnvPath(configPath);
+  const envEntries = readEnvEntries(envPath);
+  let config: PartialConfig | null = null;
+  try {
+    config = readConfig(configPath);
+  } catch {
+    // The explicit migration URL may be supplied independently from a malformed
+    // profile config. Use the safe per-instance recovery directory in that case.
+  }
+  return resolveRecoveryDirectory(envEntries, config);
 }
 
 export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
   const configPath = resolveRudderConfigPath();
   const envPath = resolveRudderEnvPath(configPath);
   const envEntries = readEnvEntries(envPath);
+  let config: PartialConfig | null = null;
+  try {
+    config = readConfig(configPath);
+  } catch (error) {
+    if (!process.env.DATABASE_URL?.trim() && !envEntries.DATABASE_URL?.trim()) throw error;
+  }
+  const recoveryDirectory = resolveRecoveryDirectory(envEntries, config);
 
   const envUrl = process.env.DATABASE_URL?.trim();
   if (envUrl) {
@@ -230,6 +275,7 @@ export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
       source: "DATABASE_URL",
       configPath,
       envPath,
+      recoveryDirectory,
     };
   }
 
@@ -241,10 +287,10 @@ export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
       source: "rudder-env",
       configPath,
       envPath,
+      recoveryDirectory,
     };
   }
 
-  const config = readConfig(configPath);
   const connectionString = config?.database?.connectionString?.trim();
   if (config?.database?.mode === "postgres" && connectionString) {
     return {
@@ -253,6 +299,7 @@ export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
       source: "config.database.connectionString",
       configPath,
       envPath,
+      recoveryDirectory,
     };
   }
 
@@ -271,5 +318,6 @@ export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
     source: `embedded-postgres@${port}`,
     configPath,
     envPath,
+    recoveryDirectory,
   };
 }

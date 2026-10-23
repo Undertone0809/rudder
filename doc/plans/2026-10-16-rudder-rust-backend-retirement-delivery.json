@@ -258,60 +258,78 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-21T20:34:37.651752+00:00",
-    "observed_main": "b38b171364c1d83f4db5c495a7d0df8552ffcf3e",
-    "branch": "codex/rust-main-qualification-20261022",
-    "status": "v6r1_stage_accepted_packaged_resource_gate",
-    "candidate_source_fingerprint": "71aa79c222850b6d10f8c829de758715cf099cad5537d2916e40e981197fdbbc",
-    "batch_plan": "2026-10-22-agent-detail-native-ingress-qualification.md",
-    "packet": "/private/tmp/rudder-main-qualification-20261022/api-only/packet-v6r1.json",
-    "artifact_sha256": null,
-    "scope": "Native Agent detail/me ingress, credential/recovery repairs, Desktop native identity/first-run workspace startup, update fixture, macOS alias and process-host qualification repairs. Does not retire whole backend authority.",
-    "author_checks": {
-      "public_http": "Rebased frozen v5 release44/44 PASS101.713s; no skipped cases",
-      "native": "Rebased release buildPASS115.663s, fmtPASS, scoped all-target clippyPASS33.543s; targeted instruction edge checks tracked in current v5 packet",
-      "inventory": "v6r1 source check/compare against b38, Cargo fmt and diffcheck PASS; initial missing retained-client record FAIL retained",
-      "full_repository": "API-only v5: full typecheck PASS, lint FAIL22 unchanged paths; expanded source focused author checks PASS; current full baseline/packaged/independent/CI gates not complete.",
-      "review_and_acceptance": "Independent v6r1 stage ACCEPT for12-source fingerprint71aa79c2...fdbbc; fresh artifact binding, independent acceptance, full Desktop and exact-head CI remain pending. No push/merge.",
-      "desktop_policy": "startup-author-checks/policy.json:16 PASS",
-      "desktop_types": "startup-author-checks/types.json:PASS",
-      "native_startup": "startup-author-checks/native.json:6 PASS",
-      "startup_recovery": "startup-author-checks/startup.json:PASS real dev startup recovery",
-      "macos_alias_instructions": "d1-macos-alias-green.json:25 PASS; old binary reproduced same alias failure first",
-      "process_host": "/private/tmp/rudder-process-host-stdio-mux.kamCvJ/process-host-cargo-test.log:8 PASS; outer zsh wrapper FAIL due readonly status",
-      "desktop_stage": "startup-author-checks/stage.json:PASS; artifact hashes captured above",
-      "full_desktop": "desktop-verify-current/result.json:FAIL before startup sources restored; no current macro PASS",
-      "prior_api": "v5 historical scoped independent PASS; new combined artifacts require affected revalidation",
-      "startup_traversal_recheck": "PASS6 release/aarch64 startup units in78.716s; existing-target traversal regression included; prior stage REJECT retained"
-    },
-    "pr_reuse_queue": [
+    "updated_at": "2026-10-23T09:25:24.267066+00:00",
+    "observed_main": "e6eb1d033aa3a7ffa6a4c889c47a7e5d1353d4f6",
+    "branch": "codex/rust-migration-integrated-20261022",
+    "status": "migration_runtime_qualified_final_baseline_review_and_publication_pending",
+    "scope": "Rust migration writer, historical reconciliation, managed PostgreSQL owner, startup transport and packaging qualification. Native authentication, remaining APIs/workers and final no-Node workflows remain incomplete.",
+    "recent_source_deliveries": [
       {
-        "pr": 352,
-        "head": "c92caa2996e9cc54b8c4b7bbcdb87706bd7c09c4",
-        "decision": "Merged upstream as b38b171364; Claude repair already on base and absent from this diff. Not a merge performed by this controller.",
-        "merge_ready": false,
-        "reused_source_commit": "17e947736428e8ebca73aef3c795ccf894a82bf5"
+        "pr": 305,
+        "state": "merged",
+        "merge_sha": "26f149a589de635947d9435aa95b33827bb1d618",
+        "scope": "Maintenance/test guardrails; not backend retirement",
+        "evidence": "/private/tmp/rudder-maintenance-305-20261022/"
       },
       {
-        "pr": 351,
-        "head": "798063db0a28bc90574c614585c1ea6b684d3a7e",
-        "decision": "retain; four missing public real-entry regression cases implemented in isolated existing worktree, not yet executed",
-        "merge_ready": false
+        "pr": 353,
+        "state": "merged",
+        "merge_sha": "7441bf0ad4a27105d52a835b5e357cade846d612",
+        "tree": "213a25b0736223f428d0d6bb30b88ee05b47a1f4",
+        "scope": "Native Agent detail/me ingress and scoped Desktop/identity compatibility; other authentication remains debt",
+        "evidence": "/private/tmp/rudder-main-qualification-20261022/api-only/merge97aa-delivered.json"
       },
       {
         "pr": 347,
-        "head": "471edc2d2e112c2eb97930001d444d39087aa5c6",
-        "decision": "Retain; rebased local f33ece7f stage ACCEPT, public follow/unfollow and rollback/retry author proof PASS; independent frozen acceptance/final review/remote PR update/CI pending.",
-        "merge_ready": false
+        "state": "merged",
+        "head_sha": "575c3f0ad584d438d98f33a6a0c78795f2084fa8",
+        "merge_sha": "c3de2954447964e953293c1a2381124c502c8784",
+        "tree": "49d4a5515b47f108fbfd2ad9dad90f1abbd9ef1c",
+        "scope": "Issue follow/unfollow Rust transaction plus activity/outbox; Express registration/organization checks/issue lookup remain explicit adapters",
+        "independent_acceptance": "54 passed, 0 failed, 0 skipped on the frozen candidate",
+        "final_review": "accept",
+        "ci": "Exact-head full Test, Rust boundaries and D1 real-entry smoke succeeded; synthetic merge tree equals reviewed candidate tree",
+        "evidence": "/private/tmp/rudder-issue-follow-qualification-r10/merge-delivered-r11.json"
       },
       {
-        "pr": 305,
-        "decision": "retain: main still has unsafe shell scanner/error-to-success and passWithNoTests gaps. Rebase; fix node:test files incorrectly included by strict Vitest discovery, then exact-head checks/review.",
-        "merge_ready": false,
-        "head": "bc4033227ac1be7c0dd742409db74e40b6163e47"
+        "pr": 351,
+        "state": "merged",
+        "merge_sha": "809938477767670d4c1d247b0c5c69bd69721362",
+        "scope": "Rust issue checkout transaction, audit/outbox and real-entry regressions; remaining Express ingress responsibilities are explicit debt",
+        "evidence": "/private/tmp/rudder-issue-checkout-qualification-20261022/merge-delivered-r25.json"
       }
     ],
-    "historical_receipt_boundary": "Original8873539ba published branch only; main b38 advanced before PR creation. Old frozen v3 binary is historical and cannot be called the combined new artifact.",
+    "pr_reuse_queue": [
+      {
+        "pr": 351,
+        "head": "798063db0a28bc90574c614585c1ea6b684d3a7e",
+        "decision": "Merged through protected PR after independent checkout acceptance and required CI",
+        "merge_ready": false,
+        "state": "merged",
+        "merge_sha": "809938477767670d4c1d247b0c5c69bd69721362"
+      }
+    ],
+    "migration_author_evidence": {
+      "session_upgrade": "r13: 10/10 public session workflow tests, genuine old-prefix upgrade and isolated corrupt interior-gap refusal; author evidence only",
+      "native_and_goal": "r13: workspace38, plugin20, Goal57 passed under normal server config; original transient Goal failure remains unexplained",
+      "providers": "42 assertions passed after unique short owned TMPDIR corrected macOS Unix socket length; whole-source harness freeze failed solely on unrelated session test edit, not independent acceptance",
+      "remaining_gates": [
+        "Full current repository tests and cross-platform CI",
+        "Final independent review and protected PR delivery"
+      ]
+    },
+    "process_corrections": {
+      "evidence": "/private/tmp/rudder-rust-migration-authority-20261022/test-environment-correction-r13.json",
+      "changes": [
+        "Fresh per-command product HOME and config; explicit existing Rustup/Cargo/Corepack caches",
+        "Unique short owned temporary directory; no prefix-based process cleanup",
+        "Per-worktree Cargo target and physical frozen acceptance artifacts",
+        "Focused failure preflights before repeating broad baseline"
+      ],
+      "claim": "These are bounded implemented corrections; no measured project-wide throughput improvement claimed."
+    },
+    "deployment": "not performed",
+    "global_completion": false,
     "time_audit": {
       "evidence": "/Users/zeeland/.codex/visualizations/2026/10/16/01a143e6-be90-79a0-9327-dac7179f6871/audit-20261022/report.md",
       "measured_scope": "89 closed main-controller turns, Oct16-Oct18; not full fortnight or momo/subagent hours",
@@ -320,28 +338,32 @@
       "claims_withdrawn": "18%/30% overall completion and prior ETA lacked a weighted retirement denominator. No replacement global percentage or completion date asserted.",
       "iteration_status": "Two commitments effective in bounded slices; stable project throughput improvement not yet demonstrated."
     },
-    "full_desktop_gate": {
-      "status": "FAIL",
-      "evidence": "/private/tmp/rudder-main-qualification-20261022/api-only/desktop-verify-current/result.json",
-      "current_rerun": "Not started below declared8GiB startup threshold; previous FAIL preserved, focused startup recovery PASS does not clear macro."
-    },
-    "excluded_wip": [],
     "previous_execution_record": {
-      "updated_at": "2026-10-21T18:43:39.629109+00:00",
+      "updated_at": "2026-10-21T20:34:37.651752+00:00",
       "observed_main": "b38b171364c1d83f4db5c495a7d0df8552ffcf3e",
       "branch": "codex/rust-main-qualification-20261022",
-      "status": "not_delivered_remaining_qualification_and_merge_gates",
-      "candidate_source_fingerprint": "31ee9f5d638ed951fcfacbf72ee3bbb97357dd4e9cc7ba3d01ed1b1f2daffcd6",
+      "status": "v6r1_stage_accepted_packaged_resource_gate",
+      "candidate_source_fingerprint": "71aa79c222850b6d10f8c829de758715cf099cad5537d2916e40e981197fdbbc",
       "batch_plan": "2026-10-22-agent-detail-native-ingress-qualification.md",
-      "packet": "/private/tmp/rudder-main-qualification-20261022/api-only/packet-v5.json",
-      "artifact_sha256": "5d5c2ebca0ad9937995544462abf592606dccff1cbba05973c3f4872662f51a5",
-      "scope": "Agent detail/me GET/HEAD native public ingress, credential lock-race revalidation, instruction recovery/error qualification; reused Claude Windows history path fix. No Desktop/startup changes in this candidate.",
+      "packet": "/private/tmp/rudder-main-qualification-20261022/api-only/packet-v6r1.json",
+      "artifact_sha256": null,
+      "scope": "Native Agent detail/me ingress, credential/recovery repairs, Desktop native identity/first-run workspace startup, update fixture, macOS alias and process-host qualification repairs. Does not retire whole backend authority.",
       "author_checks": {
         "public_http": "Rebased frozen v5 release44/44 PASS101.713s; no skipped cases",
         "native": "Rebased release buildPASS115.663s, fmtPASS, scoped all-target clippyPASS33.543s; targeted instruction edge checks tracked in current v5 packet",
-        "inventory": "check/compare PASS; Node compatibility file independently reviewed",
-        "full_repository": "Rebased full typecheckPASS43.491s. Full lintFAIL22 unchanged paths, changed TS paths not listed. Pre-rebase full build/composite test evidence remains historical; current protectedCI gates merge.",
-        "review_and_acceptance": "Independent stage accepts bounded v5 qualification. Consult current packet-v5 for remaining runtime/final verdicts; old v3/v4 receipts remain historical."
+        "inventory": "v6r1 source check/compare against b38, Cargo fmt and diffcheck PASS; initial missing retained-client record FAIL retained",
+        "full_repository": "API-only v5: full typecheck PASS, lint FAIL22 unchanged paths; expanded source focused author checks PASS; current full baseline/packaged/independent/CI gates not complete.",
+        "review_and_acceptance": "Independent v6r1 stage ACCEPT for12-source fingerprint71aa79c2...fdbbc; fresh artifact binding, independent acceptance, full Desktop and exact-head CI remain pending. No push/merge.",
+        "desktop_policy": "startup-author-checks/policy.json:16 PASS",
+        "desktop_types": "startup-author-checks/types.json:PASS",
+        "native_startup": "startup-author-checks/native.json:6 PASS",
+        "startup_recovery": "startup-author-checks/startup.json:PASS real dev startup recovery",
+        "macos_alias_instructions": "d1-macos-alias-green.json:25 PASS; old binary reproduced same alias failure first",
+        "process_host": "/private/tmp/rudder-process-host-stdio-mux.kamCvJ/process-host-cargo-test.log:8 PASS; outer zsh wrapper FAIL due readonly status",
+        "desktop_stage": "startup-author-checks/stage.json:PASS; artifact hashes captured above",
+        "full_desktop": "desktop-verify-current/result.json:FAIL before startup sources restored; no current macro PASS",
+        "prior_api": "v5 historical scoped independent PASS; new combined artifacts require affected revalidation",
+        "startup_traversal_recheck": "PASS6 release/aarch64 startup units in78.716s; existing-target traversal regression included; prior stage REJECT retained"
       },
       "pr_reuse_queue": [
         {
@@ -360,7 +382,7 @@
         {
           "pr": 347,
           "head": "471edc2d2e112c2eb97930001d444d39087aa5c6",
-          "decision": "retain; feature still Node-owned on main. Only inventory content conflict; real public POST/DELETE to Rust/PG proof still needed; current CI red",
+          "decision": "Retain; rebased local f33ece7f stage ACCEPT, public follow/unfollow and rollback/retry author proof PASS; independent frozen acceptance/final review/remote PR update/CI pending.",
           "merge_ready": false
         },
         {
@@ -381,16 +403,96 @@
       },
       "full_desktop_gate": {
         "status": "FAIL",
-        "evidence": "/private/tmp/rudder-main-qualification-20261022/desktop-verify-v3.log.json",
-        "boundary": "Known existing startup/smoke fixture failures remain merge blockers. Draft publication only after exact API-only final review; no complete Desktop claim."
+        "evidence": "/private/tmp/rudder-main-qualification-20261022/api-only/desktop-verify-current/result.json",
+        "current_rerun": "Not started below declared8GiB startup threshold; previous FAIL preserved, focused startup recovery PASS does not clear macro."
       },
-      "excluded_wip": [
-        "desktop/src/identity-runtime.ts",
-        "desktop/src/identity-startup-policy.test.ts",
-        "native/crates/server-foundation/src/native_chat_startup.rs",
-        "desktop/scripts/smoke.mjs"
-      ]
+      "excluded_wip": [],
+      "previous_execution_record": {
+        "updated_at": "2026-10-21T18:43:39.629109+00:00",
+        "observed_main": "b38b171364c1d83f4db5c495a7d0df8552ffcf3e",
+        "branch": "codex/rust-main-qualification-20261022",
+        "status": "not_delivered_remaining_qualification_and_merge_gates",
+        "candidate_source_fingerprint": "31ee9f5d638ed951fcfacbf72ee3bbb97357dd4e9cc7ba3d01ed1b1f2daffcd6",
+        "batch_plan": "2026-10-22-agent-detail-native-ingress-qualification.md",
+        "packet": "/private/tmp/rudder-main-qualification-20261022/api-only/packet-v5.json",
+        "artifact_sha256": "5d5c2ebca0ad9937995544462abf592606dccff1cbba05973c3f4872662f51a5",
+        "scope": "Agent detail/me GET/HEAD native public ingress, credential lock-race revalidation, instruction recovery/error qualification; reused Claude Windows history path fix. No Desktop/startup changes in this candidate.",
+        "author_checks": {
+          "public_http": "Rebased frozen v5 release44/44 PASS101.713s; no skipped cases",
+          "native": "Rebased release buildPASS115.663s, fmtPASS, scoped all-target clippyPASS33.543s; targeted instruction edge checks tracked in current v5 packet",
+          "inventory": "check/compare PASS; Node compatibility file independently reviewed",
+          "full_repository": "Rebased full typecheckPASS43.491s. Full lintFAIL22 unchanged paths, changed TS paths not listed. Pre-rebase full build/composite test evidence remains historical; current protectedCI gates merge.",
+          "review_and_acceptance": "Independent stage accepts bounded v5 qualification. Consult current packet-v5 for remaining runtime/final verdicts; old v3/v4 receipts remain historical."
+        },
+        "pr_reuse_queue": [
+          {
+            "pr": 352,
+            "head": "c92caa2996e9cc54b8c4b7bbcdb87706bd7c09c4",
+            "decision": "Merged upstream as b38b171364; Claude repair already on base and absent from this diff. Not a merge performed by this controller.",
+            "merge_ready": false,
+            "reused_source_commit": "17e947736428e8ebca73aef3c795ccf894a82bf5"
+          },
+          {
+            "pr": 351,
+            "head": "798063db0a28bc90574c614585c1ea6b684d3a7e",
+            "decision": "retain; four missing public real-entry regression cases implemented in isolated existing worktree, not yet executed",
+            "merge_ready": false
+          },
+          {
+            "pr": 347,
+            "head": "471edc2d2e112c2eb97930001d444d39087aa5c6",
+            "decision": "retain; feature still Node-owned on main. Only inventory content conflict; real public POST/DELETE to Rust/PG proof still needed; current CI red",
+            "merge_ready": false
+          },
+          {
+            "pr": 305,
+            "decision": "retain: main still has unsafe shell scanner/error-to-success and passWithNoTests gaps. Rebase; fix node:test files incorrectly included by strict Vitest discovery, then exact-head checks/review.",
+            "merge_ready": false,
+            "head": "bc4033227ac1be7c0dd742409db74e40b6163e47"
+          }
+        ],
+        "historical_receipt_boundary": "Original8873539ba published branch only; main b38 advanced before PR creation. Old frozen v3 binary is historical and cannot be called the combined new artifact.",
+        "time_audit": {
+          "evidence": "/Users/zeeland/.codex/visualizations/2026/10/16/01a143e6-be90-79a0-9327-dac7179f6871/audit-20261022/report.md",
+          "measured_scope": "89 closed main-controller turns, Oct16-Oct18; not full fortnight or momo/subagent hours",
+          "active_hours": 43.416787,
+          "explicit_wait_hours": 19.099197,
+          "claims_withdrawn": "18%/30% overall completion and prior ETA lacked a weighted retirement denominator. No replacement global percentage or completion date asserted.",
+          "iteration_status": "Two commitments effective in bounded slices; stable project throughput improvement not yet demonstrated."
+        },
+        "full_desktop_gate": {
+          "status": "FAIL",
+          "evidence": "/private/tmp/rudder-main-qualification-20261022/desktop-verify-v3.log.json",
+          "boundary": "Known existing startup/smoke fixture failures remain merge blockers. Draft publication only after exact API-only final review; no complete Desktop claim."
+        },
+        "excluded_wip": [
+          "desktop/src/identity-runtime.ts",
+          "desktop/src/identity-startup-policy.test.ts",
+          "native/crates/server-foundation/src/native_chat_startup.rs",
+          "desktop/scripts/smoke.mjs"
+        ]
+      },
+      "artifact_state": "Rebuild required after stage-review traversal correction; old staged foundation explicitly stale."
     },
-    "artifact_state": "Rebuild required after stage-review traversal correction; old staged foundation explicitly stale."
+    "runtime_qualification_r28": {
+      "checkpoint": "b93dbe3efb8affa5f56494358fdf4fa20fc69251",
+      "tree": "1471124015edcaff4e0eed86df4c863001645836",
+      "source_fingerprint": "358e1c005cbfdb42e26b30382daae861a34303163256563a8c1a70423a1b6c8e",
+      "evidence_root": "/private/tmp/rudder-rust-migration-authority-20261022",
+      "main": "27 PASS and separate S01 PASS; independent fresh public entry acceptance",
+      "name_only": "Raw N01 FAIL and same-run N02-N07 PASS preserved; independent N01 supplemental offline PASS on exact captures after comparator sorting fix",
+      "name_only_supplement_sha256": "976818aba18ce76e545dd51e78447984e4a5821e5645ddf330a8ae7724a3494a",
+      "checkout": "Independent 5 cases / 31 assertions / 0 skips PASS",
+      "startup": "Independent 8 groups / 9 invocations PASS",
+      "desktop": "Full default pnpm desktop:verify PASS in 791.889 seconds; macOS arm64; source unchanged and owned cleanup audited",
+      "artifact_policy": "All five native programs rebuilt from the checkpoint, physically frozen read-only with a distinct frozen server package",
+      "remaining": [
+        "Full current repository tests and cross-platform CI",
+        "Final independent review and protected PR delivery",
+        "Native auth lifecycle, remaining APIs/workers, default Rust-only ingress and final no-Node installation acceptance"
+      ],
+      "global_completion": false,
+      "deployment": "not performed"
+    }
   }
 }

@@ -419,8 +419,10 @@ async function verifyVersionCompatibility(serverPackageDir) {
     ? [
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-native.exe" : "rudder-native"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-postgres-owner.exe" : "rudder-postgres-owner"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "migration-preflight.exe" : "migration-preflight"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "migration-apply.exe" : "migration-apply"),
       ]
     : [];
   try {

@@ -1,65 +1,11 @@
 //! Explicit operator entrypoint; never starts implicitly from preflight.
-use rudder_migration_core::{
-    MigrationInspectionOptions, MigrationManifestOptions, MigrationSource, inspect_migration_source,
-};
-use rudder_migration_service::{MigrationApplyService, MigrationRecoveryPointReceipt};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::{
-    fs::{self, OpenOptions},
-    io::{self, Read, Write},
-    path::{Component, Path, PathBuf},
-    process::Stdio,
-    str::FromStr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-use tokio::process::Command;
+use std::io::{self, Read};
+use std::{future::Future, path::PathBuf, pin::Pin};
+use tokio_util::sync::CancellationToken;
 
 const SCHEMA: &str = "rudder.migration-apply/v1";
 const MAX_INPUT: u64 = 256 * 1024;
-const MAX_BACKUP: u64 = 4 * 1024 * 1024 * 1024;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct Request {
-    schema: String,
-    protocol_version: u8,
-    allow_apply: bool,
-    migrations_dir: PathBuf,
-    expected_fingerprint: String,
-    recovery_directory: PathBuf,
-    pg_dump_binary: PathBuf,
-}
-
-fn absolute_path(path: &Path) -> bool {
-    path.is_absolute()
-        && !path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-}
-
-fn parse(input: &[u8]) -> Result<Request, &'static str> {
-    let request: Request = serde_json::from_slice(input).map_err(|_| "invalid_request")?;
-    if request.schema != SCHEMA || request.protocol_version != 1 || !request.allow_apply {
-        return Err("explicit_apply_contract_required");
-    }
-    if !absolute_path(&request.migrations_dir)
-        || !absolute_path(&request.recovery_directory)
-        || !absolute_path(&request.pg_dump_binary)
-    {
-        return Err("absolute_normalized_paths_required");
-    }
-    if request.expected_fingerprint.len() != 64
-        || !request
-            .expected_fingerprint
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err("manifest_fingerprint_required");
-    }
-    Ok(request)
-}
+const CANCEL_FILE_ENV: &str = "RUDDER_MIGRATION_APPLY_CANCEL_FILE";
 
 #[tokio::main]
 async fn main() {
@@ -67,12 +13,10 @@ async fn main() {
         println!("migration-apply {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    let result = run().await;
+    let result = run_cancellable().await;
     let failed = result.is_err();
     let output = match result {
-        Ok(report) => {
-            serde_json::json!({"schema": SCHEMA, "protocolVersion": 1, "status": "applied", "report": report})
-        }
+        Ok(response) => response,
         // Do not emit SQL, connection strings, subprocess stderr or secrets.
         Err(code) => {
             serde_json::json!({"schema": SCHEMA, "protocolVersion": 1, "status": "error", "error": {"code": code}})
@@ -84,293 +28,263 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<rudder_migration_service::MigrationApplyReport, &'static str> {
-    let mut input = Vec::new();
-    io::stdin()
-        .lock()
-        .take(MAX_INPUT + 1)
-        .read_to_end(&mut input)
-        .map_err(|_| "stdin_read_failed")?;
-    if input.len() as u64 > MAX_INPUT {
-        return Err("input_too_large");
+async fn run_cancellable() -> Result<serde_json::Value, &'static str> {
+    let cancellation = CancellationToken::new();
+    let operation = run(cancellation.clone());
+    tokio::pin!(operation);
+    let mut cancellation_monitor: Pin<Box<dyn Future<Output = Result<(), &'static str>> + Send>> =
+        match std::env::var_os(CANCEL_FILE_ENV) {
+            Some(path) => Box::pin(wait_for_cancel_file(PathBuf::from(path))),
+            None => Box::pin(std::future::pending()),
+        };
+    #[cfg(unix)]
+    {
+        use rudder_migration_service::ParentProcessMonitor;
+        use tokio::signal::unix::{SignalKind, signal};
+
+        // Install both handlers before starting the operation. Keep `run()`
+        // pinned so cancellation can explicitly stop its owned PostgreSQL
+        // backend and wait for transaction and lock cleanup before exiting.
+        let supervisor =
+            ParentProcessMonitor::from_env().map_err(|_| "supervisor_monitor_unavailable")?;
+        let mut terminate =
+            signal(SignalKind::terminate()).map_err(|_| "signal_handler_unavailable")?;
+        let mut interrupt =
+            signal(SignalKind::interrupt()).map_err(|_| "signal_handler_unavailable")?;
+        if let Some(supervisor) = supervisor {
+            tokio::select! {
+                biased;
+                _ = terminate.recv() => cancel_and_drain(&cancellation, operation.as_mut(), "operation_aborted").await,
+                _ = interrupt.recv() => cancel_and_drain(&cancellation, operation.as_mut(), "operation_aborted").await,
+                result = cancellation_monitor.as_mut() => {
+                    let code = result.err().unwrap_or("operation_aborted");
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = supervisor.wait_for_exit() => {
+                    let code = if result.is_ok() { "supervisor_exited" } else { "supervisor_monitor_failed" };
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = operation.as_mut() => {
+                    if supervisor.has_exited() {
+                        Err("supervisor_exited")
+                    } else {
+                        result
+                    }
+                }
+            }
+        } else {
+            tokio::select! {
+                biased;
+                result = operation.as_mut() => result,
+                _ = terminate.recv() => cancel_and_drain(&cancellation, operation.as_mut(), "operation_aborted").await,
+                _ = interrupt.recv() => cancel_and_drain(&cancellation, operation.as_mut(), "operation_aborted").await,
+                result = cancellation_monitor.as_mut() => {
+                    let code = result.err().unwrap_or("operation_aborted");
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+            }
+        }
     }
-    let request = parse(&input)?;
-    let source = MigrationSource::new(&request.migrations_dir);
-    let manifest = inspect_migration_source(
-        &source,
-        &MigrationInspectionOptions {
-            manifest: MigrationManifestOptions::default(),
-            expected_fingerprint: Some(request.expected_fingerprint),
-        },
-    )
-    .map_err(|_| "migration_source_invalid")?;
-    if !manifest.validate_integrity().valid {
-        return Err("migration_manifest_invalid");
+    #[cfg(windows)]
+    {
+        use rudder_migration_service::ParentProcessMonitor;
+
+        let supervisor =
+            ParentProcessMonitor::from_env().map_err(|_| "supervisor_monitor_unavailable")?;
+        let interrupt = tokio::signal::ctrl_c();
+        if let Some(supervisor) = supervisor {
+            tokio::select! {
+                biased;
+                signal = interrupt => {
+                    let code = if signal.is_ok() { "operation_aborted" } else { "signal_handler_unavailable" };
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = cancellation_monitor.as_mut() => {
+                    let code = result.err().unwrap_or("operation_aborted");
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = supervisor.wait_for_exit() => {
+                    let code = if result.is_ok() { "supervisor_exited" } else { "supervisor_monitor_failed" };
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = operation.as_mut() => {
+                    match supervisor.has_exited() {
+                        Ok(true) => Err("supervisor_exited"),
+                        Ok(false) => result,
+                        Err(_) => Err("supervisor_monitor_failed"),
+                    }
+                }
+            }
+        } else {
+            tokio::select! {
+                biased;
+                signal = interrupt => {
+                    let code = if signal.is_ok() { "operation_aborted" } else { "signal_handler_unavailable" };
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = cancellation_monitor.as_mut() => {
+                    let code = result.err().unwrap_or("operation_aborted");
+                    cancel_and_drain(&cancellation, operation.as_mut(), code).await
+                }
+                result = operation.as_mut() => result,
+            }
+        }
     }
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        let interrupt = tokio::signal::ctrl_c();
+        tokio::select! {
+            biased;
+            result = interrupt => {
+                let code = if result.is_ok() { "operation_aborted" } else { "signal_handler_unavailable" };
+                cancel_and_drain(&cancellation, operation.as_mut(), code).await
+            },
+            result = cancellation_monitor.as_mut() => {
+                let code = result.err().unwrap_or("operation_aborted");
+                cancel_and_drain(&cancellation, operation.as_mut(), code).await
+            },
+            result = operation.as_mut() => result,
+        }
+    }
+}
+
+async fn cancel_and_drain<F>(
+    cancellation: &CancellationToken,
+    operation: Pin<&mut F>,
+    code: &'static str,
+) -> Result<serde_json::Value, &'static str>
+where
+    F: Future<Output = Result<serde_json::Value, &'static str>>,
+{
+    cancellation.cancel();
+    match operation.await {
+        Ok(_) => Err(code),
+        // The operation reports the generic cancellation it observed, but the
+        // caller knows which event initiated the drain (for example, the
+        // managed supervisor exiting). Preserve that more useful cause while
+        // still returning stronger cleanup failures unchanged.
+        Err("operation_aborted") => Err(code),
+        Err(operation_error) => Err(operation_error),
+    }
+}
+
+async fn wait_for_cancel_file(path: PathBuf) -> Result<(), &'static str> {
+    loop {
+        match tokio::fs::try_exists(&path).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(25)).await,
+            Err(_) => return Err("cancel_monitor_failed"),
+        }
+    }
+}
+
+async fn run(cancellation: CancellationToken) -> Result<serde_json::Value, &'static str> {
+    // `Read::read_to_end` blocks the async executor while stdin is open. Read
+    // on Tokio's blocking pool so the managed-parent monitor remains live even
+    // before the request arrives (or if a caller leaves stdin open).
+    let input = tokio::task::spawn_blocking(|| {
+        let mut input = Vec::new();
+        io::stdin()
+            .lock()
+            .take(MAX_INPUT + 1)
+            .read_to_end(&mut input)
+            .map_err(|_| "stdin_read_failed")?;
+        if input.len() as u64 > MAX_INPUT {
+            return Err("input_too_large");
+        }
+        Ok(input)
+    })
+    .await
+    .map_err(|_| "stdin_read_failed")??;
+    // Validate the request and inspect its pinned source before consulting
+    // database credentials so malformed or unsafe input has deterministic
+    // precedence over a missing runtime configuration.
+    let mode = rudder_migration_service::validate_operator_mode(&input)?;
     let database_url =
         std::env::var("RUDDER_MIGRATION_APPLY_DATABASE_URL").map_err(|_| "database_url_missing")?;
-    if database_url.len() > 8192
-        || !(database_url.starts_with("postgres://") || database_url.starts_with("postgresql://"))
-    {
-        return Err("database_url_invalid");
+    if mode == rudder_migration_service::OperatorInputMode::StartupGate {
+        let outcome = rudder_migration_service::startup_operator_cancellable(
+            &input,
+            &database_url,
+            cancellation,
+        )
+        .await?;
+        return Ok(serde_json::json!({
+            "schema": SCHEMA,
+            "protocolVersion": 1,
+            "status": "startup",
+            "outcome": outcome,
+        }));
     }
-    let options = PgConnectOptions::from_str(&database_url)
-        .map_err(|_| "database_url_invalid")?
-        .application_name("rudder-migration-apply");
-    let pool = tokio::time::timeout(
-        Duration::from_secs(5),
-        PgPoolOptions::new()
-            .max_connections(2)
-            .acquire_timeout(Duration::from_secs(5))
-            .connect_with(options),
-    )
-    .await
-    .map_err(|_| "database_connect_failed")?
-    .map_err(|_| "database_connect_failed")?;
-    let backup_pool = pool.clone();
-    let result = MigrationApplyService::new(pool.clone()).apply_pending_migrations(&manifest, &source, || async move {
-        let schema: Option<String> = sqlx::query_scalar("SELECT table_schema FROM information_schema.tables WHERE table_name = '__drizzle_migrations' AND table_schema IN ('drizzle', 'public') ORDER BY CASE WHEN table_schema = 'drizzle' THEN 0 ELSE 1 END LIMIT 1")
-            .fetch_optional(&backup_pool).await.map_err(|_| "backup_journal_lookup_failed".to_owned())?;
-        let schema = schema.ok_or_else(|| "backup_journal_missing".to_owned())?;
-        create_backup(&request.recovery_directory, &request.pg_dump_binary, &database_url, &schema)
-            .await.map_err(str::to_owned)
-    }).await;
-    pool.close().await;
-    result.map_err(|error| match error {
-        rudder_migration_service::MigrationApplyError::ManifestChanged => {
-            "migration_source_changed"
+    let validate_only = mode == rudder_migration_service::OperatorInputMode::ValidateOnly;
+    let report = if validate_only {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err("operation_aborted"),
+            result = rudder_migration_service::validate_operator(&input, &database_url) => result?,
         }
-        rudder_migration_service::MigrationApplyError::RecoveryPointProvider(_) => {
-            "recovery_point_failed"
-        }
-        rudder_migration_service::MigrationApplyError::InvalidRecoveryPoint(_) => {
-            "recovery_point_invalid"
-        }
-        rudder_migration_service::MigrationApplyError::UnsafeLegacyDatabase => {
-            "unsafe_legacy_database"
-        }
-        _ => "migration_apply_failed",
-    })
-}
-
-// libpq does not expand a URI supplied through PGDATABASE. Derive explicit
-// environment settings instead; passwords never appear in child arguments.
-fn backup_connection_env(database_url: &str) -> Result<Vec<(String, String)>, &'static str> {
-    let url = url::Url::parse(database_url).map_err(|_| "database_url_invalid")?;
-    let options = PgConnectOptions::from_str(database_url).map_err(|_| "database_url_invalid")?;
-    let host = options
-        .get_socket()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| options.get_host().to_owned());
-    let mut values = vec![
-        ("PGHOST".into(), host),
-        ("PGPORT".into(), options.get_port().to_string()),
-        ("PGUSER".into(), options.get_username().to_owned()),
-        (
-            "PGDATABASE".into(),
-            options
-                .get_database()
-                .unwrap_or(options.get_username())
-                .to_owned(),
-        ),
-        ("PGCONNECT_TIMEOUT".into(), "5".into()),
-        (
-            "PGSSLMODE".into(),
-            match options.get_ssl_mode() {
-                sqlx::postgres::PgSslMode::Disable => "disable",
-                sqlx::postgres::PgSslMode::Allow => "allow",
-                sqlx::postgres::PgSslMode::Prefer => "prefer",
-                sqlx::postgres::PgSslMode::Require => "require",
-                sqlx::postgres::PgSslMode::VerifyCa => "verify-ca",
-                sqlx::postgres::PgSslMode::VerifyFull => "verify-full",
-            }
-            .into(),
-        ),
-    ];
-    if let Some(password) = url.password() {
-        values.push((
-            "PGPASSWORD".into(),
-            percent_encoding::percent_decode_str(password)
-                .decode_utf8()
-                .map_err(|_| "database_url_invalid")?
-                .into_owned(),
-        ));
-    }
-    if let Some(options) = options.get_options() {
-        values.push(("PGOPTIONS".into(), options.to_owned()));
-    }
-    for (key, value) in url.query_pairs() {
-        let env_key = match key.as_ref() {
-            "password" => "PGPASSWORD",
-            "sslrootcert" | "ssl-root-cert" | "ssl-ca" => "PGSSLROOTCERT",
-            "sslcert" | "ssl-cert" => "PGSSLCERT",
-            "sslkey" | "ssl-key" => "PGSSLKEY",
-            _ => continue,
-        };
-        values.push((env_key.into(), value.into_owned()));
-    }
-    Ok(values)
-}
-
-async fn create_backup(
-    directory: &Path,
-    binary: &Path,
-    database_url: &str,
-    _journal_schema: &str,
-) -> Result<MigrationRecoveryPointReceipt, &'static str> {
-    // This operator-selected directory is private. Reject a symlink as its
-    // final component and never truncate an existing recovery point.
-    fs::create_dir_all(directory).map_err(|_| "backup_directory_failed")?;
-    if fs::symlink_metadata(directory)
-        .map_err(|_| "backup_directory_failed")?
-        .file_type()
-        .is_symlink()
-    {
-        return Err("backup_directory_symlink");
-    }
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "clock_invalid")?
-        .as_nanos();
-    let filename = format!("pre-migration-{stamp}-{}.sql", std::process::id());
-    let final_path = directory.join(&filename);
-    let partial = directory.join(format!("{filename}.partial"));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&partial).map_err(|_| "backup_file_failed")?;
-    writeln!(file, "-- Rudder database backup\n-- Full PostgreSQL SQL dump follows; retain until upgrade acceptance.").map_err(|_| "backup_file_failed")?;
-    // Connection credentials remain in the child environment, never argv or
-    // logs. The full dump includes the journal and all application schemas.
-    let mut command = Command::new(binary);
-    command.env_remove("RUDDER_MIGRATION_APPLY_DATABASE_URL");
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("PG") {
-            command.env_remove(name);
-        }
-    }
-    let mut child = command
-        .args([
-            "--format=plain",
-            "--no-owner",
-            "--no-privileges",
-            "--no-password",
-        ])
-        .envs(backup_connection_env(database_url)?)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| "backup_process_failed")?;
-    let started = tokio::time::Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|_| "backup_process_failed")? {
-            break status;
-        }
-        let too_large = fs::metadata(&partial)
-            .map_err(|_| "backup_read_failed")?
-            .len()
-            > MAX_BACKUP;
-        if too_large || started.elapsed() > Duration::from_secs(600) {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err(if too_large {
-                "backup_size_invalid"
-            } else {
-                "backup_timeout"
-            });
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    } else {
+        rudder_migration_service::apply_operator_cancellable(&input, &database_url, cancellation)
+            .await?
     };
-    if !status.success() {
-        return Err("backup_process_failed");
-    }
-    tokio::task::spawn_blocking(move || finish_backup(&partial, &final_path))
-        .await
-        .map_err(|_| "backup_finalize_failed")?
-}
-
-fn finish_backup(
-    partial: &Path,
-    final_path: &Path,
-) -> Result<MigrationRecoveryPointReceipt, &'static str> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(partial)
-        .map_err(|_| "backup_read_failed")?;
-    let size = file.metadata().map_err(|_| "backup_read_failed")?.len();
-    if size == 0 || size > MAX_BACKUP {
-        return Err("backup_size_invalid");
-    }
-    file.sync_all().map_err(|_| "backup_sync_failed")?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let length = file.read(&mut buffer).map_err(|_| "backup_read_failed")?;
-        if length == 0 {
-            break;
-        }
-        digest.update(&buffer[..length]);
-    }
-    // Hard-link publication fails if the destination exists, unlike rename on
-    // Unix. Both names live in the same recovery directory/filesystem.
-    fs::hard_link(partial, final_path).map_err(|_| "backup_publish_failed")?;
-    fs::remove_file(partial).map_err(|_| "backup_publish_failed")?;
-    #[cfg(unix)]
-    std::fs::File::open(final_path.parent().ok_or("backup_directory_failed")?)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| "backup_sync_failed")?;
-    Ok(MigrationRecoveryPointReceipt {
-        path: final_path.to_path_buf(),
-        size_bytes: size,
-        sha256: format!("{:x}", digest.finalize()),
-        includes_migration_journal: true,
-    })
+    Ok(serde_json::json!({
+        "schema": SCHEMA,
+        "protocolVersion": 1,
+        "status": if validate_only { "validated" } else { "applied" },
+        "report": report,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn backup_connection_uses_parsed_environment_and_query_overrides() {
-        let values: std::collections::HashMap<_, _> = backup_connection_env(
-            "postgresql://alice:p%40ss@localhost:5555/old?dbname=fixture&password=new%20pass&sslmode=require"
-        ).unwrap().into_iter().collect();
-        assert_eq!(values["PGDATABASE"], "fixture");
-        assert_eq!(values["PGPASSWORD"], "new pass");
-        assert_eq!(values["PGPORT"], "5555");
-        assert_eq!(values["PGSSLMODE"], "require");
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn cancellation_file_watcher_observes_the_owned_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("cancel");
+        let watcher = wait_for_cancel_file(marker.clone());
+        tokio::pin!(watcher);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), watcher.as_mut())
+                .await
+                .is_err()
+        );
+        tokio::fs::write(&marker, "cancel\n").await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), watcher.as_mut())
+                .await
+                .unwrap(),
+            Ok(())
+        );
     }
-    #[test]
-    fn explicit_apply_and_pinned_source_are_required() {
-        let temp = tempfile::tempdir().unwrap();
-        let valid = serde_json::json!({"schema":SCHEMA,"protocolVersion":1,"allowApply":true,"migrationsDir":temp.path().join("migrations"),"expectedFingerprint":"a".repeat(64),"recoveryDirectory":temp.path().join("recovery"),"pgDumpBinary":temp.path().join("pg_dump")});
-        assert!(parse(valid.to_string().as_bytes()).is_ok());
-        for (field, value) in [
-            ("allowApply", serde_json::json!(false)),
-            ("expectedFingerprint", serde_json::json!("")),
-            ("migrationsDir", serde_json::json!("/tmp/../data")),
-        ] {
-            let mut invalid = valid.clone();
-            invalid[field] = value;
-            assert!(parse(invalid.to_string().as_bytes()).is_err());
-        }
+
+    #[tokio::test]
+    async fn cancel_drain_preserves_unconfirmed_database_cleanup() {
+        let cancellation = CancellationToken::new();
+        let operation =
+            async { Err::<serde_json::Value, &'static str>("cancellation_cleanup_unconfirmed") };
+        tokio::pin!(operation);
+
+        assert!(matches!(
+            cancel_and_drain(&cancellation, operation.as_mut(), "operation_aborted").await,
+            Err("cancellation_cleanup_unconfirmed")
+        ));
+        assert!(cancellation.is_cancelled());
     }
-    #[test]
-    fn recovery_publication_never_overwrites_existing_backup() {
-        let temp = tempfile::tempdir().unwrap();
-        let partial = temp.path().join("backup.partial");
-        let target = temp.path().join("backup.sql");
-        fs::write(&partial, "new backup").unwrap();
-        fs::write(&target, "existing backup").unwrap();
-        assert!(finish_backup(&partial, &target).is_err());
-        assert_eq!(fs::read_to_string(&target).unwrap(), "existing backup");
-        assert!(partial.exists());
+
+    #[tokio::test]
+    async fn cancel_drain_preserves_the_supervisor_exit_cause() {
+        let cancellation = CancellationToken::new();
+        let operation = async { Err::<serde_json::Value, &'static str>("operation_aborted") };
+        tokio::pin!(operation);
+
+        assert_eq!(
+            cancel_and_drain(&cancellation, operation.as_mut(), "supervisor_exited").await,
+            Err("supervisor_exited")
+        );
+        assert!(cancellation.is_cancelled());
     }
 }

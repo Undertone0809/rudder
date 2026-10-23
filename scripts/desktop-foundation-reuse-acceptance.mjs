@@ -228,7 +228,7 @@ function inspectPackage() {
   const inputPreflight = path.join(dirs[0], "migration-preflight");
   const binaries = [];
   for (const dir of dirs.slice(1)) {
-    for (const name of ["rudder-native", "rudder-process-host", "rudder-update-helper", "migration-preflight"]) {
+    for (const name of ["rudder-native", "rudder-process-host", "rudder-update-helper", "migration-preflight", "rudder-postgres-owner"]) {
       const file = path.join(dir, name);
       assert(lstatSync(file).isFile());
       const reported = execFileSync(file, ["--version"], { encoding: "utf8", timeout: 5_000, maxBuffer: 4096 }).trim();
@@ -267,10 +267,12 @@ async function collectAssets() {
     const stat = lstatSync(file);
     assert(stat.isFile() && stat.size > 0);
     const zippedNative = {};
-    for (const binary of ["rudder-server-foundation", "migration-preflight"]) {
+    for (const binary of ["rudder-server-foundation", "migration-preflight", "rudder-postgres-owner"]) {
       const entry = `Rudder.app/Contents/Resources/native/x86_64-apple-darwin/${binary}`;
       const bytes = execFileSync("unzip", ["-p", file, entry], { timeout: 60_000, maxBuffer: 256 * 1024 * 1024 });
-      const expectedHash = binary === "rudder-server-foundation" ? native.foundation.sha256 : native.binaries.find((b) => b.path.endsWith("/migration-preflight")).sha256;
+      const expectedHash = binary === "rudder-server-foundation"
+        ? native.foundation.sha256
+        : native.binaries.find((b) => b.path.endsWith(`/${binary}`)).sha256;
       assert.equal(sha256(bytes), expectedHash, `Collected ${name} ${binary} differs from verified package`);
       zippedNative[binary] = expectedHash;
     }

@@ -15,8 +15,6 @@ import {
   inspectMigrations,
   listLegacyColumnRenames,
   MIGRATION_ADVISORY_LOCK_NAME,
-  normalizeLegacyColumnNames,
-  reconcilePendingMigrationHistory,
   validatePostMigrationInvariants,
 } from "./client.js";
 
@@ -793,10 +791,6 @@ describe("applyPendingMigrations", () => {
         await sql.unsafe(
           `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${migration0100Hash}'`,
         );
-        await sql.unsafe(`
-          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
-          VALUES ('legacy-0100-hash', 1783928221647)
-        `);
       } finally {
         await sql.end();
       }
@@ -1644,10 +1638,6 @@ describe("applyPendingMigrations", () => {
           `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${migration0100Hash}'`,
         );
         await sql.unsafe(`
-          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
-          VALUES ('legacy-conflicting-0100-hash', 1783928221647)
-        `);
-        await sql.unsafe(`
           INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
           VALUES
             ('00000000-0000-0000-0000-000000000101', 'legacy-owner', 'Legacy Owner', 'LOWN'),
@@ -1661,9 +1651,9 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
 
-      await expect(applyPendingMigrations(connectionString)).rejects.toThrow(
-        "Existing organization route identities and historical Issue Keys conflict case-insensitively",
-      );
+      await expect(applyPendingMigrations(connectionString)).rejects.toMatchObject({
+        code: "migration_apply_failed",
+      });
 
       const pendingState = await inspectMigrations(connectionString);
       expect(pendingState).toMatchObject({
@@ -1955,10 +1945,6 @@ describe("applyPendingMigrations", () => {
       }
       expect(pendingState.pendingMigrations).toContain("0021_chief_vindicator.sql");
 
-      const repair = await reconcilePendingMigrationHistory(connectionString);
-      expect(repair.repairedMigrations).toEqual([]);
-      expect(repair.remainingMigrations).toContain("0021_chief_vindicator.sql");
-
       await applyPendingMigrations(connectionString);
 
       const finalState = await inspectMigrations(connectionString);
@@ -2016,9 +2002,7 @@ describe("applyPendingMigrations", () => {
         await sql.end();
       }
 
-      await expect(normalizeLegacyColumnNames(connectionString)).rejects.toThrow(
-        "intentional legacy rename failure",
-      );
+      await expect(applyPendingMigrations(connectionString)).rejects.toThrow();
 
       const cleanupSql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {

@@ -529,14 +529,22 @@ jobs:
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
 
       - name: Rust Clippy
-        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
+
+      - name: Windows path boundary checks
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --lib agent_core::instructions::tests -- --test-threads=1
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-server-foundation-core --lib native_chat_startup::tests -- --test-threads=1
 
       - name: Windows native admission preflight
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test native_chat -- --test-threads=1
 
       - name: Rust tests serially
-        run: cargo test --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
+        run: cargo test --locked --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 
       - name: Verify external Rust host caller-death cleanup
         if: runner.os != 'Windows'
@@ -573,7 +581,7 @@ jobs:
           const target = process.env.NATIVE_TARGET;
           const extension = process.env.NATIVE_EXTENSION;
           const root = path.resolve("desktop/.packaged/native", target);
-          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight"]) {
+          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner"]) {
             const binary = path.join(root, `${name}${extension}`);
             execFileSync(binary, ["--version"], { stdio: "pipe" });
           }
@@ -687,7 +695,8 @@ jobs:
           cargo build --manifest-path native/Cargo.toml --release \
             --target "$SERVER_FOUNDATION_TARGET" \
             -p rudder-server-foundation --bin rudder-server-foundation \
-            -p rudder-migration-service --bin migration-preflight \
+            -p rudder-migration-service --bin migration-preflight --bin migration-apply \
+            -p rudder-postgres-lifecycle --bin rudder-postgres-owner \
             -p rudder-process-host --bin rudder-process-host
           artifact_dir="dist/server-foundation-artifacts/$SERVER_FOUNDATION_TARGET"
           mkdir -p "$artifact_dir"
@@ -695,8 +704,12 @@ jobs:
             "$artifact_dir/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/migration-preflight$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/migration-preflight$SERVER_FOUNDATION_EXTENSION"
+          cp "native/target/$SERVER_FOUNDATION_TARGET/release/migration-apply$SERVER_FOUNDATION_EXTENSION" \
+            "$artifact_dir/migration-apply$SERVER_FOUNDATION_EXTENSION"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-process-host$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/rudder-process-host$SERVER_FOUNDATION_EXTENSION"
+          cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-postgres-owner$SERVER_FOUNDATION_EXTENSION" \
+            "$artifact_dir/rudder-postgres-owner$SERVER_FOUNDATION_EXTENSION"
           {
             echo "target=$SERVER_FOUNDATION_TARGET"
             echo "build_mode=$SERVER_FOUNDATION_BUILD_MODE"
