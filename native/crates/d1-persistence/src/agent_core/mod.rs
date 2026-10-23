@@ -19,6 +19,26 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
+/// Resolve the configured organization workspace display root without
+/// provisioning or migrating any filesystem state.
+pub fn resolve_organization_workspace_root(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    organization_id: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    instructions::resolve_workspace_root(
+        instance_root,
+        workspace_home,
+        previous_documents_root,
+        friendly_workspace_home,
+        hostname,
+        organization_id,
+    )
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
     #[error("{1}")]

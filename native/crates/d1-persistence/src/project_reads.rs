@@ -9,7 +9,7 @@ use crate::{
     transaction,
 };
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 use std::collections::HashMap;
 
 const PROJECTS_SQL: &str = r#"
@@ -55,12 +55,45 @@ WHERE s.org_id=$1::uuid AND s.project_workspace_id=ANY($2::text[]::uuid[])
 ORDER BY s.updated_at DESC, s.created_at DESC
 "#;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectReferenceResolution {
+    Found(String),
+    NotFound,
+    Ambiguous,
+}
+
 /// Preserve the existing complete list/detail/resources shape for every Project,
 /// including Node-owned and imported rows. A read-only snapshot prevents linked
 /// rows from disappearing midway through a response, without taking write locks.
 /// `organization_workspace_root` is a signed host-derived display path only.
 pub async fn read_projects(
     pool: &PgPool,
+    organization_id: &str,
+    project_id: Option<&str>,
+    resources_only: bool,
+    organization_workspace_root: &str,
+) -> Result<Value, StoreError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let response = read_projects_in_snapshot(
+        &mut *tx,
+        organization_id,
+        project_id,
+        resources_only,
+        organization_workspace_root,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(response)
+}
+
+/// Read the complete legacy projection on a caller-owned read-only snapshot.
+/// Public ingress uses this after credential revalidation so authorization,
+/// alias resolution, and the response share the same database snapshot.
+pub async fn read_projects_in_snapshot(
+    connection: &mut PgConnection,
     organization_id: &str,
     project_id: Option<&str>,
     resources_only: bool,
@@ -75,16 +108,12 @@ pub async fn read_projects(
     if resources_only && project.is_none() {
         return Err(StoreError::InvalidInput);
     }
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .execute(&mut *tx)
-        .await?;
     // The old public list has no ordering/filter/pagination contract. Do not
     // introduce one as part of moving the capability across the bridge.
     let raw: Vec<String> = sqlx::query_scalar(PROJECTS_SQL)
         .bind(&org)
         .bind(&project)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *connection)
         .await?;
     if project.is_some() && raw.is_empty() {
         return Err(StoreError::NotFound);
@@ -94,7 +123,6 @@ pub async fn read_projects(
         .map(|raw| read_row(raw))
         .collect::<Result<Vec<_>, _>>()?;
     if projects.is_empty() {
-        tx.commit().await?;
         return Ok(json!([]));
     }
     let ids = projects
@@ -105,7 +133,7 @@ pub async fn read_projects(
     for row in sqlx::query(RESOURCES_SQL)
         .bind(&org)
         .bind(&ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *connection)
         .await?
     {
         let mut attachment = read_row(&row.try_get::<String, _>("attachment")?)?;
@@ -118,7 +146,6 @@ pub async fn read_projects(
         resources.entry(id).or_default().push(attachment);
     }
     if resources_only {
-        tx.commit().await?;
         return Ok(json!(resources.remove(&ids[0]).unwrap_or_default()));
     }
     let mut goals = HashMap::<String, Vec<Value>>::new();
@@ -131,7 +158,7 @@ pub async fn read_projects(
     )
     .bind(&org)
     .bind(&ids)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?
     {
         let id: String = row.try_get("goal_id")?;
@@ -142,7 +169,7 @@ pub async fn read_projects(
     let workspace_rows: Vec<String> = sqlx::query_scalar(WORKSPACES_SQL)
         .bind(&org)
         .bind(&ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *connection)
         .await?;
     let mut workspace_values = workspace_rows
         .iter()
@@ -157,7 +184,7 @@ pub async fn read_projects(
         let rows: Vec<String> = sqlx::query_scalar(RUNTIME_SERVICES_SQL)
             .bind(&org)
             .bind(&workspace_ids)
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *connection)
             .await?;
         for raw in rows {
             let service = read_row(&raw)?;
@@ -186,12 +213,133 @@ pub async fn read_projects(
             workspaces.remove(&id).unwrap_or_default(),
         )?;
     }
-    tx.commit().await?;
     if project.is_some() {
         Ok(projects.remove(0))
     } else {
         Ok(Value::Array(projects))
     }
+}
+
+/// Preserve the legacy UUID detail lookup's global not-found-before-company
+/// authorization ordering on the caller's read-only snapshot.
+pub async fn project_organization_id_in_snapshot(
+    connection: &mut PgConnection,
+    project_id: &str,
+) -> Result<Option<String>, StoreError> {
+    let project_id = project_id.to_ascii_lowercase();
+    transaction::uuid(&project_id)?;
+    sqlx::query_scalar::<_, String>("SELECT org_id::text FROM projects WHERE id=$1::uuid")
+        .bind(project_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(StoreError::from)
+}
+
+/// Resolve a non-UUID Project reference using the existing short-ref and URL
+/// key rules. The caller must first revalidate actor access to `org_id` on
+/// this same read-only snapshot.
+pub async fn resolve_project_reference_in_snapshot(
+    connection: &mut PgConnection,
+    org_id: &str,
+    reference: &str,
+) -> Result<ProjectReferenceResolution, StoreError> {
+    let org = org_id.to_ascii_lowercase();
+    transaction::uuid(&org)?;
+    let raw = trim_ecmascript_whitespace(reference);
+    if raw.is_empty() {
+        return Ok(ProjectReferenceResolution::NotFound);
+    }
+    if is_project_uuid_like(raw) {
+        let id = raw.to_ascii_lowercase();
+        let found = sqlx::query_scalar::<_, String>(
+            "SELECT id::text FROM projects WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(&org)
+        .bind(id)
+        .fetch_optional(&mut *connection)
+        .await?;
+        return Ok(found.map_or(
+            ProjectReferenceResolution::NotFound,
+            ProjectReferenceResolution::Found,
+        ));
+    }
+
+    let short_prefix = project_short_ref_prefix(raw);
+    let rows = sqlx::query("SELECT id::text AS id, name FROM projects WHERE org_id=$1::uuid")
+        .bind(&org)
+        .fetch_all(&mut *connection)
+        .await?;
+    let requested_url_key = normalize_project_url_key(raw);
+    let mut matches = Vec::new();
+    for row in rows {
+        let id: String = row.try_get("id")?;
+        let name: String = row.try_get("name")?;
+        let matches_row = if let Some(prefix) = short_prefix.as_deref() {
+            id.bytes()
+                .filter(|byte| *byte != b'-')
+                .map(|byte| byte.to_ascii_lowercase())
+                .take(prefix.len())
+                .eq(prefix.bytes())
+        } else {
+            requested_url_key.as_deref().is_some_and(|requested| {
+                derive_project_url_key(&name, &id).as_deref() == Some(requested)
+            })
+        };
+        if matches_row {
+            matches.push(id);
+        }
+    }
+    Ok(match matches.as_slice() {
+        [id] => ProjectReferenceResolution::Found(id.clone()),
+        [] => ProjectReferenceResolution::NotFound,
+        _ => ProjectReferenceResolution::Ambiguous,
+    })
+}
+
+pub fn is_project_uuid_like(value: &str) -> bool {
+    let value = trim_ecmascript_whitespace(value).as_bytes();
+    value.len() == 36
+        && [8, 13, 18, 23].iter().all(|index| value[*index] == b'-')
+        && value.iter().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                true
+            } else if index == 14 {
+                matches!(byte.to_ascii_lowercase(), b'1'..=b'5')
+            } else if index == 19 {
+                matches!(byte.to_ascii_lowercase(), b'8'..=b'b')
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+fn project_short_ref_prefix(value: &str) -> Option<String> {
+    let (kind, prefix) = trim_ecmascript_whitespace(value).split_once('_')?;
+    (kind.eq_ignore_ascii_case("prj")
+        && (8..=32).contains(&prefix.len())
+        && prefix.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then(|| prefix.to_ascii_lowercase())
+}
+
+fn normalize_project_url_key(value: &str) -> Option<String> {
+    let mut key = String::new();
+    let mut separator = false;
+    for ch in trim_ecmascript_whitespace(value).to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if separator && !key.is_empty() {
+                key.push('-');
+            }
+            key.push(ch);
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+    (!key.is_empty()).then_some(key)
+}
+
+fn derive_project_url_key(name: &str, id: &str) -> Option<String> {
+    normalize_project_url_key(name).or_else(|| normalize_project_url_key(id))
 }
 
 // Legacy PostgreSQL JSON decoding used JavaScript numbers before Express
@@ -408,5 +556,35 @@ mod tests {
         let mut workspace = json!({"cwd":null,"defaultRef":"","repoRef":"fallback"});
         normalize_workspace(&mut workspace, vec![]);
         assert_eq!(workspace["defaultRef"], "");
+    }
+
+    #[test]
+    fn project_reference_parsers_match_public_uuid_shortref_and_url_key_rules() {
+        assert!(is_project_uuid_like("11111111-1111-4111-8111-111111111111"));
+        assert!(is_project_uuid_like(
+            " 11111111-1111-4111-8111-111111111111 "
+        ));
+        assert!(!is_project_uuid_like(
+            "11111111-1111-7111-8111-111111111111"
+        ));
+        assert!(!is_project_uuid_like(
+            "11111111-1111-4111-7111-111111111111"
+        ));
+
+        assert_eq!(
+            project_short_ref_prefix("PRJ_ABCDEF0123"),
+            Some("abcdef0123".to_owned())
+        );
+        assert_eq!(project_short_ref_prefix("prj_abcdef0"), None);
+        assert_eq!(project_short_ref_prefix("agt_abcdef01"), None);
+        assert_eq!(
+            normalize_project_url_key(" A_B / C! "),
+            Some("a-b-c".to_owned())
+        );
+        assert_eq!(normalize_project_url_key("東京"), None);
+        assert_eq!(
+            derive_project_url_key("東京", "11111111-1111-4111-8111-111111111111"),
+            Some("11111111111141118111111111111111".to_owned())
+        );
     }
 }
