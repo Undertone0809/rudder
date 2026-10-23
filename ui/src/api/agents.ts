@@ -300,8 +300,12 @@ export const agentsApi = {
     data: { agentRuntimeConfig: Record<string, unknown> },
   ) =>
     api.post<AgentRuntimeEnvironmentTestResult>(
-      `/orgs/${orgId}/adapters/${type}/test-environment`,
-      data,
+      type === "codex_local" || type === "hermes_local"
+        ? `/orgs/${orgId}/native-chat/runtime-check`
+        : `/orgs/${orgId}/adapters/${type}/test-environment`,
+      type === "codex_local" || type === "hermes_local"
+        ? { ...data, agentRuntimeType: type }
+        : data,
     ),
   invoke: (id: string, orgId?: string) => api.post<HeartbeatRun>(agentPath(id, orgId, "/heartbeat/invoke"), {}),
   wakeup: (

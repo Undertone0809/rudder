@@ -32,6 +32,7 @@ Install and authenticate one supported runtime on the same computer as Rudder:
 | Runtime | Command Rudder looks for |
 | --- | --- |
 | Codex | `codex` |
+| Hermes | `hermes` |
 | Claude Code | `claude` |
 | Cursor | `cursor-agent` |
 | OpenCode | `opencode` |
@@ -51,12 +52,14 @@ command or login error.
    instruction-file paths at their defaults unless your task needs them.
 5. Select **Test runtime chain**.
 6. Read the result:
-   - `pass`: Rudder can start the runtime.
+   - `pass`: the runtime setup checks passed.
    - `warn`: setup may work, but read the named limitation.
    - `fail`: fix the named command, login, model, path, or network problem.
 7. Save the Agent.
 8. In Chat, ask for a safe, concrete result such as a two-line summary.
 9. Open the Agent Run and confirm the selected runtime produced the reply.
+
+For Codex and Hermes, the Rust environment check validates the installed runtime, Profile, and native settings without sending a model prompt. Hermes uses your default local Profile; choose an existing named Profile in the Agent’s advanced settings when needed. Send a real Chat message after the check to verify provider login and model access.
 
 <a id="success-signal" />
 

@@ -8,7 +8,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::native_chat_test_fixture as fixture;
 use rudder_d1_persistence::native_chat as persistence_chat;
@@ -255,6 +255,266 @@ async fn session_auth_state(pool: &sqlx::PgPool, session_id: &str) -> String {
     .fetch_one(pool)
     .await
     .unwrap()
+}
+
+#[actix_web::test]
+#[ignore = "requires PostgreSQL binaries; disposable database and local-only readiness checks"]
+async fn native_runtime_check_requires_org_config_permission_and_never_writes_or_dispatches() {
+    let database = fixture::Database::start().await;
+    let actor = fixture::verified_actor();
+    let user_id = actor.actor().id.clone();
+    let token = format!("native-runtime-check-session-{}", uuid::Uuid::new_v4());
+    let session_id = format!("native-runtime-check-row-{}", uuid::Uuid::new_v4());
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at)
+         VALUES($1,'Native Runtime Check fixture',$2,now(),now())",
+    )
+    .bind(&user_id)
+    .bind(format!("{user_id}@native-chat.invalid"))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status)
+         VALUES($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(fixture::ORG)
+    .bind(&user_id)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO session(id,user_id,token,expires_at,created_at,updated_at)
+         VALUES($1,$2,$3,now()+interval '1 hour',now(),now())",
+    )
+    .bind(&session_id)
+    .bind(&user_id)
+    .bind(&token)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    // This lightweight host is only a filesystem fixture. The endpoint never
+    // launches it; its executable and directories let tests reach Rust's pure
+    // config/profile resolver without requiring an installed provider.
+    let host = fixture::FixtureHost::new("complete");
+    let local_host = host
+        .context()
+        .clone()
+        .with_native_codex_profile()
+        .with_executable_search_path("/usr/bin:/bin".to_owned())
+        .unwrap();
+    let runtime_root = tempfile::tempdir().unwrap();
+    let runtime_dir = runtime_root.path().join("runtime");
+    let isolated_home = runtime_root.path().join("isolated-home");
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    std::fs::create_dir_all(&isolated_home).unwrap();
+    let process_host = runtime_root.path().join("rudder-process-host");
+    let process_host_marker = runtime_root.path().join("process-host-launched");
+    std::fs::write(
+        &process_host,
+        format!(
+            "#!/bin/sh\ntouch '{}'\nexit 0\n",
+            process_host_marker.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&process_host, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let runtime_config = crate::NativeChatPublicRuntime::new(
+        local_host,
+        rudder_native_chat_executor::HostPaths {
+            process_host,
+            runtime_root: runtime_dir,
+            isolated_home,
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap();
+
+    let database_url = format!(
+        "postgresql://postgres@127.0.0.1:{}/postgres",
+        database.pool.connect_options().get_port()
+    );
+    let foundation = Arc::new(
+        crate::AppState::new(crate::ServerConfig {
+            database_url: Some(database_url),
+            actor_envelope_key: Some(rudder_auth_core::SigningKey::new(AUTH_ENVELOPE_KEY).unwrap()),
+            workers: 1,
+            ..crate::ServerConfig::default()
+        })
+        .unwrap(),
+    );
+    let browser_auth = browser_auth::BrowserAuthConfig::required(
+        SESSION_SECRET,
+        false,
+        browser_auth::SessionPolicy::BetterAuth,
+    )
+    .unwrap();
+    let mutation_policy =
+        browser_auth::BrowserMutationPolicy::new(&[ALLOWED_ORIGIN.to_owned()]).unwrap();
+    let config = crate::PublicIngressConfig::new(
+        "127.0.0.1:0".parse().unwrap(),
+        "http://127.0.0.1:1",
+        "native-runtime-check-authorization-key",
+    )
+    .unwrap()
+    .with_browser_auth(browser_auth)
+    .unwrap()
+    .with_native_chat_mutation_policy(mutation_policy)
+    .with_native_chat_runtime(runtime_config);
+    let runtime = PublicIngressRuntime::bind(config, foundation).unwrap();
+    let base = format!("http://{}", runtime.bound_addr());
+    let control = runtime.control();
+    let task = actix_web::rt::spawn(runtime.run());
+    let client = awc::Client::default();
+    let cookie = signed_session_cookie(&token);
+    let url = format!("{base}/api/orgs/{}/native-chat/runtime-check", fixture::ORG);
+
+    let (status, _) = request(
+        &client,
+        Method::POST,
+        url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(serde_json::json!({
+            "agentRuntimeType":"codex_local",
+            "agentRuntimeConfig":{"profileId":"default"},
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "membership alone cannot read runtime config"
+    );
+
+    sqlx::query(
+        "INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key)
+         VALUES($1::uuid,'user',$2,'agents:create')",
+    )
+    .bind(fixture::ORG)
+    .bind(&user_id)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    let (foreign_status, _) = request(
+        &client,
+        Method::POST,
+        format!(
+            "{base}/api/orgs/{}/native-chat/runtime-check",
+            fixture::support::OTHER
+        ),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(serde_json::json!({
+            "agentRuntimeType":"codex_local",
+            "agentRuntimeConfig":{"profileId":"default"},
+        })),
+    )
+    .await;
+    assert_eq!(
+        foreign_status,
+        StatusCode::FORBIDDEN,
+        "org membership is enforced before checks"
+    );
+
+    let before: (i64, i64, i64, String) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM chat_messages),
+                (SELECT count(*) FROM chat_generations),
+                (SELECT count(*) FROM activity_log),
+                (SELECT updated_at::text FROM session WHERE id=$1)",
+    )
+    .bind(&session_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+
+    let cases = [
+        (
+            serde_json::json!({"agentRuntimeType":"codex_local"}),
+            "native_chat_runtime_config_missing",
+        ),
+        (
+            serde_json::json!({
+                "agentRuntimeType":"codex_local",
+                "agentRuntimeConfig":{"profileId":"missing-profile"},
+            }),
+            "native_chat_profile_unavailable",
+        ),
+        (
+            serde_json::json!({
+                "agentRuntimeType":"codex_local",
+                "agentRuntimeConfig":{"profileId":"default","command":"codex"},
+            }),
+            "native_chat_runtime_config_rejected",
+        ),
+    ];
+    for (body, expected_code) in cases {
+        let (status, bytes) = request(
+            &client,
+            Method::POST,
+            url.clone(),
+            Some(&cookie),
+            Some(ALLOWED_ORIGIN),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response["agentRuntimeType"], "codex_local");
+        assert_eq!(response["status"], "fail");
+        assert_eq!(
+            response["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["code"] == expected_code)
+                .unwrap()["level"],
+            "error"
+        );
+        assert_eq!(
+            response["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["code"] == "native_chat_provider_not_probed")
+                .unwrap()["level"],
+            "info"
+        );
+        assert!(response["testedAt"].as_str().is_some());
+    }
+
+    let after: (i64, i64, i64, String) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM chat_messages),
+                (SELECT count(*) FROM chat_generations),
+                (SELECT count(*) FROM activity_log),
+                (SELECT updated_at::text FROM session WHERE id=$1)",
+    )
+    .bind(&session_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after, before,
+        "readiness must not write chat, activity, or session state"
+    );
+    assert!(
+        !process_host_marker.exists(),
+        "readiness must not launch the process host"
+    );
+    assert!(
+        host.events().is_empty(),
+        "readiness must not invoke the provider CLI"
+    );
+
+    control.stop(true).await;
+    task.await.unwrap().unwrap();
+    database.pool.close().await;
 }
 
 #[actix_web::test]

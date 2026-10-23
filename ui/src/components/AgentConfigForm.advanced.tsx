@@ -12,6 +12,7 @@ import {
   AGENT_RUNTIME_TYPES
 } from "@rudderhq/shared";
 import { ChevronDown } from "lucide-react";
+import { useState } from "react";
 import { getUIAdapter } from "../agent-runtimes";
 import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
 import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
@@ -48,6 +49,8 @@ export function RuntimeAdvancedOptions({
 }) {
   const { isCreate, values, set, config, eff, mark, disabled } = fieldProps;
   const ConfigFields = adapter.ConfigFields;
+  // Native Hermes selects its installed executable and launch policy in Rust.
+  if (runtimeType === "hermes_local") return <ConfigFields {...fieldProps} />;
   return (
     <div className="space-y-3">
       <ConfigFields {...fieldProps} />
@@ -135,8 +138,8 @@ export function RuntimeAdvancedOptions({
 
 /* ---- Internal sub-components ---- */
 
-export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
-const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http"]);
+export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor", "hermes_local"]);
+const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http", "hermes_gateway"]);
 const AVAILABILITY_GROUP_LABELS = {
   available: "Ready on this machine",
   unavailable: "Needs setup",
@@ -163,6 +166,7 @@ export function AdapterTypeDropdown({
   disabled?: boolean;
   availability?: AgentRuntimeAvailability[];
 }) {
+  const [open, setOpen] = useState(false);
   const availabilityByType = new Map(availability.map((item) => [item.agentRuntimeType, item]));
   const groupedItems = (["available", "unavailable", "unknown"] as const)
     .map((status) => ({
@@ -176,7 +180,7 @@ export function AdapterTypeDropdown({
     .filter((group) => group.items.length > 0);
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between"
@@ -212,7 +216,10 @@ export function AdapterTypeDropdown({
                     unavailable && "text-muted-foreground",
                   )}
                   onClick={() => {
-                    if (!item.comingSoon) onChange(item.value);
+                    if (!item.comingSoon) {
+                      if (item.value !== value) onChange(item.value);
+                      setOpen(false);
+                    }
                   }}
                 >
                   <span className="inline-flex min-w-0 items-center gap-1.5">

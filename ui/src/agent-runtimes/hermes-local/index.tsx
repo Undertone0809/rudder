@@ -11,24 +11,18 @@ export function buildHermesLocalConfig(values: CreateConfigValues): Record<strin
   };
 }
 
-export function HermesLocalConfigFields({ isCreate, values, set, config, eff, mark }: AgentRuntimeConfigFieldsProps) {
+export function HermesLocalConfigFields({ isCreate, values, set, config, eff, mark, disabled }: AgentRuntimeConfigFieldsProps) {
   return <>
-    <p className="text-sm text-muted-foreground">Uses the installed Hermes CLI and an existing local Profile. Run Hermes setup locally before sending your first message.</p>
     <Field label="Profile" hint="Leave blank to use the default Hermes Profile. Named Profiles must already exist locally.">
       <DraftInput value={isCreate ? values!.hermesProfileId ?? "" : eff("agentRuntimeConfig", "profileId", String(config.profileId ?? ""))}
         onCommit={(value) => isCreate ? set!({ hermesProfileId: value }) : mark("agentRuntimeConfig", "profileId", value || undefined)}
-        immediate className={inputClass} placeholder="default" />
-    </Field>
-    <Field label="Model" hint="Leave blank to use the model configured in this Hermes Profile.">
-      <DraftInput value={isCreate ? values!.model : eff("agentRuntimeConfig", "model", String(config.model ?? ""))}
-        onCommit={(value) => isCreate ? set!({ model: value }) : mark("agentRuntimeConfig", "model", value || undefined)}
-        immediate className={inputClass} placeholder="Profile default" />
+        immediate disabled={disabled} className={inputClass} placeholder="default" />
     </Field>
   </>;
 }
 
 export const hermesLocalUIAdapter: UIAgentRuntimeModule = {
-  type: "hermes_local", label: "Hermes (local)",
+  type: "hermes_local", label: "Hermes",
   // Keep historical Run logs readable; native Chat uses typed events.
   parseStdoutLine: parseProcessStdoutLine,
   ConfigFields: HermesLocalConfigFields,

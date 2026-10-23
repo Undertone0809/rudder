@@ -264,19 +264,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let native = NativeChatPublicRuntime::new(host, paths, Duration::from_secs(60))?;
     let origin = format!("http://{}", config.listen_addr);
-    let ingress = PublicIngressConfig::new(
-        config.listen_addr,
-        &config.node_upstream,
-        "native-chat-browser-fixture-ingress-key",
-    )?
-    .with_browser_auth(BrowserAuthConfig::local_implicit(
-        config.listen_addr,
-        "local_trusted",
-        "private",
-        "optional",
-    )?)?
-    .with_native_chat_mutation_policy(BrowserMutationPolicy::new(&[origin])?)
-    .with_native_chat_runtime(native);
+    // Use production identity admission for Agent configuration reads as well
+    // as Chat controls. The caller supplies per-fixture loopback-only secrets.
+    let ingress = PublicIngressConfig::from_env()?
+        .ok_or("fixture public ingress identity configuration is required")?;
+    if ingress.listen_addr != config.listen_addr
+        || ingress.node_upstream().trim_end_matches('/')
+            != config.node_upstream.trim_end_matches('/')
+    {
+        return Err("fixture public ingress does not match its isolated runtime".into());
+    }
+    let ingress = ingress
+        .with_browser_auth(BrowserAuthConfig::local_implicit(
+            config.listen_addr,
+            "local_trusted",
+            "private",
+            "optional",
+        )?)?
+        .with_native_chat_mutation_policy(BrowserMutationPolicy::new(&[origin])?)
+        .with_native_chat_runtime(native);
     let runtime = ServerRuntime::bind(ServerConfig {
         database_url: Some(config.database_url),
         actor_envelope_key: Some(SigningKey::new(

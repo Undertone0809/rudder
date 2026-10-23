@@ -13,9 +13,9 @@ import { queryKeys } from "../lib/queryKeys";
 import { formatDateTime } from "../lib/utils";
 
 type JoinType = "human" | "agent";
-const joinAdapterOptions: AgentRuntimeType[] = [...AGENT_RUNTIME_TYPES];
+const joinAdapterOptions: AgentRuntimeType[] = AGENT_RUNTIME_TYPES.filter((type) => type !== "hermes_gateway");
 
-const ENABLED_INVITE_ADAPTERS = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
+const ENABLED_INVITE_ADAPTERS = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor", "hermes_local"]);
 
 function dateTime(value: string) {
   return formatDateTime(value);
