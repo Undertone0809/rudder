@@ -1,5 +1,32 @@
 use super::*;
+use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
 use actix_web::test::TestRequest;
+
+#[test]
+fn cli_auth_uses_both_prevalidated_short_session_issuer_kinds() {
+    const SECRET: &str = "short-existing-session-secret";
+    const ASSERTION_KEY: &str = "0123456789abcdef0123456789abcdef";
+    for kind in [
+        NativeSessionAuthKind::BetterAuth,
+        NativeSessionAuthKind::LocalAccount,
+    ] {
+        let mut config = PublicIngressConfig::new(
+            "127.0.0.1:0".parse().unwrap(),
+            "http://127.0.0.1:3101",
+            "fedcba9876543210fedcba9876543210",
+        )
+        .unwrap();
+        config.session_auth = Some(
+            NativeSessionAuthConfig::new(kind, SECRET, true, ASSERTION_KEY)
+                .expect("nonblank issuer with a separate valid assertion key"),
+        );
+
+        assert!(
+            browser_auth_from_config(&config).unwrap().is_some(),
+            "{kind:?} issuer should supply the CLI session verifier"
+        );
+    }
+}
 
 #[test]
 fn owns_all_six_cli_auth_paths_and_case_trailing_slash_aliases() {

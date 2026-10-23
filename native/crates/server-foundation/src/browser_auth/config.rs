@@ -1,5 +1,7 @@
 use std::net::SocketAddr;
 
+use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
+
 /// The two existing issuers intentionally have different renewal semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionPolicy {
@@ -80,6 +82,25 @@ impl BrowserAuthConfig {
             },
             better_auth_email: None,
         })
+    }
+
+    /// Reuse an issuer that was already validated by the public-ingress
+    /// session configuration. This path preserves that issuer's exact signing
+    /// secret and cookie policy; the standalone browser-auth constructor keeps
+    /// its separate minimum-secret-strength requirement.
+    pub(crate) fn from_validated_session_auth(session: &NativeSessionAuthConfig) -> Self {
+        let session_policy = match session.kind {
+            NativeSessionAuthKind::BetterAuth => SessionPolicy::BetterAuth,
+            NativeSessionAuthKind::LocalAccount => SessionPolicy::LocalAccount,
+        };
+        Self {
+            mode: Mode::Required {
+                secret: session.secret.as_bytes().to_vec(),
+                secure_cookie: session.secure_cookie,
+                session_policy,
+            },
+            better_auth_email: None,
+        }
     }
 
     pub fn local_implicit(

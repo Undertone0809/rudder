@@ -35,6 +35,13 @@ This is an explicit native entry. The installed `rudder` command and MCP
 dispatch still use their existing default entry, and their remaining commands
 are migration debt. This slice does not retire those default processes.
 
+The server owns `/api/cli-auth/*` in Rust when
+`RUDDER_RUST_PUBLIC_INGRESS_MODE=required`. The supported standalone `off`
+mode temporarily retains its existing Node handlers; they are not registered
+behind the Rust listener and are never a fallback for a failed native request.
+Removing this compatibility path requires the default-ingress cutover and its
+startup acceptance. Desktop selects `required` unless explicitly overridden.
+
 ## Base Usage
 
 Use repo script in development:

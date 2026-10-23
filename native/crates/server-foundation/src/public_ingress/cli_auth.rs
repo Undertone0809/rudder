@@ -10,8 +10,8 @@
 
 mod persistence;
 
-use crate::browser_auth::{self, BrowserActor, BrowserAuthConfig, BrowserAuthError, SessionPolicy};
-use crate::public_ingress_config::{NativeSessionAuthKind, PublicIngressConfig};
+use crate::browser_auth::{self, BrowserActor, BrowserAuthConfig, BrowserAuthError};
+use crate::public_ingress_config::PublicIngressConfig;
 use crate::{DatabaseState, public_ingress_config::NativeIdentityAuthConfig};
 use actix_web::{
     HttpRequest, HttpResponse,
@@ -88,17 +88,9 @@ pub(super) fn browser_auth_from_config(
         return Ok(Some(browser_auth.clone()));
     }
     if let Some(session) = config.session_auth.as_ref() {
-        let policy = match session.kind {
-            NativeSessionAuthKind::BetterAuth => SessionPolicy::BetterAuth,
-            NativeSessionAuthKind::LocalAccount => SessionPolicy::LocalAccount,
-        };
-        return BrowserAuthConfig::required(
-            session.secret.as_bytes(),
-            session.secure_cookie,
-            policy,
-        )
-        .map(Some)
-        .map_err(|_| "configured session issuer cannot be used by CLI auth");
+        return Ok(Some(BrowserAuthConfig::from_validated_session_auth(
+            session,
+        )));
     }
     if config
         .identity_auth

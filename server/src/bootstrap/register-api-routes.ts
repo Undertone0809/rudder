@@ -153,6 +153,7 @@ export function registerApiRoutes(
       deploymentExposure: opts.deploymentExposure,
       bindHost: opts.bindHost,
       allowedHostnames: opts.allowedHostnames,
+      nativeCliAuthOwner: Boolean(opts.rustPublicIngress),
     }),
   );
 

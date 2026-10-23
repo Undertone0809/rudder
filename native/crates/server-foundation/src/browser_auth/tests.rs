@@ -1,4 +1,5 @@
 use super::*;
+use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
 use crate::{AppState, PublicIngressConfig, PublicIngressRuntime, ServerConfig};
 use actix_web::{http::StatusCode, test::TestRequest};
 use rudder_auth_core::SigningKey;
@@ -43,6 +44,131 @@ fn verifies_issuer_vector_and_rejects_ambiguous_or_corrupt_credentials() {
     assert!(
         BrowserAuthConfig::required(b"rudder-dev-secret", false, SessionPolicy::LocalAccount)
             .is_err()
+    );
+}
+
+#[test]
+fn existing_short_session_issuers_keep_exact_cookie_semantics() {
+    const SHORT_SECRET: &str = "existing-short-session-key";
+    const ASSERTION_KEY: &str = "0123456789abcdef0123456789abcdef";
+    let cases = [
+        (
+            NativeSessionAuthKind::BetterAuth,
+            SessionPolicy::BetterAuth,
+            true,
+            true,
+        ),
+        (
+            NativeSessionAuthKind::LocalAccount,
+            SessionPolicy::LocalAccount,
+            false,
+            false,
+        ),
+    ];
+
+    for (kind, expected_policy, secure_cookie, expected_refresh) in cases {
+        let session =
+            NativeSessionAuthConfig::new(kind, SHORT_SECRET, secure_cookie, ASSERTION_KEY)
+                .expect("a nonblank existing session issuer remains valid");
+        let config = BrowserAuthConfig::from_validated_session_auth(&session);
+        match &config.mode {
+            Mode::Required {
+                secret,
+                secure_cookie: actual_secure_cookie,
+                session_policy,
+            } => {
+                assert_eq!(secret, SHORT_SECRET.as_bytes());
+                assert_eq!(*actual_secure_cookie, secure_cookie);
+                assert_eq!(*session_policy, expected_policy);
+            }
+            Mode::LocalImplicit => panic!("existing session issuers stay required"),
+        }
+
+        let token = "existing-session-token";
+        let mut mac = Hmac::<Sha256>::new_from_slice(SHORT_SECRET.as_bytes()).unwrap();
+        mac.update(token.as_bytes());
+        let signed_cookie = format!("{token}.{}", STANDARD.encode(mac.finalize().into_bytes()));
+        let cookie_name = if secure_cookie {
+            "__Secure-better-auth.session_token"
+        } else {
+            "better-auth.session_token"
+        };
+        let cookie = format!("{cookie_name}={signed_cookie}");
+        let request = TestRequest::default()
+            .insert_header((header::COOKIE, cookie.as_str()))
+            .to_http_request();
+        match credential(&config, &request).expect("existing issuer cookie verifies") {
+            Credential::Session {
+                token: actual_token,
+                refresh,
+            } => {
+                assert_eq!(actual_token, token);
+                assert_eq!(refresh, expected_refresh);
+            }
+            _ => panic!("existing issuer cookie remains a session"),
+        }
+    }
+
+    assert!(
+        BrowserAuthConfig::required(b"short", false, SessionPolicy::BetterAuth).is_err(),
+        "standalone browser-auth retains its minimum-secret-strength rule"
+    );
+    assert!(
+        issuer::parse(
+            &serde_json::json!({
+                "issuer": "local_account",
+                "secret": SHORT_SECRET,
+                "secureCookie": false,
+            })
+            .to_string()
+        )
+        .is_err()
+    );
+    assert!(
+        issuer::parse(
+            &serde_json::json!({
+                "issuer": "better_auth",
+                "secret": SHORT_SECRET,
+                "secureCookie": false,
+                "sessionCookieName": "better-auth.session_token",
+                "dontRememberCookieName": "better-auth.dont_remember",
+                "expiresIn": 604800,
+                "updateAge": 86400,
+                "disableSessionRefresh": false,
+                "trustedOrigins": [],
+                "disableSignUp": false,
+                "rateLimitEnabled": true,
+            })
+            .to_string()
+        )
+        .is_err()
+    );
+    assert!(
+        NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::BetterAuth,
+            "  ",
+            false,
+            ASSERTION_KEY,
+        )
+        .is_err()
+    );
+    assert!(
+        NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::LocalAccount,
+            SHORT_SECRET,
+            false,
+            "short",
+        )
+        .is_err()
+    );
+    assert!(
+        NativeSessionAuthConfig::new(
+            NativeSessionAuthKind::LocalAccount,
+            SHORT_SECRET,
+            false,
+            SHORT_SECRET,
+        )
+        .is_err()
     );
 }
 
