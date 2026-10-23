@@ -632,9 +632,16 @@ describe("constructed issuer through the real Rust application launcher", () => 
     expect(firstMeBody.keyId).toBe(firstApprovalBody.keyId);
     expect(firstMeBody.orgIds).toContain(organizationId);
 
-    const firstKey = await db.$client`SELECT key_hash, expires_at FROM board_api_keys WHERE id=${firstApprovalBody.keyId}::uuid`;
+    const firstKey = await db.$client`
+      SELECT key_hash,
+        expires_at > statement_timestamp() + interval '29 days' AS expires_after_29_days,
+        expires_at < statement_timestamp() + interval '31 days' AS expires_before_31_days
+      FROM board_api_keys
+      WHERE id=${firstApprovalBody.keyId}::uuid
+    `;
     expect(firstKey[0].key_hash === createHash("sha256").update(first.boardApiToken).digest("hex")).toBe(true);
-    expect(firstKey[0].expires_at > new Date(Date.now() + 29 * 24 * 60 * 60 * 1000)).toBe(true);
+    expect(firstKey[0].expires_after_29_days).toBe(true);
+    expect(firstKey[0].expires_before_31_days).toBe(true);
 
     const cancelled = await createChallenge();
     const cancel = () => postJson(
