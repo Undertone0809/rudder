@@ -97,6 +97,60 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   }),
 });
 
+// These two package-level files are temporary typed transports to Rust-owned
+// migration and PostgreSQL lifecycle executors. Keep admission path- and
+// content-bound: packages/db is otherwise a production Node database runtime,
+// not a generally trusted transport directory.
+const TRUSTED_NODE_TRANSPORT_SOURCES = Object.freeze({
+  "packages/db/src/migration-operator.ts": Object.freeze({
+    id: "rust-migration-operator-process-transport-v1",
+    source_sha256: "f9a5f20555bb6b4942adadf5c249c86469de5b11ba6dd671da87409565b3fce5",
+    rust_authority: "native/crates/migration-service/src/operator.rs and native/crates/migration-service/src/apply.rs",
+    allowed_node_duties: Object.freeze([
+      "resolve the installed Rust migration executable and migration source paths",
+      "build the deterministic source manifest fingerprint and send the typed bounded process request",
+      "parse the typed response and bound cancellation, timeout, and process cleanup",
+    ]),
+    prohibited_node_duties: Object.freeze([
+      "SQL execution or database inspection",
+      "deciding whether migrations are needed or whether approval is required",
+      "migration history repair, backup, locking, or apply fallback in Node",
+    ]),
+    compatibility_boundary: "This exact package module resolves and invokes the Rust migration operator over its typed process protocol. It does not connect to PostgreSQL or decide, inspect, back up, lock, repair, or apply migration state in Node.",
+    retirement_criterion: "Retire this Node process adapter when all first-party callers invoke the Rust migration operator through the shared native transport and this package module is deleted.",
+  }),
+  "packages/db/src/postgres-owner.ts": Object.freeze({
+    id: "rust-postgres-owner-process-transport-v1",
+    source_sha256: "3868134ff321bb2212dcf5a40812aa088e09fc0ced114046bf4f7540bd1e4895",
+    rust_authority: "native/crates/postgres-lifecycle/src/lib.rs and native/crates/postgres-lifecycle/src/bin/rudder-postgres-owner.rs",
+    allowed_node_duties: Object.freeze([
+      "resolve the installed Rust owner executable and packaged PostgreSQL runtime directory",
+      "spawn the typed bounded owner protocol and project readiness and shutdown messages",
+      "bound process lifetime and report the Rust owner endpoint to existing callers",
+    ]),
+    prohibited_node_duties: Object.freeze([
+      "initdb, pg_ctl, SQL, or PostgreSQL data-directory mutation",
+      "database creation, readiness policy, lifecycle decisions, or migration decisions",
+      "fallback to a Node-managed PostgreSQL owner when Rust is missing or fails",
+    ]),
+    compatibility_boundary: "This exact package module resolves and invokes the Rust PostgreSQL owner over its typed process protocol. PostgreSQL initialization, supervision policy, database operations, and failure handling remain Rust-owned; Node fallback is forbidden.",
+    retirement_criterion: "Retire this Node process adapter when all first-party callers consume the Rust owner through the shared native transport and this package module is deleted.",
+  }),
+});
+
+// A structural timer allowance is valid only for the reviewed native child
+// process escalation callback. This does not admit timers on any other path or
+// any other expression in migration-preflight.
+const TRUSTED_TRANSPORT_SURFACES = Object.freeze({
+  "server/src/services/migration-preflight.ts": Object.freeze({
+    owner: "server/src/services/migration-preflight.ts::runMigrationProcess",
+    source_sha256: "3f140195cfd75250bbe9e19a7928c27ba7eea35f89c2114a88961f4f1264c7e9",
+    signatures: Object.freeze([
+      "server/src/services/migration-preflight.ts|worker-schedule-candidate|setTimeout|() => { if (pendingFailure) { pendingFailure = new MigrationPreflightAdapterErro… [sha256:622fdb8c7f383d5a4265b4e5db2c04120c48d226d2e2713f8dc981cdeac95e3c]",
+    ]),
+  }),
+});
+
 const LEGACY_FENCE_CHANGE_KINDS = new Set([
   "target_advisory_lock",
   "native_chat_queue_guard_helper",
@@ -2060,20 +2114,59 @@ function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, h
 
 function isTransportAdapterPath(sourcePath) {
   return sourcePath.endsWith(".ts") && !isTestOrGeneratedPath(sourcePath)
-    && (sourcePath.startsWith("server/src/") || sourcePath.startsWith("identity/src/"));
+    && (sourcePath.startsWith("server/src/") || sourcePath.startsWith("identity/src/")
+      || Object.hasOwn(TRUSTED_NODE_TRANSPORT_SOURCES, sourcePath));
+}
+
+function validateTrustedNodeTransportSourceRecord(record, sourcePath, sourceHash) {
+  const policy = TRUSTED_NODE_TRANSPORT_SOURCES[sourcePath];
+  if (!policy) return [`${sourcePath}: no statically trusted package transport source admission`];
+  const problems = [];
+  if (sourceHash !== policy.source_sha256) problems.push("source hash does not match the statically trusted transport-source digest");
+  if (record?.transport_admission_id !== policy.id) problems.push("transport_admission_id does not match the statically trusted source admission");
+  if (record?.rust_authority !== policy.rust_authority) problems.push("rust_authority does not match the statically trusted source admission");
+  if (JSON.stringify(record?.allowed_node_duties) !== JSON.stringify(policy.allowed_node_duties)) {
+    problems.push("allowed_node_duties do not match the statically trusted source admission");
+  }
+  if (JSON.stringify(record?.prohibited_node_duties) !== JSON.stringify(policy.prohibited_node_duties)) {
+    problems.push("prohibited_node_duties do not match the statically trusted source admission");
+  }
+  if (record?.compatibility_boundary !== policy.compatibility_boundary) problems.push("compatibility_boundary does not match the statically trusted source admission");
+  if (record?.retirement_criterion !== policy.retirement_criterion) problems.push("retirement_criterion does not match the statically trusted source admission");
+  if (record && Object.hasOwn(record, "allowed_transport_surfaces")) {
+    problems.push("package transport source records cannot admit structural surfaces");
+  }
+  return problems;
 }
 
 // A transport adapter may add a route surface while handing business
 // authority to Rust. Keep this allowance explicit and hash-bound to the
 // reviewed source record: every permitted signature must exist in the current
 // candidate and must be one of the exact surfaces added by this diff.
-function consumeReviewedTransportSurfaces(record, sourcePath, headSurfaces, remainingAdded, failures) {
+function consumeReviewedTransportSurfaces(record, sourcePath, headSurfaces, headContents, remainingAdded, failures) {
   if (!record || !Object.hasOwn(record, "allowed_transport_surfaces")) return;
   const allowed = record.allowed_transport_surfaces;
   if (!Array.isArray(allowed) || allowed.some((signature) => typeof signature !== "string" || !signature.trim())) {
     failures.push(`${sourcePath}: allowed_transport_surfaces must be an array of nonempty signatures`);
     return;
   }
+  const sourcePolicy = TRUSTED_TRANSPORT_SURFACES[sourcePath];
+  if (!sourcePolicy) failures.push(`${sourcePath}: no statically trusted transport surface policy`);
+  else {
+    const candidateSource = headContents.get(sourcePath);
+    if (!candidateSource) {
+      failures.push(`${sourcePath}: candidate source is absent for the statically trusted transport surface`);
+      return;
+    }
+    if (candidateSource.sha256 !== sourcePolicy.source_sha256) {
+      failures.push(`${sourcePath}: source hash does not match the statically trusted transport-helper digest`);
+      return;
+    }
+    if (record.transport_surface_owner !== sourcePolicy.owner) {
+      failures.push(`${sourcePath}: transport_surface_owner does not match the exact statically trusted adapter helper`);
+    }
+  }
+  const trustedForPath = new Set(sourcePolicy?.signatures ?? []);
   const headSignatures = new Set(headSurfaces.filter((surface) => surface.source === sourcePath).map((surface) => surface.signature));
   const seen = new Set();
   for (const signature of allowed) {
@@ -2082,6 +2175,10 @@ function consumeReviewedTransportSurfaces(record, sourcePath, headSurfaces, rema
       continue;
     }
     seen.add(signature);
+    if (!trustedForPath.has(signature)) {
+      failures.push(`${sourcePath}: transport surface is not statically trusted for this exact source path: ${signature}`);
+      continue;
+    }
     if (!headSignatures.has(signature)) {
       failures.push(`${sourcePath}: allowed transport surface is absent from candidate: ${signature}`);
       continue;
@@ -2193,6 +2290,9 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
         consumedRecords.add(sourcePath);
         const problems = validateBoundaryRecord(record, sourcePath, null, after.sha256, "new_transport_adapter");
         if (record?.node_role !== "transport_adapter") problems.push('node_role must be "transport_adapter"');
+        if (Object.hasOwn(TRUSTED_NODE_TRANSPORT_SOURCES, sourcePath)) {
+          problems.push(...validateTrustedNodeTransportSourceRecord(record, sourcePath, after.sha256));
+        }
         if (problems.length) failures.push(`${sourcePath}: ${problems.join("; ")}`);
       }
       continue;
@@ -2218,6 +2318,10 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       problems.push('node_role must be "compatibility_adapter" or "transport_adapter"');
     }
     if (problems.length) failures.push(`${sourcePath}: ${problems.join("; ")}`);
+    if (Object.hasOwn(TRUSTED_NODE_TRANSPORT_SOURCES, sourcePath)) {
+      const trustedSourceProblems = validateTrustedNodeTransportSourceRecord(record, sourcePath, after.sha256);
+      if (trustedSourceProblems.length) failures.push(`${sourcePath}: ${trustedSourceProblems.join("; ")}`);
+    }
   }
 
   const routeAndWriterTypes = new Set([
@@ -2314,6 +2418,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       record,
       record.path,
       headInventory.structural_surfaces,
+      headContents,
       unmatchedAdded,
       failures,
     );
@@ -2468,5 +2573,7 @@ export {
   journalAppendProblems,
   scanSource,
   sha256,
-  stableGeneratedPart, TRUSTED_TRANSPORT_ADMISSIONS, validateBoundaryRecord
+  stableGeneratedPart, TRUSTED_NODE_TRANSPORT_SOURCES, TRUSTED_TRANSPORT_ADMISSIONS,
+  consumeReviewedTransportSurfaces, validateTrustedNodeTransportSourceRecord,
+  TRUSTED_TRANSPORT_SURFACES, validateBoundaryRecord
 };
