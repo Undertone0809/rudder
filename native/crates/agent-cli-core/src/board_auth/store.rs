@@ -247,12 +247,14 @@ fn mutate(
 }
 
 fn private_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
+    let options = OpenOptions::new();
     #[cfg(unix)]
-    {
+    let options = {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut options = options;
         options.mode(0o600);
-    }
+        options
+    };
     options
 }
 
