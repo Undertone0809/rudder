@@ -1059,8 +1059,8 @@ describe("constructed issuer through the real Rust application launcher", () => 
         env: cliEnvironment,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      let stdout = Buffer.alloc(0);
-      let stderr = Buffer.alloc(0);
+      let stdout: Buffer = Buffer.alloc(0);
+      let stderr: Buffer = Buffer.alloc(0);
       let timedOut = false;
       let outputLimitExceeded = false;
       let spawnFailed = false;
