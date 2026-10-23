@@ -392,9 +392,15 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
         nodeUpstream: nodeUrl,
         authorizationKey: "codex-reader-public-ingress-fixture-key-32-bytes",
         deploymentMode: "authenticated",
+        sessionAuth: {
+          kind: "better_auth",
+          secret: SESSION_SECRET,
+          secureCookie: false,
+          assertionKey: "44".repeat(32),
+        },
         browserSessionAuth: {
           issuer: "better_auth",
-          secret: "codex-reader-browser-session-fixture-secret",
+          secret: SESSION_SECRET,
           secureCookie: false,
           sessionCookieName: "better-auth.session_token",
           dontRememberCookieName: "better-auth.dont_remember",
