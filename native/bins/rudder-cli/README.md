@@ -5,6 +5,13 @@ This explicit Rust executable provides board authentication and the read-only
 It does not replace or select the existing `rudder` CLI, does not launch Node,
 and has no fallback implementation.
 
+The server owns `/api/cli-auth/*` in Rust when
+`RUDDER_RUST_PUBLIC_INGRESS_MODE=required`. The supported standalone `off`
+mode temporarily retains its existing Node handlers; they are not registered
+behind the Rust listener and are never a fallback for a failed native request.
+Removing this compatibility path requires the default-ingress cutover and its
+startup acceptance. Desktop selects `required` unless explicitly overridden.
+
 ```text
 rudder-cli org members [--org-id <id>] [--query <text>]
   [--type <human|agent|all>] [--limit <1..100>] [--cursor <opaque>]
