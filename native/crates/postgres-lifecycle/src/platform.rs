@@ -190,15 +190,18 @@ impl ParentMonitor {
     }
 
     pub(crate) fn has_exited(&self) -> bool {
-        let Some(expected) = self.expected else {
-            return false;
-        };
         #[cfg(unix)]
         {
+            let Some(expected) = self.expected else {
+                return false;
+            };
             current_parent_pid() != expected
         }
         #[cfg(windows)]
         {
+            if self.expected.is_none() {
+                return false;
+            }
             use windows_sys::Win32::{
                 Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
                 System::Threading::WaitForSingleObject,
@@ -215,7 +218,7 @@ impl ParentMonitor {
         }
         #[cfg(not(any(unix, windows)))]
         {
-            let _ = expected;
+            let _ = self.expected;
             false
         }
     }

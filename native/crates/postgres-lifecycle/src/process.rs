@@ -1,12 +1,16 @@
+#[cfg(unix)]
+use crate::platform::current_parent_pid;
 use crate::{
     bootstrap::{create_staging_data_dir, postgres_log_path, read_postmaster_pid},
     constants::{INITDB_TIMEOUT, POLL_INTERVAL, STARTUP_TIMEOUT, STOP_TIMEOUT},
     database::{ConnectionConfig, VerifiedConnection, connect_verified},
     error::OwnerError,
-    platform::{ParentMonitor, current_parent_pid},
+    platform::ParentMonitor,
 };
+#[cfg(unix)]
+use std::fs;
 use std::{
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::{self, Write},
     net::TcpStream,
     path::Path,
@@ -193,7 +197,7 @@ struct ChildJob {
 #[cfg(windows)]
 impl ChildJob {
     fn assign(child: &Child) -> Result<Self, OwnerError> {
-        use std::{mem, os::windows::io::AsRawHandle, ptr};
+        use std::{mem, ptr};
         use windows_sys::Win32::{
             Foundation::CloseHandle,
             System::JobObjects::{
@@ -202,6 +206,12 @@ impl ChildJob {
                 SetInformationJobObject,
             },
         };
+        let child_handle = child.raw_handle().ok_or_else(|| {
+            OwnerError::new(
+                "process_tree_unavailable",
+                "cannot retrieve PostgreSQL child process handle",
+            )
+        })?;
         let job = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
         if job.is_null() {
             return Err(OwnerError::io(
@@ -220,8 +230,8 @@ impl ChildJob {
                 mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             )
         };
-        let assigned = configured != 0
-            && unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as _) } != 0;
+        let assigned =
+            configured != 0 && unsafe { AssignProcessToJobObject(job, child_handle as _) } != 0;
         if !assigned {
             let error = io::Error::last_os_error();
             unsafe { CloseHandle(job) };
@@ -308,13 +318,13 @@ pub(crate) fn supervised_spawn(command: &mut Command) -> Result<OwnedPostgresPro
     })
 }
 
-fn configure_child_process(command: &mut Command) -> Result<(), OwnerError> {
+fn configure_child_process(_command: &mut Command) -> Result<(), OwnerError> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         let expected_parent = std::process::id();
         unsafe {
-            command.as_std_mut().process_group(0).pre_exec(move || {
+            _command.as_std_mut().process_group(0).pre_exec(move || {
                 #[cfg(target_os = "linux")]
                 if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
                     return Err(io::Error::last_os_error());
@@ -328,10 +338,6 @@ fn configure_child_process(command: &mut Command) -> Result<(), OwnerError> {
                 Ok(())
             });
         }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = command;
     }
     Ok(())
 }
