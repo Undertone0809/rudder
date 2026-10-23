@@ -56,7 +56,9 @@ describe("constructed issuer through the real Rust application launcher", () => 
   let db: ReturnType<typeof createDb>;
   let app: HttpAppHandle | undefined;
   let server: Server | undefined;
+  let privateNodeBaseUrl = "";
   const nodePaths: string[] = [];
+  const betterAuthRequests: string[] = [];
 
   async function startDatabaseProxy() {
     databaseProxy = net.createServer((incoming) => {
@@ -175,6 +177,9 @@ describe("constructed issuer through the real Rust application launcher", () => 
     });
     server.listen(ingress.nodeListenPort, ingress.nodeListenHost);
     await once(server, "listening");
+    privateNodeBaseUrl = `http://${ingress.nodeListenHost}:${ingress.nodeListenPort}`;
+    betterAuthRequests.length = 0;
+    const betterAuthHandler = runtime.betterAuthHandler;
     app = await createHttpApp(db, {
       uiMode: "none", serverPort: publicPort, storageService: {} as never,
       deploymentMode: config.deploymentMode, authRequirement: "required",
@@ -183,6 +188,12 @@ describe("constructed issuer through the real Rust application launcher", () => 
       rustFoundationBinaryPath: binary, rustFoundationMode: "off",
       rustOrganizationBrandingMode: "off", rustProjectGoalSetMode: "off",
       ...runtime, ...ingress.appOptions,
+      betterAuthHandler: betterAuthHandler
+        ? (req, res, next) => {
+            betterAuthRequests.push(`${req.method} ${req.originalUrl}`);
+            return betterAuthHandler(req, res, next);
+          }
+        : undefined,
     });
     await app.waitForPublicIngressReady?.();
     return app.publicIngressBaseUrl!;
@@ -224,24 +235,150 @@ describe("constructed issuer through the real Rust application launcher", () => 
             expect((await fetch(`${base}/api/${route}`)).status).toBe(401);
           }
           let cookie: string, userId: string;
+          let secondCookie: string | undefined;
+          let primarySessionToken: string | undefined;
+          let secondSessionToken: string | undefined;
           if (issuer === "better_auth") {
+            const [authRowsBeforePrivateProbe] = await db.$client`SELECT
+                (SELECT COUNT(*)::int FROM "user") AS users,
+                (SELECT COUNT(*)::int FROM account) AS accounts,
+                (SELECT COUNT(*)::int FROM session) AS sessions,
+                (SELECT COUNT(*)::int FROM verification) AS verifications`;
+            const privateNodePathsBeforeProbe = nodePaths.length;
+            const privateAuthPaths = [
+              "/api/auth/sign-up/email",
+              "/api/auth/sign-in/email",
+              "/api/auth/sign-out",
+              "/api/auth/sign-up%2Femail",
+            ];
+            for (const path of privateAuthPaths) {
+              const response = await fetch(`${privateNodeBaseUrl}${path}`, {
+                method: "POST", headers: { "content-type": "application/json", origin }, body: "{}",
+              });
+              expect(response.status, path).toBe(404);
+            }
+            expect(nodePaths.slice(privateNodePathsBeforeProbe)).toEqual(privateAuthPaths);
+            expect(betterAuthRequests).toEqual([]);
+            const [authRowsAfterPrivateProbe] = await db.$client`SELECT
+                (SELECT COUNT(*)::int FROM "user") AS users,
+                (SELECT COUNT(*)::int FROM account) AS accounts,
+                (SELECT COUNT(*)::int FROM session) AS sessions,
+                (SELECT COUNT(*)::int FROM verification) AS verifications`;
+            expect(authRowsAfterPrivateProbe).toEqual(authRowsBeforePrivateProbe);
+
+            const email = `${randomUUID()}@invalid.test`;
+            const password = randomBytes(24).toString("base64url");
+            const emailAuthNodePathsBefore = nodePaths.length;
             const signUp = () => fetch(`${base}/api/auth/sign-up/email`, {
               method: "POST", headers: { "content-type": "application/json", origin },
-              body: JSON.stringify({ name: "Native Launcher", email: `${randomUUID()}@invalid.test`, password: `test-${randomUUID()}`, rememberMe: remember }),
+              body: JSON.stringify({ name: "Native Launcher", email, password, rememberMe: remember }),
             });
             let signup = await signUp();
             // Production Better Auth rate limits this shared loopback address.
             // Respect its bounded retry window instead of disabling protection.
             if (signup.status === 429) {
-              const retrySeconds = Number(signup.headers.get("retry-after") ?? 10);
+              const retrySeconds = Number(signup.headers.get("x-retry-after") ?? signup.headers.get("retry-after") ?? 10);
               expect(retrySeconds).toBeGreaterThanOrEqual(0);
               expect(retrySeconds).toBeLessThanOrEqual(15);
               await new Promise((resolve) => setTimeout(resolve, (retrySeconds + 1) * 1000));
               signup = await signUp();
             }
             expect(signup.status).toBe(200);
+            expect(nodePaths.length).toBe(emailAuthNodePathsBefore);
             cookie = signup.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
-            userId = (await signup.json() as { user: { id: string } }).user.id;
+            const signupBody = await signup.json() as { token: string; user: { id: string } };
+            primarySessionToken = signupBody.token;
+            userId = signupBody.user.id;
+
+            const privateNodePathsBeforeSignout = nodePaths.length;
+            const betterAuthCallsBeforePrivateSignout = betterAuthRequests.length;
+            const privateSignout = await fetch(`${privateNodeBaseUrl}/api/auth/sign-out`, {
+              method: "POST", headers: { cookie, "content-type": "application/json", origin }, body: "{}",
+            });
+            expect(privateSignout.status).toBe(404);
+            expect(nodePaths.slice(privateNodePathsBeforeSignout)).toEqual(["/api/auth/sign-out"]);
+            expect(betterAuthRequests).toHaveLength(betterAuthCallsBeforePrivateSignout);
+            expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(200);
+            const emailAuthNodePathsAfterPrivateSignout = nodePaths.length;
+
+            // The installed Better Auth schema has no unique email constraint,
+            // so historical duplicate rows are possible. Native sign-in must
+            // fail closed rather than choosing an ambiguous credential row.
+            const historicalDuplicateEmail = `${randomUUID()}@invalid.test`;
+            for (const duplicateId of [randomUUID(), randomUUID()]) {
+              await db.$client`INSERT INTO "user" (id, name, email, email_verified, created_at, updated_at)
+                VALUES (${duplicateId}, 'Historical Duplicate', ${historicalDuplicateEmail}, FALSE, now(), now())`;
+            }
+            const ambiguousLogin = await fetch(`${base}/api/auth/sign-in/email`, {
+              method: "POST", headers: { "content-type": "application/json", origin },
+              body: JSON.stringify({ email: historicalDuplicateEmail, password: "synthetic-password" }),
+            });
+            expect(ambiguousLogin.status).toBe(401);
+            expect(await ambiguousLogin.json()).toEqual({
+              message: "Invalid email or password", code: "INVALID_EMAIL_OR_PASSWORD",
+            });
+
+            const concurrentEmail = `${randomUUID()}@invalid.test`;
+            const concurrentPassword = randomBytes(24).toString("base64url");
+            const outcomes: Array<{ status: number; body: unknown; retryAfter: number }> = [];
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const batch = await Promise.all([0, 1].map(async () => {
+                const response = await fetch(`${base}/api/auth/sign-up/email`, {
+                  method: "POST", headers: { "content-type": "application/json", origin },
+                  body: JSON.stringify({ name: "Concurrent Native Signup", email: concurrentEmail, password: concurrentPassword }),
+                });
+                const retryAfter = Number(response.headers.get("x-retry-after") ?? response.headers.get("retry-after") ?? 10);
+                return { status: response.status, body: await response.json(), retryAfter };
+              }));
+              outcomes.push(...batch);
+              if (!batch.some((outcome) => outcome.status === 429)) break;
+              const retrySeconds = Math.max(...batch.map((outcome) => outcome.retryAfter));
+              expect(retrySeconds).toBeGreaterThanOrEqual(0);
+              expect(retrySeconds).toBeLessThanOrEqual(15);
+              if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, (retrySeconds + 1) * 1000));
+            }
+            expect(outcomes.filter((outcome) => outcome.status === 200)).toHaveLength(1);
+            const duplicateOutcomes = outcomes.filter((outcome) => outcome.status === 422);
+            expect(duplicateOutcomes.length).toBeGreaterThanOrEqual(1);
+            for (const outcome of duplicateOutcomes) {
+              expect(outcome.body).toEqual({
+                message: "User already exists. Use another email.",
+                code: "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
+              });
+            }
+            expect(outcomes.every((outcome) => [200, 422, 429].includes(outcome.status))).toBe(true);
+            const [concurrentCounts] = await db.$client`SELECT
+                COUNT(DISTINCT u.id)::int AS users,
+                COUNT(DISTINCT a.id)::int AS accounts,
+                COUNT(DISTINCT s.id)::int AS sessions
+              FROM "user" u
+              LEFT JOIN account a ON a.user_id=u.id AND a.provider_id='credential'
+              LEFT JOIN session s ON s.user_id=u.id
+              WHERE u.email=${concurrentEmail}`;
+            expect(concurrentCounts).toMatchObject({ users: 1, accounts: 1, sessions: 1 });
+
+            const invalidLogin = await fetch(`${base}/api/auth/sign-in/email`, {
+              method: "POST", headers: { "content-type": "application/json", origin },
+              body: JSON.stringify({ email, password: `${password}-wrong` }),
+            });
+            expect(invalidLogin.status).toBe(401);
+            expect(await invalidLogin.json()).toEqual({ message: "Invalid email or password", code: "INVALID_EMAIL_OR_PASSWORD" });
+            const signIn = await fetch(`${base}/api/auth/sign-in/email`, {
+              method: "POST", headers: { "content-type": "application/json", origin },
+              body: JSON.stringify({ email, password, rememberMe: remember }),
+            });
+            expect(signIn.status).toBe(200);
+            secondCookie = signIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
+            secondSessionToken = (await signIn.json() as { token: string }).token;
+            for (const token of [primarySessionToken, secondSessionToken]) {
+              const [issuedSession] = await db.$client`SELECT
+                  expires_at>now()+interval '6 days' AS remembered,
+                  expires_at BETWEEN now()+interval '23 hours' AND now()+interval '25 hours' AS short_lived
+                FROM session WHERE token=${token}`;
+              expect(issuedSession.remembered).toBe(remember);
+              expect(issuedSession.short_lived).toBe(!remember);
+            }
+            expect(nodePaths.length).toBe(emailAuthNodePathsAfterPrivateSignout);
           } else {
             const policy = runtime.localAccountExchangePolicy!;
             const claims = { issuer: policy.expectedIssuer, subject: randomUUID(), audience: policy.audience, installationId: "auth-launcher-test", jti: randomUUID(), expiresAt: new Date(Date.now() + 60_000), email: `${randomUUID()}@invalid.test`, emailVerified: true, name: "Native Local Launcher" };
@@ -255,8 +392,16 @@ describe("constructed issuer through the real Rust application launcher", () => 
           expect(session.status).toBe(200); expect(session.headers.get("cache-control")).toBe("no-store");
           const dto = { session: { id: `rudder:session:${userId}`, userId }, user: { id: userId, email: null, name: null } };
           expect(await session.json()).toEqual(dto);
-          const [row] = await db.$client`SELECT expires_at>now()+interval '6 days' AS refreshed FROM session WHERE user_id=${userId}`;
-          expect(row.refreshed).toBe(issuer === "better_auth" && remember);
+          if (issuer === "better_auth") {
+            if (!primarySessionToken || !secondSessionToken) throw new Error("Expected both Better Auth session tokens");
+            const [primaryRow] = await db.$client`SELECT expires_at>now()+interval '6 days' AS refreshed FROM session WHERE token=${primarySessionToken}`;
+            const [secondaryRow] = await db.$client`SELECT expires_at>now()+interval '6 days' AS refreshed FROM session WHERE token=${secondSessionToken}`;
+            expect(primaryRow.refreshed).toBe(remember);
+            expect(secondaryRow.refreshed).toBe(false);
+          } else {
+            const [row] = await db.$client`SELECT expires_at>now()+interval '6 days' AS refreshed FROM session WHERE user_id=${userId}`;
+            expect(row.refreshed).toBe(false);
+          }
           expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie, authorization: "Bearer invalid" } })).status).toBe(401);
           expect(nodePaths.length).toBe(beforeRead);
           await closeApp();
@@ -270,6 +415,29 @@ describe("constructed issuer through the real Rust application launcher", () => 
             });
             expect(forbidden.status).toBe(403);
             expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(200);
+
+            // Native sign-out must not claim revocation or clear the browser
+            // cookie while the backing session row cannot be deleted.
+            const beforeOutage = nodePaths.length;
+            await stopDatabaseProxy();
+            try {
+              const unavailable = await fetch(`${base}/api/auth/sign-out`, {
+                method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: "{}",
+              });
+              expect(unavailable.status).toBe(503);
+              expect(unavailable.headers.get("retry-after")).toBe("1");
+              expect(unavailable.headers.getSetCookie()).toEqual([]);
+              const noSession = await fetch(`${base}/api/auth/sign-out`, {
+                method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}",
+              });
+              expect(noSession.status).toBe(200);
+              expect(noSession.headers.getSetCookie().length).toBeGreaterThan(0);
+              expect(nodePaths.length).toBe(beforeOutage);
+            } finally { await startDatabaseProxy(); }
+            expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(200);
+            if (secondCookie) {
+              expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie: secondCookie } })).status).toBe(200);
+            }
           }
           if (issuer === "local_account" && secure) {
             const beforeOutage = nodePaths.length;
@@ -287,7 +455,16 @@ describe("constructed issuer through the real Rust application launcher", () => 
           });
           expect(logout.status).toBe(200);
           if (issuer === "better_auth") {
-            expect(nodePaths.at(-1)).toBe(`/api/auth/${signout}`);
+            expect(nodePaths.length).toBe(beforeLogout);
+            // Replaying a correctly signed cookie after its row is gone is an
+            // idempotent sign-out: the DELETE affects zero rows but still
+            // clears that cookie, and cannot revoke the second session.
+            const repeatedLogout = await fetch(`${base}/api/auth/sign-out`, {
+              method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: "{}",
+            });
+            expect(repeatedLogout.status).toBe(200);
+            expect(repeatedLogout.headers.getSetCookie().length).toBeGreaterThan(0);
+            expect(nodePaths.length).toBe(beforeLogout);
           } else {
             // Local-account lifecycle is Rust-owned; the private Node bridge
             // must not observe the native sign-out request.
@@ -295,6 +472,9 @@ describe("constructed issuer through the real Rust application launcher", () => 
           }
           const afterLogout = nodePaths.length;
           expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(401);
+          if (issuer === "better_auth" && secondCookie) {
+            expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie: secondCookie } })).status).toBe(200);
+          }
           expect(nodePaths.length).toBe(afterLogout);
         }, 60_000);
       }

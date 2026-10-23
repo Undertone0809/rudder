@@ -17,11 +17,19 @@ pub(super) enum Mode {
     LocalImplicit,
 }
 
+#[derive(Clone)]
+pub(crate) struct BetterAuthEmailConfig {
+    pub(crate) trusted_origins: Vec<String>,
+    pub(crate) disable_sign_up: bool,
+    pub(crate) rate_limit_enabled: bool,
+}
+
 /// Immutable host configuration. No field is deserializable from a request.
 /// Debug is deliberately omitted because this contains a session signing key.
 #[derive(Clone)]
 pub struct BrowserAuthConfig {
     pub(super) mode: Mode,
+    pub(crate) better_auth_email: Option<BetterAuthEmailConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +49,21 @@ impl BrowserAuthConfig {
         matches!(self.mode, Mode::LocalImplicit)
     }
 
+    pub(crate) fn better_auth_email_auth_enabled(&self) -> bool {
+        self.better_auth_email.is_some()
+    }
+
+    pub(crate) fn better_auth_session_settings(&self) -> Option<(&[u8], bool)> {
+        match &self.mode {
+            Mode::Required {
+                secret,
+                secure_cookie,
+                session_policy: SessionPolicy::BetterAuth,
+            } => Some((secret, *secure_cookie)),
+            _ => None,
+        }
+    }
+
     pub fn required(
         secret: &[u8],
         secure_cookie: bool,
@@ -55,6 +78,7 @@ impl BrowserAuthConfig {
                 secure_cookie,
                 session_policy,
             },
+            better_auth_email: None,
         })
     }
 
@@ -73,6 +97,7 @@ impl BrowserAuthConfig {
         }
         Ok(Self {
             mode: Mode::LocalImplicit,
+            better_auth_email: None,
         })
     }
 

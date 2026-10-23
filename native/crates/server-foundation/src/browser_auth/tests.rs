@@ -134,12 +134,20 @@ fn issuer_descriptor_rejects_policy_drift_and_competing_overrides_without_secret
         "sessionCookieName": "__Secure-better-auth.session_token",
         "dontRememberCookieName": "__Secure-better-auth.dont_remember",
         "expiresIn": 604800, "updateAge": 86400, "disableSessionRefresh": false,
+        "trustedOrigins": ["https://chat.example.test"], "disableSignUp": false,
+        "rateLimitEnabled": true,
     });
     assert!(issuer::parse(&descriptor.to_string()).is_ok());
     for (field, value) in [
         ("expiresIn", serde_json::json!(3600)),
         ("updateAge", serde_json::json!(0)),
         ("disableSessionRefresh", serde_json::json!(true)),
+        (
+            "trustedOrigins",
+            serde_json::json!("https://chat.example.test"),
+        ),
+        ("disableSignUp", serde_json::json!("false")),
+        ("rateLimitEnabled", serde_json::json!("false")),
         ("secureCookie", serde_json::json!(false)),
         ("sessionCookieName", serde_json::json!("custom.session")),
         (
