@@ -627,6 +627,8 @@ test("trusted helper semantics come from checker-pinned digests, not record revi
 
 const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
 const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
+const PROJECT_READS_ADMISSION_ID = "rust-native-project-reads-router-v1";
+const CLI_AUTH_ADMISSION_ID = "rust-native-cli-auth-router-v1";
 const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
   return (request, _response, next) => next();
 }
@@ -819,6 +821,87 @@ function compareIdentityAdmissionFixture(t, options = {}) {
     trustedPolicy,
   );
   return { result, base, head, trustedPolicy, admissionRecord };
+}
+
+function publicOwnerMountSource({
+  projectExpression = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression,
+  cliExpression = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression,
+  duplicateProject = false,
+  duplicateCli = false,
+  moveProjectAfterAnchor = false,
+  moveCliBeforeAnchor = false,
+  extra = "",
+} = {}) {
+  const projectMount = `api.use(${projectExpression});\n`;
+  const cliMount = `api.use(${cliExpression});\n`;
+  const projectBeforeAnchor = `api.use(assetRoutes(db, opts.storageService));\n`;
+  const projectAfterAnchor = `api.use(appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), }));\n`;
+  const cliBeforeAnchor = `api.use(rudderPluginRoutes(db, pluginMcpOptions));\n`;
+  const initialProject = moveProjectAfterAnchor
+    ? `${projectBeforeAnchor}${projectAfterAnchor}${projectMount}${duplicateProject ? projectMount : ""}`
+    : `${projectBeforeAnchor}${projectMount}${duplicateProject ? projectMount : ""}${projectAfterAnchor}`;
+  const cli = moveCliBeforeAnchor
+    ? `${cliMount}${duplicateCli ? cliMount : ""}${cliBeforeAnchor}`
+    : `${cliBeforeAnchor}${cliMount}${duplicateCli ? cliMount : ""}`;
+  return `function register(api, opts) {
+${initialProject}${cli}${extra}return api;
+}
+`;
+}
+
+function publicOwnerMountReviewRecord(policy, source) {
+  return {
+    id: policy.id,
+    mount_source_path: policy.source_path,
+    mount_source_sha256: sha256(source),
+    mount_receiver: policy.receiver,
+    mount_expression: policy.mount_expression,
+    mount_guard: policy.mount_guard,
+    order_after: policy.order_after,
+    order_before: policy.order_before,
+    rust_proof_owner: policy.rust_proof_owner,
+    compatibility_boundary: "Node passes only the exact public-ingress mode option to the existing router factory; this record admits no new Node business handler or database writer, and separate legacy compatibility paths remain migration debt.",
+    retirement_criterion: "Remove this router admission when the legacy router no longer serves any first-party compatibility paths and the corresponding Rust routes are the sole supported owner.",
+    reviewer: "policy-test-reviewer@example.test",
+    review_reference: "Fixed trusted compatibility-mount policy fixture",
+    review_status: "reviewed",
+  };
+}
+
+function comparePublicOwnerMountFixture(t, options = {}) {
+  const baseRoot = temporaryTree(t);
+  const headRoot = temporaryTree(t);
+  const sourcePath = "server/src/bootstrap/register-api-routes.ts";
+  const projectPolicy = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID];
+  const cliPolicy = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID];
+  const baseSource = publicOwnerMountSource({
+    projectExpression: "projectRoutes(db, rustFoundationBridge)",
+    cliExpression: "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, })",
+  });
+  const headSource = options.headSource ?? publicOwnerMountSource(options);
+  put(baseRoot, sourcePath, baseSource);
+  put(headRoot, sourcePath, headSource);
+  const base = buildInventory(baseRoot);
+  const nodeRecord = boundaryRecord(sourcePath, sha256(baseSource), sha256(headSource), {
+    node_role: "transport_adapter",
+    change_kind: "modified_node_compatibility",
+  });
+  const nodeRecords = [nodeRecord];
+  if (options.extraSourcePath) {
+    const extraSource = options.extraSource ?? "";
+    put(headRoot, options.extraSourcePath, extraSource);
+    nodeRecords.push(boundaryRecord(options.extraSourcePath, null, sha256(extraSource), {
+      node_role: "transport_adapter",
+      change_kind: "new_transport_adapter",
+    }));
+  }
+  const admissionRecords = [
+    publicOwnerMountReviewRecord(projectPolicy, headSource),
+    publicOwnerMountReviewRecord(cliPolicy, headSource),
+  ];
+  const head = buildInventory(headRoot, nodeRecords, admissionRecords);
+  const result = compareProductionInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
+  return { result, base, head, baseSource, headSource };
 }
 
 test("inventory recognizes Express and direct identity routes without mistaking ordinary map updates for DB writers", () => {
@@ -1298,7 +1381,9 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [
     "rust-native-agent-core-handler-v1",
     "rust-native-agent-core-router-v1",
+    CLI_AUTH_ADMISSION_ID,
     IDENTITY_ADMISSION_ID,
+    PROJECT_READS_ADMISSION_ID,
     SESSION_ADMISSION_ID,
   ].sort());
 
@@ -1325,6 +1410,90 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
     appOptions: { mount: false },
   });
   assert(recordWithoutMount.result.failures.some((failure) => failure.includes("stale reviewed_transport_admissions record")));
+});
+
+test("trusted policy admits only the exact Rust CLI auth and Project reads router options", (t) => {
+  const projectPolicy = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID];
+  const cliPolicy = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID];
+  assert.equal(projectPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
+  assert.equal(projectPolicy.receiver, "api");
+  assert.equal(projectPolicy.mount_expression, "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })");
+  assert.equal(projectPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
+  assert.equal(projectPolicy.order_after_expression, "assetRoutes(db, opts.storageService)");
+  assert.equal(projectPolicy.order_before_expression, "appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })");
+  assert.equal(projectPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/project_reads.rs");
+  assert.equal(cliPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
+  assert.equal(cliPolicy.receiver, "api");
+  assert.equal(cliPolicy.mount_expression, "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })");
+  assert.equal(cliPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
+  assert.equal(cliPolicy.order_after_expression, "rudderPluginRoutes(db, pluginMcpOptions)");
+  assert.equal(cliPolicy.order_before_expression, "return api");
+  assert.equal(cliPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/cli_auth.rs");
+
+  const accepted = comparePublicOwnerMountFixture(t);
+  assert.deepEqual(accepted.result.failures, []);
+  assert.deepEqual(accepted.result.allowed_transport_admissions.map((entry) => entry.id).sort(), [
+    CLI_AUTH_ADMISSION_ID,
+    PROJECT_READS_ADMISSION_ID,
+  ].sort());
+  for (const id of [CLI_AUTH_ADMISSION_ID, PROJECT_READS_ADMISSION_ID]) {
+    assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === id).length, 1);
+  }
+});
+
+test("public owner mount admissions reject wrong guards, duplicates, and reordered mounts", (t) => {
+  const wrongCliGuard = comparePublicOwnerMountFixture(t, {
+    cliExpression: TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression
+      .replace("Boolean(opts.rustPublicIngress)", "Boolean(opts.rustPublicIngress?.cliAuth)"),
+  });
+  assert(wrongCliGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(wrongCliGuard.result.failures.some((failure) => failure.includes(`stale reviewed_transport_admissions record: ${CLI_AUTH_ADMISSION_ID}`)));
+
+  const wrongProjectGuard = comparePublicOwnerMountFixture(t, {
+    projectExpression: TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression
+      .replace("Boolean(opts.rustPublicIngress)", "Boolean(opts.rustPublicIngress?.projectReads)"),
+  });
+  assert(wrongProjectGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(wrongProjectGuard.result.failures.some((failure) => failure.includes(`stale reviewed_transport_admissions record: ${PROJECT_READS_ADMISSION_ID}`)));
+
+  const wrongCliOptionName = comparePublicOwnerMountFixture(t, {
+    cliExpression: TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression
+      .replace("nativeCliAuthOwner:", "unreviewedNativeOwner:"),
+  });
+  assert(wrongCliOptionName.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  const wrongProjectOptionName = comparePublicOwnerMountFixture(t, {
+    projectExpression: TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression
+      .replace("nativeProjectReads:", "unreviewedProjectReads:"),
+  });
+  assert(wrongProjectOptionName.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const duplicateCli = comparePublicOwnerMountFixture(t, { duplicateCli: true });
+  assert(duplicateCli.result.failures.some((failure) => failure.includes(`${CLI_AUTH_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
+  const duplicateProject = comparePublicOwnerMountFixture(t, { duplicateProject: true });
+  assert(duplicateProject.result.failures.some((failure) => failure.includes(`${PROJECT_READS_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
+
+  const reorderedCli = comparePublicOwnerMountFixture(t, { moveCliBeforeAnchor: true });
+  assert(reorderedCli.result.failures.some((failure) => failure.includes("native CLI auth router adapter must appear after its order-after anchor")));
+  const reorderedProject = comparePublicOwnerMountFixture(t, { moveProjectAfterAnchor: true });
+  assert(reorderedProject.result.failures.some((failure) => failure.includes("native Project reads router adapter must appear before its order-before anchor")));
+});
+
+test("admitted public owner mounts cannot authorize an additional Node route or database writer", (t) => {
+  const extraNodeBusiness = comparePublicOwnerMountFixture(t, {
+    extra: 'api.post("/api/unreviewed-native-owner", handler);\n',
+  });
+  assert.deepEqual(extraNodeBusiness.result.allowed_transport_admissions.map((entry) => entry.id).sort(), [
+    CLI_AUTH_ADMISSION_ID,
+    PROJECT_READS_ADMISSION_ID,
+  ].sort());
+  assert(extraNodeBusiness.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const extraNodeWriter = comparePublicOwnerMountFixture(t, {
+    extraSourcePath: "server/src/services/unreviewed-native-owner-writer.ts",
+    extraSource: 'export function write(db) { return db.insert(users).values({ id: "unreviewed" }); }\n',
+  });
+  assert(extraNodeWriter.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+  assert(extraNodeWriter.result.failures.some((failure) => failure.includes("db-write-candidate")));
 });
 
 test("exact Rust identity-proof mount is admitted while its source and factory hashes stay pinned", (t) => {
