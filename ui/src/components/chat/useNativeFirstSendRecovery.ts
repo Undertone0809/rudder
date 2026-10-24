@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type NativeFirstSendRecoveryView =
   | { kind: "idle" }
   | { kind: "checking" }
+  | { kind: "sending" }
   | { kind: "blocked"; message: string; intent?: NativeFirstSendIntent }
   | { kind: "not_found"; intent: NativeFirstSendIntent }
   | { kind: "accepted"; intent: NativeFirstSendIntent; receipt: Extract<NativeFirstSendReconciliation, { outcome: "accepted" }> };
@@ -219,7 +220,7 @@ export function useNativeFirstSendRecovery(
       await check();
       throw new Error("A previous first message is already saved. Check its status before sending another.");
     }
-    setRecoveryState({ kind: "blocked", message: "The first message is being admitted.", intent: result.intent });
+    setRecoveryState({ kind: "sending" });
     return requestFromIntent(result.intent);
   }, [check, ensureCapabilities, orgId, setRecoveryState, userId]);
 
@@ -239,7 +240,7 @@ export function useNativeFirstSendRecovery(
       effortOverride: intent.draft.effortOverride,
     });
     if (scopeRef.current === scopeKey) {
-      setRecoveryState({ kind: "blocked", message: "The first message was accepted by Native Chat.", intent });
+      setRecoveryState({ kind: "sending" });
     }
     return identity;
   }, [orgId, scopeKey, setRecoveryState, userId]);
@@ -294,8 +295,8 @@ export function useNativeFirstSendRecovery(
       recovery.intent.clientMutationId,
       "pending",
     );
-    setRecoveryState({ kind: "blocked", message: "Retrying the exact saved first message.", intent });
-    return requestFromIntent(recovery.intent);
+    setRecoveryState({ kind: "sending" });
+    return requestFromIntent(intent);
   }, [orgId, recovery, setRecoveryState, userId]);
 
   return {

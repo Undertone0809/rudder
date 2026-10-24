@@ -1,4 +1,20 @@
 import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+
+/** Keep brief local recovery checks from expanding the composer between paints. */
+export function ChatSendRecoveryCheckingNotice({ checking }: { checking: boolean }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!checking) { setVisible(false); return; }
+    const timer = window.setTimeout(() => setVisible(true), 250);
+    return () => window.clearTimeout(timer);
+  }, [checking]);
+  return checking && visible ? (
+    <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">
+      Checking the previous message before sending. Your current draft is preserved.
+    </div>
+  ) : null;
+}
 
 export type ChatSendRecovery = {
   clientMutationId: string;
