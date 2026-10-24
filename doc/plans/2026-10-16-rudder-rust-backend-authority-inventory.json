@@ -59147,107 +59147,23 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/bootstrap/auth-runtime.ts",
-      "base_sha256": "33c3788ed3ad6f1a55c84faa96907c28864c4127b595d104c6c8ae194266d156",
-      "head_sha256": "118ab9c225d04e7180ddb8dd07fc9215e027e6b8fb88af4f296f9f1fd67b42c8",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/browser_auth/config.rs, native/crates/server-foundation/src/public_ingress.rs, and native/crates/server-foundation/src/public_ingress/email_auth.rs",
-      "compatibility_boundary": "Node constructs Better Auth from validated startup configuration and transports immutable resolved issuer facts to Rust. For POST /api/auth/sign-up/email, POST /api/auth/sign-in/email, and POST /api/auth/sign-out, Rust owns request-time origin/CSRF checks, signup policy, rate limiting, credential/session persistence, and responses; Node has no fallback. Remaining Better Auth wildcard endpoints remain explicit legacy Node migration debt.",
-      "retirement_criterion": "Remove Node-produced issuer configuration when Rust startup constructs equivalent Better Auth-compatible issuer facts and supported default public ingress runs without Node backend artifacts, preserving the resolved trusted-origin set and current auth contracts.",
-      "reviewer": "independent descriptor transport reviewer r33-r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-descriptor-transport-recheck-r33-r1.json: ACCEPT scoped to R33-ORIGIN-01 and its focused regression; not full candidate or runtime/PAV acceptance",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Construct Better Auth from validated startup configuration.",
-        "Transport its immutable resolved startup issuer facts to Rust."
-      ],
-      "prohibited_node_duties": [
-        "No Node request-time sign-up, sign-in, sign-out, CSRF/origin, rate-limit, or signup-policy decision for Rust-owned email routes.",
-        "No Node password/session persistence or hidden fallback for those routes."
-      ]
-    },
-    {
-      "change_kind": "modified_node_compatibility",
-      "compatibility_boundary": "In Rust public-ingress mode, reject only the three native-owned email POST routes on the private Node listener before actor/session resolution and the Better Auth wildcard; preserve all other legacy Node auth endpoints and legacy Node mode.",
-      "node_role": "transport_adapter",
-      "path": "server/src/bootstrap/create-http-app.ts",
-      "retirement_criterion": "Remove this fence when the private Node Better Auth wildcard is retired or no longer reachable for these Rust-owned routes.",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-auth-stage-review-r36-r2.json",
-      "review_status": "reviewed",
-      "reviewer": "independent auth stage reviewer r36-r2",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress.rs and native/crates/server-foundation/src/public_ingress/email_auth.rs",
-      "base_sha256": "ed30faf4b741ee06323d27d6c60d1189ab912961902c2d20f2819dfaaef214d9",
-      "head_sha256": "06ab8d223e65b879ea8d8d8b224f0880ef059b0377f285d3e68c369cf6981afb",
-      "allowed_node_duties": [
-        "Only reject the three Rust-owned email POST operations on the private Node listener when rustPublicIngress is enabled; this is a negative transport fence, not an auth implementation."
-      ],
-      "prohibited_node_duties": [
-        "signup/signin/signout policy, password or session writes, origin/CSRF decisions, rate limiting, or hidden fallback for these Rust-owned routes"
-      ]
-    },
-    {
       "path": "server/src/bootstrap/register-api-routes.ts",
-      "base_sha256": "e06fd3ac54ae9067922311c948b0e10bbef093eb2764489a3f4200b6132aa2ed",
+      "base_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "head_sha256": "eb739b338a09333e56fec65ffc6a74677fb95f564be7c50245689ed5a833827c",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/cli_auth.rs and cli_auth/persistence.rs own all six public CLI-auth operations in configured Rust public-ingress mode; agent-cli-core owns the native client credential lifecycle. native/crates/server-foundation/src/public_ingress/cli_auth.rs and cli_auth/persistence.rs own all six public CLI-auth operations in configured Rust public-ingress mode; agent-cli-core owns the native client credential lifecycle. Configured public Project reads are owned by native/crates/server-foundation/src/public_ingress/project_reads.rs and native/crates/d1-persistence/src/project_reads.rs; configured organization Resource routes and canonical Resource state are owned by native/crates/server-foundation/src/public_ingress/organization_resources.rs and native/crates/d1-persistence/src/organization_resources.rs.",
-      "compatibility_boundary": "Keep the unchanged pre-migration six Node handlers only for supported ingress-off deployments. registerApiRoutes passes nativeCliAuthOwner from actual public-ingress configuration; when enabled none of these legacy handlers or their lifecycle services are registered or invoked. Native failures never enable Node fallback. The default standalone off path remains explicit legacy business debt, not a globally retired capability. Keep the unchanged pre-migration six Node handlers only for supported ingress-off deployments. registerApiRoutes passes nativeCliAuthOwner from actual public-ingress configuration; when enabled none of these legacy handlers or their lifecycle services are registered or invoked. Native failures never enable Node fallback. The default standalone off path remains explicit legacy business debt, not a globally retired capability. The same registration passes immutable startup configuration into the Project and organization Resource route gates: Node Project list/detail and organization Resource/intelligence-profile routes remain available only in ingress-off compatibility mode; configured public Rust ingress owns these operations directly and failures never fall back to Node.",
-      "retirement_criterion": "After all supported auth/startup paths default to Rust ingress and explicit off deployments have an upgrade path with real startup/package/CLI acceptance, remove the off-mode legacy registrations and CLI lifecycle helpers. After all supported auth/startup paths default to Rust ingress and explicit off deployments have an upgrade path with real startup/package/CLI acceptance, remove the off-mode legacy registrations and CLI lifecycle helpers. Retire the Project/read and organization Resource route registrations after Rust public ingress is supported in every deployment and the separate Node-owned Project attachment/newResources compatibility writer is migrated; these gates do not mean that writer is already retired.",
-      "reviewer": "/root/follow347_final_merge_review /root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/combined-auth-r53/independent-off-mode-compatibility-review-r53.json /private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/combined-auth-r53/independent-off-mode-compatibility-review-r53.json; /private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/project_reads.rs and native/crates/d1-persistence/src/project_reads.rs own configured public Project reads; native/crates/server-foundation/src/public_ingress/organization_resources.rs and native/crates/d1-persistence/src/organization_resources.rs own configured organization Resource routes and canonical Resource state.",
+      "compatibility_boundary": "Select Project and organization Resource compatibility registrations once from immutable startup configuration. Node Project list/detail and organization Resource/intelligence-profile reads remain registered only in ingress-off mode; configured public Rust ingress owns these operations directly, with no Node fallback.",
+      "retirement_criterion": "Remove these ingress-off registrations after Rust public ingress is supported in every deployment. Separately migrate Node-owned Project attachment/newResources writes before claiming complete Resource retirement.",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json; current-main composition awaiting R5 stage confirmation",
       "review_status": "reviewed",
       "allowed_node_duties": [
-        "Unchanged legacy CLI-auth behavior only when Rust public ingress is not configured.",
-        "Select route registration ownership once from startup configuration; never request-time fallback.",
         "Select Project and organization Resource route compatibility registrations once from immutable startup configuration; preserve existing ingress-off behavior."
       ],
       "prohibited_node_duties": [
-        "No CLI challenge/key/auth lifecycle decision or persistence from Node behind configured Rust ingress.",
-        "No new Node backend features or new legacy behavior.",
-        "No request-time Node fallback for Rust-owned public Project reads or organization Resource CRUD/intelligence-profile routes when Rust ingress is configured."
-      ]
-    },
-    {
-      "path": "server/src/routes/access.ts",
-      "base_sha256": "f2effc8bcf8ec3794b311cec85123334450512b59fb89a6414c877152d49243e",
-      "head_sha256": "f22a7c0cbf45f2f0ce035c41f9417125ca01f561a238d09653e2d7c87edee828",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/cli_auth.rs and cli_auth/persistence.rs own all six public CLI-auth operations in configured Rust public-ingress mode; agent-cli-core owns the native client credential lifecycle.",
-      "compatibility_boundary": "Keep the unchanged pre-migration six Node handlers only for supported ingress-off deployments. registerApiRoutes passes nativeCliAuthOwner from actual public-ingress configuration; when enabled none of these legacy handlers or their lifecycle services are registered or invoked. Native failures never enable Node fallback. The default standalone off path remains explicit legacy business debt, not a globally retired capability.",
-      "retirement_criterion": "After all supported auth/startup paths default to Rust ingress and explicit off deployments have an upgrade path with real startup/package/CLI acceptance, remove the off-mode legacy registrations and CLI lifecycle helpers.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/combined-auth-r53/independent-off-mode-compatibility-review-r53.json",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Unchanged legacy CLI-auth behavior only when Rust public ingress is not configured.",
-        "Select route registration ownership once from startup configuration; never request-time fallback."
-      ],
-      "prohibited_node_duties": [
-        "No CLI challenge/key/auth lifecycle decision or persistence from Node behind configured Rust ingress.",
-        "No new Node backend features or new legacy behavior."
-      ]
-    },
-    {
-      "path": "server/src/services/rust-public-ingress-config.ts",
-      "base_sha256": "dff008782ee71cafce558597fa052e58500500dbe4c9843e357c14dbb10a38be",
-      "head_sha256": "355ddaa8d4248cca1bed9f76401bc7892e56f16d53def85f051f572c9ed0cc02",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/browser_auth/config.rs, native/crates/server-foundation/src/public_ingress.rs, and native/crates/server-foundation/src/public_ingress/email_auth.rs",
-      "compatibility_boundary": "This file declares the typed transport shape for immutable Better Auth issuer facts. It adds no request-time policy or business behavior. Rust owns the three direct email auth routes; remaining Better Auth wildcard endpoints remain explicit legacy Node migration debt.",
-      "retirement_criterion": "Delete this TypeScript descriptor when Rust startup owns public-ingress configuration and no TypeScript ingress transport remains.",
-      "reviewer": "independent descriptor transport reviewer r33-r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/independent-descriptor-transport-recheck-r33-r1.json: ACCEPT scoped to the descriptor delta and its origin regression; not full candidate or runtime/PAV acceptance",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Declare TypeScript fields for immutable Better Auth startup issuer facts transported to Rust."
-      ],
-      "prohibited_node_duties": [
-        "No Node request-time sign-up, sign-in, sign-out, CSRF/origin, rate-limit, or signup-policy decision for Rust-owned email routes.",
-        "No Node password/session persistence or hidden fallback for those routes."
+        "No request-time Node fallback for Rust-owned public Project reads or organization Resource CRUD/intelligence-profile routes when Rust ingress is configured.",
+        "No new Node backend business responsibilities."
       ]
     },
     {
