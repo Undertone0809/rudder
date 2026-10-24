@@ -200,6 +200,7 @@ export function useChatStopSubmission({
             delete stopRecoveryStreamKeysRef.current[chatId];
           }
           await Promise.allSettled([
+            queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
             queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(orgId, chatId) }),
             queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(orgId, chatId) }),
             queryClient.invalidateQueries({ queryKey: queryKeys.chats.nativeRecovery(orgId, chatId) }),
@@ -283,6 +284,10 @@ export function useChatStopSubmission({
         void queryClient.invalidateQueries({
           queryKey: queryKeys.chats.queue(orgId, chatId),
         });
+        void Promise.allSettled([
+          queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(orgId, chatId) }),
+        ]);
         if (streamKey && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
           setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
           setChatSendInFlight(streamScopeKey, false);

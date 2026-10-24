@@ -581,6 +581,7 @@ export function GoalChatPanel({
 
   const refreshAfterStop = useCallback(async (organizationId: string, conversationId: string) => {
     await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(organizationId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(organizationId, conversationId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(organizationId, conversationId) }),
