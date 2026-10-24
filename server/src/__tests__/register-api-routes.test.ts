@@ -3,17 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerApiRoutes } from "../bootstrap/register-api-routes.js";
 import * as localAccountRoutes from "../routes/local-account-auth.js";
 
-const mocks = vi.hoisted(() => ({ organizationRoutes: vi.fn() }));
+const mocks = vi.hoisted(() => ({ organizationRoutes: vi.fn(), projectRoutes: vi.fn() }));
 
 vi.mock("../routes/orgs.js", () => ({ organizationRoutes: mocks.organizationRoutes }));
+vi.mock("../routes/projects.js", () => ({ projectRoutes: mocks.projectRoutes }));
 
 beforeEach(() => {
   mocks.organizationRoutes.mockReset();
   mocks.organizationRoutes.mockImplementation(() => Router());
+  mocks.projectRoutes.mockReset();
+  mocks.projectRoutes.mockImplementation(() => Router());
 });
 
 describe("registerApiRoutes", () => {
-  it("retires the legacy organization catalog handlers only when native public ingress is configured", () => {
+  it("retires legacy organization catalog and Project read handlers only when public ingress is configured", () => {
     const baseOptions = {
       uiMode: "none", serverPort: 3100, storageService: {}, deploymentMode: "local_trusted",
       deploymentExposure: "private", allowedHostnames: [], bindHost: "127.0.0.1",
@@ -25,9 +28,11 @@ describe("registerApiRoutes", () => {
       rustPublicIngress: {},
     } as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: true });
+    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeProjectReads: true });
 
     registerApiRoutes({} as never, baseOptions as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: false });
+    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeProjectReads: false });
   });
 
   it("builds the API router from the current server dependencies", () => {

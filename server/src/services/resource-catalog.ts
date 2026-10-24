@@ -260,21 +260,11 @@ export async function replaceProjectResourceAttachments(
     throw unprocessable("Project must belong to same organization");
   }
   await lockNodeMutationAuthority(dbOrTx, input.orgId);
-  const previousAttachments = await dbOrTx
-    .select({
-      resourceId: projectResourceAttachments.resourceId,
-      role: projectResourceAttachments.role,
-      note: projectResourceAttachments.note,
-      sortOrder: projectResourceAttachments.sortOrder,
-      isPrimary: projectResourceAttachments.isPrimary,
-    })
-    .from(projectResourceAttachments)
-    .where(
-      and(
-        eq(projectResourceAttachments.orgId, input.orgId),
-        eq(projectResourceAttachments.projectId, input.projectId),
-      ),
-    );
+  const previousAttachments = (await listProjectResourceAttachmentsByProjectIds(
+    dbOrTx,
+    input.orgId,
+    [input.projectId],
+  )).get(input.projectId) ?? [];
 
   const createdResourceIds: string[] = [];
 
@@ -284,15 +274,9 @@ export async function replaceProjectResourceAttachments(
   }
 
   const combinedAttachments = [
-    ...(input.attachments ?? previousAttachments.map((attachment: {
-      resourceId: string;
-      role: string;
-      note: string | null;
-      sortOrder: number;
-      isPrimary: boolean;
-    }) => ({
+    ...(input.attachments ?? previousAttachments.map((attachment) => ({
       resourceId: attachment.resourceId,
-      role: attachment.role as ProjectResourceAttachmentInput["role"],
+      role: attachment.role,
       note: attachment.note,
       sortOrder: attachment.sortOrder,
       isPrimary: attachment.isPrimary,
