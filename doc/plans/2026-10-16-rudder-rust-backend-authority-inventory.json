@@ -4641,7 +4641,7 @@
     },
     {
       "path": "server/src/routes/agents.core.ts",
-      "sha256": "a128cae645f1b51c450f4627de5cc26bbd117b0360e6a40b8b9c65ca19641e5e",
+      "sha256": "0d180f301a096030b6bfdd3e413b9721a3aa122a5b88c19d4c4ea98432223367",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -16678,7 +16678,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 67,
+      "line": 65,
       "signature": "server/src/routes/agents.core.ts|http-route|router|DELETE|/agents/:id/keys/:keyId",
       "receiver": "router",
       "method": "DELETE",
@@ -16728,7 +16728,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 65,
+      "line": 63,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/:id/keys",
       "receiver": "router",
       "method": "GET",
@@ -16768,7 +16768,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 64,
+      "line": 67,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/me/inbox-lite",
       "receiver": "router",
       "method": "GET",
@@ -16838,7 +16838,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 66,
+      "line": 64,
       "signature": "server/src/routes/agents.core.ts|http-route|router|POST|/agents/:id/keys",
       "receiver": "router",
       "method": "POST",
@@ -59147,300 +59147,26 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/bootstrap/register-api-routes.ts",
-      "base_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
-      "head_sha256": "eb739b338a09333e56fec65ffc6a74677fb95f564be7c50245689ed5a833827c",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/project_reads.rs and native/crates/d1-persistence/src/project_reads.rs own configured public Project reads; native/crates/server-foundation/src/public_ingress/organization_resources.rs and native/crates/d1-persistence/src/organization_resources.rs own configured organization Resource routes and canonical Resource state.",
-      "compatibility_boundary": "Select Project and organization Resource compatibility registrations once from immutable startup configuration. Node Project list/detail and organization Resource/intelligence-profile reads remain registered only in ingress-off mode; configured public Rust ingress owns these operations directly, with no Node fallback.",
-      "retirement_criterion": "Remove these ingress-off registrations after Rust public ingress is supported in every deployment. Separately migrate Node-owned Project attachment/newResources writes before claiming complete Resource retirement.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json; current-main composition awaiting R5 stage confirmation",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Select Project and organization Resource route compatibility registrations once from immutable startup configuration; preserve existing ingress-off behavior."
-      ],
-      "prohibited_node_duties": [
-        "No request-time Node fallback for Rust-owned public Project reads or organization Resource CRUD/intelligence-profile routes when Rust ingress is configured.",
-        "No new Node backend business responsibilities."
-      ]
-    },
-    {
-      "path": "server/src/routes/orgs.ts",
-      "base_sha256": "21e36633c1003d26a796e3a00c46e602694b694a5cb12e8d10c93711a08ec500",
-      "head_sha256": "8df5172c84c419736726b83ac5e58f21b689d7c2245047d5d03219cad3f77400",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/organization_resources.rs and native/crates/d1-persistence/src/organization_resources.rs own configured public organization Resource CRUD/intelligence-profile reads and canonical Resource state.",
-      "compatibility_boundary": "The existing Node organization Resource CRUD and intelligence-profile read routes are registered only when the nativeResourceRoutes startup option is false. Configured public Rust ingress owns these paths directly; no Node route is registered as a fallback after Rust errors. Existing ingress-off and standalone behavior is retained.",
-      "retirement_criterion": "Remove the ingress-off Node organization Resource routes when all supported deployments use Rust public ingress. Separately migrate the Node-owned Project attachment/newResources compatibility writer before claiming all Node Resource writes are retired.",
-      "reviewer": "independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Preserve existing organization Resource CRUD and intelligence-profile route behavior only in native-public-ingress-off compatibility mode, including current access, validation, forwarding, and activity-log contracts."
-      ],
-      "prohibited_node_duties": [
-        "Do not register organization Resource CRUD or intelligence-profile read handlers in configured public Rust-ingress mode.",
-        "Do not retry or fall back to Node when a Rust-owned public operation fails."
-      ]
-    },
-    {
-      "path": "server/src/routes/projects.ts",
-      "base_sha256": "c396c279137067a612dfb52f526a13bace263a41877b4604fb0f7a2292aaedb3",
-      "head_sha256": "b1012712262d238fc3605de175cd2daf063d079049ddf833ff92b8a0a81ea105",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/project_reads.rs and native/crates/d1-persistence/src/project_reads.rs own configured public Project collection and detail reads.",
-      "compatibility_boundary": "The Node Project collection/detail routes remain private-listener compatibility bridges only when nativeProjectReads is false. When public Rust ingress is configured, Rust owns these public paths and Node registers no list/detail fallback; other Project mutation and Resource routes remain separately scoped.",
-      "retirement_criterion": "Remove the Node Project list/detail bridge registrations after Rust owns those reads in every supported deployment and default no-Node acceptance covers collection and detail behavior.",
-      "reviewer": "independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Keep the existing Project collection/detail compatibility bridge in ingress-off mode only."
-      ],
-      "prohibited_node_duties": [
-        "Do not register or serve Project list/detail requests through Node in configured public Rust-ingress mode.",
-        "Do not add a Node fallback for a Rust public-read failure."
-      ]
-    },
-    {
-      "path": "server/src/services/projects.ts",
-      "base_sha256": "4074964d8d9d049de63292ada91434786d66fd9f1c8b1e9cf5609d65f296dc7c",
-      "head_sha256": "eb91944e7a2964677c514c1e847a4d634445481d31c9a1a811cd95550694adab",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/organization_resources.rs owns Resource claim/delete coordination; native/crates/d1-persistence/src/project_patches.rs owns Rust Project-Goal mutations.",
-      "compatibility_boundary": "Node retains Project mutation behavior only for Node-owned Projects. Existing attachment and inline newResources paths coordinate organization, Resource, and Project fences in one transaction; inline newResources may create a Node-owned Resource as part of a legacy Project update. This is compatibility debt, not ownership of Rust-owned Resource or Project-Goal state.",
-      "retirement_criterion": "Retire the Node Project compatibility writer only after Rust owns the Project edge/update path for the remaining Node-owned Projects and tests prove inline newResources, edge CRUD, and Resource claim/delete preserve scope and ownership; do not report Resource creation through Node project updates as already retired.",
-      "reviewer": "independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Mutate attachment edges for Node-owned Projects through existing edge and inline newResources compatibility paths, using organization/resource/Project fence ordering.",
-        "Retain the legacy inline newResources behavior that can create a Node-owned Resource as part of updating a Node-owned Project."
-      ],
-      "prohibited_node_duties": [
-        "Do not write fields on Rust-owned Resources or mutate Rust-owned Project-Goal state.",
-        "Do not expose this Node compatibility writer as the public organization Resource API or fall back to it for Rust-owned operations."
-      ]
-    },
-    {
-      "path": "server/src/services/resource-catalog.ts",
-      "base_sha256": "41b1fea00e64f6e4980d469c54847879eda8e2b77c6ea6e604fb860a4d687fa4",
-      "head_sha256": "655adbfade6baf290df306f4f2cad7bbbf5a48922968dfb68a522d919526c1dc",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/d1-persistence/src/organization_resources.rs owns configured public Resource state and Resource/Project coordination; native/crates/d1-persistence/src/project_patches.rs owns Rust Project-Goal mutations.",
-      "compatibility_boundary": "This Node service retains ingress-off organization Resource service behavior and Node-owned Project attachment-edge operations. Edge replacements serialize through the shared organization fence, Resource checks, and Project fence. Inline newResources used by the Node Project compatibility path can still create a Node-owned Resource; this remains explicit migration debt.",
-      "retirement_criterion": "Retire Node organization Resource service entry points when every supported public deployment uses Rust ingress, and retire the attachment/newResources compatibility operations only after Rust owns remaining Node-owned Project edges and the reviewed scope/ownership tests pass.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-e-preparation-review-r1.json",
-      "review_status": "reviewed",
-      "allowed_node_duties": [
-        "Retain existing ingress-off organization Resource service behavior.",
-        "Mutate Resource attachment edges for Node-owned Projects through the existing compatibility APIs with the reviewed organization/resource/Project fence order.",
-        "Retain inline newResources behavior as explicit Node-owned Project compatibility debt."
-      ],
-      "prohibited_node_duties": [
-        "Do not implement configured public organization Resource CRUD/intelligence-profile reads or bypass the Rust owner.",
-        "Do not mutate Rust-owned Resource fields or Rust-owned Project-Goal state; do not use Node as fallback after Rust failure."
-      ]
-    },
-    {
       "path": "server/src/routes/agents.core.ts",
-      "base_sha256": "d46af15ad40343724d58a94acb65986d05282886ecb86daa677f71ae0b52013e",
-      "head_sha256": "a128cae645f1b51c450f4627de5cc26bbd117b0360e6a40b8b9c65ca19641e5e",
+      "base_sha256": "a128cae645f1b51c450f4627de5cc26bbd117b0360e6a40b8b9c65ca19641e5e",
+      "head_sha256": "0d180f301a096030b6bfdd3e413b9721a3aa122a5b88c19d4c4ea98432223367",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own the six public configuration and revision operations in native identity-ingress mode.",
-      "compatibility_boundary": "The existing six Node configuration/revision handlers remain unchanged for ingress-off compatibility only. When nativeAgentCorePaths is enabled, the public Rust ingress owns these paths and the Node handlers are not registered. No request-time fallback is added; other legacy AgentCore routes retain their existing explicit boundaries.",
-      "retirement_criterion": "Remove these off-mode handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with acceptance coverage.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/ragc25/independent-stage-review-r1.json",
-      "review_status": "reviewed",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own Agent API-key listing, issuance, and revocation plus the previously reviewed configuration/revision operations in native identity-ingress mode.",
+      "compatibility_boundary": "Existing Node Agent API-key and configuration/revision handlers remain only for ingress-off compatibility. With nativeAgentCorePaths enabled, public Rust ingress owns these routes and the Node handlers are not registered. No request-time fallback is added.",
+      "retirement_criterion": "Remove these off-mode handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with public acceptance coverage.",
+      "reviewer": "pending independent review; earlier configuration/revision review does not cover the added API-key routes",
+      "review_reference": "pending stage review for Agent API-key routes",
+      "review_status": "pending",
       "allowed_node_duties": [
-        "Preserve the unchanged legacy configuration/revision behavior only in ingress-off compatibility mode."
+        "Preserve unchanged legacy API-key and configuration/revision behavior only in ingress-off compatibility mode."
       ],
       "prohibited_node_duties": [
-        "No configuration or revision request handling, authorization, persistence, or fallback when nativeAgentCorePaths is enabled."
+        "No Agent API-key listing, issuance, revocation, configuration, or revision request handling, authorization, persistence, or fallback when nativeAgentCorePaths is enabled."
       ]
     }
   ],
-  "reviewed_legacy_fence_changes": [
-    {
-      "id": "project-create-attachments-transaction",
-      "path": "server/src/services/projects.ts",
-      "change_kind": "existing_operation_mapping",
-      "semantic_operation": "project_create_attachment_atomicity",
-      "base_sha256": "4074964d8d9d049de63292ada91434786d66fd9f1c8b1e9cf5609d65f296dc7c",
-      "head_sha256": "eb91944e7a2964677c514c1e847a4d634445481d31c9a1a811cd95550694adab",
-      "base_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/projects.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, orgId); await assertGoalsBelongToOrganization(tx, org… [sha256:8fccd86a069b27acab51e46160090853e44111238e0ee9099b1bf472e999d714]",
-        "line": 695
-      },
-      "head_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/projects.ts|db-call|db|transaction|async (tx) => { await lockNodeMutationAuthority(tx, orgId); await assertGoalsBelongToOrganization(tx, org… [sha256:818a774e2c817b64761bcc1980b4e9a44d3edb5fb287c4acae6aa5baad87af55]",
-        "line": 695
-      },
-      "base_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/projects.ts|db-write-candidate|tx|insert|projects",
-        "line": 717
-      },
-      "head_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/projects.ts|db-write-candidate|tx|insert|projects",
-        "line": 717
-      },
-      "rust_authority": "Rust public ingress and D1 persistence own Project and Resource authority in configured public-ingress mode; this mapping only records the existing Node transaction callback and its unchanged writer while its locks were added.",
-      "compatibility_boundary": "In ingress-off mode this existing Node operation remains available. In configured Rust public ingress mode, the public route is gated to Rust and failures do not fall back to Node. The Node-owned inline newResources writer remains explicit compatibility debt.",
-      "retirement_criterion": "Remove this Node transaction only after all supported ingress modes use Rust authority and the ingress-off compatibility path has an upgrade path; migrate the separate Node inline-resource writer before removing the Project attachment compatibility service.",
-      "reviewer": "/root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed"
-    },
-    {
-      "id": "project-update-attachments-transaction",
-      "path": "server/src/services/projects.ts",
-      "change_kind": "existing_operation_mapping",
-      "semantic_operation": "project_update_attachment_atomicity",
-      "base_sha256": "4074964d8d9d049de63292ada91434786d66fd9f1c8b1e9cf5609d65f296dc7c",
-      "head_sha256": "eb91944e7a2964677c514c1e847a4d634445481d31c9a1a811cd95550694adab",
-      "base_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/projects.ts|db-call|db|transaction|async (tx) => { await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id); const updatedR… [sha256:5e29fb480dae8601ab22fd157d83c06e8c06335aa56548fc1f606ea5c48ca257]",
-        "line": 805
-      },
-      "head_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/projects.ts|db-call|db|transaction|async (tx) => { const replacesAttachments = resourceAttachments !== undefined || newResources !== undefin… [sha256:bcd0f3efa4faffa60e7d32be23bbad2f3fa8b2731d5c5663906ddf171d0aeb3d]",
-        "line": 802
-      },
-      "base_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/projects.ts|db-write-candidate|tx|update|projects",
-        "line": 808
-      },
-      "head_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/projects.ts|db-write-candidate|tx|update|projects",
-        "line": 818
-      },
-      "rust_authority": "Rust public ingress and D1 persistence own Project and Resource authority in configured public-ingress mode; this mapping only records the existing Node transaction callback and its unchanged writer while its locks were added.",
-      "compatibility_boundary": "In ingress-off mode this existing Node operation remains available. In configured Rust public ingress mode, the public route is gated to Rust and failures do not fall back to Node. The Node-owned inline newResources writer remains explicit compatibility debt.",
-      "retirement_criterion": "Remove this Node transaction only after all supported ingress modes use Rust authority and the ingress-off compatibility path has an upgrade path; migrate the separate Node inline-resource writer before removing the Project attachment compatibility service.",
-      "reviewer": "/root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed"
-    },
-    {
-      "id": "project-resource-attachment-create-transaction",
-      "path": "server/src/services/resource-catalog.ts",
-      "change_kind": "existing_operation_mapping",
-      "semantic_operation": "project_resource_attachment_create_atomicity",
-      "base_sha256": "41b1fea00e64f6e4980d469c54847879eda8e2b77c6ea6e604fb860a4d687fa4",
-      "head_sha256": "655adbfade6baf290df306f4f2cad7bbbf5a48922968dfb68a522d919526c1dc",
-      "base_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const project = await tx .select({ orgId: projects.orgId }) .from(projects) .wher… [sha256:12d5455fceebeef9c96b57e52c25ccaeb2b49172f12048b883bb9bb04b9646a9]",
-        "line": 474
-      },
-      "head_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const project = await tx .select({ orgId: projects.orgId }) .from(projects) .wher… [sha256:24b2c2a858a59c202e81b8b8ce0130f2e291f3f8e6c27073c18ce839b1c65529]",
-        "line": 487
-      },
-      "base_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|insert|projectResourceAttachments",
-        "line": 548
-      },
-      "head_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|insert|projectResourceAttachments",
-        "line": 563
-      },
-      "rust_authority": "Rust public ingress and D1 persistence own Project and Resource authority in configured public-ingress mode; this mapping only records the existing Node transaction callback and its unchanged writer while its locks were added.",
-      "compatibility_boundary": "In ingress-off mode this existing Node operation remains available. In configured Rust public ingress mode, the public route is gated to Rust and failures do not fall back to Node. The Node-owned inline newResources writer remains explicit compatibility debt.",
-      "retirement_criterion": "Remove this Node transaction only after all supported ingress modes use Rust authority and the ingress-off compatibility path has an upgrade path; migrate the separate Node inline-resource writer before removing the Project attachment compatibility service.",
-      "reviewer": "/root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed"
-    },
-    {
-      "id": "project-resource-attachment-update-transaction",
-      "path": "server/src/services/resource-catalog.ts",
-      "change_kind": "existing_operation_mapping",
-      "semantic_operation": "project_resource_attachment_update_atomicity",
-      "base_sha256": "41b1fea00e64f6e4980d469c54847879eda8e2b77c6ea6e604fb860a4d687fa4",
-      "head_sha256": "655adbfade6baf290df306f4f2cad7bbbf5a48922968dfb68a522d919526c1dc",
-      "base_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const existing = await tx .select() .from(projectResourceAttachments) .where(and(… [sha256:0c620a96944e9343c0046917b415a8b60b3e5550513a9e60bcaf7b382b9bef45]",
-        "line": 569
-      },
-      "head_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const existing = await tx .select() .from(projectResourceAttachments) .where(and(… [sha256:33cccb0f879ac7fdeb391e8c468aca5cb52dd345e0c014c124b959ef49501246]",
-        "line": 584
-      },
-      "base_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|update|projectResourceAttachments",
-        "line": 598
-      },
-      "head_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|update|projectResourceAttachments",
-        "line": 614
-      },
-      "rust_authority": "Rust public ingress and D1 persistence own Project and Resource authority in configured public-ingress mode; this mapping only records the existing Node transaction callback and its unchanged writer while its locks were added.",
-      "compatibility_boundary": "In ingress-off mode this existing Node operation remains available. In configured Rust public ingress mode, the public route is gated to Rust and failures do not fall back to Node. The Node-owned inline newResources writer remains explicit compatibility debt.",
-      "retirement_criterion": "Remove this Node transaction only after all supported ingress modes use Rust authority and the ingress-off compatibility path has an upgrade path; migrate the separate Node inline-resource writer before removing the Project attachment compatibility service.",
-      "reviewer": "/root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed"
-    },
-    {
-      "id": "project-resource-attachment-remove-transaction",
-      "path": "server/src/services/resource-catalog.ts",
-      "change_kind": "existing_operation_mapping",
-      "semantic_operation": "project_resource_attachment_remove_atomicity",
-      "base_sha256": "41b1fea00e64f6e4980d469c54847879eda8e2b77c6ea6e604fb860a4d687fa4",
-      "head_sha256": "655adbfade6baf290df306f4f2cad7bbbf5a48922968dfb68a522d919526c1dc",
-      "base_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const existing = await tx .select() .from(projectResourceAttachments) .where(and(… [sha256:131eaac8359b47b5852a9b95dea5de2285ae57315d8e0fd23029a57a16b3cc19]",
-        "line": 617
-      },
-      "head_surface": {
-        "type": "database_call_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-call|db|transaction|async (tx) => { const existing = await tx .select() .from(projectResourceAttachments) .where(and(… [sha256:2f6eeadea685bfc2c4424ceb8d33ece59875bcdd57d5b5a6fd36846630a3f85d]",
-        "line": 633
-      },
-      "base_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|delete|projectResourceAttachments",
-        "line": 637
-      },
-      "head_protected_surface": {
-        "type": "database_write_candidate",
-        "signature": "server/src/services/resource-catalog.ts|db-write-candidate|tx|delete|projectResourceAttachments",
-        "line": 654
-      },
-      "rust_authority": "Rust public ingress and D1 persistence own Project and Resource authority in configured public-ingress mode; this mapping only records the existing Node transaction callback and its unchanged writer while its locks were added.",
-      "compatibility_boundary": "In ingress-off mode this existing Node operation remains available. In configured Rust public ingress mode, the public route is gated to Rust and failures do not fall back to Node. The Node-owned inline newResources writer remains explicit compatibility debt.",
-      "retirement_criterion": "Remove this Node transaction only after all supported ingress modes use Rust authority and the ingress-off compatibility path has an upgrade path; migrate the separate Node inline-resource writer before removing the Project attachment compatibility service.",
-      "reviewer": "/root/follow347_final_merge_review; independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
       "id": "rust-native-identity-proof-v1",
