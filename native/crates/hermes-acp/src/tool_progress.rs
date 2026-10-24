@@ -68,7 +68,7 @@ impl ToolProgress {
             // ACP updates are patches. Missing content/status preserves the last
             // snapshot; an explicit empty content array clears the output.
             let old_input = snapshot.input.clone();
-            add_location(&mut snapshot.input, update);
+            add_location(&mut snapshot.input, update, true);
             if old_input != snapshot.input {
                 events.push(HermesProgressKind::ToolCall {
                     tool_call_id: id.clone(),
@@ -196,10 +196,10 @@ fn request(update: &Value, title: &str, include_content: bool) -> (String, Value
         title
     };
     let mut input = Value::Object(input);
-    add_location(&mut input, update);
+    add_location(&mut input, update, false);
     (bounded(name, 1024), input)
 }
-fn add_location(input: &mut Value, update: &Value) {
+fn add_location(input: &mut Value, update: &Value, clear_empty: bool) {
     let Some(locations) = update.get("locations").and_then(Value::as_array) else {
         return;
     };
@@ -207,10 +207,12 @@ fn add_location(input: &mut Value, update: &Value) {
         .iter()
         .find_map(|v| v.get("path").and_then(Value::as_str))
     else {
-        input
-            .as_object_mut()
-            .expect("typed input object")
-            .remove("path");
+        if clear_empty {
+            input
+                .as_object_mut()
+                .expect("typed input object")
+                .remove("path");
+        }
         return;
     };
     if !path.is_empty() {
@@ -320,6 +322,26 @@ mod tests {
                 _ => panic!("tool request"),
             }
         }
+    }
+    #[test]
+    fn preserves_initial_title_path_with_empty_locations_then_applies_explicit_clear() {
+        let mut state = ToolProgress::default();
+        let call = state
+            .normalize(
+                &json!({"title":"read: /tmp/report.txt","locations":[]}),
+                "a".into(),
+                true,
+            )
+            .unwrap();
+        assert!(
+            matches!(&call[0], HermesProgressKind::ToolCall {input,..} if input["path"] == "/tmp/report.txt")
+        );
+        let cleared = state
+            .normalize(&json!({"locations":[]}), "a".into(), false)
+            .unwrap();
+        assert!(
+            matches!(&cleared[0], HermesProgressKind::ToolCall {input,..} if input.get("path").is_none())
+        );
     }
     #[test]
     fn folds_partial_updates_and_interleaved_ids_without_fabricating_completion() {
