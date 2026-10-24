@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(normalize_project_url_key("東京"), None);
         assert_eq!(
             derive_project_url_key("東京", "11111111-1111-4111-8111-111111111111"),
-            Some("11111111111141118111111111111111".to_owned())
+            Some("11111111-1111-4111-8111-111111111111".to_owned())
         );
     }
 }
