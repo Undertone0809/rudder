@@ -27,6 +27,11 @@ formatters and is revalidated before spawning. Adding transport integrity checks
 therefore preserves existing chats without weakening launch validation or
 rotating their bindings.
 
+Admission stores the full launch revision in the immutable Run snapshot; claim
+must match it before provider effects. Pending Hermes Runs from before this pin
+was recorded fail closed and require a new turn. Existing chat history and
+session bindings are preserved; no Run or binding is rewritten to accept drift.
+
 Retire this coercion when the selected supported Hermes ACP version performs the
 same normalization itself and the mixed-batch regression passes without it.
 This is a protocol compatibility adapter, not a Python backend authority path.
