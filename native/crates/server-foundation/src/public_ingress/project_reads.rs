@@ -336,7 +336,7 @@ fn query_organization_id(query: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
-fn agent_organization_id(identity: &NativeIngressIdentity) -> Option<&str> {
+pub(super) fn agent_organization_id(identity: &NativeIngressIdentity) -> Option<&str> {
     match identity {
         NativeIngressIdentity::AgentKey { org_id, .. } => Some(org_id),
         NativeIngressIdentity::AgentJwt(identity) => Some(&identity.org_id),
@@ -344,7 +344,7 @@ fn agent_organization_id(identity: &NativeIngressIdentity) -> Option<&str> {
     }
 }
 
-fn forbidden_response(identity: &NativeIngressIdentity) -> HttpResponse {
+pub(super) fn forbidden_response(identity: &NativeIngressIdentity) -> HttpResponse {
     let message = if matches!(
         identity,
         NativeIngressIdentity::AgentKey { .. } | NativeIngressIdentity::AgentJwt(_)

@@ -193,9 +193,14 @@ pub(super) async fn handle(
                 operation: OrganizationCatalogReadOperation::Resources,
                 legacy_date_timezone: None,
             };
-            catalog_read(&state, &organization_id, &input, &authorizer).await
+            catalog_read(&state, &organization_id, &input, &identity, &authorizer).await
         }
         Endpoint::ListIntelligenceProfiles { .. } => {
+            if super::project_reads::agent_organization_id(&identity)
+                .is_some_and(|agent_org| agent_org != organization_id)
+            {
+                return super::project_reads::forbidden_response(&identity);
+            }
             if actor.kind != "user" {
                 return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
             }
@@ -203,7 +208,7 @@ pub(super) async fn handle(
                 operation: OrganizationCatalogReadOperation::IntelligenceProfiles,
                 legacy_date_timezone: None,
             };
-            catalog_read(&state, &organization_id, &input, &authorizer).await
+            catalog_read(&state, &organization_id, &input, &identity, &authorizer).await
         }
         Endpoint::CreateResource { .. } => {
             if actor.kind != "user" {
@@ -416,6 +421,7 @@ async fn catalog_read(
     state: &IngressState,
     organization_id: &str,
     input: &OrganizationCatalogReadInput,
+    identity: &NativeIngressIdentity,
     authorizer: &dyn NativeAgentAuthorizer,
 ) -> HttpResponse {
     let DatabaseState::Configured(_) = &state.foundation.database else {
@@ -445,7 +451,7 @@ async fn catalog_read(
         Err(PublicOrganizationResourceError::Forbidden)
         | Err(PublicOrganizationResourceError::Store(StoreError::PublicIdentityForbidden))
         | Err(PublicOrganizationResourceError::Catalog(OrganizationCatalogReadError::Forbidden)) => {
-            HttpResponse::Forbidden().json(json!({"error":"Organization access denied"}))
+            super::project_reads::forbidden_response(identity)
         }
         Err(PublicOrganizationResourceError::Catalog(OrganizationCatalogReadError::Store(
             StoreError::InvalidInput,
