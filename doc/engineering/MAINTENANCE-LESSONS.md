@@ -105,6 +105,15 @@ required; local updater or inventory tests do not qualify skipped jobs.
 **Reject:** handoff after merely opening a PR, treating pending/skipped CI as a
 pass, or widening an allowlist to avoid the source-bound review requirement.
 
+**Comparison-source recovery:** run `40089641446` passed the regenerated
+inventory check, but its PR event still named comparison base `e6eb1d033` while
+the tested merge's first parent was current main `12724f401`. The trusted
+ratchet consequently also evaluated already-merged database migration changes
+whose diff-local records had been retired. Refreshing the PR's unchanged
+`main` target updated its base metadata. Trigger a fresh PR event after that
+refresh; rerunning the old event preserves the stale comparison input. Keep
+the trusted checker and its findings intact.
+
 ## Historical lessons to preserve
 
 The following are source PR records, not newly reproduced runtime results:
