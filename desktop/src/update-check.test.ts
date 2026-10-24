@@ -271,6 +271,62 @@ describe("desktop update checks", () => {
     expect(result.releaseUrl).toBe("complete");
   });
 
+  it.each(["stable", "canary"] as const)("checks real platform assets in the %s HTML fallback after a 403", async (channel) => {
+    const version = channel === "canary" ? "0.7.24-canary.48" : "0.7.24";
+    const tag = channel === "canary" ? `canary/v${version}` : `v${version}`;
+    const requests: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await checkForRudderDesktopUpdates({
+        currentVersion: "0.7.24-canary.23", appName: "Rudder", repo: "example/rudder",
+        releasesUrl: "https://github.com/example/rudder/releases", channel,
+        fetchImpl: async (input, init) => {
+          const url = String(input);
+          requests.push(url);
+          expect(init?.cache).toBe("no-store");
+          if (url.includes("api.github.com")) return new Response("rate limited", { status: 403 });
+          if (!url.includes("expanded_assets")) return new Response(`
+            <a href="/example/rudder/releases/tag/%malformed">unrelated</a>
+            <a href="/example/rudder/releases/tag/${encodeURIComponent(tag)}">release</a>
+          `);
+          return new Response(requiredDesktopUpdateAssetNames(version, process.platform).map((name) =>
+            `<a href="/example/rudder/releases/download/${encodeURIComponent(tag)}/${name}">${name}</a>`,
+          ).join(""));
+        },
+      });
+      expect(result).toMatchObject({ status: "update-available", channel, latestVersion: version });
+      expect(requests.at(-1)).toBe(`https://github.com/example/rudder/releases/expanded_assets/${encodeURIComponent(tag)}`);
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each(["incomplete", "failed", "missing", "wrong-release"])("handles a %s newer HTML asset lookup without inventing update availability", async (failure) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const currentVersion = "0.7.24-canary.47";
+    try {
+      const result = await checkForRudderDesktopUpdates({
+        currentVersion, appName: "Rudder", repo: "example/rudder",
+        releasesUrl: "https://github.com/example/rudder/releases", channel: "canary",
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("api.github.com")) return new Response("rate limited", { status: 403 });
+          if (!url.includes("expanded_assets")) return new Response([47, 48].map((number) =>
+            `<a href="/example/rudder/releases/tag/canary%2Fv0.7.24-canary.${number}">release</a>`,
+          ).join(""));
+          const version = url.endsWith("48") ? "0.7.24-canary.48" : currentVersion;
+          if (version.endsWith("48") && failure === "failed") return new Response("failed", { status: 503 });
+          if (version.endsWith("48") && failure === "missing") return new Response("missing", { status: 404 });
+          const tag = failure === "wrong-release" && version.endsWith("48")
+            ? "canary/v0.7.24-canary.49" : `canary/v${version}`;
+          return new Response(requiredDesktopUpdateAssetNames(version, process.platform)
+            .filter((name) => !(version.endsWith("48") && failure === "incomplete" && name === "SHASUMS256.txt"))
+            .map((name) => `<a href="/example/rudder/releases/download/${encodeURIComponent(tag)}/${name}">asset</a>`).join(""));
+        },
+      });
+      expect(result.status).toBe(failure === "incomplete" ? "up-to-date" : "unavailable");
+      expect(result.latestVersion).toBe(failure === "incomplete" ? currentVersion : undefined);
+    } finally { warn.mockRestore(); }
+  });
+
   it("does not advertise a release when the API and HTML fallback have no complete assets", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {

@@ -610,6 +610,14 @@ against the latest stable release unless the operator enables canary updates in
 Settings > General. With canary enabled, startup, menu, and About-page checks
 compare against the latest canary release. Beta prereleases are ignored; if a
 newer matching release exists, the app prompts the user to update.
+Checks bypass the HTTP cache. If the GitHub REST API is unavailable or
+rate-limited, Desktop reads the releases page and each candidate's expanded
+asset inventory. Both the platform package and `SHASUMS256.txt` must be present
+before a release is offered. A failed newer asset lookup cannot establish that
+the installed version is current; retrying the check can recover without
+changing the update channel.
+Manual checks replace the previous comparison and check-result notification,
+so retrying cannot leave an obsolete Download action or failure toast visible.
 When the operator chooses Update, Desktop starts the bundled CLI
 `start --no-cli` replacement flow for the discovered version. That flow prepares
 the matching server runtime cache, downloads the preferred shell asset when
