@@ -207,6 +207,10 @@ fn add_location(input: &mut Value, update: &Value) {
         .iter()
         .find_map(|v| v.get("path").and_then(Value::as_str))
     else {
+        input
+            .as_object_mut()
+            .expect("typed input object")
+            .remove("path");
         return;
     };
     if !path.is_empty() {
@@ -356,6 +360,19 @@ mod tests {
             .unwrap();
         assert!(
             matches!(&empty[0],HermesProgressKind::ToolCallUpdate {status,content,..} if status=="completed" && content.is_empty())
+        );
+        state
+            .normalize(
+                &json!({"locations":[{"path":"/tmp/old"}]}),
+                "a".into(),
+                false,
+            )
+            .unwrap();
+        let cleared = state
+            .normalize(&json!({"locations":[]}), "a".into(), false)
+            .unwrap();
+        assert!(
+            matches!(&cleared[0], HermesProgressKind::ToolCall {input,..} if input.get("path").is_none())
         );
         let unknown = state
             .normalize(
