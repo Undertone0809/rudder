@@ -110,6 +110,38 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     order_before_call: false,
     rust_proof_owner: "native/crates/server-foundation/src/public_ingress/agent_core.rs",
   }),
+  "rust-native-project-reads-router-v1": Object.freeze({
+    id: "rust-native-project-reads-router-v1",
+    admission_label: "native Project reads router adapter",
+    validation_kind: "compatibility_mount",
+    source_path: "server/src/bootstrap/register-api-routes.ts",
+    receiver: "api",
+    mount_expression: "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })",
+    mount_guard: "Boolean(opts.rustPublicIngress)",
+    order_after: "asset_routes",
+    order_before: "app_builder_routes",
+    order_after_expression: "assetRoutes(db, opts.storageService)",
+    order_before_expression: "appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })",
+    order_after_call: true,
+    order_before_call: true,
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/project_reads.rs",
+  }),
+  "rust-native-cli-auth-router-v1": Object.freeze({
+    id: "rust-native-cli-auth-router-v1",
+    admission_label: "native CLI auth router adapter",
+    validation_kind: "compatibility_mount",
+    source_path: "server/src/bootstrap/register-api-routes.ts",
+    receiver: "api",
+    mount_expression: "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
+    mount_guard: "Boolean(opts.rustPublicIngress)",
+    order_after: "rudder_plugin_routes",
+    order_before: "api_return",
+    order_after_expression: "rudderPluginRoutes(db, pluginMcpOptions)",
+    order_before_expression: "return api",
+    order_after_call: true,
+    order_before_call: false,
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/cli_auth.rs",
+  }),
 });
 
 // These two package-level files are temporary typed transports to Rust-owned
@@ -539,15 +571,15 @@ function callArguments(tokens, openIndex) {
   let braceDepth = 0;
   let firstEnd = openIndex + 1;
   let argCount = 0;
+  let currentArgumentHasToken = false;
   for (let i = openIndex + 1; i < tokens.length; i += 1) {
     const value = tokens[i].value;
     if (value === "(" ) parenDepth += 1;
     else if (value === ")") {
       if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-        if (argCount > 0) argCount += 1;
-        else if (i > openIndex + 1) {
-          firstEnd = i;
-          argCount = 1;
+        if (currentArgumentHasToken) {
+          if (argCount === 0) firstEnd = i;
+          argCount += 1;
         }
         return { firstStart: openIndex + 1, firstEnd, argCount, closeIndex: i };
       }
@@ -557,8 +589,14 @@ function callArguments(tokens, openIndex) {
     else if (value === "{") braceDepth += 1;
     else if (value === "}") braceDepth -= 1;
     else if (value === "," && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      if (argCount === 0) firstEnd = i;
-      argCount += 1;
+      if (currentArgumentHasToken) {
+        if (argCount === 0) firstEnd = i;
+        argCount += 1;
+        currentArgumentHasToken = false;
+      }
+    }
+    if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && value !== ",") {
+      currentArgumentHasToken = true;
     }
     if (parenDepth < 0 || bracketDepth < 0 || braceDepth < 0) break;
   }
