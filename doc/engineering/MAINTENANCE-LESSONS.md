@@ -114,6 +114,49 @@ whose diff-local records had been retired. Refreshing the PR's unchanged
 refresh; rerunning the old event preserves the stale comparison input. Keep
 the trusted checker and its findings intact.
 
+## M005: A merged fix is not an installed update
+
+**Evidence:** the Hermes configuration fix in PR #359 was merged after the
+`0.7.24-canary.49` artifact was published. That installed artifact still exposed
+disabled Hermes options even though source acceptance had passed.
+
+**Correction:** resolve the named installed bundle and runtime, then bind repair
+evidence to its UI and Rust binary hashes. Preserve the existing profile and
+database. Expose the existing owned-runtime restart action in Settings > About
+so recovery does not depend on an accessible tray or force-quitting old runs.
+
+**Regression:** `desktop/scripts/smoke.mjs --scenario=runtime-restart-settings`
+clicks the real About control in an isolated packaged copy, observes a replaced
+runtime descriptor, and checks that Electron and saved organization data survive.
+Component tests cover duplicate clicks, update-in-progress blocking and retry
+after failure. This isolated fixture does not replace acceptance of the named
+installation, its account session or real provider profiles.
+
+**Reject:** reporting a branch, merged PR, healthy unrelated server or staged
+artifact as an updated installation. Record the installed path, version, asset
+identity and terminal user workflow separately from release publication.
+
+## M006: Verify the installed CLI launcher chain
+
+**Evidence:** the local Hermes command used a small shell launcher which clears
+`PYTHONPATH` and `PYTHONHOME`, then executes its venv Python and console script.
+The pinned ACP adapter only recognized the inner console script, so readiness
+incorrectly reported that the installed bootstrap was unavailable.
+
+**Correction:** Rust recognizes that exact launcher grammar without invoking a
+shell, validates the pinned inner installation, and requires both interpreter
+paths to resolve to the same file. It fingerprints both launchers and rechecks
+the expected installation revision immediately before the owned process starts.
+Python still runs with isolated mode and an explicit environment. This is a
+trusted local installation check, not an immutable-filesystem execution claim.
+
+**Regression:** Hermes ACP tests cover direct and wrapped entries, malformed
+commands, interpreter mismatch, source/launcher revision changes, and missing
+launch revisions. The named installed-launcher check is read-only; actual
+provider credentials and model responses still require installed-app acceptance.
+The separate ignored empty-profile session-persistence probe failed locally;
+do not report the inclusive suite as green or use it as real-profile evidence.
+
 ## Historical lessons to preserve
 
 The following are source PR records, not newly reproduced runtime results:

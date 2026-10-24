@@ -377,6 +377,9 @@ instance, runtime mode (`attached` or `owned`), server version, and shared
 instance data path.
 
 In packaged mode, resident-shell actions can restart the local runtime without changing the shared instance path.
+Settings > About exposes the same restart action when this shell owns the runtime.
+It is unavailable while an update is in progress; browser and attached-runtime
+surfaces do not expose it. Active work may be interrupted by a restart.
 
 ## Failure recovery
 
