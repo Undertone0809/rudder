@@ -81,6 +81,8 @@ pub struct HermesLaunch {
     pub python_executable: Option<PathBuf>,
     /// Validated source root for the selected Hermes installation.
     pub python_source_root: Option<PathBuf>,
+    /// Expected installation fingerprint, rechecked immediately before launch.
+    pub instruction_adapter_revision: Option<String>,
     /// Resolved Agent instructions. This is sensitive and never formatted or
     /// serialized by Rust; it is sent only to the owned child environment.
     pub ephemeral_system_prompt: Option<String>,
@@ -134,15 +136,23 @@ pub fn resolve_instruction_bootstrap(
 ) -> Result<HermesInstructionBootstrap, HermesTransportError> {
     const MAX_CODE_FILE_BYTES: u64 = 8 * 1024 * 1024;
     const WRAPPER: &str = "#!/bin/sh\n'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")\"/'python3' \"$0\" \"$@\"\n' '''\n# -*- coding: utf-8 -*-\nimport sys\nfrom hermes_cli.main import main\nif __name__ == \"__main__\":\n";
-    let executable = hermes_executable
+    let launcher = hermes_executable
         .canonicalize()
         .map_err(|_| HermesTransportError::InvalidLaunch)?;
-    let wrapper_metadata =
-        fs::metadata(&executable).map_err(|_| HermesTransportError::InvalidLaunch)?;
-    if !wrapper_metadata.is_file() || wrapper_metadata.len() > 64 * 1024 {
-        return Err(HermesTransportError::InvalidLaunch);
-    }
-    let wrapper = fs::read(&executable).map_err(|_| HermesTransportError::InvalidLaunch)?;
+    let launcher_bytes = read_bootstrap_script(&launcher)?;
+    let (executable, wrapper, shim_python) = if launcher_bytes.starts_with(WRAPPER.as_bytes()) {
+        (launcher.clone(), launcher_bytes.clone(), None)
+    } else {
+        let (python, entry) = parse_sanitizing_hermes_launcher(&launcher_bytes)?;
+        let entry = entry
+            .canonicalize()
+            .map_err(|_| HermesTransportError::UnsupportedInstructionAdapter)?;
+        let bytes = read_bootstrap_script(&entry)?;
+        let python = python
+            .canonicalize()
+            .map_err(|_| HermesTransportError::UnsupportedInstructionAdapter)?;
+        (entry, bytes, Some(python))
+    };
     if !wrapper.starts_with(WRAPPER.as_bytes()) {
         return Err(HermesTransportError::UnsupportedInstructionAdapter);
     }
@@ -168,7 +178,12 @@ pub fn resolve_instruction_bootstrap(
         .join("python3")
         .canonicalize()
         .map_err(|_| HermesTransportError::UnsupportedInstructionAdapter)?;
-    if !is_executable(&python_executable) || !python_executable.starts_with(&venv) {
+    if !is_executable(&python_executable)
+        || !python_executable.starts_with(&venv)
+        || shim_python
+            .as_ref()
+            .is_some_and(|python| python != &python_executable)
+    {
         return Err(HermesTransportError::UnsupportedInstructionAdapter);
     }
 
@@ -181,10 +196,37 @@ pub fn resolve_instruction_bootstrap(
         "agent/chat_completion_helpers.py",
     ];
     let mut digest = Sha256::new();
-    digest.update(b"rudder-hermes-ephemeral-instructions-v1\0");
-    digest.update(executable.to_string_lossy().as_bytes());
-    digest.update(&wrapper);
-    digest.update(python_executable.to_string_lossy().as_bytes());
+    if shim_python.is_some() {
+        digest.update(b"rudder-hermes-sanitizing-launcher-v1\0");
+        for (name, bytes) in [
+            (
+                b"launcher-path".as_slice(),
+                launcher.to_string_lossy().as_bytes(),
+            ),
+            (b"launcher-script".as_slice(), launcher_bytes.as_slice()),
+            (
+                b"console-path".as_slice(),
+                executable.to_string_lossy().as_bytes(),
+            ),
+            (b"console-script".as_slice(), wrapper.as_slice()),
+            (
+                b"python-path".as_slice(),
+                python_executable.to_string_lossy().as_bytes(),
+            ),
+            (
+                b"source-root".as_slice(),
+                source_root.to_string_lossy().as_bytes(),
+            ),
+        ] {
+            hash_bootstrap_field(&mut digest, name, bytes);
+        }
+    } else {
+        // Keep existing direct-console installation fingerprints stable.
+        digest.update(b"rudder-hermes-ephemeral-instructions-v1\0");
+        digest.update(executable.to_string_lossy().as_bytes());
+        digest.update(&wrapper);
+        digest.update(python_executable.to_string_lossy().as_bytes());
+    }
     let mut version_matches = 0usize;
     for relative in relative_files {
         let path = source_root.join(relative);
@@ -214,15 +256,20 @@ pub fn resolve_instruction_bootstrap(
         {
             version_matches += 1;
         }
-        digest.update(relative.as_bytes());
-        digest.update([0]);
-        digest.update(&bytes);
-        digest.update([0]);
+        if shim_python.is_some() {
+            hash_bootstrap_field(&mut digest, relative.as_bytes(), &bytes);
+        } else {
+            digest.update(relative.as_bytes());
+            digest.update([0]);
+            digest.update(&bytes);
+            digest.update([0]);
+        }
     }
     if version_matches != 1 {
         return Err(HermesTransportError::UnsupportedInstructionAdapter);
     }
-    if executable.to_str().is_none()
+    if launcher.to_str().is_none()
+        || executable.to_str().is_none()
         || python_executable.to_str().is_none()
         || source_root.to_str().is_none()
     {
@@ -233,6 +280,48 @@ pub fn resolve_instruction_bootstrap(
         source_root,
         revision: format!("hermes-instruction-v1:{}", hex_lower(&digest.finalize())),
     })
+}
+
+fn read_bootstrap_script(path: &Path) -> Result<Vec<u8>, HermesTransportError> {
+    let metadata = fs::metadata(path).map_err(|_| HermesTransportError::InvalidLaunch)?;
+    if !metadata.is_file() || metadata.len() > 64 * 1024 {
+        return Err(HermesTransportError::InvalidLaunch);
+    }
+    let bytes = fs::read(path).map_err(|_| HermesTransportError::InvalidLaunch)?;
+    if bytes.len() as u64 != metadata.len() || bytes.len() > 64 * 1024 {
+        return Err(HermesTransportError::InvalidLaunch);
+    }
+    Ok(bytes)
+}
+
+// Recognize one known installer shim, never evaluate or parse general shell code.
+fn parse_sanitizing_hermes_launcher(
+    bytes: &[u8],
+) -> Result<(PathBuf, PathBuf), HermesTransportError> {
+    let unsupported = || HermesTransportError::UnsupportedInstructionAdapter;
+    let text = std::str::from_utf8(bytes).map_err(|_| unsupported())?;
+    let args = text
+        .strip_prefix("#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"")
+        .and_then(|text| text.strip_suffix("\" \"$@\"\n"))
+        .ok_or_else(unsupported)?;
+    let (python, entry) = args.split_once("\" \"").ok_or_else(unsupported)?;
+    for path in [python, entry] {
+        if !Path::new(path).is_absolute()
+            || path
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '"' | '$' | '`' | '\\'))
+        {
+            return Err(unsupported());
+        }
+    }
+    Ok((PathBuf::from(python), PathBuf::from(entry)))
+}
+
+fn hash_bootstrap_field(digest: &mut Sha256, name: &[u8], value: &[u8]) {
+    digest.update((name.len() as u64).to_le_bytes());
+    digest.update(name);
+    digest.update((value.len() as u64).to_le_bytes());
+    digest.update(value);
 }
 
 #[cfg(unix)]
@@ -1904,14 +1993,16 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
     {
         return Err(HermesTransportError::InvalidLaunch);
     }
-    let bootstrap_requested =
-        launch.python_executable.is_some() || launch.python_source_root.is_some();
+    let bootstrap_requested = launch.python_executable.is_some()
+        || launch.python_source_root.is_some()
+        || launch.instruction_adapter_revision.is_some();
     match (
         bootstrap_requested,
         launch.python_executable.as_ref(),
         launch.python_source_root.as_ref(),
+        launch.instruction_adapter_revision.as_deref(),
     ) {
-        (true, Some(python), Some(source_root)) => {
+        (true, Some(python), Some(source_root), Some(revision)) => {
             if let Some(prompt) = launch.ephemeral_system_prompt.as_deref()
                 && (prompt.len() > MAX_EPHEMERAL_INSTRUCTION_BYTES
                     || prompt.chars().any(|character| character == '\0'))
@@ -1925,11 +2016,14 @@ fn validate_launch(launch: HermesLaunch) -> Result<HermesLaunch, HermesTransport
             let source_root = source_root
                 .canonicalize()
                 .map_err(|_| HermesTransportError::UnsupportedInstructionAdapter)?;
-            if python != expected.python_executable || source_root != expected.source_root {
+            if python != expected.python_executable
+                || source_root != expected.source_root
+                || revision != expected.revision()
+            {
                 return Err(HermesTransportError::UnsupportedInstructionAdapter);
             }
         }
-        (false, None, None) if launch.ephemeral_system_prompt.is_none() => {}
+        (false, None, None, None) if launch.ephemeral_system_prompt.is_none() => {}
         _ => return Err(HermesTransportError::InvalidLaunch),
     }
     Ok(HermesLaunch {
@@ -2218,6 +2312,7 @@ mod tests {
             hermes_executable: executable,
             python_executable: None,
             python_source_root: None,
+            instruction_adapter_revision: None,
             ephemeral_system_prompt: None,
             process_host: host,
             runtime_root: temp.path().to_path_buf(),
@@ -2279,11 +2374,127 @@ mod tests {
         assert_eq!(resolved.source_root(), root.canonicalize().unwrap());
         assert!(resolved.revision().starts_with("hermes-instruction-v1:"));
 
+        let launcher = temp.path().join("hermes-launcher");
+        let shim = format!(
+            "#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"{}\" \"{}\" \"$@\"\n",
+            python.display(),
+            executable.display()
+        );
+        fs::write(&launcher, &shim).unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+        let shim_resolved = resolve_instruction_bootstrap(&launcher).unwrap();
+        assert_eq!(
+            shim_resolved.python_executable(),
+            resolved.python_executable()
+        );
+        assert_eq!(shim_resolved.source_root(), resolved.source_root());
+        assert_ne!(shim_resolved.revision(), resolved.revision());
+        let other_launcher = temp.path().join("other-launcher");
+        fs::write(&other_launcher, &shim).unwrap();
+        assert_ne!(
+            resolve_instruction_bootstrap(&other_launcher)
+                .unwrap()
+                .revision(),
+            shim_resolved.revision()
+        );
+
+        let launch = || HermesLaunch {
+            hermes_executable: launcher.clone(),
+            python_executable: Some(python.clone()),
+            python_source_root: Some(root.clone()),
+            instruction_adapter_revision: Some(shim_resolved.revision().into()),
+            ephemeral_system_prompt: Some("Fixture instructions".into()),
+            process_host: python.clone(),
+            runtime_root: temp.path().to_path_buf(),
+            operator_home: temp.path().to_path_buf(),
+            hermes_home: temp.path().to_path_buf(),
+            cwd: temp.path().to_path_buf(),
+            run_id: "run".into(),
+            attempt_id: "attempt".into(),
+            owner_token: "owner".into(),
+            executable_search_path: fixture_search_path(),
+            env: Default::default(),
+        };
+        assert!(validate_launch(launch()).is_ok());
+        let changed_shim = shim.replace(
+            &python.display().to_string(),
+            &format!("{}/./python3", bin.display()),
+        );
+        fs::write(&launcher, changed_shim).unwrap();
+        assert_eq!(
+            resolve_instruction_bootstrap(&launcher)
+                .unwrap()
+                .python_executable(),
+            shim_resolved.python_executable()
+        );
+        assert!(matches!(
+            validate_launch(launch()),
+            Err(HermesTransportError::UnsupportedInstructionAdapter)
+        ));
+        fs::write(&launcher, &shim).unwrap();
+        // APFS rejects these filenames before the resolver can observe them.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let non_utf8_launcher = temp
+                .path()
+                .join(std::ffi::OsString::from_vec(b"launcher-\xff".to_vec()));
+            fs::write(&non_utf8_launcher, &shim).unwrap();
+            assert!(resolve_instruction_bootstrap(&non_utf8_launcher).is_err());
+        }
+        let mut missing_revision = launch();
+        missing_revision.instruction_adapter_revision = None;
+        assert!(matches!(
+            validate_launch(missing_revision),
+            Err(HermesTransportError::InvalidLaunch)
+        ));
+        fs::write(
+            root.join("agent/agent_init.py"),
+            "# changed after admission\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            validate_launch(launch()),
+            Err(HermesTransportError::UnsupportedInstructionAdapter)
+        ));
+        fs::write(root.join("agent/agent_init.py"), "# pinned fixture\n").unwrap();
+
+        let other_python = bin.join("other-python");
+        fs::write(&other_python, "python").unwrap();
+        fs::set_permissions(&other_python, fs::Permissions::from_mode(0o755)).unwrap();
+        for rejected in [
+            shim.replace(
+                &python.display().to_string(),
+                &other_python.display().to_string(),
+            ),
+            shim.replace(&python.display().to_string(), "python3"),
+            shim.replace(&python.display().to_string(), "/tmp/$(touch marker)"),
+            shim.replace(&python.display().to_string(), "/tmp/`touch marker`"),
+            shim.replace(&python.display().to_string(), "/tmp/escaped\\path"),
+            shim.replace("unset PYTHONPATH\n", ""),
+            shim.replace('\n', "\r\n"),
+            format!("{shim}echo extra\n"),
+            shim.replace("unset PYTHONPATH", "unset PYTHONPATH\0"),
+        ] {
+            fs::write(&launcher, rejected).unwrap();
+            assert!(resolve_instruction_bootstrap(&launcher).is_err());
+        }
+        fs::write(&launcher, &shim).unwrap();
+        assert!(validate_launch(launch()).is_ok());
+
         fs::write(&executable, "#!/bin/sh\nexec python3 -m hermes_cli\n").unwrap();
         assert_eq!(
             resolve_instruction_bootstrap(&executable).unwrap_err(),
             HermesTransportError::UnsupportedInstructionAdapter
         );
+    }
+
+    #[test]
+    #[ignore = "read-only capability check against a named real Hermes installation"]
+    fn real_installed_launcher_bootstrap() {
+        let path = std::env::var_os("RUDDER_TEST_HERMES_EXECUTABLE")
+            .expect("name the real Hermes executable");
+        assert!(resolve_instruction_bootstrap(Path::new(&path)).is_ok());
     }
 
     /// Exercises the exact cancel-write / correlated-error boundary with an owned peer.
@@ -2377,6 +2588,7 @@ for line in sys.stdin:
                 hermes_executable: hermes.clone(),
                 python_executable: None,
                 python_source_root: None,
+                instruction_adapter_revision: None,
                 ephemeral_system_prompt: None,
                 process_host: process_host.clone(),
                 runtime_root: temp.path().to_path_buf(),
@@ -2491,6 +2703,7 @@ for line in sys.stdin:
             hermes_executable: hermes.clone(),
             python_executable: None,
             python_source_root: None,
+            instruction_adapter_revision: None,
             ephemeral_system_prompt: None,
             process_host: process_host.clone(),
             runtime_root: temp.path().to_path_buf(),
@@ -2620,6 +2833,7 @@ for line in sys.stdin:
                 hermes_executable: hermes,
                 python_executable: None,
                 python_source_root: None,
+                instruction_adapter_revision: None,
                 ephemeral_system_prompt: None,
                 process_host: process_host.clone(),
                 runtime_root: temp.path().to_path_buf(),
@@ -2737,6 +2951,7 @@ for line in sys.stdin:
             hermes_executable: hermes,
             python_executable: None,
             python_source_root: None,
+            instruction_adapter_revision: None,
             ephemeral_system_prompt: None,
             process_host,
             runtime_root: temp.path().to_path_buf(),
@@ -2854,6 +3069,7 @@ for line in sys.stdin:
                 hermes_executable: hermes.clone(),
                 python_executable: None,
                 python_source_root: None,
+                instruction_adapter_revision: None,
                 ephemeral_system_prompt: None,
                 process_host: process_host.clone(),
                 runtime_root: temp.path().to_path_buf(),
@@ -2917,6 +3133,7 @@ for line in sys.stdin:
             hermes_executable: hermes_executable.clone(),
             python_executable: None,
             python_source_root: None,
+            instruction_adapter_revision: None,
             ephemeral_system_prompt: None,
             process_host: process_host.clone(),
             runtime_root: runtime_root.clone(),
