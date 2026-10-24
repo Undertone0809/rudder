@@ -1271,7 +1271,7 @@
     },
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
+      "sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
       "families": [
         "electron_process_graph"
       ]
@@ -15178,7 +15178,8 @@
       "line": 103,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), nativeProjectWrites: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
-      "expression": "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), nativeProjectWrites: Boolean(opts.rustPublicIngress), })"
+      "expression": "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), nativeProjectWrites: Boolean(opts.rustPublicIngress), })",
+      "transport_admission": "rust-native-project-reads-router-v1"
     },
     {
       "type": "middleware_mount",
@@ -59146,26 +59147,6 @@
   },
   "reviewed_node_changes": [
     {
-      "allowed_node_duties": [
-        "Coordinate Desktop quit/update prompts, inspect active-run summaries through the local API, and submit bounded stop requests for native_rust runs."
-      ],
-      "base_sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
-      "change_kind": "modified_node_compatibility",
-      "compatibility_boundary": "Electron Desktop is a client of the public Rust Native Chat control/stop API for native_rust runs and does not own run state or provider execution. The existing heartbeat cancel request remains only for legacy_ts runs; native_rust failures do not fall back to that Node route.",
-      "head_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
-      "node_role": "transport_adapter",
-      "path": "desktop/src/desktop-quit-flow.ts",
-      "prohibited_node_duties": [
-        "No authoritative Native Chat generation, cutoff, recovery, persistence, or provider-process decisions.",
-        "No Node fallback when a Rust-owned Native Chat stop fails."
-      ],
-      "retirement_criterion": "Retire only the legacy heartbeat-cancel branch when supported runtime modes no longer expose Node-owned runs; keep Desktop quit UX as a client of the Rust public API.",
-      "review_status": "reviewed",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/native_chat/mod.rs owns public control/stop request handling; native/crates/d1-persistence/src/native_chat/control/stop.rs and native_chat/execution own durable stop and settlement state.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rudder-native-stop-repair-20261025/desktop-quit-composition-source-review-r1.json"
-    },
-    {
       "path": "server/src/bootstrap/register-api-routes.ts",
       "base_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "head_sha256": "e4da6d89825b5fcf2e8eb96a364ebce3be7081445f22ed0233dc5d86361f1223",
@@ -59174,9 +59155,9 @@
       "rust_authority": "Rust public_ingress Project reads/writes, organization Resources and AgentCore modules and their D1 persistence own configured public operations.",
       "compatibility_boundary": "Pass immutable nativeProjectReads/nativeProjectWrites and other existing native route flags at startup. Node routes are omitted for migrated native operations; no native failure changes registration or invokes legacy business code.",
       "retirement_criterion": "Remove these ingress-off registrations after Rust public ingress is supported in every deployment. Separately migrate Node-owned Project attachment/newResources writes before claiming complete Resource retirement.",
-      "reviewer": "pending independent combined Project/AgentCore review",
-      "review_reference": "Prior D component review retained; current exact composed source awaits independent review. G97 stage/PAV preserved under /private/tmp/ragc26/final-agent-core-r1-20261024T212137Z.",
-      "review_status": "pending",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed Node source review only; no runtime or publication claim)",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Select Project and organization Resource route compatibility registrations once from immutable startup configuration; preserve existing ingress-off behavior."
       ],
@@ -59194,9 +59175,9 @@
       "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own configured native AgentCore operations, including three key lifecycle operations and five inbox/runtime/task-session/scheduler operations, plus previously scoped roster/detail/permissions/configuration/revision.",
       "compatibility_boundary": "When nativeAgentCorePaths is enabled at startup, migrated public AgentCore handlers are not registered in Node. Ingress-off adapters retain unchanged forwarding only. No native failure invokes a Node business fallback.",
       "retirement_criterion": "Remove these off-mode handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with acceptance coverage.",
-      "reviewer": "pending independent combined Project/AgentCore review",
-      "review_reference": "Prior D component review retained; current exact composed source awaits independent review. G97 stage/PAV preserved under /private/tmp/ragc26/final-agent-core-r1-20261024T212137Z.",
-      "review_status": "pending",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed Node source review only; no runtime or publication claim)",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve the unchanged legacy configuration/revision behavior only in ingress-off compatibility mode."
       ],
@@ -59233,9 +59214,9 @@
       "rust_authority": "native/crates/server-foundation/src/public_ingress/project_reads.rs and project_writes.rs with native/crates/d1-persistence/src/project_public_writes.rs own public Project reads, create/patch/delete, and resource attachment operations in configured native ingress.",
       "compatibility_boundary": "nativeProjectReads and nativeProjectWrites are immutable startup selections. In native mode the corresponding Node Project/Resource handlers are not registered. Ingress-off legacy handlers remain explicit debt. Organization import/onboarding legacy writers remain separately scoped.",
       "retirement_criterion": "Remove the Node Project list/detail bridge registrations after Rust owns those reads in every supported deployment and default no-Node acceptance covers collection and detail behavior.",
-      "reviewer": "pending independent combined Project/AgentCore review",
-      "review_reference": "Prior D component review retained; current exact composed source awaits independent review. G97 stage/PAV preserved under /private/tmp/ragc26/final-agent-core-r1-20261024T212137Z.",
-      "review_status": "pending",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed Node source review only; no runtime or publication claim)",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve unchanged ingress-off Project read/write and attachment adapters only."
       ],
@@ -59481,12 +59462,12 @@
       "mount_receiver": "api",
       "compatibility_boundary": "The API continues mounting the unchanged Agent router for compatibility. When native identity ingress is configured, it passes the startup-selected nativeAgentCorePaths flag: Rust owns roster/detail/me/permissions and six configuration/revision public paths, while Node registers no duplicate handlers for those paths. Other legacy Agent operations remain explicit migration debt.",
       "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/ragc25/independent-stage-review-r1.json; current E caller hash preserved from independently reviewed Resource registration composition; current Project flag composition hash rebind pending independent review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed startup mount source review only)",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
       "order_after": "api_route_registration",
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/agent_core.rs",
       "retirement_criterion": "Remove this Node mount after native Rust AgentCore ingress is the sole supported owner for these paths in every deployment mode.",
-      "review_status": "pending",
+      "review_status": "reviewed",
       "mount_expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
       "id": "rust-native-agent-core-router-v1",
       "mount_source_sha256": "e4da6d89825b5fcf2e8eb96a364ebce3be7081445f22ed0233dc5d86361f1223",
@@ -59497,12 +59478,12 @@
       "mount_receiver": "api",
       "compatibility_boundary": "The existing access router receives only the exact immutable startup-mode option. When Rust public ingress is configured, Rust owns all six CLI-auth operations and Node registers no CLI-auth handlers or lifecycle service; when ingress is off, only unchanged legacy behavior remains explicit migration debt. This admission allows the router mount, not new Node auth/business authority.",
       "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/combined-auth-r53/independent-off-mode-compatibility-review-r53.json; current Project flag composition hash rebind pending independent review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed startup mount source review only)",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
       "order_after": "rudder_plugin_routes",
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/cli_auth.rs",
       "retirement_criterion": "Remove this router admission after the legacy CLI-auth compatibility registrations are retired in every supported deployment and the Rust-owned CLI path remains the supported default.",
-      "review_status": "pending",
+      "review_status": "reviewed",
       "mount_expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
       "id": "rust-native-cli-auth-router-v1",
       "mount_source_sha256": "e4da6d89825b5fcf2e8eb96a364ebce3be7081445f22ed0233dc5d86361f1223",
@@ -59540,9 +59521,9 @@
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/project_reads.rs and project_writes.rs",
       "compatibility_boundary": "Node public Project reads, writes and attachments are omitted when the corresponding immutable native flags are enabled; only off-mode adapters remain, and native failures do not fall back.",
       "retirement_criterion": "Remove the Node Project read adapter after Rust owns these endpoints in every supported deployment and default no-Node acceptance covers collection/detail reads.",
-      "reviewer": "independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json; current Project flag composition hash rebind pending independent review",
-      "review_status": "pending"
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/project-agent-composition-r1/source-review-r2.json (exact composed startup mount source review only)",
+      "review_status": "reviewed"
     }
   ]
 }

@@ -1,130 +1,12 @@
 // @ts-nocheck
 import { app, dialog, type BrowserWindow } from "electron";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { DESKTOP_UPDATE_FORCE_ARG, DESKTOP_UPDATE_QUIT_ARG } from "./desktop-update-flow.js";
 
-const EMPTY_BODY_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HASH = /^[0-9a-f]{64}$/;
-
-type NativeRunTarget = {
-  organizationId: string;
-  conversationId: string;
-  generationId: string;
-};
-
-type NativeControl = {
-  executionAuthority: "native_rust";
-  orgId: string;
-  conversationId: string;
-  generationId: string;
-  attemptEpoch: number;
-  controlVersion: number;
-  lastSequence: number;
-  lastClientCheckpointSeq: number | null;
-  lastClientCheckpointHash: string | null;
-  runtimeTerminal: boolean;
-};
-
-function integer(value: unknown, minimum: number): value is number {
-  return Number.isInteger(value) && Number(value) >= minimum && Number(value) <= 2_147_483_647;
-}
-
-function controlSnapshot(value: unknown, target: NativeRunTarget): NativeControl {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Rudder could not verify the response being stopped.");
-  }
-  const control = value as NativeControl;
-  if (control.executionAuthority !== "native_rust"
-    || control.orgId !== target.organizationId
-    || control.conversationId !== target.conversationId
-    || control.generationId !== target.generationId
-    || !integer(control.attemptEpoch, 1)
-    || !integer(control.controlVersion, 0)
-    || !integer(control.lastSequence, 0)
-    || typeof control.runtimeTerminal !== "boolean"
-    || ((control.lastClientCheckpointSeq === null) !== (control.lastClientCheckpointHash === null))
-    || (control.lastClientCheckpointSeq !== null && (
-      !integer(control.lastClientCheckpointSeq, 0)
-      || control.lastClientCheckpointSeq > control.lastSequence
-      || typeof control.lastClientCheckpointHash !== "string"
-      || !HASH.test(control.lastClientCheckpointHash)
-    ))) {
-    throw new Error("Rudder could not verify the response being stopped.");
-  }
-  return control;
-}
-
-/** Desktop is a client of Rust's fenced Stop API, never a second Run writer. */
-export async function stopNativeChatRun(options: {
-  target: NativeRunTarget;
-  request: <T>(path: string, init?: RequestInit) => Promise<T>;
-  signal: AbortSignal;
-}): Promise<void> {
-  const { target, request, signal } = options;
-  if (!Object.values(target).every((id) => typeof id === "string" && UUID.test(id))) {
-    throw new Error("Rudder could not identify the response being stopped.");
-  }
-  const prefix = `/chats/${encodeURIComponent(target.conversationId)}/messages/stream`;
-  const read = async () => {
-    signal.throwIfAborted();
-    return controlSnapshot(await request<unknown>(
-      `${prefix}/control?generationId=${encodeURIComponent(target.generationId)}`, { signal },
-    ), target);
-  };
-  const control = await read();
-  if (control.runtimeTerminal) return;
-  const controlActionId = randomUUID();
-  const result = await request<{ controlActionId: string; generationId: string; disposition?: string }>(`${prefix}/stop`, {
-    method: "POST",
-    signal,
-    body: JSON.stringify({
-      controlActionId,
-      expectedGenerationId: target.generationId,
-      expectedAttemptEpoch: control.attemptEpoch,
-      expectedControlVersion: control.controlVersion,
-      lastCommittedRenderSeq: control.lastClientCheckpointSeq ?? 0,
-      renderedBodyHash: control.lastClientCheckpointHash ?? EMPTY_BODY_HASH,
-    }),
-  });
-  if (!result || result.controlActionId !== controlActionId || result.generationId !== target.generationId) {
-    throw new Error("Rudder could not confirm the stop request.");
-  }
-  if (result.disposition === "control_lost") {
-    throw new Error("This run was interrupted. Its process cleanup still needs confirmation.");
-  }
-  // Recording a cutoff is not proof that the provider stopped. The enclosing
-  // quit deadline bounds this readback, including a lost or stalled executor.
-  while (!(await read()).runtimeTerminal) {
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      };
-      const timer = setTimeout(() => {
-        signal.removeEventListener("abort", abort);
-        resolve();
-      }, 100);
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) abort();
-    });
-  }
-}
-
 type DesktopOrganization = { id: string; name: string; urlKey?: string | null };
-type DesktopLiveRun = {
-  id: string;
-  status: string;
-  agentId?: string | null;
-  agentName: string;
-  issueId?: string | null;
-  executionAuthority?: "legacy_ts" | "native_rust";
-  chatGenerationId?: string | null;
-  chatConversationId?: string | null;
-};
+type DesktopLiveRun = { id: string; status: string; agentId?: string | null; agentName: string; issueId?: string | null };
 type ActiveRunSummary = { totalRuns: number; organizations: Array<{ id: string; name: string; runs: DesktopLiveRun[] }> };
 type DesktopUpdateBlocker = {
   runId: string;
@@ -138,7 +20,6 @@ type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlock
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
-const QUIT_RUN_INSPECTION_TIMEOUT_MS = 5_000;
 // Reply before the updater's 8s deadline, including cancellation and settlement.
 const UPDATE_QUIT_INSPECTION_TIMEOUT_MS = 7_000;
 const QUIT_RUN_SETTLE_TIMEOUT_MS = 5_000;
@@ -342,26 +223,17 @@ export function createDesktopQuitFlow(context: {
   }
 
   async function cancelActiveRunsBeforeQuit(summary: ActiveRunSummary): Promise<void> {
-    const targets = summary.organizations.flatMap((organization) => organization.runs.map((run) => ({
-      run, organizationId: organization.id,
-    })));
-    if (targets.length === 0) return;
+    const runIds = summary.organizations.flatMap((organization) => organization.runs.map((run) => run.id));
+    if (runIds.length === 0) return;
 
-    const results = await Promise.allSettled(targets.map(async ({ run, organizationId }) => {
-      const runId = run.id;
+    const results = await Promise.allSettled(runIds.map(async (runId) => {
       const controller = new AbortController();
       let timeout: ReturnType<typeof setTimeout> | null = null;
-      const request = run.executionAuthority === "native_rust"
-        ? stopNativeChatRun({
-          target: { organizationId, conversationId: run.chatConversationId, generationId: run.chatGenerationId },
-          request: desktopApiRequest,
-          signal: controller.signal,
-        })
-        : desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
-          method: "POST",
-          body: JSON.stringify({}),
-          signal: controller.signal,
-        });
+      const request = desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
       const deadline = new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
           controller.abort();
@@ -380,10 +252,10 @@ export function createDesktopQuitFlow(context: {
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length > 0) {
       console.warn(
-        `[rudder-desktop] failed to cancel ${failed.length}/${targets.length} active runs before quit`,
+        `[rudder-desktop] failed to cancel ${failed.length}/${runIds.length} active runs before quit`,
         failed.map((result) => result.status === "rejected" ? result.reason : null),
       );
-      throw new Error(`Could not cancel ${failed.length}/${targets.length} active run${targets.length === 1 ? "" : "s"} before quitting.`);
+      throw new Error(`Could not cancel ${failed.length}/${runIds.length} active run${runIds.length === 1 ? "" : "s"} before quitting.`);
     }
   }
 
@@ -489,22 +361,10 @@ export function createDesktopQuitFlow(context: {
           return;
         }
         let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
-        const inspectionController = new AbortController();
-        let inspectionTimer: ReturnType<typeof setTimeout> | undefined;
         try {
-          activeRuns = await Promise.race([
-            listActiveRunsForQuit(inspectionController.signal),
-            new Promise<never>((_, reject) => {
-              inspectionTimer = setTimeout(() => {
-                inspectionController.abort();
-                reject(new Error("Timed out inspecting active runs before quit."));
-              }, QUIT_RUN_INSPECTION_TIMEOUT_MS);
-            }),
-          ]);
+          activeRuns = await listActiveRunsForQuit();
         } catch (error) {
           console.warn("[rudder-desktop] failed to inspect active runs before quit; continuing with normal quit", error);
-        } finally {
-          clearTimeout(inspectionTimer);
         }
 
         if (activeRuns.totalRuns > 0) {
