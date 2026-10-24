@@ -124,10 +124,8 @@ impl FixtureHost {
     pub(crate) fn enable_hermes_runtime(&mut self) {
         use std::os::unix::fs::PermissionsExt;
 
-        // This transport fixture exercises owned-session ordering, not the
-        // separately pinned ephemeral-instruction bootstrap. Leave the
-        // synthetic workspace without an instruction entry so it uses the
-        // ordinary Hermes ACP adapter path.
+        // Exercise owned-session ordering with the same pinned launch adapter,
+        // without adding a separate synthetic workspace instruction.
         let org_key = ORG
             .chars()
             .filter(|character| *character != '-')
@@ -168,6 +166,8 @@ impl FixtureHost {
             "hermes_bootstrap.py",
             "hermes_cli/__init__.py",
             "acp_adapter/entry.py",
+            "acp_adapter/events.py",
+            "acp_adapter/tools.py",
             "acp_adapter/session.py",
             "agent/agent_init.py",
             "agent/chat_completion_helpers.py",
@@ -178,6 +178,12 @@ impl FixtureHost {
             let source = match relative {
                 "hermes_cli/__init__.py" => "__version__ = \"0.21.0\"\n",
                 "hermes_bootstrap.py" => "def harden_import_path(source_root):\n    return None\n",
+                "acp_adapter/events.py" => {
+                    "def build_tool_complete(tool_call_id, tool_name, result=None, function_args=None, snapshot=None):\n    return None\n\ndef make_step_cb(*args, **kwargs):\n    return None\n"
+                }
+                "acp_adapter/tools.py" => {
+                    "import json\n\ndef coerce_tool_args(raw):\n    if isinstance(raw, str):\n        raw = json.loads(raw)\n    return raw if isinstance(raw, dict) else {}\n"
+                }
                 "acp_adapter/session.py" => {
                     "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n"
                 }

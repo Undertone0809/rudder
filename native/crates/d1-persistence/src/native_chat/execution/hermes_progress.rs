@@ -18,8 +18,13 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 const MAX_PROGRESS_EVENTS: i64 = 512;
 const MAX_PROGRESS_TEXT_BYTES: i64 = 256 * 1024;
 const MAX_PROGRESS_PAYLOAD_BYTES: i64 = 2 * 1024 * 1024;
+const MAX_TOOL_INPUT_BYTES: usize = 32 * 1024;
+const MAX_TOOL_INPUT_FIELD_BYTES: usize = 12 * 1024;
+const MAX_TOOL_PATH_BYTES: usize = 2 * 1024;
+const MAX_TOOL_OUTPUT_BYTES: usize = 12 * 1024;
 const TRUNCATED_TEXT: &str =
     "Live progress was truncated; the final response will include the complete answer.";
+const PUBLIC_TOOL_INPUT_KEYS: &[&str] = &["path", "query", "url", "command", "code", "details"];
 
 #[derive(Debug)]
 pub struct HermesProgressCommit {
@@ -170,8 +175,13 @@ pub async fn record_hermes_progress(
     let prior = sqlx::query(
         "SELECT count(*)::bigint AS event_count,
                 COALESCE(sum(octet_length(payload::text)),0)::bigint AS payload_bytes,
-                COALESCE(sum(octet_length(COALESCE(payload#>>'{entry,text}',
-                    payload#>>'{entry,name}',payload#>>'{entry,content}',''))),0)::bigint AS text_bytes,
+                COALESCE(sum(octet_length(COALESCE(payload#>>'{entry,text}',''))
+                    + octet_length(COALESCE(payload#>>'{entry,name}',''))
+                    + octet_length(COALESCE(payload#>>'{entry,content}',''))
+                    + octet_length(COALESCE(payload#>>'{entry,status}',''))
+                    + CASE WHEN payload#>>'{nativeSource,version}'='2'
+                        AND payload#>'{entry,input}' IS NOT NULL
+                        THEN octet_length((payload#>'{entry,input}')::text) ELSE 0 END),0)::bigint AS text_bytes,
                 COALESCE(max((payload#>>'{nativeSource,ordinal}')::bigint),0) AS latest_ordinal,
                 COALESCE(bool_or(payload#>>'{entry,kind}'='system'
                     AND payload#>>'{entry,text}'=$8),false) AS truncated,
@@ -372,46 +382,62 @@ impl NormalizedEntry {
 
 fn make_entry(observation: &HermesProgressReceipt) -> Result<NormalizedEntry> {
     let ts = timestamp()?;
-    let (entry, kind, item_digest, content) = match observation.kind() {
+    let (entry, kind, item_digest, content_digest) = match observation.kind() {
         HermesProgressKind::ThinkingChunk(text) => (
             json!({"kind":"thinking","ts":ts,"text":text,"delta":true,"phase":"commentary"}),
             "thinking_chunk",
             None,
-            text.as_str(),
+            hash(text),
         ),
         HermesProgressKind::AssistantChunk(text) => (
             json!({"kind":"assistant","ts":ts,"text":text,"delta":true,"phase":"commentary"}),
             "assistant_chunk",
             None,
-            text.as_str(),
+            hash(text),
         ),
         HermesProgressKind::ToolCall {
             tool_call_id,
             title,
+            input,
         } => {
+            if title.is_empty() || title.len() > 1024 || has_unsupported_control(title) {
+                return Err(http(409, "Hermes tool name is unsupported"));
+            }
+            if public_tool_input_exceeds_bound(title, input) {
+                return Ok(NormalizedEntry::truncated(ts));
+            }
+            let input = normalize_public_tool_input(title, input)?;
             let item_digest = tool_use_id(observation, tool_call_id);
+            let semantic_digest = tool_call_semantic_digest(title, &input);
             (
-                json!({"kind":"tool_call","ts":ts,"name":title,"input":{},"toolUseId":item_digest}),
+                json!({"kind":"tool_call","ts":ts,"name":title,"input":input,"toolUseId":item_digest}),
                 "tool_call",
                 Some(item_digest),
-                title.as_str(),
+                semantic_digest,
             )
         }
         HermesProgressKind::ToolCallUpdate {
             tool_call_id,
             status,
+            content,
         } => {
             let item_digest = tool_use_id(observation, tool_call_id);
-            let (content, is_error) = match status.as_str() {
-                "completed" => ("Completed", false),
-                "failed" => ("Failed", true),
+            let is_error = match status.as_str() {
+                "pending" | "in_progress" | "completed" => false,
+                "failed" => true,
                 _ => return Err(http(409, "Hermes tool update status is unsupported")),
             };
+            if content.len() > MAX_TOOL_OUTPUT_BYTES {
+                return Ok(NormalizedEntry::truncated(ts));
+            }
+            if has_unsupported_control(content) {
+                return Err(http(409, "Hermes tool output contains unsupported text"));
+            }
             (
-                json!({"kind":"tool_result","ts":ts,"toolUseId":item_digest,"content":content,"isError":is_error}),
+                json!({"kind":"tool_result","ts":ts,"toolUseId":item_digest,"status":status,"content":content,"isError":is_error}),
                 "tool_call_update",
                 Some(item_digest),
-                status.as_str(),
+                tool_result_semantic_digest(status, content, is_error),
             )
         }
         HermesProgressKind::Truncated => {
@@ -419,15 +445,160 @@ fn make_entry(observation: &HermesProgressReceipt) -> Result<NormalizedEntry> {
             return Ok(entry);
         }
     };
-    if content.len() > MAX_PROGRESS_TEXT_BYTES as usize {
-        return Err(http(409, "Hermes progress entry exceeds its bound"));
+    if entry_text_bytes(&entry) > MAX_PROGRESS_TEXT_BYTES as usize {
+        return Ok(NormalizedEntry::truncated(timestamp()?));
     }
     Ok(NormalizedEntry {
         entry,
         kind: kind.into(),
         item_digest,
-        content_digest: hash(content),
+        content_digest,
     })
+}
+
+fn public_tool_input_exceeds_bound(name: &str, input: &Value) -> bool {
+    let Some(object) = input.as_object() else {
+        return false;
+    };
+    if !public_tool_input_shape_matches_name(name, input) {
+        return false;
+    }
+    let mut text_bytes = 0usize;
+    for (key, value) in object {
+        if !PUBLIC_TOOL_INPUT_KEYS.contains(&key.as_str()) {
+            return false;
+        }
+        let Some(text) = value.as_str() else {
+            return false;
+        };
+        let field_limit = if key == "path" {
+            MAX_TOOL_PATH_BYTES
+        } else {
+            MAX_TOOL_INPUT_FIELD_BYTES
+        };
+        text_bytes = text_bytes.saturating_add(text.len());
+        if text.len() > field_limit || text_bytes > MAX_TOOL_INPUT_BYTES {
+            return true;
+        }
+    }
+    object.len() > PUBLIC_TOOL_INPUT_KEYS.len()
+        || Value::Object(object.clone()).to_string().len() > MAX_TOOL_INPUT_BYTES
+}
+
+/// Keep only the public, named tool arguments admitted by the Hermes ACP
+/// adapter. String-only values make nested provider metadata and secret-like
+/// structures impossible to smuggle into the transcript projection.
+fn normalize_public_tool_input(name: &str, input: &Value) -> Result<Value> {
+    let Some(object) = input.as_object() else {
+        return Err(http(409, "Hermes tool input must be a public object"));
+    };
+    if object.len() > PUBLIC_TOOL_INPUT_KEYS.len() {
+        return Err(http(409, "Hermes tool input contains unsupported fields"));
+    }
+    let mut normalized = serde_json::Map::new();
+    let mut text_bytes = 0usize;
+    for (key, value) in object {
+        if !PUBLIC_TOOL_INPUT_KEYS.contains(&key.as_str()) {
+            return Err(http(409, "Hermes tool input contains unsupported fields"));
+        }
+        let Some(text) = value.as_str() else {
+            return Err(http(409, "Hermes tool input fields must be text"));
+        };
+        if has_unsupported_control(text) {
+            return Err(http(409, "Hermes tool input contains unsupported text"));
+        }
+        let field_limit = if key == "path" {
+            MAX_TOOL_PATH_BYTES
+        } else {
+            MAX_TOOL_INPUT_FIELD_BYTES
+        };
+        if text.len() > field_limit {
+            return Err(http(409, "Hermes tool input field exceeds its bound"));
+        }
+        text_bytes = text_bytes.saturating_add(text.len());
+        if text_bytes > MAX_TOOL_INPUT_BYTES {
+            return Err(http(409, "Hermes tool input exceeds its bound"));
+        }
+        normalized.insert(key.clone(), Value::String(text.to_owned()));
+    }
+    let normalized = Value::Object(normalized);
+    if normalized.to_string().len() > MAX_TOOL_INPUT_BYTES {
+        return Err(http(409, "Hermes tool input exceeds its bound"));
+    }
+    if !public_tool_input_shape_matches_name(name, &normalized) {
+        return Err(http(
+            409,
+            "Hermes tool input does not match its public tool name",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn valid_public_tool_input(name: &str, input: &Value) -> bool {
+    let Some(object) = input.as_object() else {
+        return false;
+    };
+    if object.len() > PUBLIC_TOOL_INPUT_KEYS.len() {
+        return false;
+    }
+    let mut text_bytes = 0usize;
+    for (key, value) in object {
+        if !PUBLIC_TOOL_INPUT_KEYS.contains(&key.as_str()) {
+            return false;
+        }
+        let Some(text) = value.as_str() else {
+            return false;
+        };
+        if has_unsupported_control(text) {
+            return false;
+        }
+        let field_limit = if key == "path" {
+            MAX_TOOL_PATH_BYTES
+        } else {
+            MAX_TOOL_INPUT_FIELD_BYTES
+        };
+        if text.len() > field_limit {
+            return false;
+        }
+        text_bytes = text_bytes.saturating_add(text.len());
+        if text_bytes > MAX_TOOL_INPUT_BYTES {
+            return false;
+        }
+    }
+    input.to_string().len() <= MAX_TOOL_INPUT_BYTES
+        && public_tool_input_shape_matches_name(name, input)
+}
+
+fn public_tool_input_shape_matches_name(name: &str, input: &Value) -> bool {
+    let Some(object) = input.as_object() else {
+        return false;
+    };
+    let allowed: &[&str] = match name {
+        "web_search" => &["query", "path"],
+        "terminal" => &["command", "path"],
+        "execute_code" => &["code", "details", "path"],
+        "read_file" | "write_file" | "patch" => &["path", "details"],
+        "search_files" => &["query", "details", "path"],
+        "web_extract" => &["url", "path"],
+        _ => &["details", "path"],
+    };
+    object.keys().all(|key| allowed.contains(&key.as_str()))
+        && !(name == "execute_code"
+            && object.contains_key("code")
+            && object.contains_key("details"))
+}
+
+fn tool_call_semantic_digest(name: &str, input: &Value) -> String {
+    hash(&json!({"name":name,"input":input}).to_string())
+}
+
+fn tool_result_semantic_digest(status: &str, content: &str, is_error: bool) -> String {
+    hash(&json!({"status":status,"content":content,"isError":is_error}).to_string())
+}
+
+fn has_unsupported_control(text: &str) -> bool {
+    text.chars()
+        .any(|character| character.is_control() && character != '\n' && character != '\t')
 }
 
 fn make_source(
@@ -440,7 +611,7 @@ fn make_source(
 ) -> Source {
     let identity = fence.identity();
     let mut source = Source {
-        version: 1,
+        version: 2,
         organization_id: identity.organization_id.to_owned(),
         generation_id: identity.generation_id.to_owned(),
         run_id: identity.run_id.to_owned(),
@@ -520,11 +691,29 @@ fn timestamp() -> Result<String> {
 }
 
 fn entry_text_bytes(entry: &Value) -> usize {
-    ["text", "name", "content"]
+    let scalar_bytes = ["text", "name", "content", "status"]
         .into_iter()
         .filter_map(|key| entry.get(key).and_then(Value::as_str))
         .map(str::len)
-        .sum()
+        .sum::<usize>();
+    scalar_bytes.saturating_add(
+        entry
+            .get("input")
+            .map(|input| input.to_string().len())
+            .unwrap_or_default(),
+    )
+}
+
+fn entry_text_bytes_for_version(version: u8, entry: &Value) -> usize {
+    if version == 1 {
+        ["text", "name", "content"]
+            .into_iter()
+            .filter_map(|key| entry.get(key).and_then(Value::as_str))
+            .map(str::len)
+            .sum()
+    } else {
+        entry_text_bytes(entry)
+    }
 }
 
 fn hash(value: &str) -> String {
@@ -548,7 +737,7 @@ pub(crate) fn validate_public_projection(
         return None;
     }
     let source: Source = serde_json::from_value(raw.get("nativeSource")?.clone()).ok()?;
-    if source.version != 1
+    if !matches!(source.version, 1 | 2)
         || source.organization_id != org
         || source.generation_id != generation
         || source.run_id != run
@@ -580,7 +769,7 @@ pub(crate) fn validate_public_projection(
         return None;
     }
     let entry = raw.get("entry")?.clone();
-    if !validate_entry(&source, &entry) {
+    if !validate_entry(source.version, &source, &entry) {
         return None;
     }
     Some(ValidatedHermesProgress {
@@ -630,11 +819,17 @@ pub(crate) fn validate_receipt_projection(
     Some(projection)
 }
 
-fn validate_entry(source: &Source, entry: &Value) -> bool {
+fn validate_entry(version: u8, source: &Source, entry: &Value) -> bool {
     let expected_keys: &[&str] = match source.kind.as_str() {
         "thinking_chunk" | "assistant_chunk" => &["kind", "ts", "text", "delta", "phase"],
         "tool_call" => &["kind", "ts", "name", "input", "toolUseId"],
-        "tool_call_update" => &["kind", "ts", "toolUseId", "content", "isError"],
+        "tool_call_update" => {
+            if version == 1 {
+                &["kind", "ts", "toolUseId", "content", "isError"]
+            } else {
+                &["kind", "ts", "toolUseId", "status", "content", "isError"]
+            }
+        }
         "truncated" => &["kind", "ts", "text"],
         _ => return false,
     };
@@ -645,7 +840,7 @@ fn validate_entry(source: &Source, entry: &Value) -> bool {
     if ts.is_none_or(|value| OffsetDateTime::parse(value, &Rfc3339).is_err()) {
         return false;
     }
-    let (kind, content, item) = match source.kind.as_str() {
+    let (kind, content, item, expected_digest) = match source.kind.as_str() {
         "thinking_chunk" | "assistant_chunk" => {
             let transcript_kind = if source.kind == "thinking_chunk" {
                 "thinking"
@@ -662,54 +857,101 @@ fn validate_entry(source: &Source, entry: &Value) -> bool {
                 transcript_kind,
                 entry.get("text").and_then(Value::as_str),
                 None,
+                entry.get("text").and_then(Value::as_str).map(hash),
             )
         }
         "tool_call" => {
-            if entry.get("kind").and_then(Value::as_str) != Some("tool_call")
-                || entry.get("input") != Some(&json!({}))
+            if entry.get("kind").and_then(Value::as_str) != Some("tool_call") {
+                return false;
+            }
+            let Some(name) = entry.get("name").and_then(Value::as_str) else {
+                return false;
+            };
+            let Some(input) = entry.get("input") else {
+                return false;
+            };
+            if (version == 1 && input != &json!({}))
+                || (version == 2
+                    && (name.is_empty()
+                        || name.len() > 1024
+                        || has_unsupported_control(name)
+                        || !valid_public_tool_input(name, input)))
             {
                 return false;
             }
+            let expected_digest = if version == 1 {
+                hash(name)
+            } else {
+                tool_call_semantic_digest(name, input)
+            };
             (
                 "tool_call",
-                entry.get("name").and_then(Value::as_str),
+                Some(name),
                 entry.get("toolUseId").and_then(Value::as_str),
+                Some(expected_digest),
             )
         }
         "tool_call_update" => {
             if entry.get("kind").and_then(Value::as_str) != Some("tool_result") {
                 return false;
             }
-            let status = entry.get("content").and_then(Value::as_str);
-            if !matches!(status, Some("Completed" | "Failed"))
-                || entry.get("isError").and_then(Value::as_bool) != Some(status == Some("Failed"))
+            let content = entry.get("content").and_then(Value::as_str);
+            let is_error = entry.get("isError").and_then(Value::as_bool);
+            let status = entry.get("status").and_then(Value::as_str);
+            if content.is_none_or(|content| {
+                content.len()
+                    > if version == 1 {
+                        MAX_PROGRESS_TEXT_BYTES as usize
+                    } else {
+                        MAX_TOOL_OUTPUT_BYTES
+                    }
+            }) || is_error.is_none()
+                || (version == 2 && content.is_some_and(has_unsupported_control))
+                || (version == 1
+                    && (!matches!(content, Some("Completed" | "Failed"))
+                        || is_error != Some(content == Some("Failed"))))
+                || (version == 2
+                    && (!matches!(
+                        status,
+                        Some("pending" | "in_progress" | "completed" | "failed")
+                    ) || is_error != Some(status == Some("failed"))))
             {
                 return false;
             }
+            let Some(content) = content else { return false };
+            let expected_digest = if version == 1 {
+                if content == "Completed" {
+                    hash("completed")
+                } else {
+                    hash("failed")
+                }
+            } else {
+                tool_result_semantic_digest(
+                    status.unwrap_or_default(),
+                    content,
+                    is_error.unwrap_or_default(),
+                )
+            };
             (
                 "tool_result",
-                status,
+                Some(content),
                 entry.get("toolUseId").and_then(Value::as_str),
+                Some(expected_digest),
             )
         }
-        "truncated" => ("system", entry.get("text").and_then(Value::as_str), None),
+        "truncated" => (
+            "system",
+            entry.get("text").and_then(Value::as_str),
+            None,
+            Some(hash(TRUNCATED_TEXT)),
+        ),
         _ => return false,
     };
     let Some(content) = content else { return false };
-    let expected_text = match source.kind.as_str() {
-        "truncated" => TRUNCATED_TEXT,
-        "tool_call_update" => {
-            if content == "Completed" {
-                "completed"
-            } else {
-                "failed"
-            }
-        }
-        _ => content,
-    };
     if entry.get("kind").and_then(Value::as_str) != Some(kind)
-        || hash(expected_text) != source.content_digest
+        || expected_digest.as_deref() != Some(source.content_digest.as_str())
         || content.len() > MAX_PROGRESS_TEXT_BYTES as usize
+        || entry_text_bytes_for_version(version, entry) > MAX_PROGRESS_TEXT_BYTES as usize
     {
         return false;
     }
@@ -750,9 +992,14 @@ mod tests {
     const ATTEMPT: &str = "10000000-0000-4000-8000-000000000004";
     const MESSAGE: &str = "10000000-0000-4000-8000-000000000005";
 
-    fn tool_call_projection(tool_use_id: &str) -> Value {
+    fn source(
+        version: u8,
+        kind: &str,
+        item_digest: Option<String>,
+        content_digest: String,
+    ) -> Source {
         let mut source = Source {
-            version: 1,
+            version,
             organization_id: ORG.into(),
             generation_id: GENERATION.into(),
             run_id: RUN.into(),
@@ -768,18 +1015,25 @@ mod tests {
             session_digest: hash("session-selector"),
             request_id: 1,
             ordinal: 1,
-            kind: "tool_call".into(),
-            item_digest: Some(tool_use_id.into()),
-            content_digest: hash("Inspecting fixture"),
+            kind: kind.into(),
+            item_digest,
+            content_digest,
             fingerprint: String::new(),
         };
         source.fingerprint = source_fingerprint(&source);
+        source
+    }
+
+    fn tool_call_projection(tool_use_id: &str) -> Value {
+        let name = "Inspecting fixture";
+        let input = json!({});
+        let source = source(1, "tool_call", Some(tool_use_id.into()), hash(name));
         json!({
             "entry": {
                 "kind": "tool_call",
                 "ts": "2026-10-21T00:00:00Z",
-                "name": "Inspecting fixture",
-                "input": {},
+                "name": name,
+                "input": input,
                 "toolUseId": tool_use_id,
             },
             "nativeSource": source,
@@ -787,8 +1041,73 @@ mod tests {
         })
     }
 
+    fn tool_call_v2_projection(name: &str, input: Value) -> Value {
+        let tool_use_id = format!("hermes-{}", hash("opaque tool use"));
+        let source = source(
+            2,
+            "tool_call",
+            Some(tool_use_id.clone()),
+            tool_call_semantic_digest(name, &input),
+        );
+        json!({
+            "entry": {
+                "kind": "tool_call",
+                "ts": "2026-10-21T00:00:00Z",
+                "name": name,
+                "input": input,
+                "toolUseId": tool_use_id,
+            },
+            "nativeSource": source,
+            "bodyHash": hash(""),
+        })
+    }
+
+    fn tool_result_v2_projection(status: &str, content: &str) -> Value {
+        let tool_use_id = format!("hermes-{}", hash("opaque tool use"));
+        let is_error = status == "failed";
+        let source = source(
+            2,
+            "tool_call_update",
+            Some(tool_use_id.clone()),
+            tool_result_semantic_digest(status, content, is_error),
+        );
+        json!({
+            "entry": {
+                "kind": "tool_result",
+                "ts": "2026-10-21T00:00:00Z",
+                "toolUseId": tool_use_id,
+                "status": status,
+                "content": content,
+                "isError": is_error,
+            },
+            "nativeSource": source,
+            "bodyHash": hash(""),
+        })
+    }
+
+    fn tool_result_v1_projection(content: &str, status: &str) -> Value {
+        let tool_use_id = format!("hermes-{}", hash("opaque tool use"));
+        let source = source(
+            1,
+            "tool_call_update",
+            Some(tool_use_id.clone()),
+            hash(status),
+        );
+        json!({
+            "entry": {
+                "kind": "tool_result",
+                "ts": "2026-10-21T00:00:00Z",
+                "toolUseId": tool_use_id,
+                "content": content,
+                "isError": status == "failed",
+            },
+            "nativeSource": source,
+            "bodyHash": hash(""),
+        })
+    }
+
     #[test]
-    fn public_projection_rejects_private_extra_fields_and_malformed_tool_ids() {
+    fn legacy_v1_projection_keeps_the_original_shape_and_rejects_private_fields() {
         let valid_id = format!("hermes-{}", hash("opaque tool use"));
         let valid = tool_call_projection(&valid_id);
         assert!(validate_public_projection(&valid, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
@@ -803,5 +1122,145 @@ mod tests {
         let multibyte_id = "hermes-é";
         let malformed = tool_call_projection(multibyte_id);
         assert!(validate_public_projection(&malformed, ORG, GENERATION, RUN, 1, MESSAGE).is_none());
+
+        let mut v1_input_changed = valid.clone();
+        v1_input_changed["entry"]["input"] =
+            json!({"command":"do not retroactively allow v1 input"});
+        assert!(
+            validate_public_projection(&v1_input_changed, ORG, GENERATION, RUN, 1, MESSAGE)
+                .is_none()
+        );
+
+        let legacy_result = tool_result_v1_projection("Completed", "completed");
+        assert!(
+            validate_public_projection(&legacy_result, ORG, GENERATION, RUN, 1, MESSAGE).is_some()
+        );
+        let mut legacy_result_with_status = legacy_result;
+        legacy_result_with_status["entry"]["status"] = json!("completed");
+        assert!(
+            validate_public_projection(
+                &legacy_result_with_status,
+                ORG,
+                GENERATION,
+                RUN,
+                1,
+                MESSAGE
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn v2_tool_call_projects_only_bounded_public_string_inputs_and_binds_them() {
+        let input = json!({"command":"cargo test -p rudder-d1-persistence", "path":"native/"});
+        let mut valid = tool_call_v2_projection("terminal", input.clone());
+        assert!(validate_public_projection(&valid, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+
+        let fingerprint = valid["nativeSource"]["fingerprint"].clone();
+        valid["entry"]["ts"] = json!("2026-10-21T00:01:00Z");
+        assert_eq!(valid["nativeSource"]["fingerprint"], fingerprint);
+        assert!(validate_public_projection(&valid, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+        let shared_input = json!({"details":"Inspect the file", "path":"native/"});
+        let read_file = tool_call_v2_projection("read_file", shared_input.clone());
+        let changed_name = tool_call_v2_projection("write_file", shared_input);
+        assert_ne!(changed_name["nativeSource"]["fingerprint"], fingerprint);
+        assert!(validate_public_projection(&read_file, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+        assert!(
+            validate_public_projection(&changed_name, ORG, GENERATION, RUN, 1, MESSAGE).is_some()
+        );
+
+        let mut tampered_input = valid.clone();
+        tampered_input["entry"]["input"]["command"] = json!("different command");
+        assert!(
+            validate_public_projection(&tampered_input, ORG, GENERATION, RUN, 1, MESSAGE).is_none()
+        );
+
+        let unknown = tool_call_v2_projection("terminal", json!({"rawInput":"private"}));
+        assert!(validate_public_projection(&unknown, ORG, GENERATION, RUN, 1, MESSAGE).is_none());
+        let nested = tool_call_v2_projection("terminal", json!({"command":{"token":"secret"}}));
+        assert!(validate_public_projection(&nested, ORG, GENERATION, RUN, 1, MESSAGE).is_none());
+        let mismatched_name =
+            tool_call_v2_projection("terminal", json!({"code":"private command"}));
+        assert!(
+            validate_public_projection(&mismatched_name, ORG, GENERATION, RUN, 1, MESSAGE)
+                .is_none()
+        );
+        let oversized = tool_call_v2_projection(
+            "terminal",
+            json!({"command":"x".repeat(MAX_TOOL_INPUT_FIELD_BYTES + 1)}),
+        );
+        assert!(validate_public_projection(&oversized, ORG, GENERATION, RUN, 1, MESSAGE).is_none());
+        let near_limit_input = json!({
+            "code":"x".repeat(12 * 1024),
+            "path":"x".repeat(MAX_TOOL_PATH_BYTES),
+        });
+        assert!(near_limit_input.to_string().len() <= MAX_TOOL_INPUT_BYTES);
+        assert!(valid_public_tool_input("execute_code", &near_limit_input));
+        let near_limit = tool_call_v2_projection("execute_code", near_limit_input);
+        assert!(
+            validate_public_projection(&near_limit, ORG, GENERATION, RUN, 1, MESSAGE).is_some()
+        );
+        assert!(entry_text_bytes(&valid["entry"]) > input["command"].as_str().unwrap().len());
+    }
+
+    #[test]
+    fn v2_tool_results_preserve_real_empty_and_failed_output_with_truthful_status() {
+        let completed = tool_result_v2_projection("completed", "found three matching files");
+        assert_eq!(completed["entry"]["content"], "found three matching files");
+        assert_eq!(completed["entry"]["status"], "completed");
+        assert_eq!(completed["entry"]["isError"], false);
+        assert!(validate_public_projection(&completed, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+
+        let empty = tool_result_v2_projection("completed", "");
+        assert_eq!(empty["entry"]["content"], "");
+        assert!(validate_public_projection(&empty, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+
+        let failed = tool_result_v2_projection("failed", "permission denied");
+        assert_eq!(failed["entry"]["status"], "failed");
+        assert_eq!(failed["entry"]["isError"], true);
+        assert!(validate_public_projection(&failed, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+        let empty_failure = tool_result_v2_projection("failed", "");
+        assert_eq!(empty_failure["entry"]["content"], "");
+        assert_eq!(empty_failure["entry"]["isError"], true);
+        assert!(
+            validate_public_projection(&empty_failure, ORG, GENERATION, RUN, 1, MESSAGE).is_some()
+        );
+
+        let mut tampered_output = failed.clone();
+        tampered_output["entry"]["content"] = json!("fabricated success");
+        assert!(
+            validate_public_projection(&tampered_output, ORG, GENERATION, RUN, 1, MESSAGE)
+                .is_none()
+        );
+        let mut tampered_failure = failed;
+        tampered_failure["entry"]["isError"] = json!(false);
+        assert!(
+            validate_public_projection(&tampered_failure, ORG, GENERATION, RUN, 1, MESSAGE)
+                .is_none()
+        );
+        let oversized =
+            tool_result_v2_projection("completed", &"x".repeat(MAX_TOOL_OUTPUT_BYTES + 1));
+        assert!(validate_public_projection(&oversized, ORG, GENERATION, RUN, 1, MESSAGE).is_none());
+    }
+
+    #[test]
+    fn v2_tool_update_keeps_nonterminal_status_and_timestamp_out_of_semantic_digest() {
+        let mut running = tool_result_v2_projection("in_progress", "partial output");
+        assert_eq!(running["entry"]["status"], "in_progress");
+        assert!(validate_public_projection(&running, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+
+        let fingerprint = running["nativeSource"]["fingerprint"].clone();
+        running["entry"]["ts"] = json!("2026-10-21T00:01:00Z");
+        assert_eq!(running["nativeSource"]["fingerprint"], fingerprint);
+        assert!(validate_public_projection(&running, ORG, GENERATION, RUN, 1, MESSAGE).is_some());
+
+        assert_ne!(
+            tool_result_semantic_digest("in_progress", "partial output", false),
+            tool_result_semantic_digest("completed", "partial output", false),
+        );
+        assert_ne!(
+            tool_result_semantic_digest("failed", "partial output", true),
+            tool_result_semantic_digest("completed", "partial output", false),
+        );
     }
 }

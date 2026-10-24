@@ -233,6 +233,8 @@ export async function startNativeChatFixture(options: FixtureOptions) {
         "hermes_cli/main.py": "from acp_adapter.entry import main\n",
         "acp_adapter/entry.py":
           `import runpy\n\ndef main(argv=None):\n    runpy.run_path(${JSON.stringify(provider)}, run_name="__main__")\n`,
+        "acp_adapter/events.py": "def build_tool_complete(tool_call_id, tool_name, result=None, function_args=None, snapshot=None):\n    return None\n\ndef make_step_cb(*args, **kwargs):\n    return None\n",
+        "acp_adapter/tools.py": "import json\n\ndef coerce_tool_args(raw):\n    if isinstance(raw, str):\n        raw = json.loads(raw)\n    return raw if isinstance(raw, dict) else {}\n",
         "acp_adapter/session.py": "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n",
         "agent/agent_init.py": "# synthetic Hermes 0.21 adapter fixture\n",
         "agent/chat_completion_helpers.py": "# synthetic Hermes 0.21 adapter fixture\n",

@@ -4,6 +4,7 @@ import {
   extractMcpToolDetails,
   formatMcpSearchQuery,
   formatToolPayload,
+  hasNonEmptyToolPayload,
 } from "./RunTranscriptView.semantic";
 
 function parseJsonRecord(value: string): Record<string, unknown> | null {
@@ -20,7 +21,9 @@ export function formatNiceToolRequest(
 ): string {
   const mcpDetails = extractMcpToolDetails(name, input);
   const searchQuery = mcpDetails ? formatMcpSearchQuery(mcpDetails) : null;
-  return searchQuery ?? (formatToolPayload(mcpDetails ? (mcpDetails.args ?? {}) : input) || "<empty>");
+  const payload = mcpDetails ? (mcpDetails.args ?? {}) : input;
+  if (!hasNonEmptyToolPayload(payload)) return "<empty>";
+  return searchQuery ?? formatToolPayload(payload);
 }
 
 export function getNiceToolRequestLabel(name: string, input: unknown): "Input" | "Query" {
@@ -39,7 +42,7 @@ export function formatNiceToolResponse(
   input: unknown,
   result: string | undefined,
 ): string | null {
-  if (!result) return null;
+  if (typeof result !== "string" || !result.trim()) return null;
   if (!extractMcpToolDetails(name, input)) return formatToolPayload(result);
 
   const response = parseJsonRecord(result);
