@@ -469,6 +469,12 @@ fn public_ingress_startup_receipt(
         direct_routes.extend([
             "/api/orgs/:org_id/agents",
             "/api/agents/:agent_id/permissions",
+            "/api/orgs/:org_id/agent-configurations",
+            "/api/orgs/:org_id/agents/name-suggestion",
+            "/api/agents/:agent_id/configuration",
+            "/api/agents/:agent_id/config-revisions",
+            "/api/agents/:agent_id/config-revisions/:revision_id",
+            "/api/agents/:agent_id/config-revisions/:revision_id/rollback",
         ]);
     }
     if session_auth_kind.is_some() {
@@ -2435,6 +2441,12 @@ mod tests {
                 "/api/orgs/:org_id/intelligence-profiles",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
+                "/api/orgs/:org_id/agent-configurations",
+                "/api/orgs/:org_id/agents/name-suggestion",
+                "/api/agents/:agent_id/configuration",
+                "/api/agents/:agent_id/config-revisions",
+                "/api/agents/:agent_id/config-revisions/:revision_id",
+                "/api/agents/:agent_id/config-revisions/:revision_id/rollback",
                 "/api/auth/get-session",
                 "/api/auth/sign-up/email",
                 "/api/auth/sign-in/email",

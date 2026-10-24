@@ -100,11 +100,16 @@ pub(super) async fn ensure_workspace_key(
             keys.insert(js_trim(text(&agent, "workspaceKey")).to_owned());
         }
     }
-    let native_root = if detail && row["agentRuntimeConfig"].is_object() {
-        Some(super::instructions::agents_root(ctx)?)
-    } else {
-        None
-    };
+    let uses_native_workspace_root = matches!(
+        ctx.request.operation.as_str(),
+        "configuration" | "revisions" | "revision" | "rollback"
+    ) && ctx.request.instructions_host.is_some();
+    let native_root =
+        if (detail && row["agentRuntimeConfig"].is_object()) || uses_native_workspace_root {
+            Some(super::instructions::agents_root(ctx)?)
+        } else {
+            None
+        };
     let root = native_root
         .as_deref()
         .unwrap_or_else(|| std::path::Path::new(&ctx.request.organization_agents_root));
