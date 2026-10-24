@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 describe("registerApiRoutes", () => {
-  it("retires legacy organization catalog and Project read handlers only when public ingress is configured", () => {
+  it("passes native organization and Project route gates only when public ingress is configured", () => {
     const baseOptions = {
       uiMode: "none", serverPort: 3100, storageService: {}, deploymentMode: "local_trusted",
       deploymentExposure: "private", allowedHostnames: [], bindHost: "127.0.0.1",
@@ -28,11 +28,17 @@ describe("registerApiRoutes", () => {
       rustPublicIngress: {},
     } as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: true });
-    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeProjectReads: true });
+    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
+      nativeProjectReads: true,
+      nativeProjectWrites: true,
+    });
 
     registerApiRoutes({} as never, baseOptions as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: false });
-    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeProjectReads: false });
+    expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
+      nativeProjectReads: false,
+      nativeProjectWrites: false,
+    });
   });
 
   it("builds the API router from the current server dependencies", () => {

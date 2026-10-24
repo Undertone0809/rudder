@@ -97,6 +97,7 @@ async function createApp(
   rustFoundationBridge?: RustFoundationBridge,
   db: Record<string, unknown> = {},
   nativeProjectReads = false,
+  nativeProjectWrites = false,
 ) {
   const app = express();
   app.use(express.json());
@@ -104,7 +105,7 @@ async function createApp(
     (req as typeof req & { actor: Record<string, unknown> }).actor = actor;
     next();
   });
-  app.use("/api", projectRoutes(db as any, rustFoundationBridge, { nativeProjectReads }));
+  app.use("/api", projectRoutes(db as any, rustFoundationBridge, { nativeProjectReads, nativeProjectWrites }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -171,6 +172,39 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(response.status).toBe(503);
     expect(mockProjectService.create).toHaveBeenCalledOnce();
     expect(mockProjectService.create.mock.calls[0]?.[2]).toEqual({ lane: "rust", caller: "public", actor, idempotencyKey: undefined });
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("does not register Node Project write handlers when native writes are required", async () => {
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectGoalSet: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp(
+      { type: "board", userId: "user-1", source: "local_implicit" },
+      bridge,
+      {},
+      false,
+      true,
+    );
+
+    const responses = await Promise.all([
+      request(app).post("/api/orgs/organization-1/projects").send({ name: "Rudder" }),
+      request(app).patch(`/api/projects/${RUST_OWNED_PROJECT_ID}`).send({ name: "Updated" }),
+      request(app).delete(`/api/projects/${RUST_OWNED_PROJECT_ID}`),
+      request(app).post(`/api/projects/${RUST_OWNED_PROJECT_ID}/resources`).send({ resourceId: "resource-1" }),
+      request(app).patch(`/api/projects/${RUST_OWNED_PROJECT_ID}/resources/attachment-1`).send({ note: "Updated" }),
+      request(app).delete(`/api/projects/${RUST_OWNED_PROJECT_ID}/resources/attachment-1`),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404, 404, 404]);
+    expect(mockProjectService.create).not.toHaveBeenCalled();
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(mockResourceCatalogService.createProjectResourceAttachment).not.toHaveBeenCalled();
+    expect(mockResourceCatalogService.updateProjectResourceAttachment).not.toHaveBeenCalled();
+    expect(mockResourceCatalogService.removeProjectResourceAttachment).not.toHaveBeenCalled();
+    expect(bridge.projectGoalSet).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 

@@ -822,6 +822,14 @@ pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
     .map_err(|_| ())
 }
 
+pub(super) fn project_create_state_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let root = PathBuf::from(facts.instructions_host.instance_root).join("data");
+    root.is_absolute()
+        .then(|| root.to_string_lossy().into_owned())
+        .ok_or(())
+}
+
 fn response_error(error: AgentCoreError) -> HttpResponse {
     match error {
         AgentCoreError::Http(status, message, details) => {

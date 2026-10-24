@@ -29,6 +29,7 @@ mod project_creations;
 mod project_deletions;
 pub mod project_library;
 mod project_patches;
+mod project_public_writes;
 pub mod project_reads;
 pub mod request_reads;
 pub mod run_visibility;
@@ -325,6 +326,18 @@ impl MutationStore {
         transaction::finish(tx, result).await
     }
 
+    /// Create a Project through the public boundary. Identity is revalidated
+    /// after locking the organization mutation boundary and in the same
+    /// transaction as Project creation, receipt, audit, and ownership state.
+    pub async fn project_create_public(
+        &self,
+        command: ProjectCreateCommand,
+        provisioner: &dyn ProjectCreateProvisioner,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::create(&self.pool, command, provisioner, authorizer).await
+    }
+
     /// Read the current organization fence before constructing an opaque
     /// command. The SQLx mutation transaction repeats this check while
     /// holding the organization row lock; this read only supplies the
@@ -577,6 +590,16 @@ impl MutationStore {
         transaction::finish(tx, result).await
     }
 
+    /// Apply a public Project patch after atomically claiming a legacy
+    /// Node-owned Project fence when needed.
+    pub async fn project_patch_public(
+        &self,
+        command: ProjectPatchCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::patch(&self.pool, command, authorizer).await
+    }
+
     /// Read the optimistic component context for deletion or a durable replay.
     /// A matching receipt survives the Project fence cascade and takes
     /// precedence over any Project row recreated with the same UUID.
@@ -637,6 +660,27 @@ impl MutationStore {
         let mut tx = transaction::begin(&self.pool).await?;
         let result = project_deletions::apply(&mut tx, command, &metadata).await;
         transaction::finish(tx, result).await
+    }
+
+    /// Delete a public Project, including a matching durable replay after the
+    /// Project row and its component fence have been removed.
+    pub async fn project_delete_public(
+        &self,
+        command: ProjectDeleteCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::delete(&self.pool, command, authorizer).await
+    }
+
+    /// Read the exact response persisted for a Project resource-attachment
+    /// mutation. This is used only after the public mutation has committed.
+    pub async fn project_resource_attachment_response(
+        &self,
+        organization_id: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        project_public_writes::attachment_response(&self.pool, organization_id, idempotency_key)
+            .await
     }
 
     /// Apply an organization resource update or delete through its component

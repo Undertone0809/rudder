@@ -14,6 +14,7 @@ use serde_json::json;
 enum Endpoint {
     Collection(String),
     Detail(String),
+    Resources(String),
 }
 
 pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
@@ -51,8 +52,8 @@ pub(super) async fn detail(
 }
 
 /// Express-compatible casing and optional trailing slash are handled before
-/// the public proxy. Only these two GET shapes are reserved; Project writes
-/// and `/projects/:id/resources` continue through their existing Node routes.
+/// the public proxy. Project list, detail, and resource reads are reserved
+/// here; Project writes are handled by `project_writes`.
 pub(super) async fn dispatch_alias(
     state: web::Data<IngressState>,
     request: HttpRequest,
@@ -83,6 +84,13 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
         return None;
     }
     match segments.as_slice() {
+        [api, projects, project_ref, resources]
+            if api.eq_ignore_ascii_case("api")
+                && projects.eq_ignore_ascii_case("projects")
+                && resources.eq_ignore_ascii_case("resources") =>
+        {
+            decode_capture(project_ref).map(Endpoint::Resources)
+        }
         [api, orgs, org_id, projects]
             if api.eq_ignore_ascii_case("api")
                 && orgs.eq_ignore_ascii_case("orgs")
@@ -114,6 +122,12 @@ fn endpoint_path_shape(path: &str) -> bool {
             if api.eq_ignore_ascii_case("api")
                 && orgs.eq_ignore_ascii_case("orgs")
                 && projects.eq_ignore_ascii_case("projects")
+    ) || matches!(
+        segments.as_slice(),
+        [api, projects, _project_ref, resources]
+            if api.eq_ignore_ascii_case("api")
+                && projects.eq_ignore_ascii_case("projects")
+                && resources.eq_ignore_ascii_case("resources")
     ) || matches!(
         segments.as_slice(),
         [api, projects, _project_ref]
@@ -171,7 +185,9 @@ async fn execute(
     // Preserve that observable 404 ordering; aliases remain scoped and never
     // use this global lookup.
     let detail_uuid = match &endpoint {
-        Endpoint::Detail(reference) if is_project_uuid_like(reference) => {
+        Endpoint::Detail(reference) | Endpoint::Resources(reference)
+            if is_project_uuid_like(reference) =>
+        {
             Some(trim_ecmascript_whitespace(reference).to_owned())
         }
         _ => None,
@@ -193,13 +209,13 @@ async fn execute(
     }
 
     let detail_query_org = match &endpoint {
-        Endpoint::Detail(reference) if detail_uuid.is_none() => {
+        Endpoint::Detail(reference) | Endpoint::Resources(reference) if detail_uuid.is_none() => {
             query_organization_id(request.query_string())
         }
         _ => None,
     };
     if matches!(&identity, NativeIngressIdentity::None) {
-        let unscoped_alias = matches!(&endpoint, Endpoint::Detail(_))
+        let unscoped_alias = matches!(&endpoint, Endpoint::Detail(_) | Endpoint::Resources(_))
             && detail_uuid.is_none()
             && detail_query_org.is_none()
             && agent_organization_id(&identity).is_none();
@@ -237,11 +253,13 @@ async fn execute(
 
     let (org_id, alias) = match &endpoint {
         Endpoint::Collection(org_id) => (org_id.clone(), None),
-        Endpoint::Detail(_reference) if detail_uuid.is_some() => (
-            global_detail_org.expect("UUID detail organization was read"),
-            None,
-        ),
-        Endpoint::Detail(reference) => {
+        Endpoint::Detail(_reference) | Endpoint::Resources(_reference) if detail_uuid.is_some() => {
+            (
+                global_detail_org.expect("UUID detail organization was read"),
+                None,
+            )
+        }
+        Endpoint::Detail(reference) | Endpoint::Resources(reference) => {
             if let Some(org_id) = detail_query_org {
                 (
                     org_id,
@@ -309,7 +327,7 @@ async fn execute(
         &mut tx,
         &org_id,
         project_id.as_deref(),
-        false,
+        matches!(&endpoint, Endpoint::Resources(_)),
         &workspace_root,
     )
     .await
@@ -401,13 +419,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_public_project_list_and_detail_get_shapes_are_reserved() {
+    fn public_project_list_detail_and_resources_get_shapes_are_reserved() {
         for (path, expected) in [
             ("/api/orgs/org-1/projects", true),
             ("/API/ORGS/org-1/PROJECTS/", true),
             ("/api/projects/prj_12345678", true),
             ("/api/projects/prj_12345678/", true),
-            ("/api/projects/prj_12345678/resources", false),
+            ("/api/projects/prj_12345678/resources", true),
             ("/api/orgs/org-1/projects/p-1", false),
             ("/api/projects", false),
         ] {
@@ -423,6 +441,10 @@ mod tests {
         assert!(is_reserved_path(
             "/api/projects/prj_12345678",
             &Method::HEAD
+        ));
+        assert!(is_reserved_path(
+            "/api/projects/prj_12345678/resources",
+            &Method::GET
         ));
     }
 

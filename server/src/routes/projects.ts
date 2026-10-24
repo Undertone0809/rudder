@@ -69,6 +69,8 @@ async function readProjectDeleteReceiptOrganizationScope(
 export interface ProjectRouteOptions {
   /** The public Rust listener owns Project list/detail in required mode. */
   nativeProjectReads?: boolean;
+  /** The public Rust listener owns Project mutations in required mode. */
+  nativeProjectWrites?: boolean;
 }
 
 export function projectRoutes(
@@ -276,201 +278,266 @@ export function projectRoutes(
     });
   }
 
-  router.get("/projects/:id/resources", async (req, res) => {
-    const id = req.params.id as string;
-    const orgId = await svc.getOrganizationId(id);
-    if (!orgId) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, orgId);
-    await forwardProjectRead(req, res, orgId, id, true);
-  });
+  if (!options.nativeProjectReads) {
+    router.get("/projects/:id/resources", async (req, res) => {
+      const id = req.params.id as string;
+      const orgId = await svc.getOrganizationId(id);
+      if (!orgId) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      assertCompanyAccess(req, orgId);
+      await forwardProjectRead(req, res, orgId, id, true);
+    });
+  }
 
-  router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    // Legacy project workspace creation used a nested `workspace` body. Current
-    // project creation ignores that old shape; workspaces are resolved through
-    // organization Library/codebase and run workspace paths.
-    const { workspace: _ignoredWorkspace, ...projectData } = req.body as Parameters<typeof svc.create>[1] & {
-      workspace?: unknown;
-    };
-    const context: ProjectCreateContext = {
-      lane: "rust",
-      caller: "public",
-      actor: req.actor,
-      idempotencyKey: req.header("x-rudder-idempotency-key"),
-    };
-    const project = await svc.create(orgId, projectData, context);
-    res.status(201).json(project);
-  });
+  if (!options.nativeProjectWrites) {
+    router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      // Legacy project workspace creation used a nested `workspace` body. Current
+      // project creation ignores that old shape; workspaces are resolved through
+      // organization Library/codebase and run workspace paths.
+      const { workspace: _ignoredWorkspace, ...projectData } = req.body as Parameters<typeof svc.create>[1] & {
+        workspace?: unknown;
+      };
+      const context: ProjectCreateContext = {
+        lane: "rust",
+        caller: "public",
+        actor: req.actor,
+        idempotencyKey: req.header("x-rudder-idempotency-key"),
+      };
+      const project = await svc.create(orgId, projectData, context);
+      res.status(201).json(project);
+    });
 
-  router.patch("/projects/:id", validate(updateProjectSchema), async (req, res) => {
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-    const body = { ...req.body };
-    const hasGoalMutation = Object.prototype.hasOwnProperty.call(body, "goalIds")
-      || Object.prototype.hasOwnProperty.call(body, "goalId");
-    const nonGoalKeys = Object.keys(body).filter((key) => key !== "goalIds" && key !== "goalId");
-    const goalSetOnly = hasGoalMutation && nonGoalKeys.length === 0;
-    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
-    const rustOwnsProject = mutationOwner === "rust";
+    router.patch("/projects/:id", validate(updateProjectSchema), async (req, res) => {
+      const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (!existing) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      assertCompanyAccess(req, existing.orgId);
+      const body = { ...req.body };
+      const hasGoalMutation = Object.prototype.hasOwnProperty.call(body, "goalIds")
+        || Object.prototype.hasOwnProperty.call(body, "goalId");
+      const nonGoalKeys = Object.keys(body).filter((key) => key !== "goalIds" && key !== "goalId");
+      const goalSetOnly = hasGoalMutation && nonGoalKeys.length === 0;
+      const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+      const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
+      const rustOwnsProject = mutationOwner === "rust";
 
-    if (rustRequiredHeader && !rustOwnsProject) {
-      res.status(503).json({
-        error: "Rust does not own this Project-Goal authority",
-        code: "rust_foundation_project_goal_set_not_owned",
-      });
-      return;
-    }
-
-    if (rustOwnsProject || rustRequiredHeader) {
-      if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+      if (rustRequiredHeader && !rustOwnsProject) {
         res.status(503).json({
-          error: "Rust Project-Goal authority is not enabled",
-          code: "rust_foundation_project_goal_set_disabled",
+          error: "Rust does not own this Project-Goal authority",
+          code: "rust_foundation_project_goal_set_not_owned",
         });
         return;
       }
-      if (!req.header("x-rudder-idempotency-key")?.trim()) {
-        throw badRequest("x-rudder-idempotency-key is required for Rust Project updates");
-      }
-      const goalIds = body.goalIds !== undefined ? body.goalIds : body.goalId ? [body.goalId] : [];
-      const rustBody = goalSetOnly
-        ? {
-          goalIds,
-          primaryGoalId: goalIds[0] ?? null,
-          runId: req.actor.runId ?? null,
+
+      if (rustOwnsProject || rustRequiredHeader) {
+        if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+          res.status(503).json({
+            error: "Rust Project-Goal authority is not enabled",
+            code: "rust_foundation_project_goal_set_disabled",
+          });
+          return;
         }
-        : {
-          projectPatch: body,
-          runId: req.actor.runId ?? null,
-        };
-      const requestPath = `/api/orgs/${encodeURIComponent(existing.orgId)}/projects/${encodeURIComponent(id)}/goal-set`;
-      let response;
-      try {
-        response = await rustFoundationBridge.projectGoalSet(
-          req,
-          existing.orgId,
-          id,
-          Buffer.from(JSON.stringify(rustBody), "utf8"),
-          requestPath,
-        );
-      } catch (error) {
-        res.status(503).json({
-          error: "Rust Project-Goal authority is unavailable",
-          code: `rust_foundation_project_goal_set_${error instanceof Error ? "request_failed" : "unavailable"}`,
-        });
+        if (!req.header("x-rudder-idempotency-key")?.trim()) {
+          throw badRequest("x-rudder-idempotency-key is required for Rust Project updates");
+        }
+        const goalIds = body.goalIds !== undefined ? body.goalIds : body.goalId ? [body.goalId] : [];
+        const rustBody = goalSetOnly
+          ? {
+            goalIds,
+            primaryGoalId: goalIds[0] ?? null,
+            runId: req.actor.runId ?? null,
+          }
+          : {
+            projectPatch: body,
+            runId: req.actor.runId ?? null,
+          };
+        const requestPath = `/api/orgs/${encodeURIComponent(existing.orgId)}/projects/${encodeURIComponent(id)}/goal-set`;
+        let response;
+        try {
+          response = await rustFoundationBridge.projectGoalSet(
+            req,
+            existing.orgId,
+            id,
+            Buffer.from(JSON.stringify(rustBody), "utf8"),
+            requestPath,
+          );
+        } catch (error) {
+          res.status(503).json({
+            error: "Rust Project-Goal authority is unavailable",
+            code: `rust_foundation_project_goal_set_${error instanceof Error ? "request_failed" : "unavailable"}`,
+          });
+          return;
+        }
+        if (response.status < 200 || response.status >= 300) {
+          res.status(response.status).set("content-type", response.contentType).send(response.body);
+          return;
+        }
+        const project = await svc.getById(id);
+        if (!project) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        res.json(project);
         return;
       }
-      if (response.status < 200 || response.status >= 300) {
-        res.status(response.status).set("content-type", response.contentType).send(response.body);
+      if (typeof body.archivedAt === "string") {
+        body.archivedAt = new Date(body.archivedAt);
+      }
+      const project = await svc.update(id, body);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
         return;
       }
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: project.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "project.updated",
+        entityType: "project",
+        entityId: project.id,
+        details: req.body,
+      });
+
+      res.json(project);
+    });
+
+    router.post("/projects/:id/resources", validate(projectResourceAttachmentInputSchema), async (req, res) => {
+      const id = req.params.id as string;
       const project = await svc.getById(id);
       if (!project) {
         res.status(404).json({ error: "Project not found" });
         return;
       }
-      res.json(project);
-      return;
-    }
-    if (typeof body.archivedAt === "string") {
-      body.archivedAt = new Date(body.archivedAt);
-    }
-    const project = await svc.update(id, body);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
+      assertCompanyAccess(req, project.orgId);
 
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: project.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "project.updated",
-      entityType: "project",
-      entityId: project.id,
-      details: req.body,
-    });
-
-    res.json(project);
-  });
-
-  router.post("/projects/:id/resources", validate(projectResourceAttachmentInputSchema), async (req, res) => {
-    const id = req.params.id as string;
-    const project = await svc.getById(id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, project.orgId);
-
-    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const forwarded = await forwardRustOwnedProjectPatch(
-      req,
-      project.orgId,
-      id,
-      { resourceAttachmentOperation: { kind: "attach", ...req.body } },
-      rustRequiredHeader,
-    );
-    if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
-      sendProjectPatchForwardError(forwarded, res);
-      return;
-    }
-    if (forwarded.kind === "rust") {
-      if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
-        res.status(forwarded.response.status)
-          .set("content-type", forwarded.response.contentType)
-          .send(forwarded.response.body);
+      const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+      const forwarded = await forwardRustOwnedProjectPatch(
+        req,
+        project.orgId,
+        id,
+        { resourceAttachmentOperation: { kind: "attach", ...req.body } },
+        rustRequiredHeader,
+      );
+      if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
+        sendProjectPatchForwardError(forwarded, res);
         return;
       }
-      const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
-      res.status(stored.status).json(stored.body);
-      return;
-    }
+      if (forwarded.kind === "rust") {
+        if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
+          res.status(forwarded.response.status)
+            .set("content-type", forwarded.response.contentType)
+            .send(forwarded.response.body);
+          return;
+        }
+        const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
+        res.status(stored.status).json(stored.body);
+        return;
+      }
 
-    const attachment = await resources.createProjectResourceAttachment(id, req.body);
-    if (!attachment) {
-      res.status(404).json({ error: "Resource not found" });
-      return;
-    }
+      const attachment = await resources.createProjectResourceAttachment(id, req.body);
+      if (!attachment) {
+        res.status(404).json({ error: "Resource not found" });
+        return;
+      }
 
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: project.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "project.resource.attached",
-      entityType: "project_resource_attachment",
-      entityId: attachment.id,
-      details: {
-        projectId: project.id,
-        resourceId: attachment.resourceId,
-        role: attachment.role,
-        isPrimary: attachment.isPrimary,
-      },
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: project.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "project.resource.attached",
+        entityType: "project_resource_attachment",
+        entityId: attachment.id,
+        details: {
+          projectId: project.id,
+          resourceId: attachment.resourceId,
+          role: attachment.role,
+          isPrimary: attachment.isPrimary,
+        },
+      });
+
+      res.status(201).json(attachment);
     });
 
-    res.status(201).json(attachment);
-  });
+    router.patch(
+      "/projects/:id/resources/:attachmentId",
+      validate(updateProjectResourceAttachmentSchema),
+      async (req, res) => {
+        const id = req.params.id as string;
+        const attachmentId = req.params.attachmentId as string;
+        const project = await svc.getById(id);
+        if (!project) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        assertCompanyAccess(req, project.orgId);
 
-  router.patch(
-    "/projects/:id/resources/:attachmentId",
-    validate(updateProjectResourceAttachmentSchema),
-    async (req, res) => {
+        const existingAttachment = project.resources.find((resource) => resource.id === attachmentId);
+        const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+        const forwarded = await forwardRustOwnedProjectPatch(
+          req,
+          project.orgId,
+          id,
+          { resourceAttachmentOperation: { kind: "update", attachmentId, ...req.body } },
+          rustRequiredHeader,
+        );
+        if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
+          sendProjectPatchForwardError(forwarded, res);
+          return;
+        }
+        if (forwarded.kind === "rust") {
+          if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
+            res.status(forwarded.response.status)
+              .set("content-type", forwarded.response.contentType)
+              .send(forwarded.response.body);
+            return;
+          }
+          const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
+          res.status(stored.status).json(stored.body);
+          return;
+        }
+
+        if (!existingAttachment) {
+          res.status(404).json({ error: "Project resource attachment not found" });
+          return;
+        }
+        const attachment = await resources.updateProjectResourceAttachment(id, attachmentId, req.body);
+        if (!attachment) {
+          res.status(404).json({ error: "Project resource attachment not found" });
+          return;
+        }
+
+        const actor = getActorInfo(req);
+        await logActivity(db, {
+          orgId: project.orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "project.resource.updated",
+          entityType: "project_resource_attachment",
+          entityId: attachment.id,
+          details: req.body,
+        });
+
+        res.json(attachment);
+      },
+    );
+
+    router.delete("/projects/:id/resources/:attachmentId", async (req, res) => {
       const id = req.params.id as string;
       const attachmentId = req.params.attachmentId as string;
       const project = await svc.getById(id);
@@ -486,7 +553,7 @@ export function projectRoutes(
         req,
         project.orgId,
         id,
-        { resourceAttachmentOperation: { kind: "update", attachmentId, ...req.body } },
+        { resourceAttachmentOperation: { kind: "remove", attachmentId } },
         rustRequiredHeader,
       );
       if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
@@ -509,7 +576,7 @@ export function projectRoutes(
         res.status(404).json({ error: "Project resource attachment not found" });
         return;
       }
-      const attachment = await resources.updateProjectResourceAttachment(id, attachmentId, req.body);
+      const attachment = await resources.removeProjectResourceAttachment(id, attachmentId);
       if (!attachment) {
         res.status(404).json({ error: "Project resource attachment not found" });
         return;
@@ -522,142 +589,81 @@ export function projectRoutes(
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
-        action: "project.resource.updated",
+        action: "project.resource.detached",
         entityType: "project_resource_attachment",
         entityId: attachment.id,
-        details: req.body,
+        details: {
+          resourceId: attachment.resourceId,
+        },
       });
 
       res.json(attachment);
-    },
-  );
-
-  router.delete("/projects/:id/resources/:attachmentId", async (req, res) => {
-    const id = req.params.id as string;
-    const attachmentId = req.params.attachmentId as string;
-    const project = await svc.getById(id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, project.orgId);
-
-    const existingAttachment = project.resources.find((resource) => resource.id === attachmentId);
-    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const forwarded = await forwardRustOwnedProjectPatch(
-      req,
-      project.orgId,
-      id,
-      { resourceAttachmentOperation: { kind: "remove", attachmentId } },
-      rustRequiredHeader,
-    );
-    if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
-      sendProjectPatchForwardError(forwarded, res);
-      return;
-    }
-    if (forwarded.kind === "rust") {
-      if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
-        res.status(forwarded.response.status)
-          .set("content-type", forwarded.response.contentType)
-          .send(forwarded.response.body);
-        return;
-      }
-      const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
-      res.status(stored.status).json(stored.body);
-      return;
-    }
-
-    if (!existingAttachment) {
-      res.status(404).json({ error: "Project resource attachment not found" });
-      return;
-    }
-    const attachment = await resources.removeProjectResourceAttachment(id, attachmentId);
-    if (!attachment) {
-      res.status(404).json({ error: "Project resource attachment not found" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: project.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "project.resource.detached",
-      entityType: "project_resource_attachment",
-      entityId: attachment.id,
-      details: {
-        resourceId: attachment.resourceId,
-      },
     });
 
-    res.json(attachment);
-  });
+    router.delete("/projects/:id", async (req, res) => {
+      const id = req.params.id as string;
+      const explicitIdempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
+      if (explicitIdempotencyKey) {
+        const receiptOrgId = await readProjectDeleteReceiptOrganizationScope(
+          db,
+          id,
+          explicitIdempotencyKey,
+        );
+        if (receiptOrgId) {
+          assertCompanyAccess(req, receiptOrgId);
+          await forwardRustProjectDelete(req, res, receiptOrgId, id, explicitIdempotencyKey);
+          return;
+        }
+      }
 
-  router.delete("/projects/:id", async (req, res) => {
-    const id = req.params.id as string;
-    const explicitIdempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
-    if (explicitIdempotencyKey) {
-      const receiptOrgId = await readProjectDeleteReceiptOrganizationScope(
-        db,
-        id,
-        explicitIdempotencyKey,
-      );
-      if (receiptOrgId) {
-        assertCompanyAccess(req, receiptOrgId);
-        await forwardRustProjectDelete(req, res, receiptOrgId, id, explicitIdempotencyKey);
+      const existing = await svc.getById(id);
+      if (!existing) {
+        res.status(404).json({ error: "Project not found" });
         return;
       }
-    }
+      assertCompanyAccess(req, existing.orgId);
 
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
+      const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
+      const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+      if (rustRequiredHeader && mutationOwner !== "rust") {
+        res.status(503).json({
+          error: "Rust does not own this Project deletion authority",
+          code: "rust_foundation_project_delete_not_owned",
+        });
+        return;
+      }
+      if (mutationOwner === "rust") {
+        await forwardRustProjectDelete(
+          req,
+          res,
+          existing.orgId,
+          id,
+          explicitIdempotencyKey ?? randomUUID(),
+        );
+        return;
+      }
 
-    const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
-    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    if (rustRequiredHeader && mutationOwner !== "rust") {
-      res.status(503).json({
-        error: "Rust does not own this Project deletion authority",
-        code: "rust_foundation_project_delete_not_owned",
+      const project = await svc.remove(id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: project.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "project.deleted",
+        entityType: "project",
+        entityId: project.id,
       });
-      return;
-    }
-    if (mutationOwner === "rust") {
-      await forwardRustProjectDelete(
-        req,
-        res,
-        existing.orgId,
-        id,
-        explicitIdempotencyKey ?? randomUUID(),
-      );
-      return;
-    }
 
-    const project = await svc.remove(id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: project.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "project.deleted",
-      entityType: "project",
-      entityId: project.id,
+      res.json(project);
     });
-
-    res.json(project);
-  });
+  }
 
   return router;
 }
