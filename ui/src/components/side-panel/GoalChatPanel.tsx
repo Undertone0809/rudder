@@ -13,8 +13,8 @@ import { ChatSendRecoveryNotice, ChatSendRecoveryProblem, type ChatSendRecovery 
 import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecoveryDiscovery";
 import { Button } from "@/components/ui/button";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
-import { chatErrorMessage } from "@/lib/chat-errors";
 import { chatClientCheckpointKey, createChatClientCheckpointDispatcher } from "@/lib/chat-client-checkpoints";
+import { chatErrorMessage } from "@/lib/chat-errors";
 import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
 import { settleStoppedChatInput } from "@/lib/chat-send-recovery-settlement";
 import {
