@@ -228,6 +228,10 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             if ((req.method === "GET" && /^\/api\/orgs\/[^/]+\/(?:agents|members\/directory)\/?$/i.test(req.path))
                 || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/?$/i.test(req.path))
                 || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/permissions\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && (/^\/api\/orgs\/[^/]+\/agent-configurations\/?$/i.test(req.path)
+                    || /^\/api\/orgs\/[^/]+\/agents\/name-suggestion\/?$/i.test(req.path)
+                    || /^\/api\/agents\/[^/]+\/(?:configuration|config-revisions(?:\/[^/]+)?)\/?$/i.test(req.path)))
+                || (req.method === "POST" && /^\/api\/agents\/[^/]+\/config-revisions\/[^/]+\/rollback\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
                 nodeNativeIngressPathHits += 1;
             }
@@ -423,6 +427,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 id: string;
             }) => a.id.localeCompare(b.id));
             expect(byId(list.body)).toEqual(byId(baseline));
+            nodeNativeIngressPathHits = 0;
             const configs = await call(base, "get", `/api/orgs/${org}/agent-configurations`);
             expect(configs.status, configs.text).toBe(200);
             expect(configs.body).toHaveLength(2);
@@ -443,6 +448,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             const rollback = await call(base, "post", `/api/agents/${agent}/config-revisions/${revision}/rollback`);
             expect(rollback.status, rollback.text).toBe(200);
             expect(rollback.body.name).toBe("Delta restored");
+            expect(nodeNativeIngressPathHits).toBe(0);
             const keys = await call(base, "get", `/api/agents/${agent}/keys`);
             expect(keys.status, keys.text).toBe(200);
             expect(JSON.stringify(keys.body)).not.toContain("keyHash");
@@ -665,7 +671,10 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         bridge!.agentCore = unavailable.agentCore;
         try {
             for (const base of [publicUrl]) {
-                expect((await call(base, "get", `/api/agents/${agent}/configuration`)).status).toBe(503);
+                nodeNativeIngressPathHits = 0;
+                const nativeConfiguration = await call(base, "get", `/api/agents/${agent}/configuration`);
+                expect(nativeConfiguration.status, nativeConfiguration.text).toBe(200);
+                expect(nodeNativeIngressPathHits).toBe(0);
                 expect((await call(base, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(503);
             }
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(count);
@@ -674,7 +683,13 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             bridge!.agentCore = original;
             await unavailable.close();
         }
+        nodeNativeIngressPathHits = 0;
         await bridge!.close();
+        const unavailablePublicListener = await request(publicUrl)
+            .get(`/api/agents/${agent}/configuration`)
+            .then((response) => ({ status: response.status }), (error: NodeJS.ErrnoException) => ({ error: error.code ?? (error.message.startsWith("ECONNREFUSED:") ? "ECONNREFUSED" : undefined) }));
+        expect(unavailablePublicListener).toEqual({ error: "ECONNREFUSED" });
+        expect(nodeNativeIngressPathHits).toBe(0);
         await bridge!.start();
         publicUrl = bridge!.publicIngressBaseUrl!;
         for (const base of [publicUrl]) {
