@@ -14,6 +14,12 @@ export type RustBrowserSessionAuth = Readonly<{
   expiresIn: number;
   updateAge: number;
   disableSessionRefresh: boolean;
+  /** Effective Better Auth trust list used by native email lifecycle CSRF checks. */
+  trustedOrigins: readonly string[];
+  /** Constructed Better Auth sign-up policy; configuration transport only. */
+  disableSignUp: boolean;
+  /** Constructed Better Auth request rate-limit enablement; transport only. */
+  rateLimitEnabled: boolean;
 }>;
 
 export type RustLocalAccountLifecycleOptions = {

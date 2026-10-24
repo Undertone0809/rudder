@@ -203,7 +203,10 @@ fn is_session_cookie_name(name: &str) -> bool {
     )
 }
 
-fn session_token(config: &NativeSessionAuthConfig, headers: &HeaderMap) -> Option<(String, bool)> {
+pub(super) fn session_token(
+    config: &NativeSessionAuthConfig,
+    headers: &HeaderMap,
+) -> Option<(String, bool)> {
     let name = config.session_cookie_name();
     let cookie = headers
         .get_all(COOKIE)

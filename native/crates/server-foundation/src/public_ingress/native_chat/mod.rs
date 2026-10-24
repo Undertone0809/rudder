@@ -591,6 +591,7 @@ mod tests {
             foundation: Arc::new(AppState::new(ServerConfig::default()).unwrap()),
             config,
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let proxy = PublicIngressProxy::new(upstream).unwrap();
         let ws = PublicIngressWebSocketProxy::new(proxy.upstream_authority()).unwrap();

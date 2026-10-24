@@ -478,6 +478,7 @@ async function startNative(
       RUDDER_NATIVE_AGENT_JWT_ISSUER: "rudder",
       RUDDER_NATIVE_AGENT_JWT_AUDIENCE: "rudder-api",
       RUDDER_NATIVE_LOCAL_IMPLICIT: String(localImplicitEnabled),
+      ...(localImplicitEnabled ? { RUDDER_NATIVE_DEPLOYMENT_MODE: "local_trusted" } : {}),
       ...(lifecycle ? { RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG: JSON.stringify(lifecycle) } : {}),
       ...(kind && secret ? {
         RUDDER_NATIVE_SESSION_AUTH_MODE: "required",

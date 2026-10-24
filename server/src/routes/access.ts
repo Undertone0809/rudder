@@ -53,19 +53,13 @@ export function accessRoutes(
     deploymentExposure: DeploymentExposure;
     bindHost: string;
     allowedHostnames: string[];
+    /** Rust public ingress is the sole CLI-auth owner when configured. */
+    nativeCliAuthOwner?: boolean;
   }
 ) {
   const router = Router();
   const access = accessService(db);
-  const boardAuth = boardAuthService(db);
   const agents = agentService(db);
-
-  router.use("/cli-auth", (_req, res, next) => {
-    res.setHeader("Cache-Control", "private, no-store, max-age=0");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    next();
-  });
 
   async function assertInstanceAdmin(req: Request) {
     if (req.actor.type !== "board") throw unauthorized();
@@ -122,165 +116,177 @@ export function accessRoutes(
     throw conflict("Board claim challenge is no longer available");
   });
 
-  router.post(
-    "/cli-auth/challenges",
-    validate(createCliAuthChallengeSchema),
-    async (req, res) => {
-      const created = await boardAuth.createCliAuthChallenge(req.body);
-      const approvalPath = buildCliAuthApprovalPath(
-        created.challenge.id,
-        created.challengeSecret,
-      );
-      const baseUrl = requestBaseUrl(req);
-      res.status(201).json({
-        id: created.challenge.id,
-        token: created.challengeSecret,
-        boardApiToken: created.pendingBoardToken,
-        approvalPath,
-        approvalUrl: baseUrl ? `${baseUrl}${approvalPath}` : null,
-        pollPath: `/cli-auth/challenges/${created.challenge.id}`,
-        expiresAt: created.challenge.expiresAt.toISOString(),
-        suggestedPollIntervalMs: 1000,
-      });
-    },
-  );
-
-  router.get("/cli-auth/challenges/:id", async (req, res) => {
-    const id = (req.params.id as string).trim();
-    const token =
-      typeof req.query.token === "string" ? req.query.token.trim() : "";
-    if (!id || !token) throw notFound("CLI auth challenge not found");
-    const challenge = await boardAuth.describeCliAuthChallenge(id, token);
-    if (!challenge) throw notFound("CLI auth challenge not found");
-
-    const isSignedInBoardUser =
-      req.actor.type === "board" &&
-      (req.actor.source === "session" || isLocalImplicit(req)) &&
-      Boolean(req.actor.userId);
-    const canApprove =
-      isSignedInBoardUser &&
-      (challenge.requestedAccess !== "instance_admin_required" ||
-        isLocalImplicit(req) ||
-        Boolean(req.actor.isInstanceAdmin));
-
-    res.json({
-      ...challenge,
-      requiresSignIn: !isSignedInBoardUser,
-      canApprove,
-      currentUserId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+  // Temporary compatibility for the supported standalone ingress-off mode.
+  // Never register legacy writers behind a configured Rust public listener.
+  if (!opts.nativeCliAuthOwner) {
+    const boardAuth = boardAuthService(db);
+    router.use("/cli-auth", (_req, res, next) => {
+      res.setHeader("Cache-Control", "private, no-store, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      next();
     });
-  });
 
-  router.post(
-    "/cli-auth/challenges/:id/approve",
-    validate(resolveCliAuthChallengeSchema),
-    async (req, res) => {
-      const id = (req.params.id as string).trim();
-      if (
-        req.actor.type !== "board" ||
-        (!req.actor.userId && !isLocalImplicit(req))
-      ) {
-        throw unauthorized("Sign in before approving CLI access");
-      }
-
-      const userId = req.actor.userId ?? "local-board";
-      const approved = await boardAuth.approveCliAuthChallenge(
-        id,
-        req.body.token,
-        userId,
-      );
-
-      if (approved.status === "approved") {
-        const orgIds = await boardAuth.resolveBoardActivityCompanyIds({
-          userId,
-          requestedCompanyId: approved.challenge.requestedCompanyId,
-          boardApiKeyId: approved.challenge.boardApiKeyId,
+    router.post(
+      "/cli-auth/challenges",
+      validate(createCliAuthChallengeSchema),
+      async (req, res) => {
+        const created = await boardAuth.createCliAuthChallenge(req.body);
+        const approvalPath = buildCliAuthApprovalPath(
+          created.challenge.id,
+          created.challengeSecret,
+        );
+        const baseUrl = requestBaseUrl(req);
+        res.status(201).json({
+          id: created.challenge.id,
+          token: created.challengeSecret,
+          boardApiToken: created.pendingBoardToken,
+          approvalPath,
+          approvalUrl: baseUrl ? `${baseUrl}${approvalPath}` : null,
+          pollPath: `/cli-auth/challenges/${created.challenge.id}`,
+          expiresAt: created.challenge.expiresAt.toISOString(),
+          suggestedPollIntervalMs: 1000,
         });
-        for (const orgId of orgIds) {
-          await logActivity(db, {
-            orgId,
-            actorType: "user",
-            actorId: userId,
-            action: "board_api_key.created",
-            entityType: "user",
-            entityId: userId,
-            details: {
-              boardApiKeyId: approved.challenge.boardApiKeyId,
-              requestedAccess: approved.challenge.requestedAccess,
-              requestedCompanyId: approved.challenge.requestedCompanyId,
-              challengeId: approved.challenge.id,
-            },
-          });
-        }
-      }
-
-      res.json({
-        approved: approved.status === "approved",
-        status: approved.status,
-        userId,
-        keyId: approved.challenge.boardApiKeyId ?? null,
-        expiresAt: approved.challenge.expiresAt.toISOString(),
-      });
-    },
-  );
-
-  router.post(
-    "/cli-auth/challenges/:id/cancel",
-    validate(resolveCliAuthChallengeSchema),
-    async (req, res) => {
-      const id = (req.params.id as string).trim();
-      const cancelled = await boardAuth.cancelCliAuthChallenge(id, req.body.token);
-      res.json({
-        status: cancelled.status,
-        cancelled: cancelled.status === "cancelled",
-      });
-    },
-  );
-
-  router.get("/cli-auth/me", async (req, res) => {
-    if (req.actor.type !== "board" || !req.actor.userId) {
-      throw unauthorized("Board authentication required");
-    }
-    const accessSnapshot = await boardAuth.resolveBoardAccess(req.actor.userId);
-    res.json({
-      user: accessSnapshot.user,
-      userId: req.actor.userId,
-      isInstanceAdmin: accessSnapshot.isInstanceAdmin || isLocalImplicit(req),
-      orgIds: accessSnapshot.orgIds,
-      source: req.actor.source ?? "none",
-      keyId: req.actor.source === "board_key" ? req.actor.keyId ?? null : null,
-    });
-  });
-
-  router.post("/cli-auth/revoke-current", async (req, res) => {
-    if (req.actor.type !== "board" || req.actor.source !== "board_key") {
-      throw badRequest("Current board API key context is required");
-    }
-    const key = await boardAuth.assertCurrentBoardKey(
-      req.actor.keyId,
-      req.actor.userId,
+      },
     );
-    await boardAuth.revokeBoardApiKey(key.id);
-    const orgIds = await boardAuth.resolveBoardActivityCompanyIds({
-      userId: key.userId,
-      boardApiKeyId: key.id,
-    });
-    for (const orgId of orgIds) {
-      await logActivity(db, {
-        orgId,
-        actorType: "user",
-        actorId: key.userId,
-        action: "board_api_key.revoked",
-        entityType: "user",
-        entityId: key.userId,
-        details: {
-          boardApiKeyId: key.id,
-          revokedVia: "cli_auth_logout",
-        },
+
+    router.get("/cli-auth/challenges/:id", async (req, res) => {
+      const id = (req.params.id as string).trim();
+      const token =
+        typeof req.query.token === "string" ? req.query.token.trim() : "";
+      if (!id || !token) throw notFound("CLI auth challenge not found");
+      const challenge = await boardAuth.describeCliAuthChallenge(id, token);
+      if (!challenge) throw notFound("CLI auth challenge not found");
+
+      const isSignedInBoardUser =
+        req.actor.type === "board" &&
+        (req.actor.source === "session" || isLocalImplicit(req)) &&
+        Boolean(req.actor.userId);
+      const canApprove =
+        isSignedInBoardUser &&
+        (challenge.requestedAccess !== "instance_admin_required" ||
+          isLocalImplicit(req) ||
+          Boolean(req.actor.isInstanceAdmin));
+
+      res.json({
+        ...challenge,
+        requiresSignIn: !isSignedInBoardUser,
+        canApprove,
+        currentUserId: req.actor.type === "board" ? req.actor.userId ?? null : null,
       });
-    }
-    res.json({ revoked: true, keyId: key.id });
-  });
+    });
+
+    router.post(
+      "/cli-auth/challenges/:id/approve",
+      validate(resolveCliAuthChallengeSchema),
+      async (req, res) => {
+        const id = (req.params.id as string).trim();
+        if (
+          req.actor.type !== "board" ||
+          (!req.actor.userId && !isLocalImplicit(req))
+        ) {
+          throw unauthorized("Sign in before approving CLI access");
+        }
+
+        const userId = req.actor.userId ?? "local-board";
+        const approved = await boardAuth.approveCliAuthChallenge(
+          id,
+          req.body.token,
+          userId,
+        );
+
+        if (approved.status === "approved") {
+          const orgIds = await boardAuth.resolveBoardActivityCompanyIds({
+            userId,
+            requestedCompanyId: approved.challenge.requestedCompanyId,
+            boardApiKeyId: approved.challenge.boardApiKeyId,
+          });
+          for (const orgId of orgIds) {
+            await logActivity(db, {
+              orgId,
+              actorType: "user",
+              actorId: userId,
+              action: "board_api_key.created",
+              entityType: "user",
+              entityId: userId,
+              details: {
+                boardApiKeyId: approved.challenge.boardApiKeyId,
+                requestedAccess: approved.challenge.requestedAccess,
+                requestedCompanyId: approved.challenge.requestedCompanyId,
+                challengeId: approved.challenge.id,
+              },
+            });
+          }
+        }
+
+        res.json({
+          approved: approved.status === "approved",
+          status: approved.status,
+          userId,
+          keyId: approved.challenge.boardApiKeyId ?? null,
+          expiresAt: approved.challenge.expiresAt.toISOString(),
+        });
+      },
+    );
+
+    router.post(
+      "/cli-auth/challenges/:id/cancel",
+      validate(resolveCliAuthChallengeSchema),
+      async (req, res) => {
+        const id = (req.params.id as string).trim();
+        const cancelled = await boardAuth.cancelCliAuthChallenge(id, req.body.token);
+        res.json({
+          status: cancelled.status,
+          cancelled: cancelled.status === "cancelled",
+        });
+      },
+    );
+
+    router.get("/cli-auth/me", async (req, res) => {
+      if (req.actor.type !== "board" || !req.actor.userId) {
+        throw unauthorized("Board authentication required");
+      }
+      const accessSnapshot = await boardAuth.resolveBoardAccess(req.actor.userId);
+      res.json({
+        user: accessSnapshot.user,
+        userId: req.actor.userId,
+        isInstanceAdmin: accessSnapshot.isInstanceAdmin || isLocalImplicit(req),
+        orgIds: accessSnapshot.orgIds,
+        source: req.actor.source ?? "none",
+        keyId: req.actor.source === "board_key" ? req.actor.keyId ?? null : null,
+      });
+    });
+
+    router.post("/cli-auth/revoke-current", async (req, res) => {
+      if (req.actor.type !== "board" || req.actor.source !== "board_key") {
+        throw badRequest("Current board API key context is required");
+      }
+      const key = await boardAuth.assertCurrentBoardKey(
+        req.actor.keyId,
+        req.actor.userId,
+      );
+      await boardAuth.revokeBoardApiKey(key.id);
+      const orgIds = await boardAuth.resolveBoardActivityCompanyIds({
+        userId: key.userId,
+        boardApiKeyId: key.id,
+      });
+      for (const orgId of orgIds) {
+        await logActivity(db, {
+          orgId,
+          actorType: "user",
+          actorId: key.userId,
+          action: "board_api_key.revoked",
+          entityType: "user",
+          entityId: key.userId,
+          details: {
+            boardApiKeyId: key.id,
+            revokedVia: "cli_auth_logout",
+          },
+        });
+      }
+      res.json({ revoked: true, keyId: key.id });
+    });
+  }
 
   async function assertCompanyPermission(
     req: Request,

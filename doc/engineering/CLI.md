@@ -20,6 +20,28 @@ CI and local validation use `pnpm mcp-contract:check` to reject stale outputs.
 Only JSON Pointers listed in a fixture's normalization profile may be replaced
 during Node/Rust comparisons; all other fields remain semantic.
 
+## Explicit Rust CLI entry
+
+The native `rudder-cli` executable supports `auth login`, `auth whoami`,
+`auth logout`, and `org members`. Run it from `native/` with
+`cargo run -p rudder-cli -- auth login --api-base http://localhost:3100`.
+Login uses browser approval and the existing version-1 `auth.json` credentials;
+`--no-browser` prints the approval URL for manual use. `whoami` and member reads
+reuse those credentials. Logout reports server revocation separately from local
+removal, preserves a concurrent new login, and leaves other API origins intact.
+See `native/bins/rudder-cli/README.md` for path overrides and precedence.
+
+This is an explicit native entry. The installed `rudder` command and MCP
+dispatch still use their existing default entry, and their remaining commands
+are migration debt. This slice does not retire those default processes.
+
+The server owns `/api/cli-auth/*` in Rust when
+`RUDDER_RUST_PUBLIC_INGRESS_MODE=required`. The supported standalone `off`
+mode temporarily retains its existing Node handlers; they are not registered
+behind the Rust listener and are never a fallback for a failed native request.
+Removing this compatibility path requires the default-ingress cutover and its
+startup acceptance. Desktop selects `required` unless explicitly overridden.
+
 ## Base Usage
 
 Use repo script in development:
