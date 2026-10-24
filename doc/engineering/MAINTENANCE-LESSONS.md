@@ -136,7 +136,7 @@ installation, its account session or real provider profiles.
 artifact as an updated installation. Record the installed path, version, asset
 identity and terminal user workflow separately from release publication.
 
-## M005: Verify the installed CLI launcher chain
+## M006: Verify the installed CLI launcher chain
 
 **Evidence:** the local Hermes command used a small shell launcher which clears
 `PYTHONPATH` and `PYTHONHOME`, then executes its venv Python and console script.
