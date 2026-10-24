@@ -1137,6 +1137,14 @@ export function formatToolPayload(value: unknown): string {
   return formatUnknown(value);
 }
 
+export function hasNonEmptyToolPayload(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return true;
+  const record = asRecord(value);
+  return record ? Object.keys(record).length > 0 : true;
+}
+
 export function extractToolUseId(input: unknown): string | undefined {
   const record = asRecord(input);
   if (!record) return undefined;
@@ -1485,10 +1493,136 @@ export function neutralizeToolFailureSemanticInfo(
   return semantic;
 }
 
-export function describeToolSemanticInfo(name: string, input: unknown, result?: string): TranscriptToolSemanticInfo {
+type TranscriptToolSemanticOptions = {
+  toolUseId?: string;
+};
+
+function summarizePythonCode(value: string): string | null {
+  const firstUsefulLine = value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line
+      && !/^from\s+hermes\s+tools\s+import\s+terminal\b/iu.test(line)
+      && !/^\s*(?:from\s+[\w.]+\s+import\b|import\s+[\w.]+)/iu.test(line));
+  return firstUsefulLine ? truncate(compactWhitespace(firstUsefulLine), 64) : null;
+}
+
+function readRawStringField(record: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!record) return null;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function legacyHermesTitleSemanticInfo(name: string, input: unknown, toolUseId?: string): TranscriptToolSemanticInfo | null {
+  if (!toolUseId?.startsWith("hermes-") || hasNonEmptyToolPayload(input)) return null;
+
+  const title = name.trim();
+  const pythonMatch = title.match(/^python\s*:\s*(.*)$/iu);
+  if (pythonMatch) {
+    const preview = summarizePythonCode(pythonMatch[1] ?? "");
+    return {
+      category: "script",
+      label: "Run Python",
+      summary: preview ? `Ran Python: ${preview}` : "Ran Python code",
+      bucket: "run",
+      quantity: 1,
+      noun: "command",
+    };
+  }
+
+  const readMatch = title.match(/^read\s*:\s*(.*)$/iu) ?? title.match(/^readfile(?:\s*:\s*(.*))?$/iu);
+  if (readMatch) {
+    const target = (readMatch[1] ?? "").trim().replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).at(-1);
+    return {
+      category: "read",
+      label: "Read",
+      summary: target ? `Read ${target}` : "Read file",
+      actionKind: "read",
+      bucket: "read",
+      quantity: 1,
+      noun: "file",
+    };
+  }
+
+  const searchMatch = title.match(/^web[\s_-]*search(?:ed)?(?:\s*:\s*(.*))?$/iu);
+  if (searchMatch || /^websearched$/iu.test(title)) {
+    const query = searchMatch?.[1]?.trim();
+    return {
+      category: "web_search",
+      label: "Web Search",
+      summary: formatWebSearchSummary(query ? [query] : []),
+      bucket: "search",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
+  const terminalMatch = title.match(/^terminal(?:\s*:\s*(.*))?$/iu);
+  if (terminalMatch) {
+    const command = (terminalMatch[1] ?? "").trim();
+    return {
+      category: "bash",
+      label: "Terminal",
+      summary: command ? `Ran ${truncate(compactWhitespace(command), 64)}` : "Ran terminal command",
+      bucket: "run",
+      quantity: 1,
+      noun: "command",
+    };
+  }
+
+  return null;
+}
+
+export function isLegacyHermesSyntheticCompletion(
+  name: string,
+  input: unknown,
+  toolUseId: string | undefined,
+  result: string | undefined,
+): boolean {
+  return result?.trim() === "Completed"
+    && legacyHermesTitleSemanticInfo(name, input, toolUseId) !== null;
+}
+
+export function describeToolSemanticInfo(
+  name: string,
+  input: unknown,
+  result?: string,
+  options?: TranscriptToolSemanticOptions,
+): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
   const normalizedIdentifier = normalizedName.replace(/[\s_-]+/g, "");
   const record = asRecord(input);
+
+  const legacyHermesInfo = legacyHermesTitleSemanticInfo(name, input, options?.toolUseId);
+  if (legacyHermesInfo) return legacyHermesInfo;
+
+  if (normalizedIdentifier === "executecode") {
+    const code = readRawStringField(record, ["code", "source", "script"]);
+    const preview = code ? summarizePythonCode(code) : null;
+    return {
+      category: "script",
+      label: "Run Python",
+      summary: preview ? `Ran Python: ${preview}` : "Ran Python code",
+      bucket: "run",
+      quantity: 1,
+      noun: "command",
+    };
+  }
+
+  if (normalizedIdentifier === "webextract") {
+    const url = readStringField(record, ["url", "uri"]);
+    return {
+      category: "tool",
+      label: "Extract webpage",
+      summary: url ? `Extracted webpage ${truncate(url, 64)}` : "Extracted webpage",
+      bucket: "read",
+      quantity: 1,
+      noun: "item",
+    };
+  }
 
   if (normalizedIdentifier === "imageview") {
     const sourcePath = readStringField(record, ["path"]);

@@ -10,7 +10,10 @@ const HERMES_HOME = "operator-home/hermes-profile";
 const RELOAD_PROMPT = "Show live Hermes progress after reload.";
 const STOP_PROMPT = "Stop after Hermes emits public progress with a prompt error.";
 const PUBLIC_THOUGHT = "PUBLIC HERMES THOUGHT";
-const TOOL_TITLE = "Inspect workspace snapshot";
+const TOOL_TITLE = "web_search";
+const PUBLIC_QUERY = "HERMES PUBLIC SEARCH";
+const PUBLIC_RESULT = "PUBLIC HERMES SEARCH RESULT";
+const PUBLIC_FAILURE = "PUBLIC HERMES READ FAILURE";
 const PRIVATE_ARGUMENTS = "PRIVATE_HERMES_TOOL_ARGUMENTS_MUST_NOT_PROJECT";
 const PRIVATE_RESULT = "PRIVATE_HERMES_TOOL_RESULT_MUST_NOT_PROJECT";
 const LATE_PROGRESS = "LATE_HERMES_PROGRESS_AFTER_STOP_MUST_NOT_APPEAR";
@@ -60,9 +63,14 @@ async function expectPublicToolProjection(page: Page, chatId: string) {
   const entries = messages.flatMap((message) => message.transcript ?? []);
   const toolCall = entries.find((entry) => entry.kind === "tool_call" && entry.name === TOOL_TITLE);
   expect(toolCall).toBeDefined();
-  expect(toolCall?.input).toEqual({});
-  const toolResult = entries.find((entry) => entry.kind === "tool_result" && entry.toolUseId === toolCall?.toolUseId);
-  expect(toolResult).toMatchObject({ kind: "tool_result", content: "Completed", isError: false });
+  expect(toolCall?.input).toEqual({ query: PUBLIC_QUERY });
+  const toolResult = entries.filter((entry) => entry.kind === "tool_result" && entry.toolUseId === toolCall?.toolUseId).at(-1);
+  expect(toolResult).toMatchObject({ kind: "tool_result", content: PUBLIC_RESULT, status: "completed", isError: false });
+  const readCall = entries.find((entry) => entry.kind === "tool_call" && entry.name === "read_file");
+  expect(readCall?.input).toEqual({ path: "/tmp/hermes-fixture.txt" });
+  expect(readCall?.toolUseId).not.toBe(toolCall?.toolUseId);
+  const readResult = entries.find((entry) => entry.kind === "tool_result" && entry.toolUseId === readCall?.toolUseId);
+  expect(readResult).toMatchObject({ content: PUBLIC_FAILURE, status: "failed", isError: true });
   const publicProjection = JSON.stringify(entries);
   expect(publicProjection).not.toContain(PRIVATE_ARGUMENTS);
   expect(publicProjection).not.toContain(PRIVATE_RESULT);
@@ -86,16 +94,16 @@ async function expectPublicProgress(page: Page, chatId: string, requirePartialAs
     if (await thinking.getAttribute("aria-label") === "Expand thinking") await thinking.click();
   }
 
-  // The compact action row can summarize the tool semantically; expand its
-  // details to verify the public title while keeping private arguments hidden.
-  const toolDetails = transcript.getByRole("button", { name: /^(Expand|Collapse) tool details(?::|$)/ }).last();
-  await expect(toolDetails).toHaveCount(1);
-  await expect(toolDetails).toBeVisible();
-  if (await toolDetails.getAttribute("aria-expanded") !== "true") {
-    await toolDetails.click();
+  // Expand both correlated tool rows to verify actual public requests/results.
+  const toolDetails = transcript.getByRole("button", { name: /^(Expand|Collapse) tool details(?::|$)/ });
+  await expect(toolDetails).toHaveCount(2);
+  for (const button of await toolDetails.all()) {
+    if (await button.getAttribute("aria-expanded") !== "true") await button.click();
   }
-  await expect(transcript).toContainText("Completed");
-  await expect(transcript).toContainText("Inspected details");
+  await expect(transcript).toContainText(PUBLIC_QUERY);
+  await expect(transcript).toContainText(PUBLIC_RESULT);
+  await expect(transcript).toContainText(PUBLIC_FAILURE);
+  await expect(transcript).toContainText("/tmp/hermes-fixture.txt");
   await expect(transcript.locator('[data-transcript-action-icon-slot="true"]').first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText(PRIVATE_ARGUMENTS);
   await expect(page.locator("body")).not.toContainText(PRIVATE_RESULT);

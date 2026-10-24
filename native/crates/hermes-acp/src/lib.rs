@@ -6,6 +6,7 @@
 
 mod rpc;
 mod strict_json;
+mod tool_progress;
 
 pub use rpc::{
     HermesAcpTransport, HermesCancellation, HermesCleanupReceipt, HermesInstructionBootstrap,

@@ -7,7 +7,7 @@ import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, Transcr
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, isLegacyHermesSyntheticCompletion, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
@@ -139,8 +139,14 @@ export function getToolCommand(block: TranscriptToolCardEntry): string | null {
   return null;
 }
 
-export function shouldHideChatToolResult(semantic: TranscriptToolSemanticInfo): boolean {
-  return semantic.category === "read" || semantic.category === "skill";
+export function shouldHideChatToolResult(
+  semantic: TranscriptToolSemanticInfo,
+  toolName?: string,
+  toolUseId?: string,
+): boolean {
+  const normalizedName = toolName?.trim().toLowerCase().replace(/[\s_-]+/gu, "");
+  const showHermesReadResult = toolUseId?.startsWith("hermes-") && normalizedName === "readfile";
+  return (semantic.category === "read" && !showHermesReadResult) || semantic.category === "skill";
 }
 
 function formatChatToolActionSummary(
@@ -358,30 +364,33 @@ export function TranscriptChatToolActionRow({
   const showFailureIndicators = useToolCallFailureIndicators();
   const localizeText = useTranscriptText();
   const renderFailure = showFailureIndicators && block.status === "error";
-  const rawSemantic = describeToolSemanticInfo(block.name, block.input, block.result);
+  const rawSemantic = describeToolSemanticInfo(block.name, block.input, block.result, { toolUseId: block.toolUseId });
   const semantic = showFailureIndicators
     ? rawSemantic
     : neutralizeToolFailureSemanticInfo(rawSemantic);
+  const statusOnlyLegacyResult = isLegacyHermesSyntheticCompletion(block.name, block.input, block.toolUseId, block.result);
+  const displayResult = statusOnlyLegacyResult ? undefined : block.result;
   const displaySummary = localizeText(formatChatToolActionSummary(block, semantic, density, renderFailure));
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
+  const hasRequestText = requestText !== "<empty>" && Boolean(requestText.trim());
   const requestLabel = getNiceToolRequestLabel(block.name, block.input);
   const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
   const rudderPresenter = getRudderMcpPresenterDefinition(block.name, block.input);
-  const responseText = shouldHideChatToolResult(semantic)
+  const responseText = shouldHideChatToolResult(semantic, block.name, block.toolUseId)
     ? null
     : command
-      ? formatCommandTerminalOutput(block.result)
-      : block.result
-        ? formatNiceToolResponse(block.name, block.input, block.result)
+      ? formatCommandTerminalOutput(displayResult)
+      : displayResult
+        ? formatNiceToolResponse(block.name, block.input, displayResult)
         : block.status === "running"
           ? localizeText("Waiting for result...")
           : null;
   const canExpand = semantic.category !== "skill"
     && !(rudderPresenter && block.status === "running")
-    && Boolean(rudderPresenter || command || responseText || (!isCommand && requestText !== "<empty>"));
+    && Boolean(rudderPresenter || command || responseText || (!isCommand && hasRequestText));
   const visualStatus = block.status === "error" && !showFailureIndicators
     ? "completed"
     : block.status;
@@ -782,14 +791,16 @@ export function TranscriptChatToolActionRow({
           />
         ) : (
           <div className="motion-disclosure-enter ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
-            <div>
-              <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-                {requestLabel}
+            {hasRequestText ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                  {requestLabel}
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                  {requestText}
+                </pre>
               </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-                {requestText}
-              </pre>
-            </div>
+            ) : null}
             {requestParameters ? (
               <div>
                 <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
@@ -940,7 +951,7 @@ export function formatChatActionSummary(
   const infos = actions
     .filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool")
     .map((action) => {
-      const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input);
+      const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input, action.entry.result, { toolUseId: action.entry.toolUseId });
       return showFailureIndicators ? semantic : neutralizeToolFailureSemanticInfo(semantic);
     });
   const stdoutCount = actions.filter((action) => action.type === "stdout").length;
@@ -975,7 +986,7 @@ export function getChatActionIconInfo(action: ChatTranscriptAction): {
   if (action.type === "stdout") {
     return { category: "stdout", status: "completed" };
   }
-  const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input);
+  const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input, action.entry.result, { toolUseId: action.entry.toolUseId });
   return {
     category: semantic.category,
     status: action.entry.status === "error" ? "error" : action.entry.status === "running" ? "running" : "completed",
