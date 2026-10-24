@@ -660,6 +660,15 @@ describe("source-binary public Actix authentication workflow", () => {
       "resource-origin-guard-no-origin-delete",
       "resource-origin-guard-wrong-origin-delete",
     ];
+    const oversizedKey = "resource-public-workflow-oversized-body";
+    guardKeys.push(oversizedKey);
+    const oversized = await getPublicIngress(resourcePath, {
+      ...headers,
+      "content-type": "application/json",
+      "x-rudder-idempotency-key": oversizedKey,
+    }, "POST", JSON.stringify({ name: "Oversized resource", description: "x".repeat(1024 * 1024) }));
+    expect(oversized.status, oversized.body).toBe(413);
+    expect(JSON.parse(oversized.body)).toEqual({ error: "Request body too large" });
     const guardResponses = await Promise.all([
       getPublicIngress(resourcePath, {
         ...originlessHeaders,
