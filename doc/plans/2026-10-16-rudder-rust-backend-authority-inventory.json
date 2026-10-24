@@ -59148,8 +59148,8 @@
   "reviewed_node_changes": [
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "base_sha256": "4bfebdc85ea3ad6bdc4a80d2518738bcf41a6972",
-      "head_sha256": "f89d4bfeef96d34d364ed01f9000a03d3f7be1db",
+      "base_sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
+      "head_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
       "allowed_node_duties": [
