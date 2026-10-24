@@ -2,7 +2,7 @@ import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudde
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -15,6 +15,7 @@ import { createHttpApp, type HttpAppHandle } from "../bootstrap/create-http-app.
 import { preparePublicIngressStartup } from "../bootstrap/public-ingress-startup.js";
 import type { Config } from "../config.js";
 import { localAccountAuthService } from "../services/local-account-auth.js";
+import type { RustNativeChatHost } from "../services/rust-public-ingress-config.js";
 
 // Real bootstrap components, issuer lifecycle, public HTTP, source-built Rust,
 // and disposable PostgreSQL. No mocked session resolver or Rust bridge.
@@ -215,7 +216,36 @@ describe("constructed issuer through the real Rust application launcher", () => 
     }
   }, 30_000);
 
-  async function start(config: Config, runtime: AuthRuntime, publicPort: number) {
+  async function nativeChatHost(origin: string): Promise<RustNativeChatHost> {
+    const root = path.join(temporary, "native-chat-host");
+    const instanceRoot = path.join(root, "instance");
+    const workspaceHome = path.join(root, "workspace");
+    const operatorHome = path.join(root, "operator");
+    await Promise.all([instanceRoot, workspaceHome, operatorHome].map((directory) =>
+      mkdir(directory, { recursive: true }),
+    ));
+    return {
+      instanceId: "auth-launcher-native-chat",
+      instanceRoot,
+      workspaceHome,
+      operatorHome,
+      // Native recovery is available without an installed provider. Keep the
+      // test installation isolated and make provider discovery explicitly empty.
+      executableSearchPath: "",
+      friendlyWorkspaceHome: false,
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      authRequirement: "required",
+      trustedOrigins: [origin],
+    };
+  }
+
+  async function start(
+    config: Config,
+    runtime: AuthRuntime,
+    publicPort: number,
+    nativeHost?: RustNativeChatHost,
+  ) {
     const issuer = runtime.browserSessionAuth;
     const localIssuer = issuer?.issuer === "local_account"
       ? { sessionSecret: issuer.secret, secureCookie: issuer.secureCookie } : undefined;
@@ -234,6 +264,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
       localIssuer,
       issuer,
       localAccountLifecycle,
+      nativeHost,
     );
     const rustIngress = ingress.appOptions.rustPublicIngress;
     if (!rustIngress?.identityAuth) {
@@ -711,6 +742,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
     expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.created")).toHaveLength(expectedCreatedEvents);
     expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.revoked")).toHaveLength(1);
     expect(nodePaths.slice(publicNodeStart)).toEqual(expectedPublicNodePaths);
+    return organizationId;
   }
 
   for (const issuer of ["better_auth", "local_account"] as const) {
@@ -739,11 +771,14 @@ describe("constructed issuer through the real Rust application launcher", () => 
           expect(Object.isFrozen(runtime.browserSessionAuth)).toBe(true);
           expect(runtime.browserSessionAuth?.secret).toBe(secret);
           expect(runtime.browserSessionAuth?.secureCookie).toBe(secure);
+          const nativeHost = issuer === "better_auth" && !secure && remember
+            ? await nativeChatHost(origin)
+            : undefined;
           // Ambient changes after construction must not change either owner.
           process.env.BETTER_AUTH_SECRET = "wrong-after-construction-but-long-enough-secret";
           process.env.RUDDER_AGENT_JWT_SECRET = "wrong-fallback-after-construction-secret";
           process.env.RUDDER_PUBLIC_URL = secure ? "http://invalid.test" : "https://invalid.test";
-          let base = await start(config, runtime, publicPort);
+          let base = await start(config, runtime, publicPort, nativeHost);
           expect((await fetch(`${base}/api/auth/get-session`)).status).toBe(401);
           for (const route of ["orgs", "agents"]) {
             expect((await fetch(`${base}/api/${route}`)).status).toBe(401);
@@ -925,7 +960,14 @@ describe("constructed issuer through the real Rust application launcher", () => 
             const issued = await localAccountAuthService(db, { ...policy, verifier: { verify: async () => claims } }).redeem("synthetic-exchange-code");
             cookie = issued.session.setCookie.split(";")[0]; userId = issued.userId; nativeSessionId = issued.session.id;
           }
-          await exerciseCliAuthWorkflow(base, origin, cookie, userId, nativeSessionId, noMembershipSession);
+          const organizationId = await exerciseCliAuthWorkflow(base, origin, cookie, userId, nativeSessionId, noMembershipSession);
+          let nativeChatId: string | undefined;
+          if (nativeHost) {
+            nativeChatId = randomUUID();
+            await db.$client`INSERT INTO chat_conversations
+              (id, org_id, title, conversation_kind, created_by_user_id, status)
+              VALUES (${nativeChatId}::uuid, ${organizationId}::uuid, 'Auth and Native Chat', 'chat', ${userId}, 'active')`;
+          }
           await db.$client`UPDATE session SET expires_at=now()+interval '2 days' WHERE user_id=${userId}`;
           const beforeRead = nodePaths.length;
           const session = await fetch(`${base}/api/auth/get-session`, { headers: { cookie } });
@@ -945,10 +987,26 @@ describe("constructed issuer through the real Rust application launcher", () => 
           expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie, authorization: "Bearer invalid" } })).status).toBe(401);
           expect(nodePaths.length).toBe(beforeRead);
           await closeApp();
-          base = await start(config, runtime, publicPort);
+          base = await start(config, runtime, publicPort, nativeHost);
           const afterRestart = nodePaths.length;
           expect(await (await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).json()).toEqual(dto);
           expect(nodePaths.length).toBe(afterRestart);
+          if (nativeChatId) {
+            const beforeNativeRecovery = nodePaths.length;
+            const beforeNativeRecoveryAuth = betterAuthRequests.length;
+            const recovery = await fetch(`${base}/api/chats/${nativeChatId}/messages/stream/recovery`, {
+              headers: { cookie, origin },
+            });
+            expect(recovery.status).toBe(200);
+            expect(await recovery.json()).toEqual({
+              executionAuthority: "native_rust",
+              orgId: organizationId,
+              conversationId: nativeChatId,
+              recovery: null,
+            });
+            expect(nodePaths.length).toBe(beforeNativeRecovery);
+            expect(betterAuthRequests).toHaveLength(beforeNativeRecoveryAuth);
+          }
           if (issuer === "better_auth") {
             const forbidden = await fetch(`${base}/api/auth/sign-out`, {
               method: "POST", headers: { cookie, origin: "https://attacker.invalid.test", "content-type": "application/json" }, body: "{}",
@@ -1012,6 +1070,17 @@ describe("constructed issuer through the real Rust application launcher", () => 
           }
           const afterLogout = nodePaths.length;
           expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie } })).status).toBe(401);
+          if (nativeChatId) {
+            const beforeSignedOutRecovery = nodePaths.length;
+            const beforeSignedOutAuth = betterAuthRequests.length;
+            const signedOutRecovery = await fetch(`${base}/api/chats/${nativeChatId}/messages/stream/recovery`, {
+              headers: { cookie, origin },
+            });
+            expect(signedOutRecovery.status).toBe(401);
+            expect(await signedOutRecovery.json()).toEqual({ error: "unauthorized" });
+            expect(nodePaths.length).toBe(beforeSignedOutRecovery);
+            expect(betterAuthRequests).toHaveLength(beforeSignedOutAuth);
+          }
           if (issuer === "better_auth" && secondCookie) {
             expect((await fetch(`${base}/api/auth/get-session`, { headers: { cookie: secondCookie } })).status).toBe(200);
           }
