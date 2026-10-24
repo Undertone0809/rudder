@@ -59140,21 +59140,7 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "desktop/src/update-check.ts",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "base_sha256": "9aa411046311291be8f879b2f1371b7266aeede7e67ff078f4e5fc8365873bff",
-      "head_sha256": "6e9fad3bfc13f98f09c84c714a3bcdf9bb2ceecd02f971a4dec78661a434d36c",
-      "rust_authority": "native::update_helper_core::execute owns the later verified apply transaction, not release discovery; this patch adds no backend business authority.",
-      "compatibility_boundary": "Existing Electron client release discovery reads GitHub metadata, compares versions and checks platform asset availability for About/menu/startup. This scoped API-rate-limit fallback repair adds no route, domain state/write, authorization decision or Node backend fallback.",
-      "retirement_criterion": "If Rust updater gains equivalent release discovery, cut this client path over only after equivalent workflow/error coverage. Remove this diff-local review record once the exact source enters the comparison base; Electron client code is outside the backend retirement target.",
-      "reviewer": "/root/merge_review_xhigh (gpt-6-luna, xhigh)",
-      "review_reference": "PR #356; stage review of source 07ddced13403726c1cb0be55773c930eb8f7029a and hash-bound inventory repair, session 01a16d9e-78d3-74e2-9a2f-c3eaab6f2191",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_node_changes": [],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
