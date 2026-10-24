@@ -94,6 +94,10 @@ async function expectPublicProgress(page: Page, chatId: string, requirePartialAs
     if (await thinking.getAttribute("aria-label") === "Expand thinking") await thinking.click();
   }
 
+  // Adjacent read/search actions share one compact activity disclosure.
+  const group = transcript.getByRole("button", { name: /^Expand tool activity(?::|$)/ }).first();
+  if (await group.count()) await group.click();
+
   // Expand both correlated tool rows to verify actual public requests/results.
   const toolDetails = transcript.getByRole("button", { name: /^(Expand|Collapse) tool details(?::|$)/ });
   await expect(toolDetails).toHaveCount(2);
@@ -143,6 +147,7 @@ async function executionState(databaseUrl: string, orgId: string, chatId: string
 }
 
 test("uses one native Hermes session across server restart and sends only new input", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   const f = await fixture();
   let passed = false;
   try {
@@ -161,7 +166,7 @@ test("uses one native Hermes session across server restart and sends only new in
     const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
     await f.restartRust();
     await page.reload();
-    await expect(composer).toBeVisible();
+    await expect(composer).toBeVisible({ timeout: 30_000 });
     await send("Continue the same session.");
     expect(new URL(page.url()).pathname.split("/").at(-1)).toBe(chatId);
     await expect(page.getByText("REPLAY MUST NOT APPEAR AS NEW OUTPUT", { exact: false })).toHaveCount(0);
