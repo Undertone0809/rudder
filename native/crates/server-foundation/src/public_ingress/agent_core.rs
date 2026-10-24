@@ -822,6 +822,22 @@ pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
     .map_err(|_| ())
 }
 
+pub(super) fn ensure_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = &facts.instructions_host;
+    rudder_d1_persistence::agent_core::ensure_organization_workspace_layout(
+        &host.instance_root,
+        &host.workspace_home,
+        &host.previous_documents_root,
+        host.friendly_workspace_home,
+        &host.hostname,
+        std::path::Path::new(&facts.process_working_directory),
+        org_id,
+    )
+    .map(|path| path.to_string_lossy().into_owned())
+    .map_err(|_| ())
+}
+
 pub(super) fn project_create_state_root(org_id: &str) -> Result<String, ()> {
     let facts = host_paths::AgentHostFacts::resolve(org_id)?;
     let root = PathBuf::from(facts.instructions_host.instance_root).join("data");

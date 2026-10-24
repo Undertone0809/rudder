@@ -27,6 +27,10 @@ mod project_reads;
 mod project_writes;
 mod runtime_bindings;
 
+pub(crate) fn ensure_project_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    agent_core::ensure_organization_workspace_root(org_id)
+}
+
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
 const LLM_REFLECTION_AUTH_PATH: &str = PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH;
 const LLM_REFLECTION_ACTION: &str = "llm.reflection.read";

@@ -268,6 +268,7 @@ async fn execute(
             let provisioner = ScopedProjectCreateProvisioner {
                 organization_workspace_root: PathBuf::from(workspace_root),
                 project_create_state_root: PathBuf::from(state_root),
+                prepare_workspace_layout: true,
             };
             let command = ProjectCreateCommand {
                 organization_id: organization_id.clone(),

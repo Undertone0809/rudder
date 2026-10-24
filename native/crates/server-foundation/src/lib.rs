@@ -421,6 +421,7 @@ struct OrganizationResourceMutationRequest {
 struct ScopedProjectCreateProvisioner {
     organization_workspace_root: PathBuf,
     project_create_state_root: PathBuf,
+    prepare_workspace_layout: bool,
 }
 
 impl ProjectCreateProvisioner for ScopedProjectCreateProvisioner {
@@ -430,12 +431,28 @@ impl ProjectCreateProvisioner for ScopedProjectCreateProvisioner {
     ) -> Pin<Box<dyn Future<Output = Result<ProjectCreateProvisioned, StoreError>> + Send + 'a>>
     {
         Box::pin(async move {
+            let organization_workspace_root = if self.prepare_workspace_layout {
+                let organization_id = request.organization_id.clone();
+                let path = tokio::task::spawn_blocking(move || {
+                    public_ingress::ensure_project_organization_workspace_root(&organization_id)
+                })
+                .await
+                .map_err(|_| {
+                    StoreError::Provisioning("organization workspace preparation failed".to_owned())
+                })?
+                .map_err(|_| {
+                    StoreError::Provisioning("organization workspace preparation failed".to_owned())
+                })?;
+                PathBuf::from(path)
+            } else {
+                self.organization_workspace_root.clone()
+            };
             let command = ProjectLibraryCommand {
                 command_id: request.idempotency_key.clone(),
                 request_fingerprint: request.request_fingerprint.clone(),
                 project_id: request.project_id.clone(),
                 org_id: request.organization_id.clone(),
-                organization_root: self.organization_workspace_root.clone(),
+                organization_root: organization_workspace_root.clone(),
                 project_name: request.project_name.clone(),
                 project_url_key: request.project_url_key.clone(),
             };
@@ -443,8 +460,7 @@ impl ProjectCreateProvisioner for ScopedProjectCreateProvisioner {
                 .map_err(project_library_store_error)?;
             ensure_project_library(&command).map_err(project_library_store_error)?;
             Ok(ProjectCreateProvisioned {
-                organization_workspace_root: self
-                    .organization_workspace_root
+                organization_workspace_root: organization_workspace_root
                     .to_string_lossy()
                     .into_owned(),
             })
@@ -2419,6 +2435,7 @@ impl AppState {
         let provisioner = ScopedProjectCreateProvisioner {
             organization_workspace_root: PathBuf::from(input.organization_workspace_root),
             project_create_state_root: PathBuf::from(input.project_create_state_root),
+            prepare_workspace_layout: false,
         };
         let command = ProjectCreateCommand {
             organization_id: org_id.to_owned(),

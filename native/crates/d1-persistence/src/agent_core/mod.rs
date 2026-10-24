@@ -39,6 +39,28 @@ pub fn resolve_organization_workspace_root(
     )
 }
 
+/// Ensure the organization workspace layout from signed native host facts.
+/// Agent instruction storage owns the map lock, identity checks, and legacy
+/// migration semantics shared with existing workspace recovery.
+pub fn ensure_organization_workspace_layout(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    cwd: &std::path::Path,
+    organization_id: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    let host = instructions::Host {
+        instance_root: instance_root.to_owned(),
+        workspace_home: workspace_home.to_owned(),
+        previous_documents_root: previous_documents_root.to_owned(),
+        friendly_workspace_home,
+        hostname: hostname.to_owned(),
+    };
+    instructions::ensure_workspace_layout(&host, organization_id, cwd)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
     #[error("{1}")]
