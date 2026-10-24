@@ -2156,7 +2156,7 @@
     },
     {
       "path": "packages/agent-runtime-utils/src/types.ts",
-      "sha256": "2bf0055fbe90f1587f68d925e078b36083481688e80d1885ae0893c24c07c577",
+      "sha256": "4fb635f8b4f4a988208613db52a071c7b76c25b9d32bd6d8022bea33ee7c39da",
       "families": [
         "rudder_owned_runtime_adapters"
       ]
@@ -59140,7 +59140,21 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "packages/agent-runtime-utils/src/types.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "base_sha256": "2bf0055fbe90f1587f68d925e078b36083481688e80d1885ae0893c24c07c577",
+      "head_sha256": "4fb635f8b4f4a988208613db52a071c7b76c25b9d32bd6d8022bea33ee7c39da",
+      "rust_authority": "rudder-hermes-acp::tool_progress folds public ACP updates; rudder-d1-persistence::native_chat::execution::hermes_progress owns bounded validation, durable events and versioned provenance.",
+      "compatibility_boundary": "Type-only optional status field in the shared transcript union. No executable Node logic, persistence, state reduction or fallback is added. React consumes the Rust-projected pending/in_progress/completed/failed status.",
+      "retirement_criterion": "Remove this diff-local record once the exact type source enters the comparison base. TypeScript client and transport contracts remain synchronized with Rust; no Node business implementation is authorized.",
+      "reviewer": "/root/audit_hermes_config_journey (gpt-6-luna, xhigh)",
+      "review_reference": "Stage review of 4efb690de9d15b4c779fb77969c5940e719b2af6; source hash unchanged in later tool-UI checkpoints; final review must bind publication head.",
+      "review_status": "reviewed"
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
