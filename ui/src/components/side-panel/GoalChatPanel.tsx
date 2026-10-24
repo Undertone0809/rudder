@@ -405,7 +405,14 @@ export function GoalChatPanel({
           setStreamBody("");
           setMessages((current) => [...current, ...event.messages]);
         }
-        if (event.type === "error") throw new Error(event.error);
+        if (event.type === "error") {
+          if (event.terminal) {
+            mutationTerminal = true;
+            if (streamDraftRef.current?.streamKey === streamKey) streamDraftRef.current = null;
+            checkpointDispatcher.retain(new Set());
+          }
+          throw new Error(event.error);
+        }
       };
 
       if (sendTarget.conversationId) {
@@ -551,7 +558,9 @@ export function GoalChatPanel({
       }
     } finally {
       if (sendOperationRef.current === sendOperation) {
-        checkpointDispatcher.retain(new Set());
+        if (mutationTerminal || abortController.signal.aborted) {
+          checkpointDispatcher.retain(new Set());
+        }
         if (abortControllerRef.current === abortController) abortControllerRef.current = null;
         activeBodyRef.current = null;
         sendInFlightRef.current = false;

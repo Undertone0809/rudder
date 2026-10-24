@@ -283,7 +283,7 @@ describe("GoalChatPanel", () => {
     await act(async () => pending.resolve());
   });
 
-  it.each(["final", "error"] as const)("drops pending Goal checkpoints on %s stream termination", async (terminalEvent) => {
+  it.each(["final", "terminal error", "unconfirmed error"] as const)("handles pending Goal checkpoints on %s", async (terminalEvent) => {
     const checkpoint = deferred<unknown>();
     const keepStreamOpen = deferred<void>();
     let emitEvent: ((event: ChatStreamEvent) => Promise<void> | void) | null = null;
@@ -307,8 +307,12 @@ describe("GoalChatPanel", () => {
         bodyHash: "b".repeat(64),
       } as never);
       await keepStreamOpen.promise;
-      if (terminalEvent === "error") {
-        await options.onEvent({ type: "error", error: "The Goal stream failed." } as never);
+      if (terminalEvent !== "final") {
+        await options.onEvent({
+          type: "error",
+          error: "The Goal stream failed.",
+          ...(terminalEvent === "terminal error" ? { terminal: true } : {}),
+        } as never);
       }
     });
 
@@ -351,7 +355,17 @@ describe("GoalChatPanel", () => {
       checkpoint.reject(new Error("terminal stream checkpoint was rejected"));
       await new Promise((resolve) => setTimeout(resolve, 550));
     });
-    expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1);
+    if (terminalEvent === "unconfirmed error") {
+      expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(2);
+      expect(chatsApi.checkpointMessageStream).toHaveBeenLastCalledWith("chat-goal-1", {
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 3,
+        renderedBodyHash: "c".repeat(64),
+      });
+    } else {
+      expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("hydrates the composer from the new Goal when the scope changes with the same body prop", async () => {
