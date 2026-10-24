@@ -8350,6 +8350,43 @@ async function runAppBuilderScenario(mode) {
   if (shutdownError) throw shutdownError;
 }
 
+async function runRuntimeRestartSettingsScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "runtime-restart-settings");
+  const executable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const run = await launchDesktop(scenarioRoot, mode, await allocateSmokePorts(),
+    executable ? { RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" } : {}, executable);
+  try {
+    const company = await createCompany(run.baseUrl);
+    await createCeo(run.baseUrl, company.id);
+    const descriptorPath = resolveInstancePaths(scenarioRoot).runtimeDescriptorPath;
+    const before = await readFile(descriptorPath, "utf8");
+    const electronPid = run.electronApp.process().pid;
+    await run.page.goto(`${run.baseUrl}/instance/settings/about`);
+    const restartButton = run.page.getByRole("button", { name: "Restart local runtime", exact: true });
+    await restartButton.waitFor({ state: "visible", timeout: 20_000 });
+    await run.page.screenshot({ path: path.join(scenarioRoot, "restart-control.png") });
+    await restartButton.click();
+    await waitForSmokeCondition("About restart to replace the runtime descriptor", async () => {
+      const after = await readFile(descriptorPath, "utf8").catch(() => null);
+      return after && after !== before;
+    }, { timeoutMs: 60_000 });
+    const page = await waitForBoardWindow(run.electronApp, run.page);
+    assert.equal(run.electronApp.process().pid, electronPid, "runtime restart must retain Electron and its session");
+    const baseUrl = new URL(page.url()).origin;
+    const organizations = await fetch(`${baseUrl}/api/orgs`).then((response) => response.json());
+    assert.ok(organizations.some((org) => org.id === company.id), "restart must preserve the same organization data");
+    await page.goto(`${baseUrl}/instance/settings/about`);
+    await page.getByRole("button", { name: "Restart local runtime", exact: true })
+      .waitFor({ state: "visible", timeout: 20_000 });
+    await page.screenshot({ path: path.join(scenarioRoot, "restart-complete.png") });
+    console.log("[desktop-smoke] About restart retained Electron, replaced the runtime, preserved organization data, and reopened settings");
+  } finally {
+    await closeDesktop(run.electronApp);
+  }
+}
+
 async function runWindowsShellScenario(mode) {
   const ports = await allocateSmokePorts();
   const scenarioRoot = path.join(tmpRoot, "windows-shell");
@@ -8483,6 +8520,7 @@ function resolveScenarioList(mode, scenario) {
   }
   if (scenario === "account-gate"
     || scenario === "update-check"
+    || scenario === "runtime-restart-settings"
     || scenario === "auto-update"
     || scenario === "auto-update-public"
     || scenario === "windows-shell"
@@ -8511,6 +8549,8 @@ try {
       await runUpdateCheckScenario(smokeMode);
     } else if (scenario === "windows-shell") {
       await runWindowsShellScenario(smokeMode);
+    } else if (scenario === "runtime-restart-settings") {
+      await runRuntimeRestartSettingsScenario(smokeMode);
     } else if (scenario === "account-gate") {
       await runAccountGateScenario(smokeMode);
     } else if (scenario === "auto-update") {

@@ -1,4 +1,5 @@
 import { healthApi } from "@/api/health";
+import { DesktopRuntimeRestart } from "@/components/DesktopRuntimeRestart";
 import {
   SettingsGroup,
   SettingsItem,
@@ -509,6 +510,9 @@ export function InstanceAboutSettings() {
               value={instanceRoot}
               mono
             />
+          ) : null}
+          {runtimeMode === "owned" ? (
+            <DesktopRuntimeRestart disabled={checkUpdatesPending || installUpdatePending || updateActionInProgress} />
           ) : null}
         </SettingsGroup>
       </SettingsSection>
