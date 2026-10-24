@@ -27,6 +27,7 @@ import {
   ChatProjectSelectorButton,
 } from "@/components/chat/ChatProjectSelector";
 import {
+  ChatSendRecoveryCheckingNotice,
   ChatSendRecoveryNotice,
   ChatSendRecoveryProblem,
   type ChatSendRecovery,
@@ -1703,7 +1704,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     replayPendingStop();
     window.addEventListener("online", replayPendingStop);
     return () => window.removeEventListener("online", replayPendingStop);
-  }, [conversationId, selectedOrganizationId]); const readComposerDraft = useCallback(() => composerEditorRef.current?.getMarkdown?.() ?? draft, [draft]);
+  }, [conversationId, selectedOrganizationId]); const readComposerDraft = useCallback(() => newConversationSendInFlight ? draft : composerEditorRef.current?.getMarkdown?.() ?? draft, [draft, newConversationSendInFlight]);
   const queueComposerMessage = async (
     conversation: ChatConversation,
     bodyOverride?: string,
@@ -2029,9 +2030,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               });
               // Acknowledgement owns the caches, not the user's subsequent navigation.
               if (ownsFirstTurn) {
+                firstTurnStore.releaseOperation(firstTurnOwner, streamKey);
                 navigate(chatConversationPath(conversation.id));
-              }
-              firstTurnStore.finish(firstTurnOwner, streamKey);
+              } else firstTurnStore.finish(firstTurnOwner, streamKey);
               newConversationLockAcquired = false;
               // These caches were seeded above. Reconcile in the background so slow
               // sidebar GETs cannot block navigation or consumption of stream events.
@@ -2148,7 +2149,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (!networkWaiting && !firstTurnNeedsRecovery) {
           setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
         }
-        firstTurnStore.finish(firstTurnOwner, streamKey);
         return;
       }
       const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
@@ -3292,10 +3292,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? "Create or activate an agent before sending messages."
     : selectedConversation
       ? selectedConversation.chatRuntime.error ?? "Selected chat agent is unavailable."
-      : nativeFirstSend.capabilityState === "error"
-        ? nativeFirstSend.capabilityError ?? "Native Chat ownership could not be confirmed. Sending is paused."
-      : nativeFirstSend.recovery.kind === "blocked"
-        ? nativeFirstSend.recovery.message
+      : nativeFirstSendGate
+        ? null
       : nativeFirstSendUnavailable
         ? "The selected native runtime is unavailable. Check its local installation and Profile. Your draft is preserved."
       : draftPreflightQuery.isPending
@@ -3606,12 +3604,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [lockEmptyStatePromptSuggestions, readComposerDraft]); const applyEmptyStatePrompt = useCallback((prompt: string) => { const nextDraft = applyChatPromptToDraft(readComposerDraft(), prompt); setDraft(nextDraft); setEmptyStateActiveSuggestionIndex(0); setDismissedEmptyStatePromptQuery(chatPromptQueryKey(nextDraft));
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [readComposerDraft]); const selectEmptyStatePromptSuggestion = useCallback((suggestion: EmptyStatePromptSuggestion) => { if (emptyStatePromptSuggestionsLocked) return; applyEmptyStatePrompt(suggestion.prompt); }, [applyEmptyStatePrompt, emptyStatePromptSuggestionsLocked]); const handleComposerDraftChange = useCallback((nextDraft: string) => {
     const scopeKey = draftStorageScopeKey;
-    if (activeDraftScopeRef.current !== scopeKey) return;
+    if (activeDraftScopeRef.current !== scopeKey || newConversationSendInFlight) return;
     setDraftState((current) => current.scopeKey === scopeKey ? { ...current, value: nextDraft } : current);
     setEmptyStateActiveSuggestionIndex(0);
     const nextQuery = chatPromptQueryKey(nextDraft);
     setDismissedEmptyStatePromptQuery((current) => current === nextQuery ? current : null);
-  }, [draftStorageScopeKey]); const turnBranchControlsForTurn = useCallback(
+  }, [draftStorageScopeKey, newConversationSendInFlight]); const turnBranchControlsForTurn = useCallback(
     (chatTurnId: string | null, activeTurnVariant?: number | null): ChatTurnBranchControls | null => { if (!chatTurnId) return null; const userRows = rawMessages.filter( (m) => m.role === "user" && m.kind === "message" && m.chatTurnId === chatTurnId, ); const variants = [...new Set([...userRows.map((m) => m.turnVariant), ...(activeTurnVariant === null || activeTurnVariant === undefined ? [] : [activeTurnVariant])])].sort((a, b) => a - b); if (variants.length < 2) return null; const activeRows = userRows.filter((m) => !m.supersededAt);
       const activeVariant = activeTurnVariant ?? (activeRows.length > 0 ? Math.max(...activeRows.map((m) => m.turnVariant)) : variants[variants.length - 1]!);
       const selected = branchPreview?.chatTurnId === chatTurnId ? branchPreview.turnVariant : activeVariant; let idx = variants.indexOf(selected); if (idx < 0) idx = variants.length - 1;
@@ -4131,11 +4129,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       {recoveryDiscovery.problem ? (
         <ChatSendRecoveryProblem message={recoveryDiscovery.problem} onRetry={recoveryDiscovery.retry} />
       ) : null}
-      {recoveryDiscovery.checking ? (
-        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">
-          Checking the previous message before sending. Your current draft is preserved.
-        </div>
-      ) : null}
+      <ChatSendRecoveryCheckingNotice key={`checking:${draftStorageScopeKey}`} checking={recoveryDiscovery.checking && !activeSendInFlight} />
       {recoveryDiscovery.completedNotice ? (
         <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{recoveryDiscovery.completedNotice}</div>
       ) : null}
@@ -4292,7 +4286,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           key={draftStorageScopeKey}
           ref={composerEditorRef}
           scrollRef={composerEditorScrollRef}
-          value={draft}
+          value={newConversationSendInFlight ? "" : draft}
           readOnly={newConversationSendInFlight || selectedConversationOwnerLoss}
           onChange={handleComposerDraftChange}
           mentions={mentionOptions}

@@ -9550,7 +9550,7 @@ describe("Atomic new-chat drafts", () => {
 
     const sendButton = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
     expect(sendButton?.disabled).toBe(true);
-    expect(container.textContent).toContain("Checking the previous message before sending");
+    await vi.waitFor(() => expect(container.textContent).toContain("Checking the previous message before sending"));
     expect(container.textContent).toContain("new-draft.txt");
     expect(readChatComposerDraft("org-1", "chat-1")).toMatchObject({
       body: "New message that must remain a draft.",
@@ -9903,7 +9903,10 @@ describe("Atomic new-chat drafts", () => {
         state: "streaming",
       }),
     );
-    expect(container.querySelector("[data-testid='chat-pending-first-turn']")).toBeNull();
+    // This harness spies on navigation without committing the destination route.
+    // Keep the outgoing turn painted until RouteOwner observes that commit.
+    expect(container.querySelector("[data-testid='chat-pending-first-turn']")).not.toBeNull();
+    expect(container.querySelector("h1")).toBeNull();
 
     mockState.setChatSendInFlight.mockClear();
     await act(async () => {
@@ -9998,6 +10001,8 @@ describe("Atomic new-chat drafts", () => {
     mockState.messagesByChatId = { [acceptedConversation.id]: [acceptedMessage] };
     mockState.streamDrafts = { [streamScopeKey]: ackDraft };
     mockState.sendInFlightByChatId = { [streamScopeKey]: true };
+    // useParams/navigation are mocked; mirror RouteOwner's committed boundary.
+    act(() => firstTurnStore.setOwner(`org-1:${acceptedConversation.id}`));
     rerender();
 
     mockState.setStreamDraftForChat.mockClear();
