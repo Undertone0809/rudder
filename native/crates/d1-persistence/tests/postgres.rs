@@ -2,9 +2,11 @@ mod support;
 
 use rudder_d1_persistence::{
     MutationStore, OrganizationBrandingActivityAction, OrganizationResourceCommand,
-    OrganizationResourceOperation, Outcome, ProjectCreateCommand, ProjectCreateProvisionRequest,
-    ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    OrganizationResourceCreateCommand, OrganizationResourceOperation, Outcome,
+    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
+    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
     ProjectPatchMutationOrigin, Receipt, ResultState, StoreError,
+    agent_core::{NativeAgentAccess, NativeAgentAuthorizer},
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
@@ -14,13 +16,26 @@ use rudder_project_goal_link_core::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::Row;
+use sqlx::{PgConnection, Row};
+use std::{future::Future, pin::Pin};
 use support::{
     ASSET, CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
     PROJECT,
 };
 
 struct SeedTargets;
+
+struct FixedNativeAuthorization(NativeAgentAccess);
+
+impl NativeAgentAuthorizer for FixedNativeAuthorization {
+    fn revalidate<'a>(
+        &'a self,
+        _connection: &'a mut PgConnection,
+        _org_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>> {
+        Box::pin(std::future::ready(Ok(self.0)))
+    }
+}
 
 #[derive(Default)]
 struct CreateProvisioner {
@@ -3503,6 +3518,267 @@ async fn organization_resource_update_claims_rust_authority_and_preserves_catalo
             "Renamed".to_owned()
         )
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn public_resource_mutation_claims_a_node_row_without_claiming_its_project() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let resource = "60000000-0000-4000-8000-000000000004";
+    let node_project = "70000000-0000-4000-8000-000000000001";
+    database
+        .sql(&format!(
+            "INSERT INTO projects (id,org_id,name)
+             VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'Legacy attachment project');
+             INSERT INTO project_goal_mutation_state (project_id,org_id,owner,mutation_version,fence_epoch)
+             VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'node',0,0)
+             ON CONFLICT (project_id) DO UPDATE
+             SET owner='node',mutation_version=0,fence_epoch=0,
+                 fence_token=gen_random_uuid(),updated_at=now();
+             INSERT INTO organization_resources
+               (id,org_id,name,kind,source_type,locator,metadata)
+             VALUES ('{resource}'::uuid,'{ORG}'::uuid,'Historical','file','external',
+                     'https://example.test/historical','{{\"source\":\"node\"}}'::jsonb);
+             INSERT INTO organization_resource_mutation_state
+               (resource_id,org_id,owner,mutation_version,fence_epoch)
+             VALUES ('{resource}'::uuid,'{ORG}'::uuid,'node',0,0);
+             INSERT INTO project_resource_attachments (org_id,project_id,resource_id)
+             VALUES ('{ORG}'::uuid,'{node_project}'::uuid,'{resource}'::uuid);"
+        ))
+        .await;
+    let authorization = FixedNativeAuthorization(NativeAgentAccess::Authorized);
+    let original_token: String = sqlx::query_scalar(
+        "SELECT fence_token::text FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let before_project: (String, i64, i64) = sqlx::query_as(
+        "SELECT owner,mutation_version,fence_epoch
+         FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(node_project)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+
+    let command = organization_resource_command(
+        resource,
+        "public-resource-claim-update",
+        OrganizationResourceOperation::Update,
+        json!({"name":"Claimed by Rust"}),
+    );
+    let updated = store
+        .organization_resource_mutate_public(command.clone(), &authorization)
+        .await
+        .unwrap();
+    let ResultState::OrganizationResourceMutated { response, .. } = &updated.receipt.result else {
+        panic!("public resource update receipt")
+    };
+    assert_eq!(response["name"], "Claimed by Rust");
+    let authority = sqlx::query(
+        "SELECT owner,mutation_version,fence_epoch,fence_token::text AS fence_token
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(authority.try_get::<String, _>("owner").unwrap(), "rust");
+    assert_eq!(authority.try_get::<i64, _>("mutation_version").unwrap(), 1);
+    assert_eq!(authority.try_get::<i64, _>("fence_epoch").unwrap(), 1);
+    assert_ne!(
+        authority.try_get::<String, _>("fence_token").unwrap(),
+        original_token
+    );
+    let after_project: (String, i64, i64) = sqlx::query_as(
+        "SELECT owner,mutation_version,fence_epoch
+         FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(node_project)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(after_project, before_project);
+    let attachments: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_resource_attachments
+         WHERE project_id=$1::uuid AND resource_id=$2::uuid",
+    )
+    .bind(node_project)
+    .bind(resource)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(attachments, 1);
+
+    let replay = store
+        .organization_resource_mutate_public(command, &authorization)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, updated.receipt);
+    let effects: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
+                (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid),
+                (SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid)",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(effects, (1, 1, 1));
+
+    let denied = FixedNativeAuthorization(NativeAgentAccess::Forbidden);
+    let denied = store
+        .organization_resource_mutate_public(
+            organization_resource_command(
+                resource,
+                "public-resource-claim-forbidden",
+                OrganizationResourceOperation::Update,
+                json!({"name":"Must not be applied"}),
+            ),
+            &denied,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        denied,
+        rudder_d1_persistence::PublicOrganizationResourceError::Store(
+            StoreError::PublicIdentityForbidden
+        )
+    ));
+    let unchanged: String =
+        sqlx::query_scalar("SELECT name FROM organization_resources WHERE id=$1::uuid")
+            .bind(resource)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(unchanged, "Claimed by Rust");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn public_resource_create_replay_and_delete_commit_effects_once() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let node_project = "70000000-0000-4000-8000-000000000002";
+    database
+        .sql(&format!(
+            "INSERT INTO projects (id,org_id,name)
+             VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'Legacy attachment project');
+             INSERT INTO project_goal_mutation_state (project_id,org_id,owner,mutation_version,fence_epoch)
+             VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'node',0,0)
+             ON CONFLICT (project_id) DO UPDATE
+             SET owner='node',mutation_version=0,fence_epoch=0,
+                 fence_token=gen_random_uuid(),updated_at=now();"
+        ))
+        .await;
+    let authorization = FixedNativeAuthorization(NativeAgentAccess::Authorized);
+    let create = OrganizationResourceCreateCommand {
+        organization_id: ORG.to_owned(),
+        actor_kind: "board".to_owned(),
+        actor_id: "resource-test-user".to_owned(),
+        idempotency_key: "public-resource-create".to_owned(),
+        run_id: None,
+        data: json!({
+            "name":"New Resource",
+            "kind":"url",
+            "locator":"https://example.test/new",
+            "metadata":{"createdBy":"rust"}
+        }),
+    };
+    let created = store
+        .organization_resource_create_public(create.clone(), &authorization)
+        .await
+        .unwrap();
+    let ResultState::OrganizationResourceCreated {
+        resource_id,
+        response,
+    } = &created.receipt.result
+    else {
+        panic!("public resource creation receipt")
+    };
+    assert_eq!(response["name"], "New Resource");
+    let resource_id = resource_id.clone();
+    let replay = store
+        .organization_resource_create_public(create, &authorization)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, created.receipt);
+
+    sqlx::query(
+        "INSERT INTO project_resource_attachments (org_id,project_id,resource_id)
+         VALUES ($1::uuid,$2::uuid,$3::uuid)",
+    )
+    .bind(ORG)
+    .bind(node_project)
+    .bind(&resource_id)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let deleted = store
+        .organization_resource_mutate_public(
+            organization_resource_command(
+                &resource_id,
+                "public-resource-delete",
+                OrganizationResourceOperation::Delete,
+                json!({}),
+            ),
+            &authorization,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        deleted.receipt.result,
+        ResultState::OrganizationResourceMutated {
+            operation: OrganizationResourceOperation::Delete,
+            ..
+        }
+    ));
+    let deleted_replay = store
+        .organization_resource_mutate_public(
+            organization_resource_command(
+                &resource_id,
+                "public-resource-delete",
+                OrganizationResourceOperation::Delete,
+                json!({}),
+            ),
+            &authorization,
+        )
+        .await
+        .unwrap();
+    assert!(deleted_replay.replayed);
+    assert_eq!(deleted_replay.receipt, deleted.receipt);
+
+    let effects: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
+                (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid),
+                (SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid)",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(effects, (2, 2, 2));
+    let tombstone: (String, i64, i64) = sqlx::query_as(
+        "SELECT owner,mutation_version,fence_epoch
+         FROM organization_resource_mutation_state WHERE resource_id=$1::uuid",
+    )
+    .bind(&resource_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(tombstone, ("rust".to_owned(), 2, 1));
+    let project_state: (String, i64) = sqlx::query_as(
+        "SELECT owner,mutation_version FROM project_goal_mutation_state
+         WHERE project_id=$1::uuid",
+    )
+    .bind(node_project)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(project_state, ("node".to_owned(), 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -507,4 +507,56 @@ describe("resource catalog mutation authority", () => {
       .where(eq(organizationResources.id, resource.id)))
       .toEqual([{ name: "Rust-owned Library row" }]);
   });
+
+  it("keeps Node-owned project attachment operations separate from claimed Resource fields", async () => {
+    const orgId = await createOrganization("Claimed Resource Attachment Fence Org", "CRF");
+    const project = await createProject(orgId, "Legacy Node project");
+    const resource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Historical Node resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "https://example.test/historical",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(organizationResourceMutationState).values({ resourceId: resource.id, orgId });
+    await db.update(organizationResourceMutationState)
+      .set({ owner: "rust", mutationVersion: 1n, fenceEpoch: 1n, fenceToken: randomUUID() })
+      .where(eq(organizationResourceMutationState.resourceId, resource.id));
+
+    const rustOwned = {
+      status: 409,
+      message: "Organization resource mutation authority is owned by Rust",
+    };
+    const catalog = resourceCatalogService(db);
+    await expect(catalog.updateOrganizationResource(orgId, resource.id, { name: "Node overwrite" }))
+      .rejects.toMatchObject(rustOwned);
+    await expect(catalog.removeOrganizationResource(orgId, resource.id)).rejects.toMatchObject(rustOwned);
+
+    await catalog.replaceProjectResourceAttachments({
+      orgId,
+      projectId: project.id,
+      attachments: [{ resourceId: resource.id, note: "Project-owned relation" }],
+    });
+    const attached = await catalog.createProjectResourceAttachment(project.id, {
+      resourceId: resource.id,
+      note: "Project can still manage this edge",
+    });
+    expect(attached).toMatchObject({ resourceId: resource.id, note: "Project can still manage this edge" });
+
+    const updated = await catalog.updateProjectResourceAttachment(project.id, attached!.id, {
+      note: "updated by owning Project",
+    });
+    expect(updated).toMatchObject({ resourceId: resource.id, note: "updated by owning Project" });
+    expect(await catalog.removeProjectResourceAttachment(project.id, attached!.id))
+      .toMatchObject({ id: attached!.id, resourceId: resource.id });
+    expect(await db.select({ name: organizationResources.name })
+      .from(organizationResources).where(eq(organizationResources.id, resource.id)))
+      .toEqual([{ name: "Historical Node resource" }]);
+    expect(await db.select({ owner: organizationResourceMutationState.owner,
+      mutationVersion: organizationResourceMutationState.mutationVersion,
+      fenceEpoch: organizationResourceMutationState.fenceEpoch })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{ owner: "rust", mutationVersion: 1n, fenceEpoch: 1n }]);
+  });
 });

@@ -1205,6 +1205,12 @@ impl AppState {
             StoreError::NotFound => (StatusCode::NOT_FOUND, "mutation_target_not_found"),
             StoreError::NotOwned => (StatusCode::CONFLICT, "mutation_not_owned"),
             StoreError::Unauthorized => (StatusCode::FORBIDDEN, "mutation_unauthorized"),
+            StoreError::PublicIdentityUnauthorized => {
+                (StatusCode::UNAUTHORIZED, "mutation_identity_unauthorized")
+            }
+            StoreError::PublicIdentityForbidden => {
+                (StatusCode::FORBIDDEN, "mutation_identity_forbidden")
+            }
             StoreError::InvalidInput
             | StoreError::InvalidResource
             | StoreError::Branding(_)

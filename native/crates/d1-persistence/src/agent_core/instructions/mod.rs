@@ -29,6 +29,27 @@ pub struct Host {
     pub friendly_workspace_home: bool,
     pub hostname: String,
 }
+
+/// Resolve the same organization workspace display root used by Agent
+/// instructions without creating or repairing any workspace directories.
+pub fn resolve_workspace_root(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    org_id: &str,
+) -> io::Result<PathBuf> {
+    let host = Host {
+        instance_root: instance_root.to_owned(),
+        workspace_home: workspace_home.to_owned(),
+        previous_documents_root: previous_documents_root.to_owned(),
+        friendly_workspace_home,
+        hostname: hostname.to_owned(),
+    };
+    storage::root(&host, org_id).map(|(root, _)| root)
+}
+
 fn validate_host(host: &Host, ctx: &Context<'_>) -> Result<()> {
     if host.hostname.is_empty()
         || [
