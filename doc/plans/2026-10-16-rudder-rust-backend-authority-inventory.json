@@ -1271,7 +1271,7 @@
     },
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
+      "sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
       "families": [
         "electron_process_graph"
       ]
@@ -59140,21 +59140,7 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "desktop/src/desktop-quit-flow.ts",
-      "change_kind": "modified_node_compatibility",
-      "base_sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
-      "head_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "Rust native_chat control/stop handlers and D1 execution finalizers retain all permissions, ownership fences, persistence and terminal decisions.",
-      "compatibility_boundary": "Retained Electron client only: validate target/control responses, send complete fenced Stop to Rust and poll terminal status with bounded shutdown deadlines. No Node server cancellation fallback, DB access or provider execution.",
-      "retirement_criterion": "The Electron client remains supported; remove legacy heartbeat cancellation when all legacy run authority is retired. This record grants no backend authority and is retired when its source diff enters the comparison base.",
-      "reviewer": "/root/follow347_final_merge_review (gpt-6-luna/xhigh), independent scoped client-boundary ACCEPT",
-      "review_reference": "desktop-relocation-independent-review-r1.json SHA256 db15ddb9596dd0c8a55e142654b2f533344981379ec05749dbffbdb8266a7071; exact source accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033; no runtime acceptance claim",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_node_changes": [],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
