@@ -42,6 +42,10 @@ export class FirstChatTurnStore {
   owns(owner: string, streamKey: string) {
     return this.owner === owner && this.snapshot.pending?.streamKey === streamKey;
   }
+  /** ACK retires the operation; RouteOwner clears its presentation at navigation commit. */
+  releaseOperation(owner: string, streamKey: string) {
+    if (this.operations.get(streamKey)?.owner === owner) this.operations.delete(streamKey);
+  }
   finish(owner: string, streamKey: string, recover = false) {
     if (!recover && this.operations.get(streamKey)?.owner === owner) this.operations.delete(streamKey);
     if (!this.owns(owner, streamKey)) return false;
