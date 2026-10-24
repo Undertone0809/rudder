@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatStreamEvent } from "@rudderhq/shared";
 import { GoalChatPanel } from "./GoalChatPanel";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -280,6 +281,77 @@ describe("GoalChatPanel", () => {
       renderedBodyHash: "b".repeat(64),
     }));
     await act(async () => pending.resolve());
+  });
+
+  it.each(["final", "error"] as const)("drops pending Goal checkpoints on %s stream termination", async (terminalEvent) => {
+    const checkpoint = deferred<unknown>();
+    const keepStreamOpen = deferred<void>();
+    let emitEvent: ((event: ChatStreamEvent) => Promise<void> | void) | null = null;
+    vi.mocked(chatsApi.checkpointMessageStream).mockReturnValueOnce(checkpoint.promise as never);
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      emitEvent = options.onEvent;
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 1,
+        bodyHash: "a".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "first visible prefix",
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 2,
+        bodyHash: "b".repeat(64),
+      } as never);
+      await keepStreamOpen.promise;
+      if (terminalEvent === "error") {
+        await options.onEvent({ type: "error", error: "The Goal stream failed." } as never);
+      }
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+
+    await waitUntil(() => expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await emitEvent?.({
+        type: "assistant_delta",
+        delta: " and a newer pending prefix",
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 3,
+        bodyHash: "c".repeat(64),
+      } as never);
+    });
+    if (terminalEvent === "final") {
+      await act(async () => {
+        await emitEvent?.({
+          type: "final",
+          messages: [{
+            id: "message-assistant",
+            conversationId: "chat-goal-1",
+            role: "assistant",
+            body: "The Goal stream is complete.",
+          }],
+        } as never);
+        keepStreamOpen.resolve();
+      });
+      await waitUntil(() => expect(rendered.container.textContent).toContain("The Goal stream is complete."));
+    } else {
+      await act(async () => keepStreamOpen.resolve());
+      await waitUntil(() => expect(rendered.container.querySelector('[role="alert"]')).not.toBeNull());
+    }
+
+    await act(async () => {
+      checkpoint.reject(new Error("terminal stream checkpoint was rejected"));
+      await new Promise((resolve) => setTimeout(resolve, 550));
+    });
+    expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1);
   });
 
   it("hydrates the composer from the new Goal when the scope changes with the same body prop", async () => {

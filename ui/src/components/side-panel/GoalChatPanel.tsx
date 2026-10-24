@@ -398,9 +398,10 @@ export function GoalChatPanel({
         }
         if (event.type === "final") {
           mutationTerminal = true;
+          if (streamDraftRef.current?.streamKey === streamKey) streamDraftRef.current = null;
+          checkpointDispatcher.retain(new Set());
           if (pendingSend) await pendingSend.settle();
           setSendRecovery(null);
-          if (streamDraftRef.current?.streamKey === streamKey) streamDraftRef.current = null;
           setStreamBody("");
           setMessages((current) => [...current, ...event.messages]);
         }
@@ -550,6 +551,7 @@ export function GoalChatPanel({
       }
     } finally {
       if (sendOperationRef.current === sendOperation) {
+        checkpointDispatcher.retain(new Set());
         if (abortControllerRef.current === abortController) abortControllerRef.current = null;
         activeBodyRef.current = null;
         sendInFlightRef.current = false;
