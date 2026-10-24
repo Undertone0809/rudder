@@ -44,7 +44,7 @@ vi.mock("../services/index.js", () => ({
   deduplicateAgentName: vi.fn((name: string) => name),
 }));
 
-async function createApp(actor: any) {
+async function createApp(actor: any, nativeCliAuthOwner = false) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -62,8 +62,10 @@ async function createApp(actor: any) {
       deploymentExposure: "private",
       bindHost: "127.0.0.1",
       allowedHostnames: [],
+      nativeCliAuthOwner,
     }),
   );
+  app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -71,7 +73,7 @@ async function createApp(actor: any) {
   return server;
 }
 
-describe("cli auth routes", () => {
+describe("CLI auth legacy-off compatibility and native ownership fence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -303,4 +305,21 @@ describe("cli auth routes", () => {
       }),
     );
   });
+  it.each([
+    ["POST", "/api/cli-auth/challenges"],
+    ["GET", "/api/cli-auth/challenges/challenge-1?token=synthetic-token"],
+    ["POST", "/api/cli-auth/challenges/challenge-1/approve"],
+    ["POST", "/api/cli-auth/challenges/challenge-1/cancel"],
+    ["GET", "/api/cli-auth/me"],
+    ["POST", "/api/cli-auth/revoke-current"],
+  ])("never registers legacy %s %s when Rust owns the public ingress", async (method, path) => {
+    const app = await createApp({ type: "board", source: "session", userId: "user-1" }, true);
+    const route = method === "POST" ? request(app).post(path) : request(app).get(path);
+    const response = await route.send(method === "POST" ? { token: "synthetic-token" } : undefined);
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: "API route not found" });
+    for (const operation of Object.values(mockBoardAuthService)) expect(operation).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
 });

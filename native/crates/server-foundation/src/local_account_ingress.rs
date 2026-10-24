@@ -1066,6 +1066,7 @@ mod tests {
             )
             .unwrap(),
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let app = actix_test::init_service(
             actix_web::App::new()
@@ -1114,6 +1115,7 @@ mod tests {
             )
             .unwrap(),
             local_account: None,
+            cli_auth_browser_auth: None,
         });
         let app = actix_test::init_service(
             actix_web::App::new()

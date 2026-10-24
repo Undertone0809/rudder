@@ -157,6 +157,23 @@ afterEach(() => {
 });
 
 describe("useNativeFirstSendRecovery", () => {
+  it("keeps a normal first send in flight without exposing blocked recovery, then offers recovery only on failure", async () => {
+    api.getNativeChatCapabilities.mockResolvedValue(nativeCapabilities);
+    const hook = mount("org-1", "user-1");
+    await hook.flush();
+
+    let input: Awaited<ReturnType<typeof hook.current.prepare>> = null;
+    await act(async () => { input = await hook.current.prepare(firstDraft); });
+    expect(hook.current.recovery).toEqual({ kind: "sending" });
+    expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
+      status: "pending", draft: firstDraft, clientMutationId: input!.clientMutationId,
+    });
+    await expect(hook.current.prepare(firstDraft)).rejects.toThrow("previous first message");
+
+    await act(async () => { await hook.current.markUnknown(input!.clientMutationId); });
+    expect(hook.current.recovery).toMatchObject({ kind: "blocked" });
+    expect(readNativeFirstSendIntent("org-1", "user-1")?.status).toBe("unknown");
+  });
   it("reconciles an accepted receipt, then settles only when the user opens it", async () => {
     const saved = await savePending("org-1", "user-1");
     api.getNativeChatCapabilities.mockResolvedValue(nativeCapabilities);
@@ -197,6 +214,7 @@ describe("useNativeFirstSendRecovery", () => {
     await act(async () => {
       acceptedIdentity = await hook.current.markAccepted(saved.intent.clientMutationId, "chat-1");
     });
+    expect(hook.current.recovery).toEqual({ kind: "sending" });
     expect(readPendingChatSendMutation("org-1", "chat-1")).toMatchObject({
       id: saved.intent.clientMutationId,
       status: "accepted",
@@ -280,6 +298,7 @@ describe("useNativeFirstSendRecovery", () => {
     expect(readNativeFirstSendIntent("org-1", "user-1")?.status).toBe("not_found");
     let retryInput: unknown;
     await act(async () => { retryInput = await hook.current.retryOriginal(); });
+    expect(hook.current.recovery).toEqual({ kind: "sending" });
     expect(retryInput).toEqual({ ...firstDraft, clientMutationId: saved.intent.clientMutationId });
     expect(readNativeFirstSendIntent("org-1", "user-1")).toMatchObject({
       status: "pending",

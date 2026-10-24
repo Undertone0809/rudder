@@ -17,6 +17,9 @@ enum Issuer {
         expires_in: u64,
         update_age: u64,
         disable_session_refresh: bool,
+        trusted_origins: Vec<String>,
+        disable_sign_up: bool,
+        rate_limit_enabled: bool,
     },
 }
 
@@ -32,11 +35,11 @@ pub(super) fn parse(raw: &str) -> Result<BrowserAuthConfig, crate::ConfigError> 
         return Err(invalid());
     }
     let issuer: Issuer = serde_json::from_str(raw).map_err(|_| invalid())?;
-    let (secret, secure, policy) = match issuer {
+    let (secret, secure, policy, email_config) = match issuer {
         Issuer::LocalAccount {
             secret,
             secure_cookie,
-        } => (secret, secure_cookie, SessionPolicy::LocalAccount),
+        } => (secret, secure_cookie, SessionPolicy::LocalAccount, None),
         Issuer::BetterAuth {
             secret,
             secure_cookie,
@@ -45,6 +48,9 @@ pub(super) fn parse(raw: &str) -> Result<BrowserAuthConfig, crate::ConfigError> 
             expires_in,
             update_age,
             disable_session_refresh,
+            trusted_origins,
+            disable_sign_up,
+            rate_limit_enabled,
         } => {
             let prefix = if secure_cookie { "__Secure-" } else { "" };
             if session_cookie_name != format!("{prefix}better-auth.session_token")
@@ -55,8 +61,20 @@ pub(super) fn parse(raw: &str) -> Result<BrowserAuthConfig, crate::ConfigError> 
             {
                 return Err(invalid());
             }
-            (secret, secure_cookie, SessionPolicy::BetterAuth)
+            (
+                secret,
+                secure_cookie,
+                SessionPolicy::BetterAuth,
+                Some(super::config::BetterAuthEmailConfig {
+                    trusted_origins,
+                    disable_sign_up,
+                    rate_limit_enabled,
+                }),
+            )
         }
     };
-    BrowserAuthConfig::required(secret.as_bytes(), secure, policy).map_err(|_| invalid())
+    let mut config =
+        BrowserAuthConfig::required(secret.as_bytes(), secure, policy).map_err(|_| invalid())?;
+    config.better_auth_email = email_config;
+    Ok(config)
 }

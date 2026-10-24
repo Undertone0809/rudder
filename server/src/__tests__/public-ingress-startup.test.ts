@@ -82,8 +82,9 @@ describe("explicit public ingress startup", () => {
     vi.mocked(selectAvailablePort).mockResolvedValue(3101);
     vi.stubEnv("BETTER_AUTH_SECRET", "changed-after-issuer-construction");
     const descriptor = Object.freeze({ issuer: "better_auth" as const, secret: "original-issuer-secret", secureCookie: true,
-      sessionCookieName: "better-auth.session_token", dontRememberCookieName: "better-auth.dont_remember",
-      expiresIn: 604800, updateAge: 86400, disableSessionRefresh: false });
+      sessionCookieName: "__Secure-better-auth.session_token", dontRememberCookieName: "__Secure-better-auth.dont_remember",
+      expiresIn: 604800, updateAge: 86400, disableSessionRefresh: false,
+      trustedOrigins: Object.freeze(["https://rudder.example.test"]), disableSignUp: true, rateLimitEnabled: false });
     const ingress = await preparePublicIngressStartup(config({ deploymentMode: "authenticated" }), 3100, undefined, undefined, undefined, undefined, descriptor);
     expect(ingress.appOptions.rustPublicIngress?.sessionAuth).toMatchObject({
       kind: descriptor.issuer, secret: descriptor.secret, secureCookie: true,

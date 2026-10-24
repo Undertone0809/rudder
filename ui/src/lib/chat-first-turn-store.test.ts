@@ -13,6 +13,27 @@ afterEach(() => vi.unstubAllGlobals());
 const turn = { streamKey: "one", body: "keep my draft", files: [] as File[], createdAt: new Date() };
 
 describe("first chat operation lifetime", () => {
+  it("keeps accepted presentation until the route commits without retaining a recoverable operation", () => {
+    const store = new FirstChatTurnStore();
+    store.setOwner("org-a:route-1");
+    store.begin("org-a:route-1", turn);
+    const snapshot = store.getSnapshot();
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.releaseOperation("org-a:route-1", turn.streamKey);
+    expect(store.getSnapshot()).toBe(snapshot);
+    expect(listener).not.toHaveBeenCalled();
+    expect(store.recoverDraft("org-a:route-1", turn.streamKey, "org-a", null)).toBeNull();
+    expect(store.begin("org-a:route-1", { ...turn, streamKey: "duplicate" })).toBe(false);
+
+    store.setOwner("org-a:accepted-chat");
+    expect(store.getSnapshot().pending).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(1);
+    store.begin("org-a:accepted-chat", { ...turn, streamKey: "newer" });
+    store.releaseOperation("org-a:route-1", "newer");
+    expect(store.recoverDraft("org-a:accepted-chat", "newer", "org-a", null)).not.toBeNull();
+  });
   it("does not restore over a newer submitted turn whose source was cleared", () => {
     const store = new FirstChatTurnStore();
     store.setOwner("org-a:route-1");

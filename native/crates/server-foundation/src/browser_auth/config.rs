@@ -1,5 +1,7 @@
 use std::net::SocketAddr;
 
+use crate::public_ingress_config::{NativeSessionAuthConfig, NativeSessionAuthKind};
+
 /// The two existing issuers intentionally have different renewal semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionPolicy {
@@ -17,11 +19,19 @@ pub(super) enum Mode {
     LocalImplicit,
 }
 
+#[derive(Clone)]
+pub(crate) struct BetterAuthEmailConfig {
+    pub(crate) trusted_origins: Vec<String>,
+    pub(crate) disable_sign_up: bool,
+    pub(crate) rate_limit_enabled: bool,
+}
+
 /// Immutable host configuration. No field is deserializable from a request.
 /// Debug is deliberately omitted because this contains a session signing key.
 #[derive(Clone)]
 pub struct BrowserAuthConfig {
     pub(super) mode: Mode,
+    pub(crate) better_auth_email: Option<BetterAuthEmailConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +51,21 @@ impl BrowserAuthConfig {
         matches!(self.mode, Mode::LocalImplicit)
     }
 
+    pub(crate) fn better_auth_email_auth_enabled(&self) -> bool {
+        self.better_auth_email.is_some()
+    }
+
+    pub(crate) fn better_auth_session_settings(&self) -> Option<(&[u8], bool)> {
+        match &self.mode {
+            Mode::Required {
+                secret,
+                secure_cookie,
+                session_policy: SessionPolicy::BetterAuth,
+            } => Some((secret, *secure_cookie)),
+            _ => None,
+        }
+    }
+
     pub fn required(
         secret: &[u8],
         secure_cookie: bool,
@@ -55,7 +80,27 @@ impl BrowserAuthConfig {
                 secure_cookie,
                 session_policy,
             },
+            better_auth_email: None,
         })
+    }
+
+    /// Reuse an issuer that was already validated by the public-ingress
+    /// session configuration. This path preserves that issuer's exact signing
+    /// secret and cookie policy; the standalone browser-auth constructor keeps
+    /// its separate minimum-secret-strength requirement.
+    pub(crate) fn from_validated_session_auth(session: &NativeSessionAuthConfig) -> Self {
+        let session_policy = match session.kind {
+            NativeSessionAuthKind::BetterAuth => SessionPolicy::BetterAuth,
+            NativeSessionAuthKind::LocalAccount => SessionPolicy::LocalAccount,
+        };
+        Self {
+            mode: Mode::Required {
+                secret: session.secret.as_bytes().to_vec(),
+                secure_cookie: session.secure_cookie,
+                session_policy,
+            },
+            better_auth_email: None,
+        }
     }
 
     pub fn local_implicit(
@@ -73,6 +118,7 @@ impl BrowserAuthConfig {
         }
         Ok(Self {
             mode: Mode::LocalImplicit,
+            better_auth_email: None,
         })
     }
 

@@ -46,6 +46,42 @@ export function resolveViteHmrPort(serverPort: number): number {
   return Math.max(1_024, serverPort - 10_000);
 }
 
+const nativeEmailAuthPaths = new Set([
+  "/api/auth/sign-up/email",
+  "/api/auth/sign-in/email",
+  "/api/auth/sign-out",
+]);
+
+function isNativeEmailAuthRequest(method: string, requestTarget: string): boolean {
+  if (method.toUpperCase() !== "POST") return false;
+
+  let pathname: string;
+  try {
+    // Better Call resolves the original request URL with WHATWG URL semantics,
+    // so query strings and dot segments are handled before route matching.
+    pathname = new URL(requestTarget, "http://rudder-private.invalid").pathname;
+  } catch {
+    return false;
+  }
+
+  // Native ingress accepts up to four rounds of percent-encoded path aliases.
+  // Apply the same bounded decoding before comparing the fixed route set.
+  for (let pass = 0; pass < 4; pass += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return false;
+    }
+    if (decoded === pathname) break;
+    pathname = decoded;
+  }
+
+  if (pathname.endsWith("/")) pathname = pathname.slice(0, -1);
+  const asciiLowerPath = pathname.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+  return nativeEmailAuthPaths.has(asciiLowerPath);
+}
+
 export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
@@ -159,6 +195,18 @@ export async function createHttpApp(
       bindHost: opts.bindHost,
     }),
   );
+  if (opts.rustPublicIngress) {
+    // These POST routes are owned by the public Rust listener. Direct access
+    // to Node's private loopback port must not retain a Better Auth writer or
+    // even resolve its session before the wildcard handler is reached.
+    app.use((req, res, next) => {
+      if (isNativeEmailAuthRequest(req.method, req.originalUrl)) {
+        res.status(404).json({ error: "API route not found" });
+        return;
+      }
+      next();
+    });
+  }
   // When the managed Rust public listener is enabled, Node never grants its
   // local-trusted implicit Board actor to direct/private requests. The only
   // implicit identity is an explicit proof issued by Rust after loopback
