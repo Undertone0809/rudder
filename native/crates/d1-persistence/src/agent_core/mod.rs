@@ -207,6 +207,19 @@ impl AgentCoreRequest {
             Ok(request)
         })
     }
+
+    /// Run the existing static request validation before authorization when
+    /// the legacy route did so. Short-name references defer this until route
+    /// resolution, matching the normal AgentCore admission path.
+    pub fn validate_static_input(&self) -> std::result::Result<(), AgentCoreError> {
+        if self.id.as_deref().is_none_or(uuid_like) {
+            validation::validate(
+                &self.operation,
+                (!self.input_missing).then_some(&self.input),
+            )?;
+        }
+        Ok(())
+    }
 }
 impl Drop for AgentCoreRequest {
     fn drop(&mut self) {
@@ -284,7 +297,7 @@ fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
         return Err(http(400, "Invalid Agent command"));
     }
     if r.id.as_deref().is_none_or(uuid_like) {
-        validation::validate(&r.operation, (!r.input_missing).then_some(&r.input))?;
+        r.validate_static_input()?;
         early_authorization(actor, r)?;
     }
     Ok(())

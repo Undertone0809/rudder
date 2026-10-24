@@ -34,6 +34,11 @@ enum Endpoint {
         org_id: String,
         agent_id: String,
     },
+    Keys(String),
+    KeyRevoke {
+        agent_id: String,
+        key_id: String,
+    },
     InstructionsBundle(String),
     InstructionsFile(String),
 }
@@ -75,6 +80,8 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
             matches!(*method, Method::GET | Method::HEAD)
         }
         Endpoint::Rollback { .. } => *method == Method::POST,
+        Endpoint::Keys(_) => matches!(*method, Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *method == Method::DELETE,
         Endpoint::InstructionsPath { .. } => {
             matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
         }
@@ -157,6 +164,16 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments.len() == 5
         && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return Some(Endpoint::KeyRevoke {
+            agent_id: decode_capture(segments[2])?,
+            key_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("orgs")
         && segments[3].eq_ignore_ascii_case("agents")
         && segments[4].eq_ignore_ascii_case("name-suggestion")
@@ -217,6 +234,12 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Keys);
+    }
+    if segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
         && segments[3].eq_ignore_ascii_case("permissions")
     {
         return decode_capture(segments[2]).map(Endpoint::Permissions);
@@ -258,6 +281,8 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
             matches!(*request.method(), Method::GET | Method::HEAD)
         }
         Endpoint::Rollback { .. } => *request.method() == Method::POST,
+        Endpoint::Keys(_) => matches!(*request.method(), Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *request.method() == Method::DELETE,
         Endpoint::InstructionsPath { .. } => matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::PATCH
@@ -318,6 +343,30 @@ async fn execute(
             "native_identity_unavailable",
         );
     }
+    // The Express key-create route validates its body before checking board
+    // access. Reuse AgentCore's validator here so invalid UUID-addressed
+    // requests keep that observable error precedence without duplicating its
+    // schema in the ingress adapter.
+    if matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST {
+        let command = request_command(&state, &request, endpoint.clone(), parsed_body.clone());
+        let body = match serde_json::to_vec(&command) {
+            Ok(body) => body,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        let command = match AgentCoreRequest::parse(&body) {
+            Ok(command) => command,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        if let Err(error) = command.validate_static_input() {
+            return response_error(error);
+        }
+    }
     let identity = match resolve_public_http_identity(&state, &request).await {
         Ok(identity) => identity,
         Err((status, code)) => return state.foundation.json_error(status, code),
@@ -328,6 +377,11 @@ async fn execute(
     if let Some(response) = agent_cli_context_mismatch_response(&request, &identity) {
         return response;
     }
+    if matches!(&identity, NativeIngressIdentity::None)
+        && matches!(&endpoint, Endpoint::Keys(_) | Endpoint::KeyRevoke { .. })
+    {
+        return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
+    }
     // This is the Rust equivalent of boardMutationGuard(): cookie-backed
     // board actors need a same-host browser origin; local-implicit and bearer
     // actors are exempt exactly as the legacy middleware specifies.
@@ -335,6 +389,8 @@ async fn execute(
         &endpoint,
         Endpoint::Permissions(_)
             | Endpoint::Rollback { .. }
+            | Endpoint::Keys(_)
+            | Endpoint::KeyRevoke { .. }
             | Endpoint::InstructionsPath { .. }
             | Endpoint::InstructionsBundle(_)
             | Endpoint::InstructionsFile(_)
@@ -612,6 +668,10 @@ fn request_command(
     endpoint: Endpoint,
     parsed_body: Option<Value>,
 ) -> Value {
+    let key_id = match &endpoint {
+        Endpoint::KeyRevoke { key_id, .. } => Some(key_id.clone()),
+        _ => None,
+    };
     let (operation, org_id, id, revision_id) = match endpoint {
         Endpoint::Roster(org_id) => ("list", Some(org_id), None, None),
         Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id), None),
@@ -629,6 +689,15 @@ fn request_command(
             agent_id,
             revision_id,
         } => ("rollback", None, Some(agent_id), Some(revision_id)),
+        Endpoint::Keys(agent_id) => {
+            let operation = if *request.method() == Method::POST {
+                "key-create"
+            } else {
+                "keys"
+            };
+            (operation, None, Some(agent_id), None)
+        }
+        Endpoint::KeyRevoke { agent_id, .. } => ("key-revoke", None, Some(agent_id), None),
         Endpoint::InstructionsPath { org_id, agent_id } => {
             let op = match *request.method() {
                 Method::GET | Method::HEAD => "instructions-path-get",
@@ -658,6 +727,7 @@ fn request_command(
         "orgId": org_id,
         "id": id,
         "revisionId": revision_id,
+        "keyId": key_id,
         "query": query_value(request.uri().query().unwrap_or_default()),
         "localImplicit": false,
         "actorRunId": request
@@ -676,6 +746,7 @@ fn request_command(
         operation,
         "permissions"
             | "rollback"
+            | "key-create"
             | "instructions-path-patch"
             | "instructions-bundle-patch"
             | "instructions-file-put"
@@ -1003,6 +1074,58 @@ mod tests {
             "/api/agents/agent-1/config-revisions//rollback",
             "/api/agents/agent-1/configuration/extra",
             "/api/orgs/org-1/agents/name-suggestion/extra",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn api_key_routes_are_reserved_with_exact_method_contracts() {
+        let cases = [
+            (
+                "/api/agents/agent-1/keys",
+                Endpoint::Keys("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/API/AGENTS/agent%2Done/KEYS/",
+                Endpoint::Keys("agent-one".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/api/agents/agent-1/keys/key%2Done",
+                Endpoint::KeyRevoke {
+                    agent_id: "agent-1".to_owned(),
+                    key_id: "key-one".to_owned(),
+                },
+                &[Method::DELETE][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/agent-1/keys/extra/segment",
+            "/api/agents/agent-1//keys",
         ] {
             assert_eq!(endpoint_for_path(path), None, "{path}");
         }
