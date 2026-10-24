@@ -167,6 +167,9 @@ const mockState = vi.hoisted(() => {
   getNativeChatCapabilities: vi.fn(),
   readNativeChatTurn: vi.fn(),
   readNativeChatControl: vi.fn(),
+  readNativeChatRecovery: vi.fn(),
+  nativeRecoveryStatus: undefined as unknown,
+  lastNativeRecoveryStatus: undefined as unknown,
   streamDrafts: {} as Record<string, ChatStreamDraft>,
   intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
   browserShortcutListener: null as ((request: DesktopBrowserShortcutRequest) => void) | null,
@@ -295,6 +298,16 @@ vi.mock("@tanstack/react-query", () => ({
         data: mockState.queueSnapshot,
         isPending: false,
         isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "chats" && queryKey[2] === "native-recovery") {
+      mockState.lastNativeRecoveryStatus = mockState.nativeRecoveryStatus ?? { kind: "legacy" };
+      return {
+        data: mockState.lastNativeRecoveryStatus,
+        isPending: false,
+        isLoading: false,
+        isError: false,
         error: null,
       };
     }
@@ -670,6 +683,7 @@ vi.mock("@/api/chats", () => ({
     getNativeChatCapabilities: mockState.getNativeChatCapabilities,
     readNativeChatTurn: mockState.readNativeChatTurn,
     readNativeChatControl: mockState.readNativeChatControl,
+    readNativeChatRecovery: mockState.readNativeChatRecovery,
     sendMessageStream: mockState.sendMessageStream,
     reconcilePendingMessageSend: mockState.reconcilePendingMessageSend,
     destroySideChat: mockState.destroySideChat,
@@ -1847,6 +1861,9 @@ beforeEach(() => {
   mockState.getNativeChatCapabilities.mockResolvedValue(null);
   mockState.readNativeChatTurn.mockReset();
   mockState.readNativeChatControl.mockReset();
+  mockState.readNativeChatRecovery.mockReset();
+  mockState.nativeRecoveryStatus = undefined;
+  mockState.lastNativeRecoveryStatus = undefined;
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
@@ -5575,6 +5592,157 @@ describe("Chat streaming controls", () => {
     });
   });
 
+  it("settles owner-loss Stop as interrupted while keeping the chat quarantined", async () => {
+    mockState.messagesByChatId = { "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })] };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = { "chat-1": {
+      chatId: "chat-1", streamKey: "owner-loss-stream", userBody: "Please draft a plan.",
+      userCreatedAt: new Date("2026-05-12T09:04:00.000Z"), userMessageId: "user-message-1",
+      chatTurnId: "turn-1", turnVariant: 0, editedFromCreatedAt: null, body: "Partial output",
+      generationId: "generation-1", attemptEpoch: 1, lastCommittedRenderSeq: 0,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST, state: "streaming",
+      createdAt: new Date("2026-05-12T09:04:01.000Z"), transcript: [], replyingAgentId: "agent-1",
+    } };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1", activeAttemptEpoch: 1, activeControlVersion: 2,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust", firstSend: true, readTurn: true, nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl());
+    mockState.stopMessageStream.mockImplementationOnce(async (_chatId: string, request: {
+      controlActionId: string;
+      expectedGenerationId: string;
+    }) => {
+      mockState.queueSnapshot = queueSnapshot();
+      return {
+        stopped: false,
+        disposition: "control_lost",
+        controlActionId: request.controlActionId,
+        generationId: request.expectedGenerationId,
+        idempotent: false,
+      };
+    });
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="chat-owner-loss-blocked"]')).not.toBeNull());
+    expect(container.textContent).toContain("Rudder could not confirm it stopped");
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
+    expect(mockState.abortChatStream).toHaveBeenCalledWith("chat-1");
+    expect(mockState.setChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Run interrupted",
+      body: expect.stringContaining("Rudder could not confirm it stopped"),
+      tone: "warn",
+    }));
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Response stopped" }));
+  });
+
+  it("reopens a held owner-loss generation without Stop or Continue and with Send blocked", () => {
+    mockState.messagesByChatId = { "chat-1": [message({
+      id: "assistant-owner-lost", role: "assistant", status: "streaming",
+      generationTerminalReason: "native_chat_owner_lost_cleanup_unknown", body: "Partial output",
+    })] };
+    mockState.queueSnapshot = queueSnapshot();
+    mockState.nativeRecoveryStatus = {
+      kind: "native",
+      recovery: {
+        generationId: "generation-1",
+        runId: "run-1",
+        attemptEpoch: 1,
+        generationStatus: "interrupted_unverified",
+        controlState: "control_lost",
+        cleanupState: "unknown",
+      },
+    };
+
+    const { container } = renderChat();
+
+    expect(container.querySelector('[data-testid="chat-owner-loss-blocked"]')).not.toBeNull();
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
+    expect(container.querySelector("button[aria-label='Continue response']")).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
+    expect(container.textContent).not.toContain("Response stopped");
+  });
+
+  it("blocks sending when native recovery state cannot be read", () => {
+    mockState.queueSnapshot = queueSnapshot();
+    mockState.messagesByChatId = { "chat-1": [] };
+    mockState.nativeRecoveryStatus = { kind: "unavailable" };
+
+    const { container } = renderChat();
+
+    expect(mockState.allQueryKeys).toContainEqual(["chats", "org-1", "native-recovery", "chat-1"]);
+    expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "native-recovery", "chat-1"]);
+    expect(mockState.lastNativeRecoveryStatus).toEqual({ kind: "unavailable" });
+    expect(container.querySelector('[data-testid="chat-owner-loss-blocked"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-recovery-status-unavailable"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Sending is paused");
+  });
+
+  it("blocks immediate Full Chat submission until native recovery status resolves", async () => {
+    mockState.messagesByChatId = { "chat-1": [] };
+    mockState.nativeRecoveryStatus = { kind: "checking" };
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")!;
+    expect(container.querySelector('[data-testid="chat-recovery-status-checking"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Send before the recovery check completes.");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(mockState.createConversation).not.toHaveBeenCalled();
+  });
+
+  it("keeps recovery warnings visible when an approval hides the composer", () => {
+    mockState.queueSnapshot = queueSnapshot();
+    mockState.nativeRecoveryStatus = { kind: "unavailable" };
+    const { container, rerender } = renderChat();
+
+    expect(container.querySelector('[data-testid="chat-recovery-status-unavailable"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-composer-layout"]')).toBeNull();
+
+    mockState.nativeRecoveryStatus = {
+      kind: "native",
+      recovery: {
+        generationId: "generation-1",
+        runId: "run-1",
+        attemptEpoch: 1,
+        generationStatus: "interrupted_unverified",
+        controlState: "control_lost",
+        cleanupState: "unknown",
+      },
+    };
+    mockState.messagesByChatId = {
+      "chat-1": [pendingIssueProposal(), message({
+        id: "assistant-owner-lost-with-approval",
+        role: "assistant",
+        status: "streaming",
+        generationTerminalReason: "native_chat_owner_lost_cleanup_unknown",
+        body: "Partial output",
+      })],
+    };
+    rerender();
+
+    expect(container.querySelector('[data-testid="chat-owner-loss-blocked"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-recovery-status-unavailable"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-composer-layout"]')).toBeNull();
+  });
+
   it("keeps a final-before-ACK event behind the Stop cutoff", async () => {
     let resolveStop!: (value: { stopped: boolean; disposition: string }) => void;
     mockState.stopMessageStream.mockReturnValueOnce(new Promise((resolve) => {
@@ -5820,6 +5988,43 @@ describe("Chat streaming controls", () => {
     const [, stopRequest] = mockState.stopMessageStream.mock.calls.at(-1) ?? [];
     expect(stopRequest).not.toHaveProperty("lastCommittedRenderSeq");
     expect(stopRequest).not.toHaveProperty("renderedBodyHash");
+  });
+
+  it("builds the full Native Stop request when an active run has no queue attempt fence", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 4,
+      controlVersion: 11,
+      lastSequence: 0,
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.readNativeChatControl).toHaveBeenCalledWith("chat-1", "org-1", "generation-1");
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      controlActionId: expect.any(String),
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 4,
+      expectedControlVersion: 11,
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST,
+    }));
   });
 
   it("uses the narrow native control fence before Stop without requiring turn projection", async () => {
@@ -6074,7 +6279,7 @@ describe("Chat streaming controls", () => {
     expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
     expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
       title: "Stop target could not be verified",
-      body: expect.stringContaining("already finished"),
+      body: "Rudder could not verify which response to stop. Refresh the chat and try again.",
     }));
   });
 
@@ -6216,7 +6421,7 @@ describe("Chat streaming controls", () => {
 
     await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
       title: "Stop target could not be verified",
-      body: expect.stringContaining("changed before Stop"),
+      body: "Rudder could not verify which response to stop. Refresh the chat and try again.",
     })));
     expect(mockState.stopMessageStream).not.toHaveBeenCalled();
     expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
@@ -6341,6 +6546,98 @@ describe("Chat streaming controls", () => {
       body: "Visible prefix",
     });
     expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+  });
+
+  it("repairs an incomplete stored Native Stop after reopen without changing its action or target", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      attemptEpoch: 2,
+      controlVersion: 8,
+      lastClientCheckpointSeq: 4,
+      lastClientCheckpointHash: "b".repeat(64),
+      lastSequence: 5,
+    }));
+    mockState.stopMessageStream.mockImplementationOnce(async (_chatId: string, request: { controlActionId: string; expectedGenerationId: string }) => ({
+      stopped: true,
+      disposition: "stopped",
+      controlActionId: request.controlActionId,
+      generationId: request.expectedGenerationId,
+    }));
+    savePendingChatStopRecovery(createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-1",
+      request: {
+        controlActionId: "old-incomplete-stop",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: null,
+    }));
+
+    renderChat();
+    await vi.waitFor(() => expect(mockState.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.readNativeChatControl).toHaveBeenCalledWith("chat-1", "org-1", "generation-1");
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", {
+      controlActionId: "old-incomplete-stop",
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 8,
+      lastCommittedRenderSeq: 4,
+      renderedBodyHash: "b".repeat(64),
+    });
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+  });
+
+  it("clears an incomplete old Stop instead of retargeting a replacement generation", async () => {
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-2",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 6,
+      activeGenerationStatus: "running",
+    });
+    mockState.getNativeChatCapabilities.mockResolvedValue({
+      executionAuthority: "native_rust",
+      firstSend: true,
+      readTurn: true,
+      nativeControls: true,
+    });
+    mockState.readNativeChatControl.mockResolvedValue(nativeControl({
+      generationId: "generation-2",
+      attemptEpoch: 1,
+      controlVersion: 6,
+    }));
+    savePendingChatStopRecovery(createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-1",
+      request: {
+        controlActionId: "obsolete-stop-action",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: null,
+    }));
+
+    const { container } = renderChat();
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Stop needs a fresh confirmation",
+    })));
+
+    expect(mockState.readNativeChatControl).toHaveBeenCalledWith("chat-1", "org-1", "generation-1");
+    expect(mockState.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
+    expect(container.textContent).not.toContain("Response stopped");
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.not.stringContaining("complete_stop_fence_required"),
+    }));
   });
 
   it("retains an unknown Stop result and replays the exact action after remount", async () => {
@@ -9127,7 +9424,18 @@ describe("Atomic new-chat drafts", () => {
     } else {
       mockState.stopMessageStream.mockReturnValue(new Promise(() => {}));
       savePendingChatStopRecovery(createPendingChatStopRecovery({
-        orgId: "org-1", chatId: "chat-1", request: { controlActionId: "stop-during-discovery" }, frozenDraft: null,
+        orgId: "org-1",
+        chatId: "chat-1",
+        executionAuthority: "native_rust",
+        request: {
+          controlActionId: "stop-during-discovery",
+          expectedGenerationId: "generation-1",
+          expectedAttemptEpoch: 1,
+          expectedControlVersion: 2,
+          lastCommittedRenderSeq: 0,
+          renderedBodyHash: EMPTY_CHAT_BODY_SHA256_FOR_TEST,
+        },
+        frozenDraft: null,
       }));
     }
     const { container, rerender } = renderChat();

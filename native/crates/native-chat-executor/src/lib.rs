@@ -55,6 +55,8 @@ use tokio::runtime::Handle;
 
 type Result<T> = std::result::Result<T, Error>;
 
+const VISIBLE_OUTPUT_PARTIAL_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Native Chat blocking worker was interrupted")]
@@ -87,6 +89,8 @@ pub enum Error {
     ProviderRejected,
     #[error("Native Chat process exited before a matching provider terminal observation")]
     ProcessExited,
+    #[error("Native Chat visible output exceeded its durable receipt limit")]
+    VisibleOutputLimitExceeded,
 }
 
 /// Installation paths, never accepted from an HTTP request. The isolated HOME
@@ -407,6 +411,7 @@ impl ExecutionFailure {
             Error::ApprovalRequired => "approval_required",
             Error::ProviderRejected => "provider_rejected",
             Error::ProcessExited => "process_exited",
+            Error::VisibleOutputLimitExceeded => "visible_output_limit_exceeded",
         }
     }
 
@@ -465,6 +470,17 @@ impl ExecutionFailure {
             &self.0.error,
             Error::ProviderRejected | Error::UnsupportedConfiguration
         )
+    }
+
+    /// This exact pre-transaction output-cap failure may use the ordinary
+    /// failure finalizer only after its own cleanup and fence were verified.
+    /// It does not make persistence conflicts or other indeterminate errors
+    /// definitive.
+    pub fn can_finalize_output_limit_failure(&self) -> bool {
+        matches!(&self.0.error, Error::VisibleOutputLimitExceeded)
+            && self.0.process == ProcessDisposition::CleanupProven
+            && self.0.fence.is_some()
+            && self.0.cleanup_receipt.is_some()
     }
 
     fn not_launched(error: Error) -> Self {
@@ -1233,6 +1249,7 @@ fn run_codex_claimed(
         notifications: VecDeque::new(),
         stop: None,
         stop_checked: Instant::now() - Duration::from_secs(1),
+        visible_output_flush_checked: Instant::now() - VISIBLE_OUTPUT_PARTIAL_FLUSH_INTERVAL,
         connection_registered: false,
         turn_response: None,
         spawned: false,
@@ -1374,6 +1391,7 @@ struct Driver<'a> {
     notifications: VecDeque<(String, Value)>,
     stop: Option<execution::StopIntent>,
     stop_checked: Instant,
+    visible_output_flush_checked: Instant,
     connection_registered: bool,
     turn_response: Option<EffectResponseReceipt>,
     spawned: bool,
@@ -1485,8 +1503,17 @@ impl Driver<'_> {
             if Instant::now() >= self.deadline {
                 return Err(Error::Deadline);
             }
-            if self.stop_checked.elapsed() >= Duration::from_millis(200) {
+            let output_flush_due = self.visible_output_flush_checked.elapsed()
+                >= VISIBLE_OUTPUT_PARTIAL_FLUSH_INTERVAL;
+            if self.stop_checked.elapsed() >= Duration::from_millis(200) || output_flush_due {
                 self.poll_stop()?;
+                if output_flush_due {
+                    self.visible_output_flush_checked = Instant::now();
+                    if self.stop.is_none() {
+                        self.transport.flush_visible_output_deltas()?;
+                        self.persist_visible_outputs()?;
+                    }
+                }
             }
             self.interrupt_if_ready()?;
             if self.renewed.elapsed() >= Duration::from_secs(5) {
@@ -1588,6 +1615,19 @@ impl Driver<'_> {
             // receipts instead of letting provider tail output change it.
             if self.stop.is_some() {
                 continue;
+            }
+            if receipt.ordinal() > execution::MAX_VISIBLE_OUTPUTS_PER_TURN {
+                // Resolve Stop before interpreting the cap. A durable Stop
+                // owns the cutoff and intentionally drops this receipt and
+                // the rest of the already-drained queue.
+                self.poll_stop()?;
+                if self.stop.is_some() {
+                    return Ok(());
+                }
+                // Fail before entering the persistence transaction. The
+                // worker may finalize this one known bound only after exact
+                // owned cleanup is proven.
+                return Err(Error::VisibleOutputLimitExceeded);
             }
             match db(
                 self.handle,
@@ -2108,16 +2148,22 @@ mod cleanup_claim_tests {
         );
         assert!(!failure.process_quiescent());
         assert!(failure.cleanup_receipt().is_none());
+        assert!(!failure.can_finalize_output_limit_failure());
 
         let owned_cleanup = stop_and_take_cleanup(&mut owned);
         assert!(cleanup_proves_owned_execution(&fence, &owned_cleanup));
-        let failure =
-            ExecutionFailure::after_launch(Error::ProcessExited, fence, Some(owned_cleanup));
+        let failure = ExecutionFailure::after_launch(
+            Error::VisibleOutputLimitExceeded,
+            fence,
+            Some(owned_cleanup),
+        );
         assert_eq!(
             failure.process_disposition(),
             ProcessDisposition::CleanupProven
         );
         assert!(failure.process_quiescent());
         assert!(failure.cleanup_receipt().is_some());
+        assert!(failure.can_finalize_output_limit_failure());
+        assert!(!failure.is_definitive_failure());
     }
 }

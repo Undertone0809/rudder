@@ -178,6 +178,7 @@ describe("Live-run reads through real public HTTP, Rust and PostgreSQL", () => {
   const orgFields = [
     "id", "status", "executionPhase", "invocationSource", "triggerDetail", "startedAt", "finishedAt",
     "createdAt", "stdoutExcerpt", "resultJson", "agentId", "agentName", "agentRuntimeType", "goalId", "issueId",
+    "executionAuthority", "chatGenerationId", "chatConversationId",
   ].sort();
   const issueFields = orgFields.filter((field) => field !== "goalId" && field !== "issueId");
 
@@ -232,11 +233,14 @@ describe("Live-run reads through real public HTTP, Rust and PostgreSQL", () => {
     return request(target).get(url).set("authorization", `Bearer ${token}`);
   }
 
-  // Frozen legacy Drizzle query, deliberately independent of the native SQL.
-  // Preserve wire field presence, nulls, summary mapping and both sort phases.
+  // Independent reference for the legacy query and sorting, extended only with
+  // the three safe target fields Desktop needs to call the correct Stop owner.
   async function legacyRuns(organizationId: string, input: LiveRunReadInput): Promise<WireRun[]> {
     const columns = {
       id: heartbeatRuns.id, status: heartbeatRuns.status, executionPhase: heartbeatRuns.runningSubstate,
+      executionAuthority: heartbeatRuns.executionAuthority,
+      chatGenerationId: heartbeatRuns.chatGenerationId,
+      chatConversationId: heartbeatRuns.chatConversationId,
       invocationSource: heartbeatRuns.invocationSource, triggerDetail: heartbeatRuns.triggerDetail,
       startedAt: heartbeatRuns.startedAt, finishedAt: heartbeatRuns.finishedAt, createdAt: heartbeatRuns.createdAt,
       stdoutExcerpt: heartbeatRuns.stdoutExcerpt, resultJson: heartbeatRuns.resultSummaryJson,
@@ -478,6 +482,7 @@ describe("Live-run reads through real public HTTP, Rust and PostgreSQL", () => {
     const rows = await expectParity(`/api/orgs/${orgId}/live-runs`, { issueId: null, goalId: null, minCount: 0 });
     expect(rows).toHaveLength(11);
     expect(rows.find((row) => row.id === queuedId)).toMatchObject({
+      executionAuthority: "legacy_ts", chatGenerationId: null, chatConversationId: null,
       executionPhase: null, invocationSource: "on_demand", triggerDetail: null,
       startedAt: null, finishedAt: null, createdAt: "2024-02-29T04:34:56.123Z", stdoutExcerpt: null, resultJson: null,
       agentId, agentName: "Release verifier ☃", agentRuntimeType: "process", goalId, issueId,

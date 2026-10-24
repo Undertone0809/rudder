@@ -528,6 +528,13 @@ impl OwnedTransport {
         self.receipts.take_visible_output_receipts()
     }
 
+    /// Flush a bounded partial final-answer delta after the caller has checked
+    /// the durable Stop intent. This makes low-volume output visible without
+    /// turning each provider notification into a database receipt.
+    pub fn flush_visible_output_deltas(&mut self) -> Result<(), TransportError> {
+        self.receipts.flush_visible_output_deltas()
+    }
+
     /// A turn receipt requires the exact `turn/completed` notification and the
     /// host terminal boundary that drained all provider output.
     pub fn take_turn_receipt(&mut self) -> Option<crate::TurnReceipt> {

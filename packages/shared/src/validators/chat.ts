@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { organizationEntityReferenceSchema } from "./reference.js";
 import {
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
@@ -14,6 +13,7 @@ import {
   ISSUE_STATUSES,
 } from "../constants.js";
 import type { ChatInlineAnnotation, ChatInlineAnnotationInput } from "../types/chat.js";
+import { organizationEntityReferenceSchema } from "./reference.js";
 
 export const chatConversationStatusSchema = z.enum(CHAT_CONVERSATION_STATUSES);
 export const chatIssueCreationModeSchema = z.enum(CHAT_ISSUE_CREATION_MODES);
@@ -87,6 +87,7 @@ export const chatGenerationEventKindSchema = z.enum([
   "stop_requested",
   "output_cutoff",
   "runtime_terminal",
+  "control_lost",
   "late_output_dropped",
   "terminal_projection_requested",
   "terminal_projected",

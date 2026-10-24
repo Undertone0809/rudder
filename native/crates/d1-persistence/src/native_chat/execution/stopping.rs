@@ -24,6 +24,9 @@ pub struct StopIntent {
     fence: ExecutionFence,
 }
 
+mod output_failure;
+pub(super) use output_failure::{observe_output_failure_stop, resolve_output_failure_stop};
+
 pub async fn observe_stop(
     pool: &PgPool,
     actor: &impl NativeChatExecutionActor,
