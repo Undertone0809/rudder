@@ -360,13 +360,14 @@ async fn authorize_public(
     organization_id: &str,
     authorizer: &dyn NativeAgentAuthorizer,
 ) -> Result<(), StoreError> {
-    match authorizer.revalidate(&mut **tx, organization_id).await? {
+    match authorizer.revalidate(tx, organization_id).await? {
         NativeAgentAccess::Authorized => Ok(()),
         NativeAgentAccess::Unauthorized => Err(StoreError::PublicIdentityUnauthorized),
         NativeAgentAccess::Forbidden => Err(StoreError::PublicIdentityForbidden),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply(
     tx: &mut transaction::Tx<'_>,
     command: &OrganizationResourceCommand,
@@ -1218,6 +1219,7 @@ fn validate_bounded_text(value: &str, max_bytes: usize) -> Result<(), StoreError
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_activity(
     tx: &mut transaction::Tx<'_>,
     organization_id: &str,
@@ -1282,6 +1284,7 @@ async fn persist_receipt(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_activity_outbox(
     tx: &mut transaction::Tx<'_>,
     organization_id: &str,

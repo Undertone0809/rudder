@@ -304,7 +304,7 @@ pub async fn read_organization_catalog(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let output = read_organization_catalog_on_connection(&mut *tx, org, input).await?;
+    let output = read_organization_catalog_on_connection(&mut tx, org, input).await?;
     tx.commit().await?;
     Ok(output)
 }
@@ -330,12 +330,12 @@ pub async fn read_organization_catalog_public(
         );
     }
     input.validate()?;
-    match authorizer.revalidate(&mut *tx, org).await? {
+    match authorizer.revalidate(&mut tx, org).await? {
         NativeAgentAccess::Authorized => {}
         NativeAgentAccess::Unauthorized => return Err(OrganizationCatalogReadError::Unauthorized),
         NativeAgentAccess::Forbidden => return Err(OrganizationCatalogReadError::Forbidden),
     }
-    let output = read_organization_catalog_on_connection(&mut *tx, org, &input).await?;
+    let output = read_organization_catalog_on_connection(&mut tx, org, &input).await?;
     tx.commit().await?;
     Ok(output)
 }

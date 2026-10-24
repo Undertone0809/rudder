@@ -657,9 +657,7 @@ impl MutationStore {
         command: OrganizationResourceCommand,
         authorizer: &dyn agent_core::NativeAgentAuthorizer,
     ) -> Result<CommittedMutation, PublicOrganizationResourceError> {
-        organization_resources::mutate_public(&self.pool, command, authorizer)
-            .await
-            .map_err(PublicOrganizationResourceError::from)
+        organization_resources::mutate_public(&self.pool, command, authorizer).await
     }
 
     /// Create or reuse an organization resource through the direct public
@@ -670,9 +668,7 @@ impl MutationStore {
         command: OrganizationResourceCreateCommand,
         authorizer: &dyn agent_core::NativeAgentAuthorizer,
     ) -> Result<CommittedMutation, PublicOrganizationResourceError> {
-        organization_resources::create_public(&self.pool, command, authorizer)
-            .await
-            .map_err(PublicOrganizationResourceError::from)
+        organization_resources::create_public(&self.pool, command, authorizer).await
     }
 
     /// Read the organization catalog under the same repeatable-read snapshot

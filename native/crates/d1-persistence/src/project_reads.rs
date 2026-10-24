@@ -78,7 +78,7 @@ pub async fn read_projects(
         .execute(&mut *tx)
         .await?;
     let response = read_projects_in_snapshot(
-        &mut *tx,
+        &mut tx,
         organization_id,
         project_id,
         resources_only,

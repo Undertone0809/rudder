@@ -598,11 +598,9 @@ mod tests {
             organization_id: "org".to_owned(),
         };
         assert!(requires_trusted_board_origin(
-            &NativeIngressIdentity::Session(crate::native_session_auth::NativeSessionIdentity {
-                user_id: "user".to_owned(),
-                session_id: "session".to_owned(),
-                token: "token".to_owned(),
-            }),
+            &NativeIngressIdentity::Session(
+                crate::native_session_auth::NativeSessionIdentity::fixture()
+            ),
             &endpoint,
         ));
         assert!(!requires_trusted_board_origin(
@@ -618,11 +616,9 @@ mod tests {
             &endpoint,
         ));
         assert!(!requires_trusted_board_origin(
-            &NativeIngressIdentity::Session(crate::native_session_auth::NativeSessionIdentity {
-                user_id: "user".to_owned(),
-                session_id: "session".to_owned(),
-                token: "token".to_owned(),
-            }),
+            &NativeIngressIdentity::Session(
+                crate::native_session_auth::NativeSessionIdentity::fixture()
+            ),
             &Endpoint::ListResources {
                 organization_id: "org".to_owned(),
             },

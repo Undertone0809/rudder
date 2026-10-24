@@ -31,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { signNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
@@ -150,6 +151,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
   const volumeOrgId = randomUUID();
   const volumeProjectIds = Array.from({ length: 80 }, () => randomUUID());
   const agentId = randomUUID();
+  let agentKeyId = "";
   const oldProjectId = "11111111-1111-4111-8111-111111111111";
   const bareProjectId = "22222222-2222-4222-8222-222222222222";
   const foreignProjectId = "33333333-3333-4333-8333-333333333333";
@@ -212,7 +214,9 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db!, { deploymentMode: "authenticated", authRequirement: "required" }));
-    app.use("/api", projectRoutes(db!, selectedBridge));
+    app.use("/api", projectRoutes(db!, selectedBridge, {
+      nativeProjectReads: ingressMode === "required",
+    }));
     app.use(errorHandler);
     const result = app.listen(listenPort, "127.0.0.1");
     await once(result, "listening");
@@ -304,7 +308,10 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     ]);
     await db.insert(organizationMutationState).values([{ orgId }, { orgId: foreignOrgId }, { orgId: emptyOrgId }, { orgId: volumeOrgId }]).onConflictDoNothing();
     await db.insert(agents).values({ id: agentId, orgId, name: "Reader", role: "general", status: "idle" });
-    await db.insert(agentApiKeys).values({ orgId, agentId, name: "Read test", keyHash: createHash("sha256").update(agentToken).digest("hex") });
+    const [agentKey] = await db.insert(agentApiKeys).values({
+      orgId, agentId, name: "Read test", keyHash: createHash("sha256").update(agentToken).digest("hex"),
+    }).returning({ id: agentApiKeys.id });
+    agentKeyId = agentKey!.id;
     await db.insert(authUsers).values({ id: boardUserId, name: "Read operator", email: "read-test@example.test", createdAt: early, updatedAt: later });
     await db.insert(organizationMemberships).values([orgId, emptyOrgId, volumeOrgId].map((id) => ({ orgId: id, principalType: "user", principalId: boardUserId, status: "active", membershipRole: "member" })));
     await db.insert(boardApiKeys).values({ userId: boardUserId, name: "Read test", keyHash: createHash("sha256").update(boardToken).digest("hex") });
@@ -461,7 +468,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
 
   it("returns complete Node-contract parity for old Node-owned and new Rust-created projects without writes", async () => {
     const list = await get(`/api/orgs/${orgId}/projects`);
-    expect(list.status).toBe(200);
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
     expect(canonicalList(list.body as ProjectRead[])).toEqual(canonicalList(expected));
     expect((list.body as ProjectRead[]).map((project) => project.id)).not.toContain(foreignProjectId);
     for (const project of expected) {
@@ -627,10 +634,29 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     }
     const failingServer = await startApp(unavailable, nodeListenPort);
     try {
-      for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`, `/api/projects/${oldProjectId}/resources`]) {
-        const response = await get(url, agentToken, ingressMode === "required" ? publicTarget : failingServer);
-        expect(response.status).toBe(503);
-        expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+      if (ingressMode === "required") {
+        // Public Project list/detail reads are served by Rust, independently
+        // of the private Node target. The resources subroute is still legacy
+        // Node behavior and therefore remains unavailable with this bridge.
+        const list = await get(`/api/orgs/${orgId}/projects`, agentToken, publicTarget);
+        expect(list.status, JSON.stringify(list.body)).toBe(200);
+        expect(canonicalList(list.body as ProjectRead[])).toEqual(canonicalList(expected));
+
+        const detail = await get(`/api/projects/${oldProjectId}`, agentToken, publicTarget);
+        expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+        expect(canonicalProject(detail.body as ProjectRead)).toEqual(
+          canonicalProject(expected.find((project) => project.id === oldProjectId)!),
+        );
+
+        const resources = await get(`/api/projects/${oldProjectId}/resources`, agentToken, publicTarget);
+        expect(resources.status).toBe(503);
+        expect(resources.body.code).toBe("rust_foundation_project_read_request_failed");
+      } else {
+        for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`, `/api/projects/${oldProjectId}/resources`]) {
+          const response = await get(url, agentToken, failingServer);
+          expect(response.status).toBe(503);
+          expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+        }
       }
       await expectReadOnly();
     } finally {
@@ -694,5 +720,49 @@ describe.each(["off", "required"] as const)("Project reads through real public H
       .send({ goalIds: [] });
     expect(crossOrg.status).toBe(403);
     expect(await databaseSnapshot()).toEqual(beforeCrossOrgRequest);
+
+    if (ingressMode === "required") {
+      // Stop the public Rust ingress, then keep the private Node target alive
+      // with an unavailable bridge. The two migrated reads must be absent from
+      // Node while the remaining legacy resources path reports the outage.
+      const beforeRustUnavailable = await databaseSnapshot();
+      const filesystemBeforeRustUnavailable = filesystemSnapshot(home);
+      await bridge!.close();
+      for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`]) {
+        await expect(get(url, agentToken, publicTarget)).rejects.toThrow(/ECONNREFUSED/);
+      }
+
+      await closeServer(server);
+      const unavailable = createRustFoundationBridge({
+        databaseUrl: connectionString,
+        binaryPath: path.join(home, "foundation-does-not-exist"),
+        mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off",
+      });
+      server = await startApp(unavailable, nodeListenPort);
+      const privateNodeGet = (url: string) => request(server!)
+        .get(url)
+        .set("x-rudder-native-session-proof", signNativeSessionAssertion({
+          key: nativeIdentity.identityAuth.assertionKey,
+          method: "GET",
+          target: url,
+          identity: {
+            kind: "agent_key",
+            agent_id: agentId,
+            key_id: agentKeyId,
+            org_id: orgId,
+            session_id: `agent-key:${agentKeyId}`,
+          },
+        }));
+
+      for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`]) {
+        expect((await privateNodeGet(url)).status).toBe(404);
+      }
+      const legacyResources = await privateNodeGet(`/api/projects/${oldProjectId}/resources`);
+      expect(legacyResources.status, JSON.stringify(legacyResources.body)).toBe(503);
+      expect(legacyResources.body.code).toBe("rust_foundation_project_read_request_failed");
+      await unavailable.close();
+      expect(await databaseSnapshot()).toEqual(beforeRustUnavailable);
+      expect(filesystemSnapshot(home)).toEqual(filesystemBeforeRustUnavailable);
+    }
   });
 });

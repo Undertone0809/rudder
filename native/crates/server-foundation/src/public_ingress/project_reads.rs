@@ -226,7 +226,7 @@ async fn execute(
     // UUID existence-before-organization-check behavior, but never perform the
     // lookup for a request whose public identity has not been authenticated.
     let global_detail_org = if let Some(project_id) = detail_uuid.as_deref() {
-        match project_organization_id_in_snapshot(&mut *tx, project_id).await {
+        match project_organization_id_in_snapshot(&mut tx, project_id).await {
             Ok(Some(org_id)) => Some(org_id),
             Ok(None) => return route_not_found(),
             Err(_) => return internal_error(),
@@ -269,7 +269,7 @@ async fn execute(
     else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
-    match native_auth.revalidate(&mut *tx, &org_id).await {
+    match native_auth.revalidate(&mut tx, &org_id).await {
         Ok(MemberDirectoryNativeAccess::Authorized) => (),
         Ok(MemberDirectoryNativeAccess::Unauthorized) => {
             return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
@@ -292,7 +292,7 @@ async fn execute(
     };
 
     let project_id = if let Some(reference) = alias.as_deref() {
-        match resolve_project_reference_in_snapshot(&mut *tx, &org_id, reference).await {
+        match resolve_project_reference_in_snapshot(&mut tx, &org_id, reference).await {
             Ok(ProjectReferenceResolution::Found(project_id)) => Some(project_id),
             Ok(ProjectReferenceResolution::NotFound) => return route_not_found(),
             Ok(ProjectReferenceResolution::Ambiguous) => {
@@ -306,7 +306,7 @@ async fn execute(
         detail_uuid.clone()
     };
     let response = match read_projects_in_snapshot(
-        &mut *tx,
+        &mut tx,
         &org_id,
         project_id.as_deref(),
         false,

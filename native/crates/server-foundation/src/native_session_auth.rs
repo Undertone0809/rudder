@@ -26,6 +26,17 @@ pub(super) struct NativeSessionIdentity {
     token: String,
 }
 
+#[cfg(test)]
+impl NativeSessionIdentity {
+    pub(super) fn fixture() -> Self {
+        Self {
+            user_id: "user".to_owned(),
+            session_id: "session".to_owned(),
+            token: "token".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum NativeIngressIdentity {
     None,
