@@ -886,7 +886,7 @@ fn validate_first_send_conversation(value: &Value, expected_org: &str, expected_
             value["status"].as_str(),
             Some("active" | "resolved" | "archived")
         )
-        || !value["contextLinks"].as_array().is_some_and(Vec::is_empty)
+        || !valid_first_send_context_links(&value["contextLinks"], expected_org, expected_id)
     {
         return false;
     }
@@ -941,6 +941,47 @@ fn validate_first_send_conversation(value: &Value, expected_org: &str, expected_
                 && runtime["effort"].is_null()
                 && runtime["error"].as_str()
                     == Some("Refresh this chat to load its current Agent.")))
+}
+
+fn valid_first_send_context_links(value: &Value, expected_org: &str, expected_id: &str) -> bool {
+    let Some(links) = value.as_array() else {
+        return false;
+    };
+    if links.len() > 1 {
+        return false;
+    }
+    links.iter().all(|link| {
+        let Some(object) = link.as_object() else {
+            return false;
+        };
+        const LINK_KEYS: &[&str] = &[
+            "id",
+            "orgId",
+            "conversationId",
+            "entityType",
+            "entityId",
+            "metadata",
+            "entity",
+            "createdAt",
+            "updatedAt",
+        ];
+        let canonical_uuid = |value: &Value| {
+            value.as_str().is_some_and(|value| {
+                Uuid::parse_str(value).is_ok_and(|parsed| parsed.to_string() == value)
+            })
+        };
+        object.len() == LINK_KEYS.len()
+            && object.keys().all(|key| LINK_KEYS.contains(&key.as_str()))
+            && canonical_uuid(&link["id"])
+            && link["orgId"].as_str() == Some(expected_org)
+            && link["conversationId"].as_str() == Some(expected_id)
+            && link["entityType"].as_str() == Some("goal")
+            && canonical_uuid(&link["entityId"])
+            && link["metadata"].is_null()
+            && link["entity"].is_null()
+            && link["createdAt"].as_str().is_some()
+            && link["updatedAt"].as_str().is_some()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1681,6 +1722,56 @@ agent-2\r\n\
         let mut invalid_hold = valid;
         invalid_hold["nativeAdmissionHold"] = json!(true);
         assert!(parse_receipt(invalid_hold, org, Some(chat)).is_none());
+    }
+
+    #[test]
+    fn first_send_context_projection_accepts_only_one_bound_goal_link() {
+        let org = "11000000-0000-4000-8000-000000000001";
+        let chat = "21000000-0000-4000-8000-000000000001";
+        let link = json!({
+            "id":"31000000-0000-4000-8000-000000000001",
+            "orgId":org,
+            "conversationId":chat,
+            "entityType":"goal",
+            "entityId":"30000000-0000-4000-8000-000000000001",
+            "metadata":null,
+            "entity":null,
+            "createdAt":"2026-10-25T00:00:00Z",
+            "updatedAt":"2026-10-25T00:00:00Z"
+        });
+        assert!(valid_first_send_context_links(
+            &json!([link.clone()]),
+            org,
+            chat
+        ));
+        assert!(valid_first_send_context_links(&json!([]), org, chat));
+
+        let mut wrong_org = link.clone();
+        wrong_org["orgId"] = json!("11000000-0000-4000-8000-000000000002");
+        let mut wrong_chat = link.clone();
+        wrong_chat["conversationId"] = json!("21000000-0000-4000-8000-000000000002");
+        let mut wrong_type = link.clone();
+        wrong_type["entityType"] = json!("issue");
+        assert!(!valid_first_send_context_links(
+            &json!([wrong_org]),
+            org,
+            chat
+        ));
+        assert!(!valid_first_send_context_links(
+            &json!([wrong_chat]),
+            org,
+            chat
+        ));
+        assert!(!valid_first_send_context_links(
+            &json!([wrong_type]),
+            org,
+            chat
+        ));
+        assert!(!valid_first_send_context_links(
+            &json!([link.clone(), link]),
+            org,
+            chat
+        ));
     }
 
     #[test]

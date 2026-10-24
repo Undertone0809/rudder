@@ -6,7 +6,7 @@
 //! rows. Conversation creation and the normal Native Chat admission body share
 //! one SQL transaction.
 
-use super::{Error, config::LocalHostContext};
+use super::{Error, FirstSendContextLink, config::LocalHostContext};
 use super::{NativeChatActor, Result, admission, auth, http, validation};
 use crate::runtime_bindings;
 use serde::Deserialize;
@@ -56,6 +56,7 @@ pub(super) struct FirstSendInput<'a> {
     pub issue_creation_mode: Option<&'a str>,
     pub title: &'a str,
     pub body: &'a str,
+    pub context_goal_id: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -69,8 +70,24 @@ struct InitialDraftProof {
     effort_override: Option<String>,
     issue_creation_mode: String,
     plan_mode: bool,
+    #[serde(default)]
+    context_goal_id: Option<String>,
     safe_runtime_descriptor: SafeRuntimeDescriptor,
     safe_chat_runtime: SafeChatRuntime,
+}
+
+pub(super) fn context_goal_id(links: &[FirstSendContextLink]) -> Result<Option<String>> {
+    match links {
+        [] => Ok(None),
+        [link] if link.entity_type == "goal" => {
+            let goal_id = validation::canonical_uuid(&link.entity_id, "Goal id")?;
+            Ok(Some(goal_id))
+        }
+        _ => Err(http(
+            422,
+            "Native Chat first-send supports at most one Goal context link",
+        )),
+    }
 }
 
 #[derive(Deserialize)]
@@ -141,6 +158,7 @@ pub(super) async fn submit(
         issue_creation_mode,
         title,
         body,
+        context_goal_id,
     } = *input;
     validate_actor(actor, organization_id)?;
     let mut tx = pool.begin().await?;
@@ -179,6 +197,21 @@ pub(super) async fn submit(
         Some(value) => value.to_owned(),
         None => organization_issue_creation_mode(&mut tx, organization_id).await?,
     };
+    if let Some(goal_id) = context_goal_id {
+        match crate::links::validate_native_chat_goal_context(&mut tx, organization_id, goal_id)
+            .await
+        {
+            Ok(()) => (),
+            Err(crate::StoreError::NotFound) => {
+                return Err(http(
+                    422,
+                    "Goal context must belong to the same organization",
+                ));
+            }
+            Err(crate::StoreError::Database(error)) => return Err(Error::Database(error)),
+            Err(_) => return Err(http(500, "Goal context validation failed")),
+        }
+    }
     let draft_fingerprint = first_draft_fingerprint(
         body,
         &selected_agent_id,
@@ -186,6 +219,7 @@ pub(super) async fn submit(
         model_override,
         effort_override,
         Some(&issue_creation_mode),
+        context_goal_id,
     );
     let body_fingerprint = validation::fingerprint(body);
     let initial_draft_snapshot = serde_json::json!({
@@ -197,6 +231,7 @@ pub(super) async fn submit(
         "effortOverride": effort_override,
         "issueCreationMode": issue_creation_mode,
         "planMode": false,
+        "contextGoalId": context_goal_id,
     });
 
     // The partial unique index remains the authority across legacy Node
@@ -235,6 +270,19 @@ pub(super) async fn submit(
         ));
     };
     let conversation_id: String = inserted.try_get("id")?;
+
+    if let Some(goal_id) = context_goal_id {
+        sqlx::query(
+            "INSERT INTO chat_context_links
+               (org_id, conversation_id, entity_type, entity_id, metadata)
+             VALUES ($1::uuid, $2::uuid, 'goal', $3, NULL)",
+        )
+        .bind(organization_id)
+        .bind(&conversation_id)
+        .bind(goal_id)
+        .execute(&mut *tx)
+        .await?;
+    }
 
     let (mut tx, receipt) = admission::submit_in_transaction(
         tx,
@@ -416,6 +464,55 @@ async fn public_conversation_projection(
     let latest_user_message_preview: String = row.try_get("latest_user_message_preview")?;
     let user_message_count: i32 = row.try_get("user_message_count")?;
 
+    let context_rows = sqlx::query(
+        "SELECT id::text AS id, org_id::text AS org_id,
+                conversation_id::text AS conversation_id, entity_type, entity_id,
+                metadata, created_at::text AS created_at, updated_at::text AS updated_at
+         FROM chat_context_links
+         WHERE conversation_id=$1::uuid
+         ORDER BY entity_type, entity_id",
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let expected_context_count = if proof.context_goal_id.is_some() {
+        1
+    } else {
+        0
+    };
+    if context_rows.len() != expected_context_count {
+        return Err(http(409, "Initial Native Chat context link changed"));
+    }
+    let mut context_links = Vec::with_capacity(context_rows.len());
+    for context_row in context_rows {
+        let context_org_id: String = context_row.try_get("org_id")?;
+        let context_conversation_id: String = context_row.try_get("conversation_id")?;
+        let entity_type: String = context_row.try_get("entity_type")?;
+        let entity_id: String = context_row.try_get("entity_id")?;
+        if context_org_id != organization_id
+            || context_conversation_id != conversation_id
+            || entity_type != "goal"
+            || proof.context_goal_id.as_deref() != Some(entity_id.as_str())
+        {
+            return Err(http(409, "Initial Native Chat context link changed"));
+        }
+        let id: String = context_row.try_get("id")?;
+        let metadata: Option<Value> = context_row.try_get("metadata")?;
+        let created_at: String = context_row.try_get("created_at")?;
+        let updated_at: String = context_row.try_get("updated_at")?;
+        context_links.push(serde_json::json!({
+            "id": id,
+            "orgId": context_org_id,
+            "conversationId": context_conversation_id,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "metadata": metadata,
+            "entity": null,
+            "createdAt": created_at,
+            "updatedAt": updated_at,
+        }));
+    }
+
     // The accepted Run remains bound to its immutable Agent proof. Current
     // Conversation preferences are display state, not part of that proof.
     // Do not present the original runtime as the newly selected Agent or
@@ -496,7 +593,7 @@ async fn public_conversation_projection(
         ("unreadCount", serde_json::json!(0)),
         ("needsAttention", serde_json::json!(false)),
         ("resolvedAt", serde_json::json!(resolved_at)),
-        ("contextLinks", serde_json::json!([])),
+        ("contextLinks", serde_json::json!(context_links)),
         ("sourceMetadata", serde_json::json!(null)),
         ("chatRuntime", serde_json::json!(chat_runtime)),
         ("createdAt", serde_json::json!(created_at)),
@@ -769,6 +866,7 @@ fn validate_initial_draft(proof: &InitialDraftProof, input: &FirstSendInput<'_>)
     if proof.title != input.title
         || proof.model_override.as_deref() != input.model_override
         || proof.effort_override.as_deref() != input.effort_override
+        || proof.context_goal_id.as_deref() != input.context_goal_id
     {
         return Err(http(
             409,
@@ -782,6 +880,7 @@ fn validate_initial_draft(proof: &InitialDraftProof, input: &FirstSendInput<'_>)
         proof.model_override.as_deref(),
         proof.effort_override.as_deref(),
         Some(&proof.issue_creation_mode),
+        proof.context_goal_id.as_deref(),
     );
     if proof.fingerprint != expected {
         return Err(http(409, "Initial Native Chat draft proof does not match"));
@@ -796,6 +895,7 @@ fn first_draft_fingerprint(
     model_override: Option<&str>,
     effort_override: Option<&str>,
     issue_creation_mode: Option<&str>,
+    context_goal_id: Option<&str>,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"native-chat-first-draft-v1\0");
@@ -806,6 +906,12 @@ fn first_draft_fingerprint(
     hash_optional_field(&mut hasher, effort_override);
     hash_optional_field(&mut hasher, issue_creation_mode);
     hash_field(&mut hasher, b"plan_mode=false");
+    if let Some(goal_id) = context_goal_id {
+        // Keep the no-context fingerprint byte-for-byte compatible with
+        // existing receipts while binding a Goal-bearing draft to its link.
+        hasher.update(b"context_goal\0");
+        hash_field(&mut hasher, goal_id.as_bytes());
+    }
     let digest = hasher.finalize();
     let hex = digest
         .iter()

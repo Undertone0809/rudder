@@ -1745,7 +1745,7 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
         "modelOverride":null,
         "effortOverride":null,
         "planMode":false,
-        "contextLinks":[],
+        "contextLinks":[{"entityType":"goal","entityId":fixture::support::GOAL}],
     });
 
     let mut unsupported = input.clone();
@@ -1772,7 +1772,7 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
         Some(input.clone()),
     )
     .await;
-    assert_eq!(foreign_status, StatusCode::NOT_FOUND);
+    assert_eq!(foreign_status, StatusCode::FORBIDDEN);
     let no_foreign_write: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM chat_conversations
          WHERE org_id=$1::uuid AND created_by_user_id=$2 AND initial_client_mutation_id=$3",
@@ -1801,6 +1801,21 @@ async fn public_first_send_creates_and_dispatches_one_exact_native_chat_turn() {
         .map(|line| serde_json::from_slice::<serde_json::Value>(line).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(lines.first().unwrap()["type"], "ack");
+    assert_eq!(
+        lines[0]["conversation"]["contextLinks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        lines[0]["conversation"]["contextLinks"][0]["entityType"],
+        "goal"
+    );
+    assert_eq!(
+        lines[0]["conversation"]["contextLinks"][0]["entityId"],
+        fixture::support::GOAL
+    );
     assert_eq!(
         lines[0]["userMessage"]["body"],
         "First message reaches one native Codex Turn 🌍"

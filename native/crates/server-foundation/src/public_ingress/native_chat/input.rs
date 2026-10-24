@@ -21,9 +21,9 @@ pub(super) struct SendInput {
 }
 
 /// First-message input carries only existing browser choices implemented by
-/// the Rust first-send authority. The UI's empty contextLinks array and false
-/// planMode default are accepted for wire compatibility; populated unsupported
-/// values fail before worker reservation or any write.
+/// the Rust first-send authority. The UI's empty contextLinks array, one Goal
+/// context link, and false planMode default are accepted; unsupported values
+/// fail before worker reservation or any write.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct FirstSendInput {
@@ -67,11 +67,16 @@ impl FirstSendInput {
     }
 
     pub(super) fn into_command(self) -> Result<FirstSendRequest, InputError> {
-        if self.plan_mode == Some(true) || !self.context_links.is_empty() {
+        let supported_context_links = self.context_links.len() <= 1
+            && self
+                .context_links
+                .iter()
+                .all(|link| link.get("entityType").and_then(Value::as_str) == Some("goal"));
+        if self.plan_mode == Some(true) || !supported_context_links {
             return Err(InputError::UnsupportedInput);
         }
-        // Keep the D1 DTO strict and non-publicly constructible. This ingress
-        // conversion only omits the accepted empty compatibility fields.
+        // Keep the D1 DTO strict and non-publicly constructible. The typed
+        // context-link DTO accepts only its supported Goal identity fields.
         serde_json::from_value(serde_json::json!({
             "body": self.body,
             "clientMutationId": self.client_mutation_id,
@@ -81,6 +86,7 @@ impl FirstSendInput {
             "modelOverride": self.model_override,
             "effortOverride": self.effort_override,
             "planMode": false,
+            "contextLinks": self.context_links,
         }))
         .map_err(|_| InputError::UnsupportedInput)
     }
@@ -192,8 +198,19 @@ mod tests {
         .unwrap();
         assert!(input.into_command().is_ok());
 
+        let goal_context: FirstSendInput = serde_json::from_value(json!({
+            "body":"first message",
+            "clientMutationId":"first-send-goal-1",
+            "contextLinks":[{"entityType":"goal","entityId":"30000000-0000-4000-8000-000000000001"}]
+        }))
+        .unwrap();
+        assert!(goal_context.into_command().is_ok());
+
         for payload in [
             json!({"body":"x","clientMutationId":"id","contextLinks":[{"url":"https://example.test"}]}),
+            json!({"body":"x","clientMutationId":"id","contextLinks":[{"entityType":"issue","entityId":"30000000-0000-4000-8000-000000000001"}]}),
+            json!({"body":"x","clientMutationId":"id","contextLinks":[{"entityType":"goal","entityId":"30000000-0000-4000-8000-000000000001"},{"entityType":"goal","entityId":"30000000-0000-4000-8000-000000000002"}]}),
+            json!({"body":"x","clientMutationId":"id","contextLinks":[{"entityType":"goal","entityId":"30000000-0000-4000-8000-000000000001","metadata":{"unexpected":true}}]}),
             json!({"body":"x","clientMutationId":"id","planMode":true}),
         ] {
             let input = serde_json::from_value::<FirstSendInput>(payload).unwrap();

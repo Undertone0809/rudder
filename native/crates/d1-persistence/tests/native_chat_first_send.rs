@@ -17,7 +17,7 @@ use rudder_runtime_core::native_chat::NativeChatProtocolPhase as Phase;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{fs, path::PathBuf, sync::OnceLock};
-use support::{CEO, Database, ORG, OTHER};
+use support::{CEO, Database, FOREIGN_GOAL, GOAL, GOAL_TWO, ORG, OTHER};
 use tempfile::TempDir;
 
 const USER: &str = "native-first-send-owner";
@@ -179,6 +179,15 @@ fn first_send(
         plan_mode: None,
         title: None,
     })
+}
+
+fn first_send_with_goal(mutation: &str, body: &str, goal_id: &str) -> FirstSendRequest {
+    serde_json::from_value(json!({
+        "clientMutationId": mutation,
+        "body": body,
+        "contextLinks": [{"entityType":"goal","entityId":goal_id}],
+    }))
+    .expect("valid Goal first-send request")
 }
 
 struct FirstSendOptions<'a> {
@@ -416,6 +425,127 @@ async fn first_send_creates_one_conversation_and_exact_retry_keeps_original_agen
         counts(&database.pool, "first-mutation-1").await,
         (1, 1, 1, 1, 1, 1)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn first_send_goal_context_is_atomic_projected_and_bound_to_exact_retry() {
+    let database = Database::start().await;
+    prepare(&database).await;
+    let request = first_send_with_goal("first-goal-mutation", "goal first message", GOAL);
+    let accepted = run(&database.pool, &actor("first-goal-owner"), &request)
+        .await
+        .expect("same-organization Goal context is admitted");
+    let conversation_id = accepted["conversationId"].as_str().unwrap();
+    assert_eq!(
+        accepted["conversation"]["contextLinks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        accepted["conversation"]["contextLinks"][0]["entityType"],
+        "goal"
+    );
+    assert_eq!(
+        accepted["conversation"]["contextLinks"][0]["entityId"],
+        GOAL
+    );
+    assert!(accepted["conversation"]["contextLinks"][0]["entity"].is_null());
+
+    let persisted_link: (String, String, String, Option<Value>) = sqlx::query_as(
+        "SELECT org_id::text, conversation_id::text, entity_type, metadata
+         FROM chat_context_links WHERE conversation_id=$1::uuid",
+    )
+    .bind(conversation_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("first send persisted its Goal link");
+    assert_eq!(persisted_link.0, ORG);
+    assert_eq!(persisted_link.1, conversation_id);
+    assert_eq!(persisted_link.2, "goal");
+    assert_eq!(persisted_link.3, None);
+
+    let draft_proof: Value = sqlx::query_scalar(
+        "SELECT r.context_snapshot->'nativeChatInitialDraft'
+         FROM heartbeat_runs r WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(accepted["runId"].as_str().unwrap())
+    .fetch_one(&database.pool)
+    .await
+    .expect("read immutable first-draft proof");
+    assert_eq!(draft_proof["contextGoalId"], GOAL);
+    assert!(
+        draft_proof["fingerprint"]
+            .as_str()
+            .is_some_and(|fingerprint| fingerprint.starts_with("native-chat-first-v1:"))
+    );
+
+    let reconciled =
+        lookup_first_send_submission(&database.pool, &actor("first-goal-lookup"), ORG, &request)
+            .await
+            .expect("lookup exact Goal first-send receipt")
+            .expect("first-send receipt is durable");
+    assert_eq!(
+        reconciled["conversation"]["contextLinks"][0]["entityId"],
+        GOAL
+    );
+    assert_eq!(reconciled["runId"], accepted["runId"]);
+    assert_eq!(reconciled["idempotentReplay"], true);
+
+    let retry = run(&database.pool, &actor("first-goal-retry"), &request)
+        .await
+        .expect("exact Goal first-send retry replays original receipt");
+    assert_eq!(retry["conversationId"], accepted["conversationId"]);
+    assert_eq!(retry["runId"], accepted["runId"]);
+    assert_eq!(retry["idempotentReplay"], true);
+
+    let changed_goal = first_send_with_goal("first-goal-mutation", "goal first message", GOAL_TWO);
+    assert!(matches!(
+        run(&database.pool, &actor("first-goal-conflict"), &changed_goal).await,
+        Err(Error::Http(409, _))
+    ));
+    assert_eq!(
+        counts(&database.pool, "first-goal-mutation").await,
+        (1, 1, 1, 1, 1, 1)
+    );
+    let link_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chat_context_links WHERE conversation_id=$1::uuid",
+    )
+    .bind(conversation_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(link_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn first_send_rejects_foreign_goal_context_without_business_writes() {
+    let database = Database::start().await;
+    prepare(&database).await;
+    let request = first_send_with_goal("foreign-goal-mutation", "goal first message", FOREIGN_GOAL);
+    assert!(matches!(
+        run(&database.pool, &actor("foreign-goal-owner"), &request).await,
+        Err(Error::Http(422, _))
+    ));
+    assert_eq!(
+        counts(&database.pool, "foreign-goal-mutation").await,
+        (0, 0, 0, 0, 0, 0)
+    );
+    let links: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chat_context_links l
+         JOIN chat_conversations c ON c.org_id=l.org_id AND c.id=l.conversation_id
+         WHERE c.org_id=$1::uuid AND c.created_by_user_id=$2
+           AND c.initial_client_mutation_id=$3",
+    )
+    .bind(ORG)
+    .bind(USER)
+    .bind("foreign-goal-mutation")
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(links, 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
