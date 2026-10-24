@@ -3532,9 +3532,7 @@ async fn public_resource_mutation_claims_a_node_row_without_claiming_its_project
              VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'Legacy attachment project');
              INSERT INTO project_goal_mutation_state (project_id,org_id,owner,mutation_version,fence_epoch)
              VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'node',0,0)
-             ON CONFLICT (project_id) DO UPDATE
-             SET owner='node',mutation_version=0,fence_epoch=0,
-                 fence_token=gen_random_uuid(),updated_at=now();
+             ON CONFLICT (project_id) DO NOTHING;
              INSERT INTO organization_resources
                (id,org_id,name,kind,source_type,locator,metadata)
              VALUES ('{resource}'::uuid,'{ORG}'::uuid,'Historical','file','external',
@@ -3668,9 +3666,7 @@ async fn public_resource_create_replay_and_delete_commit_effects_once() {
              VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'Legacy attachment project');
              INSERT INTO project_goal_mutation_state (project_id,org_id,owner,mutation_version,fence_epoch)
              VALUES ('{node_project}'::uuid,'{ORG}'::uuid,'node',0,0)
-             ON CONFLICT (project_id) DO UPDATE
-             SET owner='node',mutation_version=0,fence_epoch=0,
-                 fence_token=gen_random_uuid(),updated_at=now();"
+             ON CONFLICT (project_id) DO NOTHING;"
         ))
         .await;
     let authorization = FixedNativeAuthorization(NativeAgentAccess::Authorized);
