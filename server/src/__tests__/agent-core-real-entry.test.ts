@@ -563,19 +563,30 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("keeps key identity bound to the selected agent and rolls mutation/audit/outbox back together", async () => {
+        nodeNativeIngressPathHits = 0;
         const created = await call(publicUrl, "post", `/api/agents/${peer}/keys`, ownerToken, {});
         expect(created.status).toBe(201);
         expect((await call(publicUrl, "delete", `/api/agents/${agent}/keys/${created.body.id}`)).status).toBe(404);
         expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${created.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
         const before = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`);
-        await db.execute(sql.raw("CREATE FUNCTION synthetic_agent_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.key_created' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_agent_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION synthetic_agent_audit_failure()"));
+        await db.execute(sql.raw("CREATE FUNCTION synthetic_agent_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('agent.key_created','agent.key_revoked') THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_agent_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION synthetic_agent_audit_failure()"));
         try {
             expect((await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(500);
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`)).toBe(before);
+            const rejectedRevoke = await call(publicUrl, "delete", `/api/agents/${peer}/keys/${created.body.id}`);
+            expect(rejectedRevoke.status, rejectedRevoke.text).toBe(500);
+            expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${created.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
+            expect((await call(publicUrl, "get", "/api/agents/me", created.body.token)).status).toBe(200);
+            expect(await scalar(sql `SELECT count(*) AS value FROM activity_log WHERE action='agent.key_revoked' AND details->>'keyId'=${created.body.id}`)).toBe(0);
         }
         finally {
             await db.execute(sql.raw("DROP TRIGGER synthetic_agent_audit_failure ON activity_log; DROP FUNCTION synthetic_agent_audit_failure()"));
         }
+        const revoked = await call(publicUrl, "delete", `/api/agents/${peer}/keys/${created.body.id}`);
+        expect(revoked.status, revoked.text).toBe(200);
+        expect((await call(publicUrl, "get", "/api/agents/me", created.body.token)).status).toBe(401);
+        expect(await scalar(sql `SELECT count(*) AS value FROM activity_log a JOIN organization_mutation_outbox o ON o.activity_id=a.id AND o.org_id=a.org_id WHERE a.action='agent.key_revoked' AND a.entity_id=${peer} AND a.details->>'keyId'=${created.body.id}`)).toBe(1);
+        expect(nodeNativeIngressPathHits).toBe(0);
         expect(await scalar(sql `SELECT count(*) AS value FROM organization_mutation_outbox o LEFT JOIN activity_log a ON a.id=o.activity_id WHERE a.id IS NULL`)).toBe(0);
         const publisher = startOrganizationMutationOutboxPublisher(db, { intervalMs: 60000 });
         try {

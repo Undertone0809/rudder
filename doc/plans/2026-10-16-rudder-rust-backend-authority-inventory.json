@@ -59153,16 +59153,16 @@
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own Agent API-key listing, issuance, and revocation plus the previously reviewed configuration/revision operations in native identity-ingress mode.",
-      "compatibility_boundary": "Existing Node Agent API-key and configuration/revision handlers remain only for ingress-off compatibility. With nativeAgentCorePaths enabled, public Rust ingress owns these routes and the Node handlers are not registered. No request-time fallback is added.",
+      "compatibility_boundary": "At startup, Boolean(opts.rustPublicIngress?.identityAuth) selects nativeAgentCorePaths. When true, the Node AgentCore key/configuration/revision handlers are not registered and Rust public ingress owns those paths; there is no request-time fallback. When false, the existing Node compatibility adapter forwards unchanged behavior to Rust.",
       "retirement_criterion": "Remove these off-mode handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with public acceptance coverage.",
-      "reviewer": "pending independent review; earlier configuration/revision review does not cover the added API-key routes",
-      "review_reference": "pending stage review for Agent API-key routes",
-      "review_status": "pending",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rakey25/independent-source-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
-        "Preserve unchanged legacy API-key and configuration/revision behavior only in ingress-off compatibility mode."
+        "Preserve unchanged legacy API-key and configuration/revision forwarding only when nativeAgentCorePaths is false (ingress-off compatibility mode)."
       ],
       "prohibited_node_duties": [
-        "No Agent API-key listing, issuance, revocation, configuration, or revision request handling, authorization, persistence, or fallback when nativeAgentCorePaths is enabled."
+        "No Agent API-key listing, issuance, revocation, configuration, or revision request handling, authorization, persistence, or fallback when nativeAgentCorePaths is true."
       ]
     }
   ],
