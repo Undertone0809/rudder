@@ -705,6 +705,7 @@ fn hermes_launch(
         hermes_executable: config.executable.clone(),
         python_executable: local.instruction_python_executable.clone(),
         python_source_root: local.instruction_python_source_root.clone(),
+        instruction_adapter_revision: local.instruction_adapter_revision.clone(),
         ephemeral_system_prompt: local
             .instruction_adapter_revision
             .as_ref()
@@ -819,6 +820,7 @@ for line in sys.stdin:
                     hermes_executable: executable,
                     python_executable: None,
                     python_source_root: None,
+                    instruction_adapter_revision: None,
                     ephemeral_system_prompt: None,
                     process_host: process_host.clone(),
                     runtime_root: cwd.clone(),

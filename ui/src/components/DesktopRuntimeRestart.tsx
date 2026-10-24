@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
-import { useI18n } from "@/context/I18nContext";
-import { readDesktopShell } from "@/lib/desktop-shell";
 import { SettingsItem } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/context/I18nContext";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { useRef, useState } from "react";
 
 export function DesktopRuntimeRestart({ disabled = false }: { disabled?: boolean }) {
   const { t } = useI18n();
