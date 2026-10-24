@@ -1445,6 +1445,7 @@ export function parseStructuredToolResult(result: string | undefined) {
   const lines = result.split(/\r?\n/);
   const metadata = new Map<string, string>();
   let bodyStartIndex = lines.findIndex((line) => line.trim() === "");
+  const hasHeaderSeparator = bodyStartIndex !== -1;
   if (bodyStartIndex === -1) bodyStartIndex = lines.length;
 
   for (let index = 0; index < bodyStartIndex; index += 1) {
@@ -1454,12 +1455,22 @@ export function parseStructuredToolResult(result: string | undefined) {
     }
   }
 
+  const command = metadata.get("command") ?? null;
+  const status = metadata.get("status") ?? null;
+  const exitCode = metadata.get("exit_code") ?? null;
+  const recognizedStatus = status !== null
+    && ["completed", "failed", "errored", "error", "cancelled", "running"].includes(status.toLowerCase());
+  // Tool output is often ordinary text (including Hermes markdown), so only
+  // treat it as an envelope when it has an explicit separator or the
+  // status/exit-code pair used by older failure summaries.
+  if (!recognizedStatus || (!hasHeaderSeparator && exitCode === null)) return null;
+
   const body = lines.slice(Math.min(bodyStartIndex + 1, lines.length)).join("\n").trim();
 
   return {
-    command: metadata.get("command") ?? null,
-    status: metadata.get("status") ?? null,
-    exitCode: metadata.get("exit_code") ?? null,
+    command,
+    status,
+    exitCode,
     body,
   };
 }

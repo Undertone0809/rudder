@@ -20,6 +20,29 @@ def _fail_closed():
     raise SystemExit(_UNSUPPORTED)
 
 
+def _install_tool_argument_compat(events, coerce_tool_args):
+    """Repair Hermes 0.21's JSON-string argument/formatter boundary in this child.
+
+    The upstream step callback forwards API argument JSON strings to formatters
+    expecting dicts. The first read_file then aborts the remaining completions.
+    Preserve tool IDs, results, status and ordering; only normalize that argument
+    representation using Hermes' own converter. Rust owns projection/persistence.
+    """
+    original = events.build_tool_complete
+    expected = {"tool_call_id", "tool_name", "result", "function_args", "snapshot"}
+    if not expected.issubset(inspect.signature(original).parameters):
+        _fail_closed()
+
+    def complete_with_typed_args(tool_call_id, tool_name, result=None, function_args=None, snapshot=None):
+        return original(
+            tool_call_id, tool_name, result=result,
+            function_args=coerce_tool_args(function_args) if function_args is not None else None,
+            snapshot=snapshot,
+        )
+
+    events.build_tool_complete = complete_with_typed_args
+
+
 def main():
     # Python -I ignores PYTHON* environment variables and the working
     # directory, so disable bytecode writes and add only the Rust-validated
@@ -40,6 +63,13 @@ def main():
 
         if getattr(hermes_cli, "__version__", None) != "0.21.0":
             _fail_closed()
+
+        from acp_adapter import events
+        from acp_adapter.tools import coerce_tool_args
+
+        if events.make_step_cb.__globals__ is not vars(events):
+            _fail_closed()
+        _install_tool_argument_compat(events, coerce_tool_args)
 
         from acp_adapter.session import SessionManager
 
@@ -91,4 +121,5 @@ def main():
         raise SystemExit(_UNSUPPORTED) from None
 
 
-main()
+if __name__ == "__main__":
+    main()

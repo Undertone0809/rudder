@@ -191,6 +191,8 @@ pub fn resolve_instruction_bootstrap(
         "hermes_bootstrap.py",
         "hermes_cli/__init__.py",
         "acp_adapter/entry.py",
+        "acp_adapter/events.py",
+        "acp_adapter/tools.py",
         "acp_adapter/session.py",
         "agent/agent_init.py",
         "agent/chat_completion_helpers.py",
@@ -2301,6 +2303,27 @@ mod tests {
         assert!(protected_environment_key(HERMES_INSTRUCTION_ROOT_ENV));
     }
 
+    #[test]
+    fn instruction_bootstrap_preserves_all_typed_tool_completions() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let python = std::env::var_os("RUDDER_TEST_PYTHON")
+            .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into());
+        let output = std::process::Command::new(python)
+            .args(["-I", "-B"])
+            .arg(root.join("tests/bootstrap_tool_arguments.py"))
+            .arg(root.join("src/acp_instruction_bootstrap.py"))
+            .output()
+            .expect("Python 3 is required for the embedded ACP transport compatibility test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("5 correlated completions preserved")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn instruction_bootstrap_accepts_only_the_pinned_console_script_layout() {
@@ -2321,6 +2344,8 @@ mod tests {
             "hermes_bootstrap.py",
             "hermes_cli/__init__.py",
             "acp_adapter/entry.py",
+            "acp_adapter/events.py",
+            "acp_adapter/tools.py",
             "acp_adapter/session.py",
             "agent/agent_init.py",
             "agent/chat_completion_helpers.py",
@@ -2355,6 +2380,16 @@ mod tests {
         );
         assert_eq!(shim_resolved.source_root(), resolved.source_root());
         assert_ne!(shim_resolved.revision(), resolved.revision());
+        for relative in ["acp_adapter/events.py", "acp_adapter/tools.py"] {
+            let path = root.join(relative);
+            let original = fs::read(&path).unwrap();
+            fs::write(&path, "# changed ACP transport fixture\n").unwrap();
+            assert_ne!(
+                resolve_instruction_bootstrap(&launcher).unwrap().revision(),
+                shim_resolved.revision()
+            );
+            fs::write(path, original).unwrap();
+        }
         let other_launcher = temp.path().join("other-launcher");
         fs::write(&other_launcher, &shim).unwrap();
         assert_ne!(

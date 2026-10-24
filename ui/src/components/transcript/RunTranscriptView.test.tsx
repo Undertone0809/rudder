@@ -9,7 +9,7 @@ import { TranscriptThinkingBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, segmentChatTranscriptBlocks, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatMcpSummary, hasNonEmptyToolPayload } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, formatMcpSummary, hasNonEmptyToolPayload, parseStructuredToolResult } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
@@ -1860,6 +1860,44 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Failed");
     expect(html).toContain("ValueError: bad input");
     expect(html).toContain("text-red-700");
+  });
+
+  it("preserves plain terminal text and Hermes markdown output while parsing known legacy envelopes", () => {
+    const plainText = "A plain terminal result\nwith a second line.";
+    const hermesMarkdown = "terminal result\n- **output:** HERMES_TOOL_UI_20261025_TERMINAL_OK\n- **exit_code:** 0";
+    const legacyEnvelope = "command: pwd\nstatus: completed\nexit_code: 0\n\n/workspace/rudder";
+
+    expect(parseStructuredToolResult(plainText)).toBeNull();
+    expect(formatCommandTerminalOutput(plainText)).toBe(plainText);
+    expect(parseStructuredToolResult(hermesMarkdown)).toBeNull();
+    expect(formatCommandTerminalOutput(hermesMarkdown)).toBe(hermesMarkdown);
+    expect(parseStructuredToolResult(legacyEnvelope)).toMatchObject({
+      command: "pwd",
+      status: "completed",
+      exitCode: "0",
+      body: "/workspace/rudder",
+    });
+    expect(formatCommandTerminalOutput(legacyEnvelope)).toBe("/workspace/rudder");
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "terminal",
+            toolUseId: "hermes-terminal-markdown-output",
+            input: { command: "pwd" },
+            result: hermesMarkdown,
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("data-testid=\"command-terminal-detail\"");
+    expect(html).toContain("HERMES_TOOL_UI_20261025_TERMINAL_OK");
   });
 
   it("suppresses empty tool details while retaining meaningful falsy and array payloads", () => {
