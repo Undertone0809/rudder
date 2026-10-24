@@ -80,6 +80,31 @@ or not-run results as passes. Record passed/failed/skipped counts and the actual
 runner. A discovered filename is not proof that its assertions executed. Do not
 use a permissive flag or remove a test merely to restore green CI.
 
+## M004: Runtime source repairs must refresh their authority evidence
+
+**Evidence:** PR #356 at `07ddced13403726c1cb0be55773c930eb8f7029a`
+passed its focused Desktop checks, but CI run `39893339993` stopped in the
+qualification planner because the generated authority inventory still recorded
+the old `desktop/src/update-check.ts` hash. The planner's inventory suite passed
+33 tests; the planner failed and downstream qualification jobs were skipped.
+Regenerating exposed the next
+required gate: the changed source also needed a reviewed compatibility-boundary
+record.
+
+**Correction:** regenerate the inventory and bind the scoped existing Electron
+release-discovery repair to its exact base/head hashes and independent review.
+Keep the unchanged structural surfaces and unknown entries visible. This record
+does not claim Rust ownership of the updater or completion of backend migration.
+
+**Regression:** run `node scripts/rust-backend-authority-inventory.mjs check`,
+then the trusted comparison-base checker with `compare --compare-ref <base>`.
+The stale inventory and missing-record cases must fail before repair; both
+checks must pass after repair. The inventory suite and exact-candidate CI remain
+required; local updater or inventory tests do not qualify skipped jobs.
+
+**Reject:** handoff after merely opening a PR, treating pending/skipped CI as a
+pass, or widening an allowlist to avoid the source-bound review requirement.
+
 ## Historical lessons to preserve
 
 The following are source PR records, not newly reproduced runtime results:
