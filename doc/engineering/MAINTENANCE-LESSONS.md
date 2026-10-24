@@ -114,6 +114,28 @@ whose diff-local records had been retired. Refreshing the PR's unchanged
 refresh; rerunning the old event preserves the stale comparison input. Keep
 the trusted checker and its findings intact.
 
+## M005: A merged fix is not an installed update
+
+**Evidence:** the Hermes configuration fix in PR #359 was merged after the
+`0.7.24-canary.49` artifact was published. That installed artifact still exposed
+disabled Hermes options even though source acceptance had passed.
+
+**Correction:** resolve the named installed bundle and runtime, then bind repair
+evidence to its UI and Rust binary hashes. Preserve the existing profile and
+database. Expose the existing owned-runtime restart action in Settings > About
+so recovery does not depend on an accessible tray or force-quitting old runs.
+
+**Regression:** `desktop/scripts/smoke.mjs --scenario=runtime-restart-settings`
+clicks the real About control in an isolated packaged copy, observes a replaced
+runtime descriptor, and checks that Electron and saved organization data survive.
+Component tests cover duplicate clicks, update-in-progress blocking and retry
+after failure. This isolated fixture does not replace acceptance of the named
+installation, its account session or real provider profiles.
+
+**Reject:** reporting a branch, merged PR, healthy unrelated server or staged
+artifact as an updated installation. Record the installed path, version, asset
+identity and terminal user workflow separately from release publication.
+
 ## Historical lessons to preserve
 
 The following are source PR records, not newly reproduced runtime results:
