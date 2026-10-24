@@ -173,7 +173,7 @@ pub(super) async fn handle(
     .await
     {
         Ok(body) => body,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some((actor, session_id)) = actor_and_session(&identity) else {
         return state
@@ -505,16 +505,19 @@ fn request_idempotency_key(request: &HttpRequest) -> String {
         .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
-async fn read_body(payload: &mut web::Payload, max_bytes: usize) -> Result<Vec<u8>, HttpResponse> {
+async fn read_body(
+    payload: &mut web::Payload,
+    max_bytes: usize,
+) -> Result<Vec<u8>, Box<HttpResponse>> {
     let mut body = Vec::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.map_err(|_| {
-            HttpResponse::BadRequest().json(json!({"error":"Invalid request body"}))
+            Box::new(HttpResponse::BadRequest().json(json!({"error":"Invalid request body"})))
         })?;
         if body.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(
-                HttpResponse::PayloadTooLarge().json(json!({"error":"Request body too large"}))
-            );
+            return Err(Box::new(
+                HttpResponse::PayloadTooLarge().json(json!({"error":"Request body too large"})),
+            ));
         }
         body.extend_from_slice(&chunk);
     }
