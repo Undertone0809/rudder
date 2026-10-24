@@ -106,7 +106,7 @@ describe("Agent core foundation binary resolution", () => {
             expect(explicit).toThrow(debug);
     });
 });
-describe("Agent core fifteen-route real HTTP authority", () => {
+describe("Agent core twenty-route real HTTP authority", () => {
     let db: ReturnType<typeof createDb>;
     let pg: Pg | undefined;
     let root = "";
@@ -232,6 +232,13 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                     || /^\/api\/orgs\/[^/]+\/agents\/name-suggestion\/?$/i.test(req.path)
                     || /^\/api\/agents\/[^/]+\/(?:configuration|config-revisions(?:\/[^/]+)?)\/?$/i.test(req.path)))
                 || (req.method === "POST" && /^\/api\/agents\/[^/]+\/config-revisions\/[^/]+\/rollback\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/keys\/?$/i.test(req.path))
+                || (req.method === "POST" && /^\/api\/agents\/[^/]+\/keys\/?$/i.test(req.path))
+                || (req.method === "DELETE" && /^\/api\/agents\/[^/]+\/keys\/[^/]+\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/me\/inbox-lite\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/(?:runtime-state|task-sessions)\/?$/i.test(req.path))
+                || (req.method === "POST" && /^\/api\/agents\/[^/]+\/runtime-state\/reset-session\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/instance\/scheduler-heartbeats\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
                 nodeNativeIngressPathHits += 1;
             }
@@ -366,6 +373,33 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         expect(missingBody.status, missingBody.text).toBe(400);
         expect(missingBody.body.error).toBe("Validation error");
 
+        const keyRowsBefore = await scalar(sql`SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${subject.id}::uuid`);
+        const keyCreateAuditBefore = await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id} AND action='agent.key_created'`);
+        const hostileCookieKeyCreate = await request(publicUrl).post(`/api/agents/${subject.id}/keys`)
+            .set("cookie", ownerCookie()).set("origin", "https://attacker.invalid").send({ name: "Hostile origin" });
+        expect(hostileCookieKeyCreate.status, hostileCookieKeyCreate.text).toBe(403);
+        expect(hostileCookieKeyCreate.body).toEqual({ error: "Board mutation requires trusted browser origin" });
+        expect(await scalar(sql`SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${subject.id}::uuid`)).toBe(keyRowsBefore);
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${subject.id} AND action='agent.key_created'`)).toBe(keyCreateAuditBefore);
+
+        const sessionKey = await request(publicUrl).post(`/api/agents/${subject.id}/keys`)
+            .set("cookie", ownerCookie()).set("origin", origin).send({ name: "Same-origin session" });
+        expect(sessionKey.status, sessionKey.text).toBe(201);
+        expect(sessionKey.body.token).toMatch(/^pcp_[a-f0-9]{48}$/);
+        const hostileCookieKeyRevoke = await request(publicUrl).delete(`/api/agents/${subject.id}/keys/${sessionKey.body.id}`)
+            .set("cookie", ownerCookie()).set("origin", "https://attacker.invalid");
+        expect(hostileCookieKeyRevoke.status, hostileCookieKeyRevoke.text).toBe(403);
+        expect(await scalar(sql`SELECT count(*) AS value FROM agent_api_keys WHERE id=${sessionKey.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
+        const trustedCookieKeyRevoke = await request(publicUrl).delete(`/api/agents/${subject.id}/keys/${sessionKey.body.id}`)
+            .set("cookie", ownerCookie()).set("origin", origin);
+        expect(trustedCookieKeyRevoke.status, trustedCookieKeyRevoke.text).toBe(200);
+
+        const bearerKey = await request(publicUrl).post(`/api/agents/${subject.id}/keys`)
+            .set("authorization", `Bearer ${ownerToken}`).set("origin", "https://attacker.invalid").send({ name: "Bearer origin exemption" });
+        expect(bearerKey.status, bearerKey.text).toBe(201);
+        expect((await request(publicUrl).delete(`/api/agents/${subject.id}/keys/${bearerKey.body.id}`)
+            .set("authorization", `Bearer ${ownerToken}`).set("origin", "https://attacker.invalid")).status).toBe(200);
+
         const parserBaseline = express();
         parserBaseline.use(express.json({ limit: "10mb" }));
         parserBaseline.patch("/permissions", validate(updateAgentPermissionsSchema), (_req, res) => res.json({ ok: true }));
@@ -457,8 +491,19 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             expect(key.status, key.text).toBe(201);
             expect(key.body.token).toMatch(/^pcp_[a-f0-9]{48}$/);
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${key.body.id}::uuid AND key_hash=${hash(key.body.token)}`)).toBe(1);
+            const keysAfterCreate = await call(base, "get", `/api/agents/${agent}/keys`);
+            expect(keysAfterCreate.status, keysAfterCreate.text).toBe(200);
+            expect(JSON.stringify(keysAfterCreate.body)).not.toContain(key.body.token);
+            expect(keysAfterCreate.body.some((row: { id: string }) => row.id === key.body.id)).toBe(true);
+            const authenticatedAsNewKey = await call(base, "get", "/api/agents/me", key.body.token);
+            expect(authenticatedAsNewKey.status, authenticatedAsNewKey.text).toBe(200);
+            expect(authenticatedAsNewKey.body.id).toBe(agent);
             const revoke = await call(base, "delete", `/api/agents/${agent}/keys/${key.body.id}`);
             expect(revoke.status, revoke.text).toBe(200);
+            const revokedKeyDenied = await call(base, "get", "/api/agents/me", key.body.token);
+            expect(revokedKeyDenied.status, revokedKeyDenied.text).toBe(401);
+            expect(nodeNativeIngressPathHits).toBe(0);
+            nodeNativeIngressPathHits = 0;
             await db.execute(sql `INSERT INTO agent_task_sessions(org_id,agent_id,agent_runtime_type,task_key,session_display_id,session_params_json,last_run_id,updated_at) VALUES(${org}::uuid,${agent}::uuid,'process','visible-task','visible-session','{"keep":"yes","password":"synthetic"}',${publicRun}::uuid,now()-interval '1 minute'),(${org}::uuid,${agent}::uuid,'process','private-task','PEER_PRIVATE_SESSION','{"private":"PEER_PRIVATE_VALUE"}',${privateRun}::uuid,now())`);
             const state = await call(base, "get", `/api/agents/${agent}/runtime-state`);
             expect(state.status, state.text).toBe(200);
@@ -481,11 +526,22 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 id: string;
                 intervalSec: number;
             }) => a.id === agent && a.intervalSec === 60)).toBe(true);
+            expect(nodeNativeIngressPathHits).toBe(0);
         }
+    });
+    it("preserves API-key schema precedence before board authorization", async () => {
+        for (const input of [{}, { name: null }, { name: "" }, { name: [] }, { name: false }, { name: 1 }, { name: {} }, { name: " \uFEFF " }]) {
+            const expected = createAgentKeySchema.safeParse(input);
+            const response = await call(publicUrl, "post", `/api/agents/${agent}/keys`, "", input);
+            expect(response.status, response.text).toBe(expected.success ? 403 : 400);
+            if (!expected.success)
+                expect(response.body).toEqual({ error: "Validation error", details: expected.error.issues });
+        }
+        expect((await call(publicUrl, "post", `/api/agents/${agent}/keys`, "")).status).toBe(400);
     });
     it("owns schema errors, aliases, auth priority and principal/org isolation", async () => {
         for (const base of [publicUrl]) {
-            for (const [endpoint, schema, key] of [["keys", createAgentKeySchema, "name"], ["runtime-state/reset-session", resetAgentSessionSchema, "taskKey"]] as const) {
+            for (const [endpoint, schema, key] of [["runtime-state/reset-session", resetAgentSessionSchema, "taskKey"]] as const) {
                 for (const input of [{}, { [key]: null }, { [key]: "" }, { [key]: [] }, { [key]: false }, { [key]: 1 }, { [key]: {} }, { [key]: " \uFEFF " }]) {
                     const expected = schema.safeParse(input);
                     const response = await call(base, "post", `/api/agents/${agent}/${endpoint}`, "", input);
@@ -513,19 +569,30 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         }
     });
     it("keeps key identity bound to the selected agent and rolls mutation/audit/outbox back together", async () => {
+        nodeNativeIngressPathHits = 0;
         const created = await call(publicUrl, "post", `/api/agents/${peer}/keys`, ownerToken, {});
         expect(created.status).toBe(201);
         expect((await call(publicUrl, "delete", `/api/agents/${agent}/keys/${created.body.id}`)).status).toBe(404);
         expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${created.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
         const before = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`);
-        await db.execute(sql.raw("CREATE FUNCTION synthetic_agent_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.key_created' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_agent_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION synthetic_agent_audit_failure()"));
+        await db.execute(sql.raw("CREATE FUNCTION synthetic_agent_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('agent.key_created','agent.key_revoked') THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_agent_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION synthetic_agent_audit_failure()"));
         try {
             expect((await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(500);
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE agent_id=${agent}::uuid`)).toBe(before);
+            const rejectedRevoke = await call(publicUrl, "delete", `/api/agents/${peer}/keys/${created.body.id}`);
+            expect(rejectedRevoke.status, rejectedRevoke.text).toBe(500);
+            expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys WHERE id=${created.body.id}::uuid AND revoked_at IS NULL`)).toBe(1);
+            expect((await call(publicUrl, "get", "/api/agents/me", created.body.token)).status).toBe(200);
+            expect(await scalar(sql `SELECT count(*) AS value FROM activity_log WHERE action='agent.key_revoked' AND details->>'keyId'=${created.body.id}`)).toBe(0);
         }
         finally {
             await db.execute(sql.raw("DROP TRIGGER synthetic_agent_audit_failure ON activity_log; DROP FUNCTION synthetic_agent_audit_failure()"));
         }
+        const revoked = await call(publicUrl, "delete", `/api/agents/${peer}/keys/${created.body.id}`);
+        expect(revoked.status, revoked.text).toBe(200);
+        expect((await call(publicUrl, "get", "/api/agents/me", created.body.token)).status).toBe(401);
+        expect(await scalar(sql `SELECT count(*) AS value FROM activity_log a JOIN organization_mutation_outbox o ON o.activity_id=a.id AND o.org_id=a.org_id WHERE a.action='agent.key_revoked' AND a.entity_id=${peer} AND a.details->>'keyId'=${created.body.id}`)).toBe(1);
+        expect(nodeNativeIngressPathHits).toBe(0);
         expect(await scalar(sql `SELECT count(*) AS value FROM organization_mutation_outbox o LEFT JOIN activity_log a ON a.id=o.activity_id WHERE a.id IS NULL`)).toBe(0);
         const publisher = startOrganizationMutationOutboxPublisher(db, { intervalMs: 60000 });
         try {
@@ -664,20 +731,49 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const resets = await Promise.all([call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, {}), call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: " \uFEFF " })]);
         expect(resets.map(r => r.status)).toEqual([200, 200]);
     });
-    it("returns 503 through the managed public ingress with no Node fallback, then survives native restart", async () => {
+    it("keeps API-key paths in Rust when Node is unavailable and fails closed during database outage", async () => {
         const count = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`);
         const unavailable = createRustFoundationBridge({ databaseUrl, binaryPath: path.join(root, "missing-foundation"), mode: "required", actorEnvelopeKey: "synthetic-unavailable-bridge-key-32bytes" });
         const original = bridge!.agentCore;
         bridge!.agentCore = unavailable.agentCore;
         try {
-            for (const base of [publicUrl]) {
-                nodeNativeIngressPathHits = 0;
-                const nativeConfiguration = await call(base, "get", `/api/agents/${agent}/configuration`);
-                expect(nativeConfiguration.status, nativeConfiguration.text).toBe(200);
+            nodeNativeIngressPathHits = 0;
+            for (const [method, route, token] of [
+                ["get", `/api/agents/${agent}/runtime-state`, ownerToken],
+                ["get", `/api/agents/${agent}/task-sessions`, ownerToken],
+                ["get", "/api/agents/me/inbox-lite", agentToken],
+                ["get", "/api/instance/scheduler-heartbeats", ownerToken],
+            ] as const) {
+                const response = await call(publicUrl, method, route, token);
+                expect(response.status, response.text).toBe(200);
                 expect(nodeNativeIngressPathHits).toBe(0);
-                expect((await call(base, "post", `/api/agents/${agent}/keys`, ownerToken, {})).status).toBe(503);
             }
-            expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(count);
+            const resetWhileNodeUnavailable = await call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: "not-present" });
+            expect(resetWhileNodeUnavailable.status, resetWhileNodeUnavailable.text).toBe(200);
+            expect(nodeNativeIngressPathHits).toBe(0);
+
+            nodeNativeIngressPathHits = 0;
+            const nativeConfiguration = await call(publicUrl, "get", `/api/agents/${agent}/configuration`);
+            expect(nativeConfiguration.status, nativeConfiguration.text).toBe(200);
+            expect(nodeNativeIngressPathHits).toBe(0);
+
+            const created = await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {});
+            expect(created.status, created.text).toBe(201);
+            expect(nodeNativeIngressPathHits).toBe(0);
+            const afterCreate = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`);
+            expect(afterCreate).toBe(count + 1);
+
+            await pg!.stop();
+            try {
+                nodeNativeIngressPathHits = 0;
+                const nativeDatabaseFailure = await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {});
+                expect(nativeDatabaseFailure.status, nativeDatabaseFailure.text).toBe(503);
+                expect(nodeNativeIngressPathHits).toBe(0);
+            }
+            finally {
+                await pg!.start();
+            }
+            expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(afterCreate);
         }
         finally {
             bridge!.agentCore = original;

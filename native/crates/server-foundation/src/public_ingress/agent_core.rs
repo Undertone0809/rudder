@@ -1,4 +1,4 @@
-//! Native public ingress for Agent roster, detail, permissions and instructions.
+//! Native public ingress for AgentCore routes.
 //! Parsing, authentication and host context are adapted here; the
 //! existing D1 AgentCore remains the only business and persistence authority.
 mod host_paths;
@@ -9,6 +9,7 @@ use actix_web::http::header::CONTENT_TYPE;
 use futures_util::StreamExt;
 use rudder_d1_persistence::agent_core::{
     AgentCoreError, AgentCoreRequest, admit_agent, execute_agent_with_native_auth,
+    normalize_public_input, parse_public_json_value,
 };
 use serde_json::{Map, Value, json};
 
@@ -34,6 +35,16 @@ enum Endpoint {
         org_id: String,
         agent_id: String,
     },
+    Keys(String),
+    KeyRevoke {
+        agent_id: String,
+        key_id: String,
+    },
+    Inbox,
+    RuntimeState(String),
+    ResetSession(String),
+    TaskSessions(String),
+    SchedulerHeartbeats,
     InstructionsBundle(String),
     InstructionsFile(String),
 }
@@ -75,6 +86,8 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
             matches!(*method, Method::GET | Method::HEAD)
         }
         Endpoint::Rollback { .. } => *method == Method::POST,
+        Endpoint::Keys(_) => matches!(*method, Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *method == Method::DELETE,
         Endpoint::InstructionsPath { .. } => {
             matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
         }
@@ -87,6 +100,11 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
                 Method::GET | Method::HEAD | Method::PUT | Method::DELETE
             )
         }
+        Endpoint::Inbox
+        | Endpoint::RuntimeState(_)
+        | Endpoint::TaskSessions(_)
+        | Endpoint::SchedulerHeartbeats => matches!(*method, Method::GET | Method::HEAD),
+        Endpoint::ResetSession(_) => *method == Method::POST,
     })
 }
 
@@ -134,6 +152,43 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments.len() == 3
         && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("instance")
+        && segments[2].eq_ignore_ascii_case("scheduler-heartbeats")
+    {
+        return Some(Endpoint::SchedulerHeartbeats);
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("runtime-state")
+        && segments[4].eq_ignore_ascii_case("reset-session")
+    {
+        return decode_capture(segments[2]).map(Endpoint::ResetSession);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[2].eq_ignore_ascii_case("me")
+        && segments[3].eq_ignore_ascii_case("inbox-lite")
+    {
+        return Some(Endpoint::Inbox);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("runtime-state")
+    {
+        return decode_capture(segments[2]).map(Endpoint::RuntimeState);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("task-sessions")
+    {
+        return decode_capture(segments[2]).map(Endpoint::TaskSessions);
+    }
+    if segments.len() == 3
+        && segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("agents")
     {
         // Express matches the literal route before the parameter route. An
@@ -153,6 +208,16 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
         return Some(Endpoint::InstructionsPath {
             org_id: decode_capture(segments[2])?,
             agent_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return Some(Endpoint::KeyRevoke {
+            agent_id: decode_capture(segments[2])?,
+            key_id: decode_capture(segments[4])?,
         });
     }
     if segments.len() == 5
@@ -217,6 +282,12 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Keys);
+    }
+    if segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
         && segments[3].eq_ignore_ascii_case("permissions")
     {
         return decode_capture(segments[2]).map(Endpoint::Permissions);
@@ -258,6 +329,8 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
             matches!(*request.method(), Method::GET | Method::HEAD)
         }
         Endpoint::Rollback { .. } => *request.method() == Method::POST,
+        Endpoint::Keys(_) => matches!(*request.method(), Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *request.method() == Method::DELETE,
         Endpoint::InstructionsPath { .. } => matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::PATCH
@@ -270,6 +343,11 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
             *request.method(),
             Method::GET | Method::HEAD | Method::PUT | Method::DELETE
         ),
+        Endpoint::Inbox
+        | Endpoint::RuntimeState(_)
+        | Endpoint::TaskSessions(_)
+        | Endpoint::SchedulerHeartbeats => matches!(*request.method(), Method::GET | Method::HEAD),
+        Endpoint::ResetSession(_) => *request.method() == Method::POST,
     }
 }
 
@@ -291,7 +369,7 @@ async fn execute(
     };
     // Express JSON parsing runs before auth and route middleware. Preserve its
     // parse-error precedence and leave non-JSON bodies absent on the command.
-    let parsed_body = match parse_public_json_body(&request, &public_body) {
+    let mut parsed_body = match parse_public_json_body(&request, &public_body, &endpoint) {
         Ok(body) => body,
         // The current Express error handler does not special-case body-parser
         // SyntaxErrors, so malformed JSON and strict-parser scalar values are
@@ -318,6 +396,40 @@ async fn execute(
             "native_identity_unavailable",
         );
     }
+    if matches!(&endpoint, Endpoint::Keys(_))
+        && *request.method() == Method::POST
+        && let Some(input) = parsed_body.take()
+    {
+        parsed_body = match normalize_public_input("key-create", input) {
+            Ok(input) => Some(input),
+            Err(error) => return response_error(error),
+        };
+    }
+    // These Express routes validate their bodies before checking board access.
+    // Reuse AgentCore's validator so invalid UUID-addressed requests keep that
+    // observable error precedence without duplicating their schemas here.
+    if (matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST)
+        || matches!(&endpoint, Endpoint::ResetSession(_))
+    {
+        let command = request_command(&state, &request, endpoint.clone(), parsed_body.clone());
+        let body = match serde_json::to_vec(&command) {
+            Ok(body) => body,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        let command = match AgentCoreRequest::parse(&body) {
+            Ok(command) => command,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        if let Err(error) = command.validate_static_input() {
+            return response_error(error);
+        }
+    }
     let identity = match resolve_public_http_identity(&state, &request).await {
         Ok(identity) => identity,
         Err((status, code)) => return state.foundation.json_error(status, code),
@@ -328,6 +440,14 @@ async fn execute(
     if let Some(response) = agent_cli_context_mismatch_response(&request, &identity) {
         return response;
     }
+    if matches!(&identity, NativeIngressIdentity::None)
+        && matches!(
+            &endpoint,
+            Endpoint::Keys(_) | Endpoint::KeyRevoke { .. } | Endpoint::ResetSession(_)
+        )
+    {
+        return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
+    }
     // This is the Rust equivalent of boardMutationGuard(): cookie-backed
     // board actors need a same-host browser origin; local-implicit and bearer
     // actors are exempt exactly as the legacy middleware specifies.
@@ -335,6 +455,8 @@ async fn execute(
         &endpoint,
         Endpoint::Permissions(_)
             | Endpoint::Rollback { .. }
+            | Endpoint::Keys(_)
+            | Endpoint::KeyRevoke { .. }
             | Endpoint::InstructionsPath { .. }
             | Endpoint::InstructionsBundle(_)
             | Endpoint::InstructionsFile(_)
@@ -612,6 +734,10 @@ fn request_command(
     endpoint: Endpoint,
     parsed_body: Option<Value>,
 ) -> Value {
+    let key_id = match &endpoint {
+        Endpoint::KeyRevoke { key_id, .. } => Some(key_id.clone()),
+        _ => None,
+    };
     let (operation, org_id, id, revision_id) = match endpoint {
         Endpoint::Roster(org_id) => ("list", Some(org_id), None, None),
         Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id), None),
@@ -629,6 +755,20 @@ fn request_command(
             agent_id,
             revision_id,
         } => ("rollback", None, Some(agent_id), Some(revision_id)),
+        Endpoint::Keys(agent_id) => {
+            let operation = if *request.method() == Method::POST {
+                "key-create"
+            } else {
+                "keys"
+            };
+            (operation, None, Some(agent_id), None)
+        }
+        Endpoint::KeyRevoke { agent_id, .. } => ("key-revoke", None, Some(agent_id), None),
+        Endpoint::Inbox => ("inbox", None, None, None),
+        Endpoint::RuntimeState(agent_id) => ("runtime-state", None, Some(agent_id), None),
+        Endpoint::ResetSession(agent_id) => ("reset-session", None, Some(agent_id), None),
+        Endpoint::TaskSessions(agent_id) => ("task-sessions", None, Some(agent_id), None),
+        Endpoint::SchedulerHeartbeats => ("scheduler-heartbeats", None, None, None),
         Endpoint::InstructionsPath { org_id, agent_id } => {
             let op = match *request.method() {
                 Method::GET | Method::HEAD => "instructions-path-get",
@@ -658,6 +798,7 @@ fn request_command(
         "orgId": org_id,
         "id": id,
         "revisionId": revision_id,
+        "keyId": key_id,
         "query": query_value(request.uri().query().unwrap_or_default()),
         "localImplicit": false,
         "actorRunId": request
@@ -676,6 +817,8 @@ fn request_command(
         operation,
         "permissions"
             | "rollback"
+            | "key-create"
+            | "reset-session"
             | "instructions-path-patch"
             | "instructions-bundle-patch"
             | "instructions-file-put"
@@ -686,7 +829,11 @@ fn request_command(
     command
 }
 
-fn parse_public_json_body(request: &HttpRequest, public_body: &[u8]) -> Result<Option<Value>, ()> {
+fn parse_public_json_body(
+    request: &HttpRequest,
+    public_body: &[u8],
+    endpoint: &Endpoint,
+) -> Result<Option<Value>, ()> {
     let content_type = request
         .headers()
         .get(CONTENT_TYPE)
@@ -695,7 +842,12 @@ fn parse_public_json_body(request: &HttpRequest, public_body: &[u8]) -> Result<O
     if !is_json_content_type(content_type) || public_body.is_empty() {
         return Ok(None);
     }
-    let body = serde_json::from_slice::<Value>(public_body).map_err(|_| ())?;
+    let body = if matches!(endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST {
+        let raw = std::str::from_utf8(public_body).map_err(|_| ())?;
+        parse_public_json_value(raw).map_err(|_| ())?
+    } else {
+        serde_json::from_slice::<Value>(public_body).map_err(|_| ())?
+    };
     // Express's default express.json() parser is strict: JSON values must be
     // objects or arrays. Explicit null therefore stays a parser error, while
     // a missing body remains omitted from AgentCoreRequest.input.
@@ -900,6 +1052,67 @@ mod tests {
     }
 
     #[test]
+    fn remaining_agent_core_routes_are_native_with_exact_methods_and_captures() {
+        let cases = [
+            (
+                "/API/AGENTS/ME/INBOX-LITE/",
+                Endpoint::Inbox,
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/API/AGENTS/agent%2Done/runtime-state/",
+                Endpoint::RuntimeState("agent-one".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/runtime-state/reset-session",
+                Endpoint::ResetSession("agent-1".to_owned()),
+                &[Method::POST][..],
+            ),
+            (
+                "/api/agents/agent-1/task-sessions",
+                Endpoint::TaskSessions("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/API/INSTANCE/SCHEDULER-HEARTBEATS/",
+                Endpoint::SchedulerHeartbeats,
+                &[Method::GET, Method::HEAD][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/me/inbox-lite/extra",
+            "/api/agents/agent-1/runtime-state/reset-session/extra",
+            "/api/agents/agent-1/task-sessions/extra",
+            "/api/instance/scheduler-heartbeats/extra",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
     fn instructions_routes_are_reserved_with_exact_method_contracts() {
         let cases = [
             (
@@ -1027,6 +1240,58 @@ mod tests {
             "/api/agents/agent-1/config-revisions//rollback",
             "/api/agents/agent-1/configuration/extra",
             "/api/orgs/org-1/agents/name-suggestion/extra",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn api_key_routes_are_reserved_with_exact_method_contracts() {
+        let cases = [
+            (
+                "/api/agents/agent-1/keys",
+                Endpoint::Keys("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/API/AGENTS/agent%2Done/KEYS/",
+                Endpoint::Keys("agent-one".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/api/agents/agent-1/keys/key%2Done",
+                Endpoint::KeyRevoke {
+                    agent_id: "agent-1".to_owned(),
+                    key_id: "key-one".to_owned(),
+                },
+                &[Method::DELETE][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/agent-1/keys/extra/segment",
+            "/api/agents/agent-1//keys",
         ] {
             assert_eq!(endpoint_for_path(path), None, "{path}");
         }

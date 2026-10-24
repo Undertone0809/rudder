@@ -99,6 +99,14 @@ pub(super) async fn execute(
             if changed == 0 {
                 return Err(http(404, "Key not found"));
             }
+            activity(
+                tx,
+                ctx,
+                "agent.key_revoked",
+                id,
+                Some(&json!({"keyId":ctx.request.key_id})),
+            )
+            .await?;
             Ok(json!({"ok":true}))
         }
         "reset-session" => {
