@@ -5629,7 +5629,7 @@ describe("Chat streaming controls", () => {
     await clickEnabledButtonByAriaLabel(container, "Stop streaming");
 
     await vi.waitFor(() => expect(container.querySelector('[data-testid="chat-owner-loss-blocked"]')).not.toBeNull());
-    expect(container.textContent).toContain("Runtime cleanup could not be verified");
+    expect(container.textContent).toContain("Rudder could not confirm it stopped");
     expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
     expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
     expect(mockState.abortChatStream).toHaveBeenCalledWith("chat-1");
@@ -5637,7 +5637,7 @@ describe("Chat streaming controls", () => {
     expect(readPendingChatStopRecovery("org-1", "chat-1")).toBeNull();
     expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
       title: "Run interrupted",
-      body: expect.stringContaining("cleanup could not be verified"),
+      body: expect.stringContaining("Rudder could not confirm it stopped"),
       tone: "warn",
     }));
     expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Response stopped" }));
@@ -5684,6 +5684,28 @@ describe("Chat streaming controls", () => {
     expect(container.querySelector('[data-testid="chat-recovery-status-unavailable"]')).not.toBeNull();
     expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
     expect(container.textContent).toContain("Sending is paused");
+  });
+
+  it("blocks immediate Full Chat submission until native recovery status resolves", async () => {
+    mockState.messagesByChatId = { "chat-1": [] };
+    mockState.nativeRecoveryStatus = { kind: "checking" };
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")!;
+    expect(container.querySelector('[data-testid="chat-recovery-status-checking"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label='Send']")?.disabled).toBe(true);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Send before the recovery check completes.");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(mockState.createConversation).not.toHaveBeenCalled();
   });
 
   it("keeps recovery warnings visible when an approval hides the composer", () => {

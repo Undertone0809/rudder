@@ -471,7 +471,7 @@ describe("GoalChatPanel", () => {
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
 
     await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-owner-loss-blocked"]')).not.toBeNull());
-    expect(rendered.container.textContent).toContain("Runtime cleanup could not be verified");
+    expect(rendered.container.textContent).toContain("Rudder could not confirm it stopped");
     expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).toBeNull();
     expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
     expect(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')?.readOnly).toBe(true);
@@ -526,6 +526,36 @@ describe("GoalChatPanel", () => {
 
     expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
     expect(rendered.container.textContent).toContain("Sending is paused");
+  });
+
+  it("blocks immediate Goal chat submission until native recovery status resolves", async () => {
+    const pendingCapabilities = deferred<Awaited<ReturnType<typeof chatsApi.getNativeChatCapabilities>>>();
+    vi.mocked(chatsApi.getNativeChatCapabilities).mockReturnValue(pendingCapabilities.promise);
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(chatsApi.getNativeChatCapabilities).toHaveBeenCalled());
+    expect(rendered.container.querySelector('[data-testid="goal-chat-recovery-status-checking"]')).not.toBeNull();
+    expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+
+    const editor = rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!;
+    change(editor, "Send before the recovery check completes.");
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(chatsApi.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(rendered.container.textContent).toContain("Sending is paused until the check finishes");
+
+    await act(async () => {
+      pendingCapabilities.resolve({
+        executionAuthority: "native_rust",
+        firstSend: true,
+        readTurn: true,
+        nativeControls: true,
+        recoveryRead: true,
+      });
+      await pendingCapabilities.promise;
+    });
+    await waitUntil(() => expect(chatsApi.readNativeChatRecovery).toHaveBeenCalledWith("chat-goal-1", "org-1"));
   });
 
   it("retains the legacy Stop route when the Native capability endpoint is absent", async () => {

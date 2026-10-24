@@ -146,14 +146,14 @@ import {
   filterChatSkillOptions,
 } from "@/lib/chat-skill-options";
 import {
+  CHAT_RECOVERY_STATUS_CHECKING_MESSAGE,
   CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE,
-  CHAT_STOP_OWNER_LOST_MESSAGE,
   CHAT_STOP_CONFIRMATION_PENDING_MESSAGE,
+  CHAT_STOP_OWNER_LOST_MESSAGE,
   CHAT_STOP_REJECTED_MESSAGE,
   CHAT_STOP_REQUIRES_FRESH_ACTION_MESSAGE,
   CHAT_STOP_TARGET_UNVERIFIED_MESSAGE,
 } from "@/lib/chat-stop-feedback";
-import { useNativeChatRecovery } from "@/lib/use-native-chat-recovery";
 import {
   chatStopRecoveryActionKey,
   clearPendingChatStopRecovery,
@@ -205,6 +205,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/li
 import { latestSideChatAnchor } from "@/lib/side-chat";
 import { chatGenerationScopeKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { resolveTranscriptSkillSidePanelTarget } from "@/lib/transcript-skill-targets";
+import { useNativeChatRecovery } from "@/lib/use-native-chat-recovery";
 import { cn } from "@/lib/utils";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -553,6 +554,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const serverOwnerLostGeneration = nativeRecoveryQuery.recovery !== null
     || confirmedOwnerLossApplies;
   const nativeRecoveryUnavailable = nativeRecoveryQuery.unavailable;
+  const nativeRecoveryChecking = Boolean(conversationId && nativeRecoveryQuery.status.kind === "checking");
   const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const liveAgents = useMemo(() => selectableChatAgents(agents), [agents]);
@@ -2155,10 +2157,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pushToast({ title: "Response needs recovery", body: "Resume the accepted response before sending another message in this chat.", tone: "warn" });
         return;
       }
-      if (!isResume && (serverOwnerLostGeneration || nativeRecoveryUnavailable)) {
+      if (!isResume && (serverOwnerLostGeneration || nativeRecoveryUnavailable || nativeRecoveryChecking)) {
         pushToast({
-          title: serverOwnerLostGeneration ? "Run interrupted" : "Recovery status unavailable",
-          body: serverOwnerLostGeneration ? CHAT_STOP_OWNER_LOST_MESSAGE : CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE,
+          title: serverOwnerLostGeneration ? "Run interrupted" : nativeRecoveryUnavailable ? "Recovery status unavailable" : "Checking recovery status",
+          body: serverOwnerLostGeneration
+            ? CHAT_STOP_OWNER_LOST_MESSAGE
+            : nativeRecoveryUnavailable
+              ? CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE
+              : CHAT_RECOVERY_STATUS_CHECKING_MESSAGE,
           tone: "warn",
         });
         return;
@@ -3735,7 +3741,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     composerUnavailable,
     sendButtonMode,
     hasDraft: hasSubmittableComposerDraft,
-  }) || recoveryCheckBlocksSubmit || nativeFirstSendGate || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery) || selectedConversationOwnerLoss || nativeRecoveryUnavailable;
+  }) || recoveryCheckBlocksSubmit || nativeFirstSendGate || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery) || selectedConversationOwnerLoss || nativeRecoveryUnavailable || nativeRecoveryChecking;
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
@@ -4301,7 +4307,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           )}
           placeholder={composerPlaceholder}
           onSubmit={() => {
-            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking || nativeFirstSendGate || selectedConversationOwnerLoss) return;
+            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking || nativeFirstSendGate || selectedConversationOwnerLoss || nativeRecoveryChecking) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
               void queueComposerMessage(selectedConversation);
               return;
@@ -4822,6 +4828,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               ) : nativeRecoveryUnavailable ? (
                 <div role="status" data-testid="chat-recovery-status-unavailable" className="mx-4 mt-2.5 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200 md:mx-5">
                   {CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE}
+                </div>
+              ) : nativeRecoveryChecking ? (
+                <div role="status" data-testid="chat-recovery-status-checking" className="mx-4 mt-2.5 rounded-[var(--radius-md)] border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground md:mx-5">
+                  {CHAT_RECOVERY_STATUS_CHECKING_MESSAGE}
                 </div>
               ) : null}
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">

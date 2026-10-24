@@ -6,7 +6,6 @@ import type {
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
-  NativeChatRecoveryRead,
   ChatOperationProposalDecisionAction,
   ChatQueueClaimResponse,
   ChatQueueSnapshot,
@@ -20,6 +19,7 @@ import type {
   ChatWorkManifestResponse,
   ForkChatConversation,
   HeartbeatRunStatus,
+  NativeChatRecoveryRead,
 } from "@rudderhq/shared";
 import {
   ApiError,

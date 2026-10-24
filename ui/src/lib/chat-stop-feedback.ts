@@ -11,7 +11,10 @@ export const CHAT_STOP_TARGET_UNVERIFIED_MESSAGE =
   "Rudder could not verify which response to stop. Refresh the chat and try again.";
 
 export const CHAT_STOP_OWNER_LOST_MESSAGE =
-  "Run interrupted. Runtime cleanup could not be verified. New work in this chat remains blocked until recovery is resolved.";
+  "Run interrupted. Rudder could not confirm it stopped. This chat is paused and needs operator recovery. You can still quit Rudder.";
+
+export const CHAT_RECOVERY_STATUS_CHECKING_MESSAGE =
+  "Rudder is checking this chat's runtime recovery state. Sending is paused until the check finishes.";
 
 export const CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE =
   "Rudder could not verify this chat's runtime recovery state. Sending is paused; try again after refreshing the chat.";

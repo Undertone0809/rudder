@@ -14,17 +14,17 @@ import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecov
 import { Button } from "@/components/ui/button";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { chatErrorMessage } from "@/lib/chat-errors";
-import { settleStoppedChatInput } from "@/lib/chat-send-recovery-settlement";
 import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
+import { settleStoppedChatInput } from "@/lib/chat-send-recovery-settlement";
 import {
+  CHAT_RECOVERY_STATUS_CHECKING_MESSAGE,
   CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE,
-  CHAT_STOP_OWNER_LOST_MESSAGE,
   CHAT_STOP_CONFIRMATION_PENDING_MESSAGE,
+  CHAT_STOP_OWNER_LOST_MESSAGE,
   CHAT_STOP_REJECTED_MESSAGE,
   CHAT_STOP_REQUIRES_FRESH_ACTION_MESSAGE,
   CHAT_STOP_TARGET_UNVERIFIED_MESSAGE,
 } from "@/lib/chat-stop-feedback";
-import { useNativeChatRecovery } from "@/lib/use-native-chat-recovery";
 import {
   clearPendingChatStopRecovery,
   createChatStopRecoveryRetrier,
@@ -38,6 +38,7 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { useNativeChatRecovery } from "@/lib/use-native-chat-recovery";
 import { ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import { mergeChatMessages } from "@/pages/Chat.parts";
 import { activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, EMPTY_CHAT_BODY_SHA256 } from "@/pages/Chat.workspace-helpers";
@@ -170,6 +171,7 @@ export function GoalChatPanel({
         || nativeRecoveryQuery.dataUpdatedAt <= confirmedOwnerLoss.recoveryReadUpdatedAt
         || nativeRecoveryQuery.recovery !== null));
   const nativeRecoveryUnavailable = nativeRecoveryQuery.unavailable;
+  const nativeRecoveryChecking = Boolean(target.conversationId && nativeRecoveryQuery.status.kind === "checking");
 
   const selectedAgent = useMemo(() => {
     const agents = agentsQuery.data ?? [];
@@ -254,6 +256,9 @@ export function GoalChatPanel({
     }
     if (nativeRecoveryUnavailable && sendTarget.conversationId) {
       setNotice(CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE);
+      return;
+    }
+    if (nativeRecoveryChecking && sendTarget.conversationId) {
       return;
     }
     ownerLostStopRef.current = false;
@@ -855,7 +860,7 @@ export function GoalChatPanel({
     })();
   };
 
-  const canSend = Boolean(draft.trim() && selectedAgent && !sending && !ownerLost && !nativeRecoveryUnavailable);
+  const canSend = Boolean(draft.trim() && selectedAgent && !sending && !ownerLost && !nativeRecoveryUnavailable && !nativeRecoveryChecking);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="goal-chat-panel">
@@ -995,6 +1000,7 @@ export function GoalChatPanel({
         />
       ) : ownerLost ? <div role="status" data-testid="goal-chat-owner-loss-blocked" className="px-4 pb-2 text-sm text-amber-800 dark:text-amber-200">{CHAT_STOP_OWNER_LOST_MESSAGE}</div>
         : nativeRecoveryUnavailable ? <div role="status" data-testid="goal-chat-recovery-status-unavailable" className="px-4 pb-2 text-sm text-amber-800 dark:text-amber-200">{CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE}</div>
+        : nativeRecoveryChecking ? <div role="status" data-testid="goal-chat-recovery-status-checking" className="px-4 pb-2 text-sm text-muted-foreground">{CHAT_RECOVERY_STATUS_CHECKING_MESSAGE}</div>
         : notice ? <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{notice}</div> : null}
       {(error || failedBody) && !ownerLost ? (
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-2">
