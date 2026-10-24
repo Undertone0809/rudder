@@ -21,21 +21,31 @@ def update(value):
     out({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': session, 'update': value}})
 
 def progress_prompt(prompt_id, text):
-    tool_call_id = 'fixture-private-tool-call'
+    tool_call_id = 'fixture-search'
     update({'sessionUpdate': 'agent_thought_chunk', 'content': {'type': 'text', 'text': 'PUBLIC HERMES THOUGHT'}})
     update({
-        'sessionUpdate': 'tool_call',
-        'toolCallId': tool_call_id,
-        'title': 'Inspect workspace snapshot',
+        'sessionUpdate': 'tool_call', 'toolCallId': tool_call_id,
+        'title': 'web search: HERMES PUBLIC SEARCH',
+        'content': [{'type': 'content', 'content': {'type': 'text', 'text': 'Searching the web for: HERMES PUBLIC SEARCH'}}],
         'rawInput': {'sentinel': 'PRIVATE_HERMES_TOOL_ARGUMENTS_MUST_NOT_PROJECT'},
     })
     update({
-        'sessionUpdate': 'tool_call_update',
-        'toolCallId': tool_call_id,
-        'status': 'completed',
-        'content': [{'type': 'content', 'content': {'type': 'text', 'text': 'PRIVATE_HERMES_TOOL_RESULT_MUST_NOT_PROJECT'}}],
+        'sessionUpdate': 'tool_call', 'toolCallId': 'fixture-read',
+        'title': 'read: fixture.txt', 'locations': [{'path': '/tmp/hermes-fixture.txt'}],
+    })
+    # Interleaved calls finish out of order. Public failure output must stay on
+    # its read call; a content-only search patch must remain in progress.
+    update({
+        'sessionUpdate': 'tool_call_update', 'toolCallId': 'fixture-read',
+        'status': 'failed',
+        'content': [{'type': 'content', 'content': {'type': 'text', 'text': 'PUBLIC HERMES READ FAILURE'}}],
+    })
+    update({
+        'sessionUpdate': 'tool_call_update', 'toolCallId': tool_call_id,
+        'content': [{'type': 'content', 'content': {'type': 'text', 'text': 'PUBLIC HERMES SEARCH RESULT'}}],
         'rawOutput': {'sentinel': 'PRIVATE_HERMES_TOOL_RESULT_MUST_NOT_PROJECT'},
     })
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool_call_id, 'status': 'completed'})
     update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Native Hermes answer: '}})
     (home / 'output-pending').write_text('ready')
 

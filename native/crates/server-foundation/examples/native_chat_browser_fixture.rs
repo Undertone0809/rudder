@@ -76,6 +76,8 @@ impl FixtureConfig {
                 "hermes-install/hermes_cli/__init__.py",
                 "hermes-install/hermes_cli/main.py",
                 "hermes-install/acp_adapter/entry.py",
+                "hermes-install/acp_adapter/events.py",
+                "hermes-install/acp_adapter/tools.py",
                 "hermes-install/acp_adapter/session.py",
                 "hermes-install/agent/agent_init.py",
                 "hermes-install/agent/chat_completion_helpers.py",
@@ -156,6 +158,14 @@ impl FixtureConfig {
             ),
             ("hermes-install/acp_adapter/entry.py", expected_entry),
             (
+                "hermes-install/acp_adapter/events.py",
+                "def build_tool_complete(tool_call_id, tool_name, result=None, function_args=None, snapshot=None):\n    return None\n\ndef make_step_cb(*args, **kwargs):\n    return None\n".to_owned(),
+            ),
+            (
+                "hermes-install/acp_adapter/tools.py",
+                "import json\n\ndef coerce_tool_args(raw):\n    if isinstance(raw, str):\n        raw = json.loads(raw)\n    return raw if isinstance(raw, dict) else {}\n".to_owned(),
+            ),
+            (
                 "hermes-install/acp_adapter/session.py",
                 "class SessionManager:\n    def _make_agent(self, session_id, cwd, model, requested_provider, base_url, api_mode):\n        return type('Agent', (), {'ephemeral_system_prompt': None})()\n".to_owned(),
             ),
@@ -170,7 +180,12 @@ impl FixtureConfig {
         ];
         for (relative, expected) in expected_files {
             let bytes = read_fixture_file(&self.fixture_root, relative)?;
-            if bytes != expected.as_bytes() {
+            // The restart regression has one explicit harmless formatter
+            // revision. Accept only these exact fixture bytes, and hash the
+            // selected version along with every imported adapter module.
+            let known_formatter_update = relative == "hermes-install/acp_adapter/events.py"
+                && bytes == format!("{expected}\n# updated transport formatter\n").as_bytes();
+            if bytes != expected.as_bytes() && !known_formatter_update {
                 return Err(
                     "synthetic Hermes installation does not match its pinned fixture".into(),
                 );

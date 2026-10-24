@@ -508,7 +508,7 @@ export function normalizeTranscript(
   options?: { showDeveloperDiagnostics?: boolean },
 ): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
-  const pendingToolBlocks = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
+  const toolBlocksById = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
   const pendingActivityBlocks = new Map<string, Extract<TranscriptBlock, { type: "activity" }>>();
   const pendingTodoListBlocks = new Map<string, Extract<TranscriptBlock, { type: "todo_list" }>>();
   let previousTextEntry: { kind: "assistant" | "user" | "thinking"; delta: boolean } | null = null;
@@ -720,51 +720,65 @@ export function normalizeTranscript(
     forceTextBoundary = false;
 
     if (entry.kind === "tool_call") {
+      const toolUseId = entry.toolUseId ?? extractToolUseId(entry.input);
+      const existing = toolUseId ? toolBlocksById.get(toolUseId) : undefined;
+      if (existing) {
+        existing.name = entry.name;
+        existing.input = entry.input;
+        for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
+        continue;
+      }
+
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {
         type: "tool",
         ts: entry.ts,
         name: entry.name,
-        toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
+        toolUseId,
         input: entry.input,
         status: "running",
         sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
       if (toolBlock.toolUseId) {
-        pendingToolBlocks.set(toolBlock.toolUseId, toolBlock);
+        toolBlocksById.set(toolBlock.toolUseId, toolBlock);
       }
       continue;
     }
 
     if (entry.kind === "tool_result") {
-      const matched =
-        pendingToolBlocks.get(entry.toolUseId)
-        ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
+      const matched = entry.toolUseId ? toolBlocksById.get(entry.toolUseId) : undefined;
+      const terminal = entry.status === "completed"
+        || entry.status === "failed"
+        || entry.isError
+        || entry.status === undefined;
+      const isError = entry.isError || entry.status === "failed";
 
       if (matched) {
         const artifactInput = trustedArtifactResultInput(matched.name, entry.content);
         if (artifactInput !== null) matched.input = artifactInput;
         mergeCollaborationToolResultInput(matched, entry.content);
         matched.result = entry.content;
-        matched.isError = entry.isError;
-        matched.status = entry.isError ? "error" : "completed";
-        matched.endTs = entry.ts;
+        matched.isError = isError;
+        matched.status = terminal ? (isError ? "error" : "completed") : "running";
+        if (terminal) matched.endTs = entry.ts;
+        else delete matched.endTs;
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(matched, sourceEntryId);
-        pendingToolBlocks.delete(entry.toolUseId);
       } else {
         const artifactInput = trustedArtifactResultInput(entry.toolName, entry.content);
-        blocks.push({
+        const resultBlock: Extract<TranscriptBlock, { type: "tool" }> = {
           type: "tool",
           ts: entry.ts,
-          endTs: entry.ts,
+          ...(terminal ? { endTs: entry.ts } : {}),
           name: entry.toolName ?? "tool",
           toolUseId: entry.toolUseId,
           input: artifactInput,
           result: entry.content,
-          isError: entry.isError,
-          status: entry.isError ? "error" : "completed",
+          isError,
+          status: terminal ? (isError ? "error" : "completed") : "running",
           sourceEntryIds: transcriptEntrySourceIds(entry),
-        });
+        };
+        blocks.push(resultBlock);
+        if (entry.toolUseId) toolBlocksById.set(entry.toolUseId, resultBlock);
       }
       continue;
     }

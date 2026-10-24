@@ -108,6 +108,7 @@ pub struct HermesInstructionBootstrap {
     python_executable: PathBuf,
     source_root: PathBuf,
     revision: String,
+    binding_revision: String,
 }
 impl HermesInstructionBootstrap {
     pub fn python_executable(&self) -> &Path {
@@ -118,6 +119,11 @@ impl HermesInstructionBootstrap {
     }
     pub fn revision(&self) -> &str {
         &self.revision
+    }
+    /// Preserve existing session identities while separately validating every
+    /// source file needed by the current launch adapter.
+    pub fn binding_revision(&self) -> &str {
+        &self.binding_revision
     }
 }
 impl fmt::Debug for HermesInstructionBootstrap {
@@ -191,6 +197,8 @@ pub fn resolve_instruction_bootstrap(
         "hermes_bootstrap.py",
         "hermes_cli/__init__.py",
         "acp_adapter/entry.py",
+        "acp_adapter/events.py",
+        "acp_adapter/tools.py",
         "acp_adapter/session.py",
         "agent/agent_init.py",
         "agent/chat_completion_helpers.py",
@@ -227,6 +235,7 @@ pub fn resolve_instruction_bootstrap(
         digest.update(&wrapper);
         digest.update(python_executable.to_string_lossy().as_bytes());
     }
+    let mut binding_digest = digest.clone();
     let mut version_matches = 0usize;
     for relative in relative_files {
         let path = source_root.join(relative);
@@ -264,6 +273,19 @@ pub fn resolve_instruction_bootstrap(
             digest.update(&bytes);
             digest.update([0]);
         }
+        // These two transport formatters were added to launch integrity after
+        // sessions already existed. Keep the original six-file binding hash;
+        // the full revision above still gates admission-to-launch continuity.
+        if !matches!(relative, "acp_adapter/events.py" | "acp_adapter/tools.py") {
+            if shim_python.is_some() {
+                hash_bootstrap_field(&mut binding_digest, relative.as_bytes(), &bytes);
+            } else {
+                binding_digest.update(relative.as_bytes());
+                binding_digest.update([0]);
+                binding_digest.update(&bytes);
+                binding_digest.update([0]);
+            }
+        }
     }
     if version_matches != 1 {
         return Err(HermesTransportError::UnsupportedInstructionAdapter);
@@ -279,6 +301,10 @@ pub fn resolve_instruction_bootstrap(
         python_executable,
         source_root,
         revision: format!("hermes-instruction-v1:{}", hex_lower(&digest.finalize())),
+        binding_revision: format!(
+            "hermes-instruction-v1:{}",
+            hex_lower(&binding_digest.finalize())
+        ),
     })
 }
 
@@ -409,18 +435,20 @@ pub struct HermesPromptErrorAfterCancel {
     error_code: i64,
 }
 
-/// Public, bounded ACP progress. The raw ACP update and its content/arguments
-/// are intentionally not retained in a turn receipt.
+/// Public, bounded ACP progress. Only display content and known request fields
+/// cross this boundary; raw ACP envelopes and private metadata are not retained.
 pub enum HermesProgressKind {
     ThinkingChunk(String),
     AssistantChunk(String),
     ToolCall {
         tool_call_id: String,
         title: String,
+        input: Value,
     },
     ToolCallUpdate {
         tool_call_id: String,
         status: String,
+        content: String,
     },
     Truncated,
 }
@@ -1063,6 +1091,7 @@ impl HermesAcpTransport {
         let mut progress_text_bytes = 0usize;
         let mut progress_truncated = false;
         let mut pending_progress: Option<(HermesProgressKind, Instant)> = None;
+        let mut tool_progress = crate::tool_progress::ToolProgress::default();
         let mut approval_required = false;
         let mut cancel_sent = false;
         loop {
@@ -1188,8 +1217,7 @@ impl HermesAcpTransport {
                     let update = params
                         .get("update")
                         .ok_or(HermesTransportError::InvalidMessage)?;
-                    let normalized = normalize_progress_update(update)?;
-                    if let Some(kind) = normalized {
+                    for kind in normalize_progress_update(update, &mut tool_progress)? {
                         if let HermesProgressKind::AssistantChunk(chunk) = &kind {
                             if let Some(id) = update.get("messageId").and_then(Value::as_str) {
                                 let parsed = Uuid::parse_str(id)
@@ -1845,7 +1873,8 @@ fn emit_progress_kind<F>(
 
 fn normalize_progress_update(
     update: &Value,
-) -> Result<Option<HermesProgressKind>, HermesTransportError> {
+    tools: &mut crate::tool_progress::ToolProgress,
+) -> Result<Vec<HermesProgressKind>, HermesTransportError> {
     let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
         return Err(HermesTransportError::InvalidMessage);
     };
@@ -1859,44 +1888,19 @@ fn normalize_progress_update(
                 return Err(HermesTransportError::UnsupportedOutput);
             }
             if text.is_empty() {
-                return Ok(None);
+                return Ok(Vec::new());
             }
-            Ok(Some(if kind == "agent_thought_chunk" {
+            Ok(vec![if kind == "agent_thought_chunk" {
                 HermesProgressKind::ThinkingChunk(text.to_owned())
             } else {
                 HermesProgressKind::AssistantChunk(text.to_owned())
-            }))
+            }])
         }
-        "tool_call" => {
-            let tool_call_id = public_tool_call_id(update)?;
-            let title = update
-                .get("title")
-                .and_then(Value::as_str)
-                .ok_or(HermesTransportError::UnsupportedOutput)?;
-            let title = bounded_public_title(title);
-            if title.is_empty() {
-                return Err(HermesTransportError::UnsupportedOutput);
-            }
-            Ok(Some(HermesProgressKind::ToolCall {
-                tool_call_id,
-                title,
-            }))
+        "tool_call" | "tool_call_update" => {
+            let id = public_tool_call_id(update)?;
+            tools.normalize(update, id, kind == "tool_call")
         }
-        "tool_call_update" => {
-            let tool_call_id = public_tool_call_id(update)?;
-            let Some(status) = update.get("status").and_then(Value::as_str) else {
-                return Ok(None);
-            };
-            match status {
-                "completed" | "failed" => Ok(Some(HermesProgressKind::ToolCallUpdate {
-                    tool_call_id,
-                    status: status.to_owned(),
-                })),
-                "pending" | "in_progress" => Ok(None),
-                _ => Err(HermesTransportError::InvalidMessage),
-            }
-        }
-        _ => Ok(None),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -1912,27 +1916,15 @@ fn public_tool_call_id(update: &Value) -> Result<String, HermesTransportError> {
     Ok(value.to_owned())
 }
 
-fn bounded_public_title(title: &str) -> String {
-    let mut bounded = String::new();
-    for character in title.trim().chars() {
-        if character.is_control() && character != '\n' && character != '\t' {
-            continue;
-        }
-        if bounded.len().saturating_add(character.len_utf8()) > 1024 {
-            break;
-        }
-        bounded.push(character);
-    }
-    bounded.trim().to_owned()
-}
-
 fn progress_kind_text_bytes(kind: &HermesProgressKind) -> usize {
     match kind {
         HermesProgressKind::ThinkingChunk(text) | HermesProgressKind::AssistantChunk(text) => {
             text.len()
         }
-        HermesProgressKind::ToolCall { title, .. } => title.len(),
-        HermesProgressKind::ToolCallUpdate { status, .. } => status.len(),
+        HermesProgressKind::ToolCall { title, input, .. } => title.len() + input.to_string().len(),
+        HermesProgressKind::ToolCallUpdate {
+            status, content, ..
+        } => status.len() + content.len(),
         HermesProgressKind::Truncated => 0,
     }
 }
@@ -2209,7 +2201,7 @@ mod tests {
             "content":{"type":"text","text":"visible public thought"}
         });
         assert!(matches!(
-            normalize_progress_update(&thought).unwrap(),
+            normalize_progress_update(&thought, &mut Default::default()).unwrap().pop(),
             Some(HermesProgressKind::ThinkingChunk(text)) if text == "visible public thought"
         ));
 
@@ -2218,7 +2210,7 @@ mod tests {
             "content":{"type":"image","text":"must not be projected"}
         });
         assert!(matches!(
-            normalize_progress_update(&non_text),
+            normalize_progress_update(&non_text, &mut Default::default()),
             Err(HermesTransportError::UnsupportedOutput)
         ));
     }
@@ -2335,6 +2327,27 @@ mod tests {
         assert!(protected_environment_key(HERMES_INSTRUCTION_ROOT_ENV));
     }
 
+    #[test]
+    fn instruction_bootstrap_preserves_all_typed_tool_completions() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let python = std::env::var_os("RUDDER_TEST_PYTHON")
+            .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into());
+        let output = std::process::Command::new(python)
+            .args(["-I", "-B"])
+            .arg(root.join("tests/bootstrap_tool_arguments.py"))
+            .arg(root.join("src/acp_instruction_bootstrap.py"))
+            .output()
+            .expect("Python 3 is required for the embedded ACP transport compatibility test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("5 correlated completions preserved")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn instruction_bootstrap_accepts_only_the_pinned_console_script_layout() {
@@ -2355,6 +2368,8 @@ mod tests {
             "hermes_bootstrap.py",
             "hermes_cli/__init__.py",
             "acp_adapter/entry.py",
+            "acp_adapter/events.py",
+            "acp_adapter/tools.py",
             "acp_adapter/session.py",
             "agent/agent_init.py",
             "agent/chat_completion_helpers.py",
@@ -2389,6 +2404,28 @@ mod tests {
         );
         assert_eq!(shim_resolved.source_root(), resolved.source_root());
         assert_ne!(shim_resolved.revision(), resolved.revision());
+        for relative in ["acp_adapter/events.py", "acp_adapter/tools.py"] {
+            let path = root.join(relative);
+            let original = fs::read(&path).unwrap();
+            fs::write(&path, "# changed ACP transport fixture\n").unwrap();
+            assert_ne!(
+                resolve_instruction_bootstrap(&launcher).unwrap().revision(),
+                shim_resolved.revision()
+            );
+            assert_eq!(
+                resolve_instruction_bootstrap(&launcher)
+                    .unwrap()
+                    .binding_revision(),
+                shim_resolved.binding_revision()
+            );
+            assert_eq!(
+                resolve_instruction_bootstrap(&executable)
+                    .unwrap()
+                    .binding_revision(),
+                resolved.binding_revision()
+            );
+            fs::write(path, original).unwrap();
+        }
         let other_launcher = temp.path().join("other-launcher");
         fs::write(&other_launcher, &shim).unwrap();
         assert_ne!(
@@ -2416,6 +2453,16 @@ mod tests {
             env: Default::default(),
         };
         assert!(validate_launch(launch()).is_ok());
+        for relative in ["acp_adapter/events.py", "acp_adapter/tools.py"] {
+            let path = root.join(relative);
+            let original = fs::read(&path).unwrap();
+            fs::write(&path, "# changed after admission\n").unwrap();
+            assert!(matches!(
+                validate_launch(launch()),
+                Err(HermesTransportError::UnsupportedInstructionAdapter)
+            ));
+            fs::write(path, original).unwrap();
+        }
         let changed_shim = shim.replace(
             &python.display().to_string(),
             &format!("{}/./python3", bin.display()),
@@ -2453,6 +2500,12 @@ mod tests {
             "# changed after admission\n",
         )
         .unwrap();
+        assert_ne!(
+            resolve_instruction_bootstrap(&launcher)
+                .unwrap()
+                .binding_revision(),
+            shim_resolved.binding_revision()
+        );
         assert!(matches!(
             validate_launch(launch()),
             Err(HermesTransportError::UnsupportedInstructionAdapter)

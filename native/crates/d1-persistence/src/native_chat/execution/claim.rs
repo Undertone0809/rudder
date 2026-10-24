@@ -104,7 +104,7 @@ pub async fn claim_with_preflight(
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
                 chat_conversation_id::text AS conversation_id,
-                chat_generation_id::text AS generation_id
+                chat_generation_id::text AS generation_id, context_snapshot
          FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
     )
     .bind(&organization_id)
@@ -115,6 +115,7 @@ pub async fn claim_with_preflight(
     let agent_id: String = hint.try_get("agent_id")?;
     let conversation_id: Option<String> = hint.try_get("conversation_id")?;
     let generation_id: Option<String> = hint.try_get("generation_id")?;
+    let admitted_context_snapshot: serde_json::Value = hint.try_get("context_snapshot")?;
     let conversation_id =
         conversation_id.ok_or_else(|| http(409, "Run is not attached to Native Chat"))?;
     let generation_id =
@@ -204,6 +205,9 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Resolved Native Chat runtime is unsupported"));
     }
 
+    if runtime_type == "hermes_local" {
+        ensure_admitted_hermes_adapter_revision(&admitted_context_snapshot, &config)?;
+    }
     preflight(&config)?;
 
     // Keep the global lock order after Conversation aligned with Native Chat
@@ -322,6 +326,12 @@ pub async fn claim_with_preflight(
         return Err(http(
             409,
             "Native Chat Run is not eligible for first ownership",
+        ));
+    }
+    if runtime_type == "hermes_local" && context_snapshot != admitted_context_snapshot {
+        return Err(http(
+            409,
+            "Native Chat Run context changed during first claim; retry this message as a new turn",
         ));
     }
     let run_owner = run_owner.ok_or_else(|| http(409, "Run execution owner is missing"))?;
@@ -1000,4 +1010,26 @@ fn new_connection_claim_id() -> Result<String> {
             .map_err(|_| http(500, "Native Chat connection claim could not be created"))?;
     }
     Ok(value)
+}
+
+fn ensure_admitted_hermes_adapter_revision(
+    context_snapshot: &serde_json::Value,
+    config: &ResolvedCodexConfig,
+) -> Result<()> {
+    let admitted_revision = context_snapshot
+        .get("hermesInstructionAdapterRevision")
+        .and_then(serde_json::Value::as_str)
+        .filter(|revision| !revision.is_empty());
+    let resolved_revision = config
+        .hermes
+        .as_ref()
+        .and_then(|hermes| hermes.instruction_adapter_revision.as_deref())
+        .filter(|revision| !revision.is_empty());
+    if admitted_revision.is_none() || admitted_revision != resolved_revision {
+        return Err(http(
+            409,
+            "Hermes instruction adapter changed or is missing since admission; retry this message as a new turn",
+        ));
+    }
+    Ok(())
 }

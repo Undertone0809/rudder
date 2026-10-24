@@ -576,7 +576,7 @@ export type TranscriptEntry =
       sourceEntryId?: string;
     }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string }
-  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string }
+  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; status?: "pending" | "in_progress" | "completed" | "failed"; sourceEntryId?: string }
   | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string }
   | { kind: "init"; ts: string; model: string; sessionId: string; sourceEntryId?: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[]; sourceEntryId?: string }
