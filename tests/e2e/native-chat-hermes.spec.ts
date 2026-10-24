@@ -146,7 +146,7 @@ async function executionState(databaseUrl: string, orgId: string, chatId: string
   } finally { await db.$client.end({ timeout: 5 }); }
 }
 
-test("uses one native Hermes session across server restart and sends only new input", async ({ page }, testInfo) => {
+test("preserves the native Hermes binding across transport integrity updates and server restart", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const f = await fixture();
   let passed = false;
@@ -164,10 +164,24 @@ test("uses one native Hermes session across server restart and sends only new in
     };
     await send("Remember this first native turn.");
     const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const bindingId = async () => {
+      const db = createDb(f.databaseUrl);
+      try {
+        const rows = await db.$client`SELECT id FROM runtime_bindings WHERE org_id=${f.orgId}::uuid AND target_type='chat_conversation' AND target_id=${chatId} AND status='active'`;
+        expect(rows).toHaveLength(1);
+        return rows[0].id;
+      } finally { await db.$client.end({ timeout: 5 }); }
+    };
+    const originalBindingId = await bindingId();
+    // A newly pinned transport formatter must not rotate an existing session's
+    // binding, while the next launch resolves and validates its current bytes.
+    const formatter = path.join(f.root, "hermes-install/acp_adapter/events.py");
+    await writeFile(formatter, `${await readFile(formatter, "utf8")}\n# updated transport formatter\n`);
     await f.restartRust();
     await page.reload();
     await expect(composer).toBeVisible({ timeout: 30_000 });
     await send("Continue the same session.");
+    expect(await bindingId()).toBe(originalBindingId);
     expect(new URL(page.url()).pathname.split("/").at(-1)).toBe(chatId);
     await expect(page.getByText("REPLAY MUST NOT APPEAR AS NEW OUTPUT", { exact: false })).toHaveCount(0);
     const observed = await events(f.providerEventsPath);

@@ -108,6 +108,7 @@ pub struct HermesInstructionBootstrap {
     python_executable: PathBuf,
     source_root: PathBuf,
     revision: String,
+    binding_revision: String,
 }
 impl HermesInstructionBootstrap {
     pub fn python_executable(&self) -> &Path {
@@ -118,6 +119,11 @@ impl HermesInstructionBootstrap {
     }
     pub fn revision(&self) -> &str {
         &self.revision
+    }
+    /// Preserve existing session identities while separately validating every
+    /// source file needed by the current launch adapter.
+    pub fn binding_revision(&self) -> &str {
+        &self.binding_revision
     }
 }
 impl fmt::Debug for HermesInstructionBootstrap {
@@ -229,6 +235,7 @@ pub fn resolve_instruction_bootstrap(
         digest.update(&wrapper);
         digest.update(python_executable.to_string_lossy().as_bytes());
     }
+    let mut binding_digest = digest.clone();
     let mut version_matches = 0usize;
     for relative in relative_files {
         let path = source_root.join(relative);
@@ -266,6 +273,19 @@ pub fn resolve_instruction_bootstrap(
             digest.update(&bytes);
             digest.update([0]);
         }
+        // These two transport formatters were added to launch integrity after
+        // sessions already existed. Keep the original six-file binding hash;
+        // the full revision above still gates admission-to-launch continuity.
+        if !matches!(relative, "acp_adapter/events.py" | "acp_adapter/tools.py") {
+            if shim_python.is_some() {
+                hash_bootstrap_field(&mut binding_digest, relative.as_bytes(), &bytes);
+            } else {
+                binding_digest.update(relative.as_bytes());
+                binding_digest.update([0]);
+                binding_digest.update(&bytes);
+                binding_digest.update([0]);
+            }
+        }
     }
     if version_matches != 1 {
         return Err(HermesTransportError::UnsupportedInstructionAdapter);
@@ -281,6 +301,10 @@ pub fn resolve_instruction_bootstrap(
         python_executable,
         source_root,
         revision: format!("hermes-instruction-v1:{}", hex_lower(&digest.finalize())),
+        binding_revision: format!(
+            "hermes-instruction-v1:{}",
+            hex_lower(&binding_digest.finalize())
+        ),
     })
 }
 
@@ -2388,6 +2412,18 @@ mod tests {
                 resolve_instruction_bootstrap(&launcher).unwrap().revision(),
                 shim_resolved.revision()
             );
+            assert_eq!(
+                resolve_instruction_bootstrap(&launcher)
+                    .unwrap()
+                    .binding_revision(),
+                shim_resolved.binding_revision()
+            );
+            assert_eq!(
+                resolve_instruction_bootstrap(&executable)
+                    .unwrap()
+                    .binding_revision(),
+                resolved.binding_revision()
+            );
             fs::write(path, original).unwrap();
         }
         let other_launcher = temp.path().join("other-launcher");
@@ -2417,6 +2453,16 @@ mod tests {
             env: Default::default(),
         };
         assert!(validate_launch(launch()).is_ok());
+        for relative in ["acp_adapter/events.py", "acp_adapter/tools.py"] {
+            let path = root.join(relative);
+            let original = fs::read(&path).unwrap();
+            fs::write(&path, "# changed after admission\n").unwrap();
+            assert!(matches!(
+                validate_launch(launch()),
+                Err(HermesTransportError::UnsupportedInstructionAdapter)
+            ));
+            fs::write(path, original).unwrap();
+        }
         let changed_shim = shim.replace(
             &python.display().to_string(),
             &format!("{}/./python3", bin.display()),
@@ -2454,6 +2500,12 @@ mod tests {
             "# changed after admission\n",
         )
         .unwrap();
+        assert_ne!(
+            resolve_instruction_bootstrap(&launcher)
+                .unwrap()
+                .binding_revision(),
+            shim_resolved.binding_revision()
+        );
         assert!(matches!(
             validate_launch(launch()),
             Err(HermesTransportError::UnsupportedInstructionAdapter)

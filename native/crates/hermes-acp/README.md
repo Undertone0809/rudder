@@ -21,6 +21,12 @@ The Rust launcher fingerprints `acp_adapter/events.py` and `tools.py`, rechecks
 its launch revision, and the shim verifies the formatter signature and callback
 module binding. Unsupported layouts fail closed.
 
+The persisted session identity retains the original six-source-file
+`binding_revision`. The full launch `revision` also pins the two completion
+formatters and is revalidated before spawning. Adding transport integrity checks
+therefore preserves existing chats without weakening launch validation or
+rotating their bindings.
+
 Retire this coercion when the selected supported Hermes ACP version performs the
 same normalization itself and the mixed-batch regression passes without it.
 This is a protocol compatibility adapter, not a Python backend authority path.
