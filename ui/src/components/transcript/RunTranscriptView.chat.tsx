@@ -3,6 +3,7 @@ import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef,
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
+import { getTranscriptMcpBrandIcon } from "./RunTranscriptView.chat-brand";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
@@ -13,6 +14,7 @@ import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./Trans
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
 import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff";
+export { getTranscriptMcpBrandIcon } from "./RunTranscriptView.chat-brand";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 const CHAT_READING_COLUMN_CLASS = "w-full min-w-0 max-w-3xl px-1";
@@ -26,59 +28,6 @@ function useTranscriptText() {
 function transcriptFileDisplayName(label: string) {
   const trimmed = label.replace(/[\\/]+$/, "");
   return trimmed.split(/[\\/]/).pop() || label;
-}
-
-type TranscriptMcpBrandIcon = {
-  aliases: readonly string[];
-  label: string;
-  src: string;
-  imageClassName?: string;
-};
-
-const TRANSCRIPT_MCP_BRAND_ICONS: readonly TranscriptMcpBrandIcon[] = [
-  {
-    aliases: ["rudder", "rudder-tools", "rudder_tools", "rudder-browser", "rudder_browser"],
-    label: "Rudder",
-    src: "/rudder-logo.png",
-  },
-  {
-    aliases: ["github", "github-tools", "github-mcp", "github-mcp-server"],
-    label: "GitHub",
-    src: "/brands/github-logo.svg",
-    imageClassName: "dark:invert",
-  },
-  {
-    aliases: ["gmail"],
-    label: "Gmail",
-    src: "/brands/gmail-logo.svg",
-  },
-  {
-    aliases: ["google-calendar", "google_calendar"],
-    label: "Google Calendar",
-    src: "/brands/google-calendar-logo.svg",
-  },
-  {
-    aliases: ["google-drive", "google_drive"],
-    label: "Google Drive",
-    src: "/brands/google-drive-logo.svg",
-  },
-  {
-    aliases: ["notion"],
-    label: "Notion",
-    src: "/brands/notion-logo.svg",
-    imageClassName: "dark:invert",
-  },
-  {
-    aliases: ["linear"],
-    label: "Linear",
-    src: "/brands/linear-logo.svg",
-  },
-];
-
-export function getTranscriptMcpBrandIcon(server: string | null | undefined): TranscriptMcpBrandIcon | null {
-  const normalizedServer = server?.trim().toLowerCase();
-  if (!normalizedServer) return null;
-  return TRANSCRIPT_MCP_BRAND_ICONS.find((brand) => brand.aliases.includes(normalizedServer)) ?? null;
 }
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
