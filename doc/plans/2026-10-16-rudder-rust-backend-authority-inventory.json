@@ -59147,6 +59147,24 @@
   },
   "reviewed_node_changes": [
     {
+      "path": "desktop/src/desktop-quit-flow.ts",
+      "base_sha256": "4bfebdc85ea3ad6bdc4a80d2518738bcf41a6972",
+      "head_sha256": "f89d4bfeef96d34d364ed01f9000a03d3f7be1db",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "transport_adapter",
+      "allowed_node_duties": [
+        "Coordinate Desktop quit/update prompts, inspect active-run summaries through the local API, and submit bounded stop requests for native_rust runs."
+      ],
+      "compatibility_boundary": "Electron Desktop remains a client of the public Rust Native Chat control/stop API for native_rust runs and does not own run state or provider execution. The pre-existing heartbeat cancel request remains only for legacy_ts runs; native_rust failures do not fall back to that Node route.",
+      "prohibited_node_duties": [
+        "No authoritative Native Chat generation, cutoff, recovery, persistence, or provider-process decisions.",
+        "No Node fallback when a Rust-owned Native Chat stop fails."
+      ],
+      "retirement_criterion": "Retire only the legacy heartbeat-cancel branch when supported runtime modes no longer expose Node-owned runs; keep Desktop quit UX as a client of the Rust public API.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/native_chat/mod.rs owns public control/stop request handling; native/crates/d1-persistence/src/native_chat/control/stop.rs and native_chat/execution own durable stop and settlement state.",
+      "review_status": "pending"
+    },
+    {
       "path": "packages/agent-runtime-utils/src/types.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
