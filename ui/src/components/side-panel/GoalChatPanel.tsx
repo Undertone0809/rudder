@@ -14,6 +14,7 @@ import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecov
 import { Button } from "@/components/ui/button";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { chatErrorMessage } from "@/lib/chat-errors";
+import { chatClientCheckpointKey, createChatClientCheckpointDispatcher } from "@/lib/chat-client-checkpoints";
 import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
 import { settleStoppedChatInput } from "@/lib/chat-send-recovery-settlement";
 import {
@@ -45,7 +46,7 @@ import { activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, EMPTY_CHA
 import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Loader2, MessageSquare } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type GoalChatTarget = Extract<SidePanelTarget, { kind: "goal_chat" }>;
 
@@ -80,6 +81,7 @@ export function GoalChatPanel({
   const [draft, setDraft] = useState(target.body);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamBody, setStreamBody] = useState("");
+  const [checkpointRevision, setCheckpointRevision] = useState(0);
   const [sending, setSending] = useState(false);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingSeconds, setWorkingSeconds] = useState(0);
@@ -104,6 +106,14 @@ export function GoalChatPanel({
   const expectedTargetScopeRef = useRef(goalSendTargetScope(target));
   const sendOperationRef = useRef(0);
   const streamDraftRef = useRef<ChatStreamDraft | null>(null);
+  const checkpointDispatcherRef = useRef<ReturnType<typeof createChatClientCheckpointDispatcher> | null>(null);
+  if (!checkpointDispatcherRef.current) {
+    checkpointDispatcherRef.current = createChatClientCheckpointDispatcher((checkpoint) => {
+      const { chatId, ...request } = checkpoint;
+      return chatsApi.checkpointMessageStream(chatId, request);
+    });
+  }
+  const checkpointDispatcher = checkpointDispatcherRef.current;
   const sendInFlightRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const ownerLostStopRef = useRef(false);
@@ -139,9 +149,39 @@ export function GoalChatPanel({
     setFailedUserMessageId(null);
     setMessages([]);
     streamDraftRef.current = null;
+    checkpointDispatcher.retain(new Set());
     setStreamBody("");
     setDraft(target.body);
-  }, [target]);
+  }, [checkpointDispatcher, target]);
+
+  useLayoutEffect(() => {
+    const activeCheckpointKeys = new Set<string>();
+    const current = streamDraftRef.current;
+    if (current
+      && ["streaming", "tool_busy", "finalizing"].includes(current.state)
+      && current.chatId
+      && current.generationId
+      && Number.isSafeInteger(current.attemptEpoch)
+      && current.attemptEpoch != null
+      && Number.isSafeInteger(current.lastCommittedRenderSeq)
+      && current.lastCommittedRenderSeq != null
+      && current.lastCommittedRenderSeq >= 0
+      && typeof current.renderedBodyHash === "string"
+      && /^[0-9a-f]{64}$/u.test(current.renderedBodyHash)) {
+      const checkpoint = {
+        chatId: current.chatId,
+        generationId: current.generationId,
+        attemptEpoch: current.attemptEpoch,
+        generationSeq: current.lastCommittedRenderSeq,
+        renderedBodyHash: current.renderedBodyHash,
+      };
+      activeCheckpointKeys.add(chatClientCheckpointKey(checkpoint));
+      checkpointDispatcher.enqueue(checkpoint);
+    }
+    checkpointDispatcher.retain(activeCheckpointKeys);
+  }, [checkpointDispatcher, checkpointRevision]);
+
+  useEffect(() => () => checkpointDispatcher.dispose(), [checkpointDispatcher]);
 
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(target.organizationId),
@@ -331,6 +371,7 @@ export function GoalChatPanel({
               lastCommittedRenderSeq: event.generationSeq ?? currentStream.lastCommittedRenderSeq,
               renderedBodyHash: event.bodyHash ?? currentStream.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
             };
+            setCheckpointRevision((revision) => revision + 1);
           }
           setMessages((current) => [...current, event.userMessage]);
           expectedConversationId = event.userMessage.conversationId;
@@ -351,6 +392,7 @@ export function GoalChatPanel({
             if (nextStream && nextStream !== currentStream) {
               streamDraftRef.current = nextStream;
               setStreamBody(nextStream.body);
+              setCheckpointRevision((revision) => revision + 1);
             }
           }
         }

@@ -33,6 +33,7 @@ vi.mock("@/api/chats", () => ({
     readNativeChatRecovery: vi.fn(),
     sendFirstMessageStream: vi.fn(),
     sendMessageStream: vi.fn(),
+    checkpointMessageStream: vi.fn(),
     reconcilePendingMessageSend: vi.fn(),
     stopMessageStream: vi.fn(),
   },
@@ -212,6 +213,11 @@ beforeEach(() => {
     } as never);
   });
   vi.mocked(chatsApi.sendMessageStream).mockResolvedValue(undefined);
+  vi.mocked(chatsApi.checkpointMessageStream).mockResolvedValue({
+    generationId: "generation-1",
+    generationSeq: 1,
+    advanced: true,
+  });
   vi.mocked(chatsApi.reconcilePendingMessageSend).mockReset().mockImplementation(async (_conversationId, request) => ({
     outcome: "not_found",
     clientMutationId: request.clientMutationId,
@@ -238,6 +244,44 @@ afterEach(() => {
 });
 
 describe("GoalChatPanel", () => {
+  it("persists the latest rendered Goal stream checkpoint", async () => {
+    const pending = deferred<void>();
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+        generationId: "generation-goal-checkpoint",
+        attemptEpoch: 2,
+        generationSeq: 1,
+        bodyHash: "a".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "visible Goal prefix",
+        generationId: "generation-goal-checkpoint",
+        attemptEpoch: 2,
+        generationSeq: 2,
+        bodyHash: "b".repeat(64),
+      } as never);
+      await pending.promise;
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Review this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-streaming"]')?.textContent)
+      .toBe("visible Goal prefix"));
+    await waitUntil(() => expect(chatsApi.checkpointMessageStream).toHaveBeenCalledWith("chat-goal-1", {
+      generationId: "generation-goal-checkpoint",
+      attemptEpoch: 2,
+      generationSeq: 2,
+      renderedBodyHash: "b".repeat(64),
+    }));
+    await act(async () => pending.resolve());
+  });
+
   it("hydrates the composer from the new Goal when the scope changes with the same body prop", async () => {
     const initialTarget = { ...target, body: "Shared body" };
     const nextTarget = { ...initialTarget, organizationId: "org-2", goalId: "goal-2" };
