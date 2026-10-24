@@ -1,9 +1,9 @@
-//! Explicit Rust CLI transport for bounded, read-only Agent capabilities.
+//! Explicit Rust CLI transport for board authentication and bounded Agent reads.
 //!
 //! The first command is the canonical organization member directory. It uses
 //! the Agent request planner for contract validation and the shared MCP
 //! identity validator for credential/org requirements; this crate owns no
-//! server, authentication, or database authority.
+//! server-side authentication or database authority.
 
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderValue};
@@ -21,6 +21,8 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use url::Url;
+
+mod board_auth;
 
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 10_000;
 const MIN_HTTP_TIMEOUT_MS: u64 = 50;
@@ -111,6 +113,21 @@ pub fn execute(
             let _ = writeln!(stdout, "rudder-cli {}", env!("CARGO_PKG_VERSION"));
             0
         }
+        Ok(Command::Auth(command)) => match command.run(environment, stderr) {
+            Ok(value) => {
+                let output = if command.json() {
+                    value.to_string()
+                } else {
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+                };
+                let _ = writeln!(stdout, "{output}");
+                0
+            }
+            Err(error) => {
+                write_error(&error, options_json_requested(args), stderr);
+                1
+            }
+        },
         Ok(Command::Members(options)) => match run_members(*options, environment) {
             Ok(output) => {
                 let _ = writeln!(stdout, "{output}");
@@ -132,10 +149,11 @@ enum Command {
     Help,
     Version,
     Members(Box<Options>),
+    Auth(Box<board_auth::AuthCommand>),
 }
 
 fn usage() -> &'static str {
-    "Usage: rudder-cli org members [--org-id <id>] [--query <text>] [--type <human|agent|all>] [--limit <1..100>] [--cursor <opaque>] [--api-base <url>] [--api-key <token>] [--context <path>] [--profile <name>] [--config <path>] [--json] [--full-ids]\n\nInteractive TTY board login and stored/keychain credentials are not supported. See native/bins/rudder-cli/README.md."
+    "Usage: rudder-cli org members [--org-id <id>] [--query <text>] [--type <human|agent|all>] [--limit <1..100>] [--cursor <opaque>] [--api-base <url>] [--api-key <token>] [--context <path>] [--profile <name>] [--config <path>] [--json] [--full-ids]\n       rudder-cli auth <login|logout|whoami> [--api-base <url>] [--context <path>] [--profile <name>] [--config <path>] [--data-dir <path>] [--json]\n       rudder-cli auth login [--instance-admin] [--org-id <id>] [--no-browser]\n\nBoard credentials use the existing Rudder auth.json store. See native/bins/rudder-cli/README.md."
 }
 
 fn parse_command(args: &[String]) -> Result<Command, CliError> {
@@ -145,11 +163,19 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
     if args == ["--version"] || args == ["-V"] {
         return Ok(Command::Version);
     }
+    if args.first().is_some_and(|arg| arg == "auth") {
+        if args.len() == 1 || args.iter().any(|arg| arg == "--help" || arg == "-h") {
+            return Ok(Command::Help);
+        }
+        return board_auth::parse(args).map(|command| Command::Auth(Box::new(command)));
+    }
     if args.first().is_some_and(|arg| arg == "org") && args.len() == 1 {
         return Ok(Command::Help);
     }
     if args.len() < 2 || args[0] != "org" || args[1] != "members" {
-        return Err(CliError::cli("supported command: org members"));
+        return Err(CliError::cli(
+            "supported commands: org members; auth login, logout, whoami",
+        ));
     }
 
     let mut options = Options::default();
@@ -239,7 +265,7 @@ fn run_members(
         .or(profile.api_base.as_deref())
         .map(str::to_owned)
         .unwrap_or_else(|| infer_api_base(&options, environment));
-    let api_key = nonempty(options.api_key.as_deref())
+    let explicit_key = nonempty(options.api_key.as_deref())
         .or_else(|| env_value(environment, "RUDDER_API_KEY"))
         .or_else(|| {
             profile
@@ -247,10 +273,16 @@ fn run_members(
                 .as_deref()
                 .and_then(|name| env_value(environment, name))
         })
-        .map(str::to_owned)
+        .map(str::to_owned);
+    let stored_key = if explicit_key.is_none() {
+        board_auth::stored_token(environment, &api_base)?
+    } else {
+        None
+    };
+    let api_key = explicit_key.or(stored_key)
         .ok_or_else(|| {
             CliError::cli(
-                "API key is required. Pass --api-key, set RUDDER_API_KEY, or configure profile apiKeyEnvVarName; interactive TTY login is not supported.",
+                "API key is required. Pass --api-key, set RUDDER_API_KEY, configure profile apiKeyEnvVarName, or run rudder-cli auth login.",
             )
         })?;
     let org_id = nonempty(options.org_id.as_deref())
@@ -702,7 +734,7 @@ fn resolve_context_path(
             break;
         }
     }
-    home_dir(environment).map(|home| home.join(".rudder").join("context.json"))
+    board_auth::rudder_home(environment).map(|home| home.join("context.json"))
 }
 
 fn infer_api_base(options: &Options, environment: &BTreeMap<String, String>) -> String {
@@ -742,18 +774,11 @@ fn resolve_config_path(
             break;
         }
     }
-    let home = home_dir(environment)?;
+    let home = board_auth::rudder_home(environment)?;
     let instance = env_value(environment, "RUDDER_INSTANCE_ID")
         .map(str::to_owned)
         .unwrap_or_else(|| "default".to_owned());
     Some(home.join("instances").join(instance).join("config.json"))
-}
-
-fn home_dir(environment: &BTreeMap<String, String>) -> Option<PathBuf> {
-    env_value(environment, "RUDDER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env_value(environment, "HOME").map(PathBuf::from))
-        .or_else(|| env_value(environment, "USERPROFILE").map(PathBuf::from))
 }
 
 fn positive_port(value: &str) -> Option<u16> {

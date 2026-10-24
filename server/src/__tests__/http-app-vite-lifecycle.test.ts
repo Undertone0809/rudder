@@ -1,9 +1,20 @@
 import express from "express";
-import { createServer } from "node:net";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const actorMiddlewareRequests = vi.hoisted(() => [] as string[]);
+
 vi.mock("../middleware/auth.js", () => ({
-  actorMiddleware: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()),
+  actorMiddleware: vi.fn(() => (
+    req: { originalUrl: string; actor?: unknown },
+    _res: unknown,
+    next: () => void,
+  ) => {
+    actorMiddlewareRequests.push(req.originalUrl);
+    req.actor = { type: "none" };
+    next();
+  }),
 }));
 vi.mock("../middleware/index.js", () => ({
   errorHandler: (_err: unknown, _req: unknown, _res: unknown, next: () => void) => next(),
@@ -51,7 +62,7 @@ function createLifecycleDb() {
 }
 
 async function reserveEphemeralPort(): Promise<number> {
-  const server = createServer();
+  const server = createTcpServer();
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -65,12 +76,32 @@ async function reserveEphemeralPort(): Promise<number> {
 }
 
 async function canBind(port: number): Promise<boolean> {
-  const server = createServer();
+  const server = createTcpServer();
   return new Promise<boolean>((resolve) => {
     server.once("error", () => resolve(false));
     server.listen(port, "127.0.0.1", () => {
       server.close(() => resolve(true));
     });
+  });
+}
+
+function requestRawPath(baseUrl: string, path: string, method = "POST") {
+  const { hostname, port } = new URL(baseUrl);
+  return new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+    const request = httpRequest({
+      hostname,
+      port: Number(port),
+      path,
+      method,
+      headers: { "content-type": "application/json" },
+    }, (response) => {
+      response.setEncoding("utf8");
+      let body = "";
+      response.on("data", (chunk: string) => { body += chunk; });
+      response.on("end", () => resolve({ statusCode: response.statusCode ?? 0, body }));
+    });
+    request.once("error", reject);
+    request.end("{}");
   });
 }
 
@@ -92,6 +123,98 @@ const baseOpts = {
 describe("createHttpApp Vite lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    actorMiddlewareRequests.length = 0;
+  });
+
+  it("fences native email-auth POSTs on the private Node listener and preserves other modes", async () => {
+    const db = createLifecycleDb();
+    const betterAuthRequests: string[] = [];
+    const betterAuthHandler = vi.fn((req: { method: string; originalUrl: string }, res: {
+      status(code: number): { json(value: unknown): void };
+    }) => {
+      betterAuthRequests.push(`${req.method} ${req.originalUrl}`);
+      res.status(200).json({ handled: true });
+    });
+    const ingressKey = "native-private-ingress-key-1234567890";
+    const actorEnvelopeKey = "native-actor-envelope-key-1234567890";
+    const rustMode = await createHttpApp(db as never, {
+      ...baseOpts,
+      uiMode: "none",
+      serverPort: 3100,
+      rustPublicIngressAuthKey: ingressKey,
+      rustFoundationActorEnvelopeKey: actorEnvelopeKey,
+      rustPublicIngress: {
+        listenAddr: "127.0.0.1:3100",
+        nodeUpstream: "http://127.0.0.1:3101",
+        authorizationKey: ingressKey,
+      },
+      betterAuthHandler,
+    } as never);
+    const rustServer = createHttpServer(rustMode.app);
+    await new Promise<void>((resolve, reject) => {
+      rustServer.once("error", reject);
+      rustServer.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const address = rustServer.address();
+      if (!address || typeof address === "string") throw new Error("Expected an assigned HTTP port");
+      const privateBase = `http://127.0.0.1:${address.port}`;
+      const requestsBeforeFence = actorMiddlewareRequests.length;
+      const dbTransactionsBeforeFence = db.transaction.mock.calls.length;
+      const protectedPaths = [
+        "/api/auth/sign-up/email",
+        "/api/auth/sign-in/email",
+        "/api/auth/sign-out",
+        "/API/AUTH/SIGN-UP/EMAIL?source=private",
+        "/api/auth/sign-in%2Femail",
+        "/api/auth/sign-out/",
+        "/api/auth/sign-up%252femail",
+        "/api/auth/unused/../sign-in/email",
+      ];
+      for (const path of protectedPaths) {
+        const response = await requestRawPath(privateBase, path);
+        expect(response.statusCode, path).toBe(404);
+        expect(JSON.parse(response.body), path).toEqual({ error: "API route not found" });
+      }
+      expect(betterAuthRequests).toEqual([]);
+      expect(actorMiddlewareRequests).toHaveLength(requestsBeforeFence);
+      expect(db.transaction).toHaveBeenCalledTimes(dbTransactionsBeforeFence);
+
+      const otherAuthRoute = await requestRawPath(privateBase, "/api/auth/verify-email", "POST");
+      expect(otherAuthRoute.statusCode).toBe(200);
+      expect(JSON.parse(otherAuthRoute.body)).toEqual({ handled: true });
+      expect(betterAuthRequests).toEqual(["POST /api/auth/verify-email"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => rustServer.close((error) => error ? reject(error) : resolve()));
+      await rustMode.close();
+    }
+
+    const legacyDb = createLifecycleDb();
+    const legacyHandler = vi.fn((_req: unknown, res: { status(code: number): { json(value: unknown): void } }) => {
+      res.status(200).json({ handled: true });
+    });
+    const legacyMode = await createHttpApp(legacyDb as never, {
+      ...baseOpts,
+      uiMode: "none",
+      serverPort: 3100,
+      betterAuthHandler: legacyHandler,
+    } as never);
+    const legacyServer = createHttpServer(legacyMode.app);
+    await new Promise<void>((resolve, reject) => {
+      legacyServer.once("error", reject);
+      legacyServer.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = legacyServer.address();
+      if (!address || typeof address === "string") throw new Error("Expected an assigned HTTP port");
+      const legacySignup = await requestRawPath(`http://127.0.0.1:${address.port}`, "/api/auth/sign-up/email");
+      expect(legacySignup.statusCode).toBe(200);
+      expect(legacyHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => legacyServer.close((error) => error ? reject(error) : resolve()));
+      await legacyMode.close();
+    }
   });
 
   it("rejects required native ingress without issuer facts before acquiring app resources", async () => {

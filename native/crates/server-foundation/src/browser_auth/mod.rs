@@ -11,6 +11,8 @@ use sqlx::PgConnection;
 mod config;
 mod issuer;
 mod mutation_origin;
+#[cfg(test)]
+pub(crate) use config::BetterAuthEmailConfig;
 use config::Mode;
 pub use config::{BrowserAuthConfig, BrowserAuthConfigError, SessionPolicy};
 pub use mutation_origin::{BrowserMutationPolicy, BrowserMutationPolicyError};
