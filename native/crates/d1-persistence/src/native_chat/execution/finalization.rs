@@ -176,7 +176,7 @@ pub async fn finalize(
         Some(ProviderTurn::Codex(turn)),
         ProviderCleanup::Codex(cleanup),
         None,
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -198,7 +198,7 @@ pub async fn finalize_hermes(
         Some(ProviderTurn::Hermes(turn)),
         ProviderCleanup::Hermes(cleanup),
         None,
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -220,7 +220,7 @@ pub async fn finalize_pi(
         Some(ProviderTurn::Pi(turn)),
         ProviderCleanup::Pi(cleanup),
         None,
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -243,7 +243,7 @@ pub async fn finalize_native(
         Some(ProviderTurn::Native(turn)),
         ProviderCleanup::Host(cleanup),
         None,
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -266,7 +266,7 @@ pub async fn finalize_native_stopped(
         Some(ProviderTurn::Native(turn)),
         ProviderCleanup::Host(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -286,7 +286,7 @@ pub async fn finalize_pi_stopped(
         Some(ProviderTurn::Pi(turn)),
         ProviderCleanup::Pi(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -307,7 +307,7 @@ pub async fn finalize_native_stopped_before_submission(
         None,
         ProviderCleanup::Host(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -326,7 +326,7 @@ pub async fn finalize_pi_stopped_before_submission(
         None,
         ProviderCleanup::Pi(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -378,7 +378,7 @@ pub async fn finalize_stopped(
         Some(ProviderTurn::Codex(turn)),
         ProviderCleanup::Codex(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -400,7 +400,7 @@ pub async fn finalize_hermes_stopped(
         Some(ProviderTurn::Hermes(turn)),
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -423,7 +423,7 @@ pub async fn finalize_hermes_prompt_error_stopped(
         Some(ProviderTurn::HermesPromptError(error)),
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -446,7 +446,7 @@ pub async fn finalize_stopped_before_submission(
         None,
         ProviderCleanup::Codex(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -454,8 +454,10 @@ pub async fn finalize_stopped_before_submission(
 /// Close a claimed Native execution when the provider never produced a
 /// validated Turn receipt but the owned process cleanup is proven. This is a
 /// failure terminal, never a successful provider projection: it releases the
-/// Run/Generation hold, seals the primary span as partial, and leaves the
-/// assistant side absent so recovery cannot retry an ambiguous effect.
+/// Run/Generation hold unless budget policy retains it, seals the primary span
+/// as partial, and leaves any already committed assistant prefix visibly failed,
+/// so it is never
+/// mistaken for a successful answer or an ongoing stream.
 pub async fn finalize_failed(
     pool: &PgPool,
     actor: &impl NativeChatExecutionActor,
@@ -469,7 +471,28 @@ pub async fn finalize_failed(
         None,
         ProviderCleanup::Codex(cleanup),
         None,
-        true,
+        FinalizationMode::Failure,
+    )
+    .await
+}
+
+/// Close only the executor's known pre-transaction output-limit rejection.
+/// Exact owned cleanup is mandatory. Under the target lock, an already accepted
+/// Stop wins; submitted input and provider outcome remain unknown.
+pub async fn finalize_output_limit_failure(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    cleanup: &CleanupReceipt,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Codex(cleanup),
+        None,
+        FinalizationMode::OutputLimit,
     )
     .await
 }
@@ -488,7 +511,7 @@ pub async fn finalize_hermes_failed(
         None,
         ProviderCleanup::Hermes(cleanup),
         None,
-        true,
+        FinalizationMode::Failure,
     )
     .await
 }
@@ -508,7 +531,7 @@ pub async fn finalize_hermes_stopped_before_submission(
         None,
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
-        false,
+        FinalizationMode::Provider,
     )
     .await
 }
@@ -858,6 +881,13 @@ enum ProviderRetryPredicate<'a> {
     },
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum FinalizationMode {
+    Provider,
+    Failure,
+    OutputLimit,
+}
+
 async fn finalize_inner(
     pool: &PgPool,
     actor: &impl NativeChatExecutionActor,
@@ -865,8 +895,10 @@ async fn finalize_inner(
     turn: Option<ProviderTurn<'_>>,
     cleanup: ProviderCleanup<'_>,
     stop: Option<&super::stopping::StopIntent>,
-    forced_failure: bool,
+    mode: FinalizationMode,
 ) -> Result<Value> {
+    let output_limit_failure = mode == FinalizationMode::OutputLimit;
+    let forced_failure = mode != FinalizationMode::Provider;
     let id = fence.identity();
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
@@ -910,7 +942,42 @@ async fn finalize_inner(
             "Hermes prompt error requires an exact operator Stop",
         ));
     }
-    let pre_submission_stop = stop.is_some() && turn.is_none();
+    let mut tx = pool.begin().await?;
+    super::super::budget::lock_policy_state(&mut tx, id.organization_id).await?;
+    runtime_bindings::preauthorize_chat_execution_target_read_tx(
+        &mut tx,
+        actor,
+        id.organization_id,
+        id.conversation_id,
+        id.agent_id,
+        fence,
+    )
+    .await?;
+    runtime_bindings::lock_native_chat_target_tx(&mut tx, id.organization_id, id.conversation_id)
+        .await?;
+    runtime_bindings::authorize_chat_execution_target_read_locked_tx(
+        &mut tx,
+        actor,
+        id.organization_id,
+        id.conversation_id,
+        id.agent_id,
+        fence,
+    )
+    .await?;
+    // The target advisory lock serializes this choice with public Stop. A Stop
+    // accepted before this point wins, even when the worker last observed none.
+    let selected_stop = if output_limit_failure {
+        super::stopping::observe_output_failure_stop(&mut tx, fence).await?
+    } else {
+        None
+    };
+    let stop = if output_limit_failure {
+        selected_stop.as_ref()
+    } else {
+        stop
+    };
+    let forced_failure = forced_failure && stop.is_none();
+    let pre_submission_stop = stop.is_some() && turn.is_none() && !output_limit_failure;
     if !cleanup_matches || !turn_matches || (turn.is_none() && stop.is_none() && !forced_failure) {
         return Err(http(
             409,
@@ -965,33 +1032,18 @@ async fn finalize_inner(
         if let Some(turn) = turn {
             facts["actualProviderStatus"] = json!(turn.provider_status());
         } else {
-            facts["inputDisposition"] = json!("not_submitted");
+            facts["inputDisposition"] = json!(if output_limit_failure {
+                "unknown"
+            } else {
+                "not_submitted"
+            });
         }
+    }
+    if output_limit_failure {
+        facts["outputLimitFailure"] = json!(true);
     }
     let fingerprint = hash(&facts.to_string());
     let stop_action_id = stop.map(|value| value.action_id.as_str());
-    let mut tx = pool.begin().await?;
-    super::super::budget::lock_policy_state(&mut tx, id.organization_id).await?;
-    runtime_bindings::preauthorize_chat_execution_target_read_tx(
-        &mut tx,
-        actor,
-        id.organization_id,
-        id.conversation_id,
-        id.agent_id,
-        fence,
-    )
-    .await?;
-    runtime_bindings::lock_native_chat_target_tx(&mut tx, id.organization_id, id.conversation_id)
-        .await?;
-    runtime_bindings::authorize_chat_execution_target_read_locked_tx(
-        &mut tx,
-        actor,
-        id.organization_id,
-        id.conversation_id,
-        id.agent_id,
-        fence,
-    )
-    .await?;
     // Read-only retry under the same target serialization. A completed execution
     // has no live lease; it cannot pass the first-finalization owner checks.
     let existing: Option<Value> = if pre_submission_stop {
@@ -1031,8 +1083,34 @@ async fn finalize_inner(
         .fetch_optional(&mut *tx)
         .await?
         .flatten()
-    } else if forced_failure {
-        None
+    } else if forced_failure || output_limit_failure {
+        sqlx::query_scalar(
+            "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
+             JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+             JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid
+             WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+               AND r.chat_conversation_id=$3::uuid AND r.chat_generation_id=$4::uuid
+               AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5
+               AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9
+               AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed'
+               AND ((r.status='failed' AND g.status='failed' AND a.status='failed')
+                 OR (r.status='cancelled' AND g.status='stopped' AND a.status='cancelled'))
+               AND r.result_json->'nativeChatFinalization'->'result'->>'projectionDisposition'
+                   IN ('failed_without_terminal_receipt','frozen_at_stop')",
+        )
+        .bind(id.organization_id)
+        .bind(id.run_id)
+        .bind(id.conversation_id)
+        .bind(id.generation_id)
+        .bind(fence.run_execution_owner_token())
+        .bind(fence.generation_control_owner_token())
+        .bind(id.attempt_id)
+        .bind(id.generation_attempt_epoch)
+        .bind(id.run_attempt_epoch)
+        .bind(id.connection_epoch)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
     } else {
         let turn = turn.ok_or_else(|| http(409, "Provider retry requires a Turn receipt"))?;
         match turn.retry_predicate() {
@@ -1165,7 +1243,9 @@ async fn finalize_inner(
     } else {
         lock_current_execution(&mut tx, actor, fence).await?
     };
-    let checkpoint_matches = if forced_failure {
+    let checkpoint_matches = if output_limit_failure {
+        locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown
+    } else if forced_failure {
         locked.checkpoint.phase() != NativeChatProtocolPhase::ExecutionTerminalCommitted
     } else if pre_submission_stop {
         matches!(
@@ -1300,7 +1380,12 @@ async fn finalize_inner(
         .await?;
 
     let message_id: Option<String> = if forced_failure {
-        None
+        match cleanup {
+            ProviderCleanup::Codex(cleanup) => {
+                output::fail_existing_projection(&mut tx, fence, cleanup).await?
+            }
+            _ => None,
+        }
     } else if let Some(stop) = stop {
         super::stopping::frozen_message(&mut tx, fence, stop).await?
     } else {
@@ -1452,7 +1537,7 @@ async fn finalize_inner(
                 .or(locked.admitted_message_id.clone()),
             turn.selector(),
         ),
-        None if forced_failure => (
+        None if forced_failure || output_limit_failure => (
             "partial",
             None,
             None,
@@ -1557,7 +1642,9 @@ async fn finalize_inner(
         result["providerCancelAcknowledged"] = json!(false);
         result["usageAvailable"] = json!(false);
     }
-    if pre_submission_stop {
+    if output_limit_failure {
+        result["inputDisposition"] = json!("unknown");
+    } else if pre_submission_stop {
         result["inputDisposition"] = json!("not_submitted");
     }
     sqlx::query(
@@ -1588,7 +1675,15 @@ async fn finalize_inner(
             format!("native_provider_{run_status}")
         }).bind(held).execute(&mut *tx).await?;
     if let Some(stop) = stop {
-        if pre_submission_stop {
+        if output_limit_failure {
+            let ProviderCleanup::Codex(cleanup) = cleanup else {
+                return Err(http(409, "Output-limit cleanup must be Codex-owned"));
+            };
+            super::stopping::resolve_output_failure_stop(
+                &mut tx, actor, fence, stop, cleanup, &result,
+            )
+            .await?;
+        } else if pre_submission_stop {
             match cleanup {
                 ProviderCleanup::Codex(cleanup) => {
                     super::stopping::resolve_action_pre_submission(

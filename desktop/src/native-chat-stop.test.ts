@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { stopNativeChatRun } from "./native-chat-stop.js";
+vi.mock("electron", () => ({ app: {}, dialog: {} }));
+
+const { stopNativeChatRun } = await import("./desktop-quit-flow.js");
 
 const target = {
   organizationId: "10000000-0000-4000-8000-000000000001",

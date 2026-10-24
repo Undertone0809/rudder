@@ -761,36 +761,59 @@ fn run(
                 == rudder_native_chat_executor::ProcessDisposition::CleanupProven
                 && let (Some(fence), Some(cleanup)) = (failure.fence(), cleanup)
             {
-                match handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
-                    let stop = execution::observe_stop(&pool, execution_actor, fence).await?;
-                    let connection = cleanup.connection_receipt();
-                    if let Some(stop) = stop {
-                        execution::bind_stopping_connection(
-                            &pool,
-                            execution_actor,
-                            fence,
-                            &stop,
-                            &connection,
-                        )
-                        .await?;
-                        execution::finalize_stopped_before_submission(
-                            &pool,
-                            execution_actor,
-                            fence,
-                            cleanup,
-                            &stop,
-                        )
-                        .await
-                        .map(Some)
-                    } else if cancelled.load(Ordering::Acquire) || !failure.is_definitive_failure()
-                    {
-                        Ok(None)
-                    } else {
-                        execution::finalize_failed(&pool, execution_actor, fence, cleanup)
+                let finalization = if !cancelled.load(Ordering::Acquire)
+                    && failure.can_finalize_output_limit_failure()
+                {
+                    // The output-cap finalizer observes Stop while it holds the
+                    // exact execution fence. A separate Stop read here could
+                    // race with a newly accepted Stop and incorrectly route a
+                    // committed prefix through the empty-prefix pre-submission
+                    // finalizer.
+                    handle
+                        .block_on(tokio::time::timeout(
+                            Duration::from_secs(5),
+                            execution::finalize_output_limit_failure(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                cleanup,
+                            ),
+                        ))
+                        .map(|result| result.map(Some))
+                } else {
+                    handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
+                        let stop = execution::observe_stop(&pool, execution_actor, fence).await?;
+                        let connection = cleanup.connection_receipt();
+                        if let Some(stop) = stop {
+                            execution::bind_stopping_connection(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                &stop,
+                                &connection,
+                            )
+                            .await?;
+                            execution::finalize_stopped_before_submission(
+                                &pool,
+                                execution_actor,
+                                fence,
+                                cleanup,
+                                &stop,
+                            )
                             .await
                             .map(Some)
-                    }
-                })) {
+                        } else if cancelled.load(Ordering::Acquire)
+                            || !failure.is_definitive_failure()
+                        {
+                            Ok(None)
+                        } else {
+                            execution::finalize_failed(&pool, execution_actor, fence, cleanup)
+                                .await
+                                .map(Some)
+                        }
+                    }))
+                };
+                match finalization {
                     Ok(Ok(Some(_))) => Status::FinalizationCommitted,
                     Ok(Ok(None)) => Status::Unresolved(UnresolvedReason::ExecutionUnresolved),
                     _ => Status::Unresolved(UnresolvedReason::FinalizationUnresolved),

@@ -517,6 +517,8 @@ pub async fn recover_expired_claimed_stop(
 
 /// Return the one durable owner-loss incident only while its exact run and
 /// latest Attempt still prove the quarantine state. This also fences retries.
+// Keep caller expectations separate from the observed pin being validated.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn current_owner_loss_incident(
     tx: &mut auth::Tx<'_>,
     org: &str,
@@ -676,6 +678,8 @@ pub(super) async fn current_owner_loss_incident(
     }
 }
 
+// These independent caller identities must not be inferred from action JSON.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn action_matches_owner_loss(
     tx: &mut auth::Tx<'_>,
     org: &str,

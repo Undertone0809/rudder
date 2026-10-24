@@ -1271,7 +1271,7 @@
     },
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
+      "sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
       "families": [
         "electron_process_graph"
       ]
@@ -59142,16 +59142,16 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "desktop/src/update-check.ts",
+      "path": "desktop/src/desktop-quit-flow.ts",
       "change_kind": "modified_node_compatibility",
+      "base_sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
+      "head_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
       "node_role": "compatibility_adapter",
-      "base_sha256": "9aa411046311291be8f879b2f1371b7266aeede7e67ff078f4e5fc8365873bff",
-      "head_sha256": "6e9fad3bfc13f98f09c84c714a3bcdf9bb2ceecd02f971a4dec78661a434d36c",
-      "rust_authority": "native::update_helper_core::execute owns the later verified apply transaction, not release discovery; this patch adds no backend business authority.",
-      "compatibility_boundary": "Existing Electron client release discovery reads GitHub metadata, compares versions and checks platform asset availability for About/menu/startup. This scoped API-rate-limit fallback repair adds no route, domain state/write, authorization decision or Node backend fallback.",
-      "retirement_criterion": "If Rust updater gains equivalent release discovery, cut this client path over only after equivalent workflow/error coverage. Remove this diff-local review record once the exact source enters the comparison base; Electron client code is outside the backend retirement target.",
-      "reviewer": "/root/merge_review_xhigh (gpt-6-luna, xhigh)",
-      "review_reference": "PR #356; stage review of source 07ddced13403726c1cb0be55773c930eb8f7029a and hash-bound inventory repair, session 01a16d9e-78d3-74e2-9a2f-c3eaab6f2191",
+      "rust_authority": "Rust native_chat control/stop handlers and D1 execution finalizers retain all permissions, ownership fences, persistence and terminal decisions.",
+      "compatibility_boundary": "Retained Electron client only: validate target/control responses, send complete fenced Stop to Rust and poll terminal status with bounded shutdown deadlines. No Node server cancellation fallback, DB access or provider execution.",
+      "retirement_criterion": "The Electron client remains supported; remove legacy heartbeat cancellation when all legacy run authority is retired. This record grants no backend authority and is retired when its source diff enters the comparison base.",
+      "reviewer": "/root/follow347_final_merge_review (gpt-6-luna/xhigh), independent scoped client-boundary ACCEPT",
+      "review_reference": "desktop-relocation-independent-review-r1.json SHA256 db15ddb9596dd0c8a55e142654b2f533344981379ec05749dbffbdb8266a7071; exact source accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033; no runtime acceptance claim",
       "review_status": "reviewed"
     }
   ],

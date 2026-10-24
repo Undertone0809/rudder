@@ -16,7 +16,12 @@ const MAX_FINAL_ITEMS: usize = 1;
 const MAX_TRACKED_AGENT_ITEMS: usize = 128;
 const MAX_PENDING_DELTA_EVENTS: usize = 32;
 const MAX_PENDING_DELTA_BYTES: usize = 1024 * 1024;
-const MAX_VISIBLE_OUTPUT_RECEIPTS: usize = 128;
+// Coalescing preserves small output while bounding full-size answers to a few
+// hundred delta receipts; the executor flushes partial chunks at most once/sec.
+// A chunk may exceed the target by one Unicode scalar, at most three bytes.
+const MAX_FINAL_DELTA_RECEIPT_BYTES: usize = 1024;
+const MAX_VISIBLE_OUTPUT_RECEIPTS: usize =
+    MAX_FINAL_TEXT_BYTES / MAX_FINAL_DELTA_RECEIPT_BYTES + MAX_FINAL_ITEMS + 1;
 const MAX_VISIBLE_OUTPUT_BYTES: usize = 1024 * 1024;
 pub struct CleanupReceipt {
     proof: HostCleanupProof,
@@ -250,6 +255,7 @@ struct ActiveTurn {
     pending_deltas: BTreeMap<String, VecDeque<String>>,
     pending_delta_events: usize,
     pending_delta_bytes: usize,
+    pending_final_delta: String,
     final_delta_bytes: usize,
 }
 
@@ -365,6 +371,7 @@ impl TurnReceiptTracker {
             pending_deltas: BTreeMap::new(),
             pending_delta_events: 0,
             pending_delta_bytes: 0,
+            pending_final_delta: String::new(),
             final_delta_bytes: 0,
         };
         let mut next_ordinal = self.next_visible_ordinal;
@@ -446,6 +453,19 @@ impl TurnReceiptTracker {
     pub(crate) fn take_visible_output_receipts(&mut self) -> Vec<VisibleOutputReceipt> {
         self.visible_output_bytes = 0;
         self.visible_output.drain(..).collect()
+    }
+
+    pub(crate) fn flush_visible_output_deltas(&mut self) -> Result<(), TransportError> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(());
+        };
+        let mut output = VisibleOutputCapture {
+            identity: &self.identity,
+            next_ordinal: &mut self.next_visible_ordinal,
+            receipts: &mut self.visible_output,
+            bytes: &mut self.visible_output_bytes,
+        };
+        active.flush_final_output_delta(&mut output)
     }
 }
 
@@ -657,6 +677,7 @@ impl ActiveTurn {
             .ok_or(TransportError::InvalidTurnReceipt)?
             .to_owned();
         insert_item(&mut self.items, id.clone(), text.clone())?;
+        self.flush_final_output_delta(output)?;
         self.emit_output(&id, VisibleOutputKind::Snapshot, text, output)
     }
 
@@ -692,6 +713,7 @@ impl ActiveTurn {
             Some("interrupted") => TurnStatus::Interrupted,
             _ => return Err(TransportError::InvalidTurnReceipt),
         };
+        self.flush_final_output_delta(output)?;
         let items_view = params["turn"]["itemsView"].as_str().unwrap_or("full");
         let terminal_items = match items_view {
             "full" => {
@@ -843,14 +865,37 @@ impl ActiveTurn {
         delta: String,
         output: &mut VisibleOutputCapture<'_>,
     ) -> Result<(), TransportError> {
+        if self.final_answer_item_id.as_deref() != Some(item_id) {
+            return Err(TransportError::InvalidTurnReceipt);
+        }
         let total = self
             .final_delta_bytes
             .checked_add(delta.len())
             .filter(|total| *total <= MAX_FINAL_TEXT_BYTES)
             .ok_or(TransportError::InvalidTurnReceipt)?;
-        self.emit_output(item_id, VisibleOutputKind::Delta, delta, output)?;
         self.final_delta_bytes = total;
+        for character in delta.chars() {
+            self.pending_final_delta.push(character);
+            if self.pending_final_delta.len() >= MAX_FINAL_DELTA_RECEIPT_BYTES {
+                self.flush_final_output_delta(output)?;
+            }
+        }
         Ok(())
+    }
+
+    fn flush_final_output_delta(
+        &mut self,
+        output: &mut VisibleOutputCapture<'_>,
+    ) -> Result<(), TransportError> {
+        if self.pending_final_delta.is_empty() {
+            return Ok(());
+        }
+        let item_id = self
+            .final_answer_item_id
+            .as_deref()
+            .ok_or(TransportError::InvalidTurnReceipt)?;
+        let text = std::mem::take(&mut self.pending_final_delta);
+        self.emit_output(item_id, VisibleOutputKind::Delta, text, output)
     }
 
     fn emit_output(
@@ -1249,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_deltas_wait_for_exact_final_answer_metadata_and_keep_duplicate_chunks() {
+    fn visible_deltas_wait_for_exact_final_answer_metadata_and_coalesce_duplicate_chunks() {
         let identity = ReceiptIdentity::unbound(
             "run-1".into(),
             "attempt-1".into(),
@@ -1322,32 +1367,27 @@ mod tests {
             .unwrap();
 
         let outputs = tracker.take_visible_output_receipts();
-        assert_eq!(outputs.len(), 4);
+        assert_eq!(outputs.len(), 2);
         assert_eq!(
             outputs
                 .iter()
                 .map(VisibleOutputReceipt::ordinal)
                 .collect::<Vec<_>>(),
-            [1, 2, 3, 4]
+            [1, 2]
         );
         assert_eq!(
             outputs
                 .iter()
                 .map(VisibleOutputReceipt::text)
                 .collect::<Vec<_>>(),
-            ["ha", "ha", "ha", "hahaha"]
+            ["hahaha", "hahaha"]
         );
         assert_eq!(
             outputs
                 .iter()
                 .map(VisibleOutputReceipt::kind)
                 .collect::<Vec<_>>(),
-            [
-                VisibleOutputKind::Delta,
-                VisibleOutputKind::Delta,
-                VisibleOutputKind::Delta,
-                VisibleOutputKind::Snapshot,
-            ]
+            [VisibleOutputKind::Delta, VisibleOutputKind::Snapshot]
         );
         for output in &outputs {
             assert_eq!(output.thread_id(), "thread-1");
@@ -1390,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn output_ordinals_continue_after_each_drain() {
+    fn explicit_partial_flush_keeps_output_ordinals_contiguous() {
         let mut tracker = tracker();
         tracker
             .begin_turn("thread-1".into(), "turn-1".into())
@@ -1407,6 +1447,7 @@ mod tests {
                 delta("thread-1", "turn-1", "answer-1", "same"),
             )
             .unwrap();
+        tracker.flush_visible_output_deltas().unwrap();
         let first = tracker.take_visible_output_receipts();
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].ordinal(), 1);
@@ -1417,10 +1458,280 @@ mod tests {
                 delta("thread-1", "turn-1", "answer-1", "same"),
             )
             .unwrap();
+        assert!(tracker.take_visible_output_receipts().is_empty());
+        tracker.flush_visible_output_deltas().unwrap();
         let second = tracker.take_visible_output_receipts();
         assert_eq!(second.len(), 1);
         assert_eq!(second[0].ordinal(), 2);
         assert_eq!(second[0].text(), first[0].text());
+    }
+
+    #[test]
+    fn thousands_of_tiny_utf8_deltas_coalesce_without_changing_text_or_order() {
+        let mut tracker = tracker();
+        tracker
+            .begin_turn("thread-1".into(), "turn-1".into())
+            .unwrap();
+        tracker
+            .observe(
+                "item/started",
+                started("thread-1", "turn-1", "answer-1", Some("final_answer")),
+            )
+            .unwrap();
+
+        let expected = "🧭".repeat(6_001);
+        for _ in 0..6_001 {
+            tracker
+                .observe(
+                    "item/agentMessage/delta",
+                    delta("thread-1", "turn-1", "answer-1", "🧭"),
+                )
+                .unwrap();
+        }
+        tracker.flush_visible_output_deltas().unwrap();
+        let mut outputs = tracker.take_visible_output_receipts();
+        let delta_count = outputs
+            .iter()
+            .filter(|receipt| receipt.kind() == VisibleOutputKind::Delta)
+            .count();
+        let reconstructed = outputs
+            .iter()
+            .filter(|receipt| receipt.kind() == VisibleOutputKind::Delta)
+            .map(VisibleOutputReceipt::text)
+            .collect::<String>();
+        assert_eq!(reconstructed, expected);
+        assert!(delta_count <= expected.len().div_ceil(MAX_FINAL_DELTA_RECEIPT_BYTES));
+        assert!(
+            outputs
+                .windows(2)
+                .all(|pair| pair[0].ordinal() + 1 == pair[1].ordinal())
+        );
+
+        tracker
+            .observe(
+                "item/completed",
+                json!({"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{
+                    "id":"answer-1","type":"agentMessage","phase":"final_answer","text":expected
+                }}),
+            )
+            .unwrap();
+        outputs.extend(tracker.take_visible_output_receipts());
+        assert_eq!(outputs.last().unwrap().kind(), VisibleOutputKind::Snapshot);
+        assert_eq!(outputs.last().unwrap().text(), expected);
+        tracker
+            .observe(
+                "turn/completed",
+                json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","itemsView":"full","items":[{
+                    "id":"answer-1","type":"agentMessage","phase":"final_answer","text":expected
+                }]}}),
+            )
+            .unwrap();
+        assert!(tracker.take_visible_output_receipts().is_empty());
+        tracker.finish().unwrap();
+        assert_eq!(
+            tracker.take().unwrap().final_text(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn large_single_delta_is_chunked_and_stays_below_visible_output_receipt_cap() {
+        let mut tracker = tracker();
+        tracker
+            .begin_turn("thread-1".into(), "turn-1".into())
+            .unwrap();
+        tracker
+            .observe(
+                "item/started",
+                started("thread-1", "turn-1", "answer-1", Some("final_answer")),
+            )
+            .unwrap();
+
+        let expected = "x".repeat(MAX_FINAL_TEXT_BYTES - 4 * 1024);
+        tracker
+            .observe(
+                "item/agentMessage/delta",
+                delta("thread-1", "turn-1", "answer-1", &expected),
+            )
+            .unwrap();
+        let mut outputs = tracker.take_visible_output_receipts();
+        tracker.flush_visible_output_deltas().unwrap();
+        outputs.extend(tracker.take_visible_output_receipts());
+
+        let delta_text = outputs
+            .iter()
+            .filter(|receipt| receipt.kind() == VisibleOutputKind::Delta)
+            .map(VisibleOutputReceipt::text)
+            .collect::<String>();
+        assert_eq!(delta_text, expected);
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|receipt| receipt.kind() == VisibleOutputKind::Delta)
+                .count(),
+            expected.len().div_ceil(MAX_FINAL_DELTA_RECEIPT_BYTES)
+        );
+
+        tracker
+            .observe(
+                "item/completed",
+                json!({"threadId":"thread-1","turnId":"turn-1","completedAtMs":3,"item":{
+                    "id":"answer-1","type":"agentMessage","phase":"final_answer","text":expected
+                }}),
+            )
+            .unwrap();
+        outputs.extend(tracker.take_visible_output_receipts());
+        assert_eq!(
+            outputs.len(),
+            expected.len().div_ceil(MAX_FINAL_DELTA_RECEIPT_BYTES) + 1
+        );
+        assert!(outputs.len() < 4_096);
+        assert_eq!(outputs.last().unwrap().kind(), VisibleOutputKind::Snapshot);
+        assert_eq!(outputs.last().unwrap().text(), expected);
+    }
+
+    #[test]
+    fn worst_case_partial_flushes_and_final_snapshot_stay_below_durable_cap() {
+        let mut tracker = tracker();
+        tracker
+            .begin_turn("thread-1".into(), "turn-1".into())
+            .unwrap();
+        tracker
+            .observe(
+                "item/started",
+                started("thread-1", "turn-1", "answer-1", Some("final_answer")),
+            )
+            .unwrap();
+
+        // A Native Chat turn can run for at most one hour. Simulate one
+        // non-empty timer flush per second, then fill the rest of the largest
+        // snapshot that leaves room for its JSON envelope. Count all delta
+        // receipts and the final snapshot, including receipts later labeled
+        // runtime_output.
+        const MAX_PARTIAL_FLUSHES_PER_TURN: usize = 3_600;
+        const SNAPSHOT_ENVELOPE_HEADROOM: usize = 4 * 1024;
+        let target_text_bytes = MAX_FINAL_TEXT_BYTES - SNAPSHOT_ENVELOPE_HEADROOM;
+        let mut expected = String::new();
+        let mut outputs = Vec::new();
+        for _ in 0..MAX_PARTIAL_FLUSHES_PER_TURN {
+            expected.push('x');
+            tracker
+                .observe(
+                    "item/agentMessage/delta",
+                    delta("thread-1", "turn-1", "answer-1", "x"),
+                )
+                .unwrap();
+            tracker.flush_visible_output_deltas().unwrap();
+            outputs.extend(tracker.take_visible_output_receipts());
+        }
+
+        let remaining = target_text_bytes - expected.len();
+        let full_chunk = "y".repeat(MAX_FINAL_DELTA_RECEIPT_BYTES);
+        for _ in 0..remaining / MAX_FINAL_DELTA_RECEIPT_BYTES {
+            expected.push_str(&full_chunk);
+            tracker
+                .observe(
+                    "item/agentMessage/delta",
+                    delta("thread-1", "turn-1", "answer-1", &full_chunk),
+                )
+                .unwrap();
+            outputs.extend(tracker.take_visible_output_receipts());
+        }
+        let remainder = remaining % MAX_FINAL_DELTA_RECEIPT_BYTES;
+        if remainder > 0 {
+            let tail = "y".repeat(remainder);
+            expected.push_str(&tail);
+            tracker
+                .observe(
+                    "item/agentMessage/delta",
+                    delta("thread-1", "turn-1", "answer-1", &tail),
+                )
+                .unwrap();
+        }
+        tracker.flush_visible_output_deltas().unwrap();
+        outputs.extend(tracker.take_visible_output_receipts());
+        tracker
+            .observe(
+                "item/completed",
+                json!({"threadId":"thread-1","turnId":"turn-1","completedAtMs":4,"item":{
+                    "id":"answer-1","type":"agentMessage","phase":"final_answer","text":expected
+                }}),
+            )
+            .unwrap();
+        outputs.extend(tracker.take_visible_output_receipts());
+        tracker
+            .observe(
+                "turn/completed",
+                json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","itemsView":"full","items":[{
+                    "id":"answer-1","type":"agentMessage","phase":"final_answer","text":expected
+                }]}}),
+            )
+            .unwrap();
+        assert!(
+            tracker.take_visible_output_receipts().is_empty(),
+            "the terminal item snapshot does not duplicate the final projection"
+        );
+        tracker.finish().unwrap();
+
+        let deltas = outputs
+            .iter()
+            .filter(|receipt| receipt.kind() == VisibleOutputKind::Delta)
+            .map(VisibleOutputReceipt::text)
+            .collect::<String>();
+        assert_eq!(deltas, expected);
+        assert_eq!(outputs.last().unwrap().kind(), VisibleOutputKind::Snapshot);
+        assert_eq!(outputs.last().unwrap().text(), expected);
+        assert!(
+            outputs
+                .windows(2)
+                .all(|pair| pair[0].ordinal() + 1 == pair[1].ordinal())
+        );
+
+        let conservative_bound = MAX_PARTIAL_FLUSHES_PER_TURN
+            + MAX_FINAL_TEXT_BYTES.div_ceil(MAX_FINAL_DELTA_RECEIPT_BYTES)
+            + 1; // final reconciled snapshot
+        assert_eq!(conservative_bound, 3_857);
+        assert!(outputs.len() <= conservative_bound);
+        assert!(outputs.len() < 4_096);
+    }
+
+    #[test]
+    fn terminal_flushes_partial_delta_and_does_not_leak_it_to_the_next_turn() {
+        let mut tracker = tracker();
+        tracker
+            .begin_turn("thread-1".into(), "turn-1".into())
+            .unwrap();
+        tracker
+            .observe(
+                "item/started",
+                started("thread-1", "turn-1", "answer-1", Some("final_answer")),
+            )
+            .unwrap();
+        tracker
+            .observe(
+                "item/agentMessage/delta",
+                delta("thread-1", "turn-1", "answer-1", "short tail"),
+            )
+            .unwrap();
+        tracker
+            .observe("turn/completed", terminal("thread-1", "turn-1"))
+            .unwrap();
+        let outputs = tracker.take_visible_output_receipts();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].text(), "short tail");
+        tracker.finish().unwrap();
+        tracker.take().unwrap();
+
+        tracker.arm().unwrap();
+        tracker
+            .begin_turn("thread-1".into(), "turn-2".into())
+            .unwrap();
+        tracker
+            .observe("turn/completed", terminal("thread-1", "turn-2"))
+            .unwrap();
+        assert!(tracker.take_visible_output_receipts().is_empty());
+        tracker.finish().unwrap();
+        assert_eq!(tracker.take().unwrap().final_text(), None);
     }
 
     #[test]

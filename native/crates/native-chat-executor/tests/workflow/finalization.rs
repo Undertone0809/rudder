@@ -1,9 +1,8 @@
 use crate::fixture::*;
 use rudder_auth_core::VerifiedActor;
-use rudder_d1_persistence::native_chat::execution::finalize;
+use rudder_d1_persistence::native_chat::execution::{MAX_VISIBLE_OUTPUTS_PER_TURN, finalize};
 use rudder_native_chat_executor::{
-    ExecutionFailure, ExecutionObservation, ExecutionRequest, ProcessDisposition,
-    run_observed_on_blocking_thread,
+    ExecutionFailure, ExecutionObservation, ExecutionRequest, run_observed_on_blocking_thread,
 };
 use serde_json::Value;
 use std::{
@@ -97,15 +96,25 @@ async fn wait_for_fixture_gate(
     }
 }
 
-async fn wait_for_output_rows(
+async fn wait_for_assistant_body(
     database: &Database,
     run_id: &str,
-    expected: i64,
+    expected_prefix: &str,
+    minimum_bytes: usize,
     worker: &mut ObservedWorker,
     cancelled: &AtomicBool,
 ) {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
+        let body: Option<String> = sqlx::query_scalar(
+            "SELECT body FROM chat_messages WHERE org_id=$1::uuid AND run_id=$2::uuid
+             AND role='assistant' ORDER BY id LIMIT 1",
+        )
+        .bind(ORG)
+        .bind(run_id)
+        .fetch_optional(&database.pool)
+        .await
+        .expect("read persisted assistant prefix");
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM chat_generation_events WHERE org_id=$1::uuid AND run_id=$2::uuid
              AND event_kind IN ('assistant_delta','runtime_output')",
@@ -115,10 +124,19 @@ async fn wait_for_output_rows(
         .fetch_one(&database.pool)
         .await
         .expect("count persisted output receipts");
-        if count == expected {
-            return;
+        assert!(
+            count <= MAX_VISIBLE_OUTPUTS_PER_TURN as i64,
+            "visible output exceeded the durable receipt cap"
+        );
+        if let Some(body) = body {
+            assert!(
+                expected_prefix.starts_with(&body),
+                "persisted output diverged from the provider prefix"
+            );
+            if body.len() >= minimum_bytes {
+                return;
+            }
         }
-        assert!(count < expected, "output writer advanced past gated batch");
         if worker.is_finished() {
             panic_for_early_worker_exit(worker, "output batch persistence").await;
         }
@@ -165,10 +183,12 @@ async fn run_gated_many_observations() {
             "mixed observation prelude",
         )
         .await;
-        wait_for_output_rows(
+        let expected_body = "m".repeat((batch + 1) * 1024);
+        wait_for_assistant_body(
             &database,
             &run_id,
-            (batch + 1) as i64,
+            &expected_body,
+            expected_body.len(),
             &mut worker,
             &cancelled,
         )
@@ -182,7 +202,7 @@ async fn run_gated_many_observations() {
     };
     assert_eq!(
         observation.turn_receipt.final_text(),
-        Some("synthetic answer")
+        Some(format!("{}synthetic answer", "m".repeat(7 * 1024)).as_str())
     );
     assert_eq!(observation.turn_receipt.usage().unwrap().total_tokens(), 12);
     let counts: Value = serde_json::from_slice(
@@ -746,17 +766,21 @@ async fn streamed_output_preserves_repeated_deltas_and_finalizes_the_same_messag
     .fetch_all(&database.pool)
     .await
     .expect("read ordered visible output receipts");
-    assert_eq!(output_events.len(), 4);
-    assert_eq!(output_events[0].0, "assistant_delta");
-    assert_eq!(output_events[0].1["delta"], "same ");
-    assert_eq!(output_events[1].0, "assistant_delta");
-    assert_eq!(output_events[1].1["delta"], "same ");
+    let persisted_deltas = output_events
+        .iter()
+        .filter(|(kind, _)| kind == "assistant_delta")
+        .map(|(_, payload)| payload["delta"].as_str().unwrap())
+        .collect::<String>();
     assert_eq!(
-        output_events[2].1["delta"], "answer",
-        "identical chunks remain distinct ordered observations"
+        persisted_deltas, "same same answer",
+        "coalescing preserves the exact ordered text, including repeated chunks"
     );
-    assert_eq!(output_events[3].0, "runtime_output");
-    assert_eq!(output_events[3].1["body"], "same same answer");
+    let snapshots = output_events
+        .iter()
+        .filter(|(kind, _)| kind == "runtime_output")
+        .collect::<Vec<_>>();
+    assert_eq!(snapshots.len(), 1, "the final snapshot is persisted once");
+    assert_eq!(snapshots[0].1["body"], "same same answer");
 
     let cleanup = observation
         .cleanup_receipt
@@ -828,7 +852,8 @@ async fn finalization_rejects_tampered_delta_that_remains_a_body_suffix() {
     .await
     .expect("read latest partial output event");
     assert_eq!(latest_delta.0, "assistant_delta");
-    assert_eq!(latest_delta.1, "answer");
+    assert_eq!(latest_delta.1, "same same answer");
+    assert!("same same answer".ends_with(&latest_delta.1));
     assert!("same same answer".ends_with("swer"));
 
     let mut tx = database.pool.begin().await.unwrap();
@@ -1025,7 +1050,7 @@ async fn finalization_rejects_missing_output_ledger_without_effects() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
-async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without_publishing_tail() {
+async fn visible_output_coalescing_preserves_more_than_5000_tiny_deltas_below_the_durable_cap() {
     assert_ignored_external_dependencies();
 
     // The transport must continue to accept tool and usage observations after
@@ -1047,29 +1072,62 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
         Duration::from_secs(360),
     );
 
-    // Each fixture batch is smaller than the host's bounded event queue. An
-    // empty delta after each prelude batch provides a durable drain marker; the
-    // test releases the next batch only after that receipt commits.
+    // Each fixture batch is smaller than the host's bounded event queue. A
+    // real 1KiB answer prefix chunk makes preceding mixed observations durable
+    // before the next batch is released.
     for batch in 0..7 {
         let marker = home.join(format!("output-flood-prelude-pending-{batch}"));
         wait_for_fixture_gate(&marker, &mut worker, &cancelled, "output-flood prelude").await;
-        wait_for_output_rows(
+        let expected_body = "m".repeat((batch + 1) * 1024);
+        wait_for_assistant_body(
             &database,
             &run_id,
-            (batch + 1) as i64,
+            &expected_body,
+            expected_body.len(),
             &mut worker,
             &cancelled,
         )
         .await;
         release_fixture_gate(&home, "prelude", batch);
     }
-    for batch in 0..64 {
+    let mut expected_prefix = "m".repeat(7 * 1024);
+    for batch in 0..79 {
         let marker = home.join(format!("output-flood-output-pending-{batch}"));
         wait_for_fixture_gate(&marker, &mut worker, &cancelled, "visible output flood").await;
-        let expected = 7 + (((batch + 1) * 64).min(4089)) as i64;
-        wait_for_output_rows(&database, &run_id, expected, &mut worker, &cancelled).await;
+        let x_count = (5001 - batch * 64).min(64);
+        expected_prefix.push_str(&"x".repeat(x_count));
+        expected_prefix.push_str(&"z".repeat(1024));
+        let minimum_bytes = expected_prefix.len() / 1024 * 1024;
+        wait_for_assistant_body(
+            &database,
+            &run_id,
+            &expected_prefix,
+            minimum_bytes,
+            &mut worker,
+            &cancelled,
+        )
+        .await;
         release_fixture_gate(&home, "output", batch);
     }
+    let prefix_pending = home.join("output-flood-prefix-pending");
+    wait_for_fixture_gate(
+        &prefix_pending,
+        &mut worker,
+        &cancelled,
+        "coalesced output prefix before the tail",
+    )
+    .await;
+    wait_for_assistant_body(
+        &database,
+        &run_id,
+        &expected_prefix,
+        expected_prefix.len(),
+        &mut worker,
+        &cancelled,
+    )
+    .await;
+    std::fs::write(home.join("output-flood-prefix-release"), "release")
+        .expect("release provider tail after its complete prefix is durable");
     let terminal_pending = home.join("output-flood-terminal-pending");
     wait_for_fixture_gate(
         &terminal_pending,
@@ -1078,39 +1136,49 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
         "uncommitted tail before terminal snapshot",
     )
     .await;
-    // Correct behavior rejects ordinal 4097 and tears down the blocked child.
-    // If the regression is present, release the terminal only after giving the
-    // worker time to demonstrate that it failed to enforce the output ceiling;
-    // subsequent ledger assertions then expose any published tail.
-    for _ in 0..300 {
-        if worker.is_finished() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    if !worker.is_finished() {
-        std::fs::write(home.join("output-flood-terminal-release"), "release")
-            .expect("release terminal to prevent a broken-cap test from hanging");
-    }
-    let (result, host) = worker
+    // TAIL is below the coalescing threshold. It must remain private until the
+    // provider's full item snapshot reconciles the exact answer.
+    let (prefix_rows, prefix_ordinal, prefix_tail_rows, prefix_body): (i64, i64, i64, String) =
+        sqlx::query_as(
+            "SELECT
+               (SELECT count(*) FROM chat_generation_events
+                WHERE org_id=$1::uuid AND run_id=$2::uuid
+                  AND event_kind IN ('assistant_delta','runtime_output')),
+               COALESCE((SELECT max((payload->'nativeSource'->>'ordinal')::bigint)
+                 FROM chat_generation_events WHERE org_id=$1::uuid AND run_id=$2::uuid
+                   AND event_kind IN ('assistant_delta','runtime_output')),0),
+               (SELECT count(*) FROM chat_generation_events
+                WHERE org_id=$1::uuid AND run_id=$2::uuid
+                  AND (payload->>'delta'='TAIL' OR COALESCE(payload->>'body','') LIKE '%TAIL%')),
+               (SELECT body FROM chat_messages
+                WHERE org_id=$1::uuid AND run_id=$2::uuid AND role='assistant'
+                ORDER BY id LIMIT 1)",
+        )
+        .bind(ORG)
+        .bind(&run_id)
+        .fetch_one(&database.pool)
         .await
-        .expect("flood worker joins after bounded rejection");
-    let failure = match result {
-        Err(failure) => failure,
-        Ok(_) => panic!("the 4097th visible receipt must not complete the Run"),
-    };
-    assert_eq!(
-        failure.process_disposition(),
-        ProcessDisposition::CleanupProven,
-        "output rejection must still reap the owned provider process"
-    );
-    let failure_debug = format!("{failure:?}");
+        .expect("read durable prefix before final snapshot");
+    assert!(prefix_rows >= 86, "each gated batch has a durable prefix");
     assert!(
-        failure_debug.contains("Native Chat output does not match its execution"),
-        "failure must be the durable output ordinal cap, got {failure_debug}"
+        prefix_rows < MAX_VISIBLE_OUTPUTS_PER_TURN as i64,
+        "coalesced output stays below the durable cap"
     );
+    assert_eq!(prefix_ordinal, prefix_rows);
+    assert_eq!(prefix_tail_rows, 0, "unreconciled tail is not yet durable");
+    assert_eq!(prefix_body, expected_prefix);
+    std::fs::write(home.join("output-flood-terminal-release"), "release")
+        .expect("release provider final item and terminal snapshots");
+
+    let (result, host) = worker.await.expect("coalesced flood worker joins");
+    let observation = result.expect("coalescing keeps the bounded provider answer usable");
     assert!(host.provider_started());
     assert!(terminal_pending.exists());
+    let expected_full = format!("{expected_prefix}TAIL");
+    assert_eq!(
+        observation.turn_receipt.final_text(),
+        Some(expected_full.as_str())
+    );
     let counts: Value = serde_json::from_slice(
         &std::fs::read(host.probe_path("output-flood-prelude-counts.json"))
             .expect("provider emitted mixed observation counts"),
@@ -1135,18 +1203,19 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
         .fetch_one(&database.pool)
         .await
         .expect("read output cap and terminal evidence");
-    assert_eq!(
-        output_rows, 4096,
-        "durable output cannot exceed its hard cap"
+    assert!(
+        output_rows >= prefix_rows + 2,
+        "the final partial delta and reconciled snapshot are durable"
     );
-    assert_eq!(max_ordinal, 4096);
+    assert!(output_rows <= MAX_VISIBLE_OUTPUTS_PER_TURN as i64);
+    assert_eq!(max_ordinal, output_rows);
     assert_eq!(
-        tail_rows, 0,
-        "the rejected sentinel tail is never published"
+        tail_rows, 2,
+        "the terminal TAIL delta and snapshot are durable"
     );
     assert_eq!(
         terminal_rows, 0,
-        "no terminal event is inferred from the flood"
+        "provider output receipts do not fabricate terminal rows"
     );
 
     let boundary: Vec<(i64, String, String, String, String)> = sqlx::query_as(
@@ -1187,7 +1256,7 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
     .await
     .expect("count output audit rows");
     assert_eq!(
-        audit_rows, 4096,
+        audit_rows, output_rows,
         "every durable output row has one audit row"
     );
 
@@ -1202,7 +1271,7 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
     .expect("read streaming assistant projection");
     assert_eq!(assistants.len(), 1);
     assert_eq!(assistants[0].1, "streaming");
-    assert_eq!(assistants[0].2, "x".repeat(4089));
+    assert_eq!(assistants[0].2, expected_full);
 
     let (run_status, run_hold, generation_status, generation_hold, attempt_status, phase): (
         String,
@@ -1227,9 +1296,9 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
     .expect("read held execution state");
     assert!(
         run_hold && generation_hold,
-        "hard output limit retains both holds"
+        "execution remains held until finalization"
     );
-    assert_eq!(phase, "turn_known");
+    assert_eq!(phase, "provider_terminal_observed");
     assert!(!matches!(
         run_status.as_str(),
         "succeeded" | "failed" | "cancelled" | "stopped" | "completed"
@@ -1253,4 +1322,44 @@ async fn visible_output_flood_retains_hold_at_durable_projection_ceiling_without
     .await
     .expect("count finalization activity");
     assert_eq!(finalized_activity, 0);
+
+    let finalized = finalize(
+        &database.pool,
+        &observation.execution_principal,
+        &observation.fence,
+        &observation.turn_receipt,
+        observation
+            .cleanup_receipt
+            .as_ref()
+            .expect("successful observation retains owned cleanup proof"),
+    )
+    .await
+    .expect("the coalesced answer finalizes through the normal receipt path");
+    assert_eq!(finalized["status"], "succeeded");
+    assert_eq!(finalized["nativeAdmissionHold"], false);
+    assert_eq!(finalized["projectionDisposition"], "projected");
+
+    let (run_status, run_hold, generation_status, generation_hold, attempt_status): (
+        String,
+        bool,
+        String,
+        bool,
+        String,
+    ) = sqlx::query_as(
+        "SELECT r.status,r.native_admission_hold,g.status,g.native_admission_hold,a.status
+         FROM heartbeat_runs r
+         JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$3::uuid
+         WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&run_id)
+    .bind(&attempt_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read finalized coalesced execution state");
+    assert_eq!(run_status, "succeeded");
+    assert_eq!(generation_status, "completed");
+    assert_eq!(attempt_status, "succeeded");
+    assert!(!run_hold && !generation_hold);
 }
