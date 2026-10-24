@@ -59320,8 +59320,8 @@
       "rust_authority": "native/crates/d1-persistence/src/organization_resources.rs owns configured public Resource state and Resource/Project coordination; native/crates/d1-persistence/src/project_patches.rs owns Rust Project-Goal mutations.",
       "compatibility_boundary": "This Node service retains ingress-off organization Resource service behavior and Node-owned Project attachment-edge operations. Edge replacements serialize through the shared organization fence, Resource checks, and Project fence. Inline newResources used by the Node Project compatibility path can still create a Node-owned Resource; this remains explicit migration debt.",
       "retirement_criterion": "Retire Node organization Resource service entry points when every supported public deployment uses Rust ingress, and retire the attachment/newResources compatibility operations only after Rust owns remaining Node-owned Project edges and the reviewed scope/ownership tests pass.",
-      "reviewer": "independent Resource/Project edge owner review r1",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-edge-owner-review-r1.json",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/resource-project-e-preparation-review-r1.json",
       "review_status": "reviewed",
       "allowed_node_duties": [
         "Retain existing ingress-off organization Resource service behavior.",
