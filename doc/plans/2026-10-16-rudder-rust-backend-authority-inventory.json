@@ -4641,7 +4641,7 @@
     },
     {
       "path": "server/src/routes/agents.core.ts",
-      "sha256": "0d180f301a096030b6bfdd3e413b9721a3aa122a5b88c19d4c4ea98432223367",
+      "sha256": "083ce4e0b7173241f56e23d6c00ecad1fb82b631c76bc8098533dfc2136e0ff8",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -16738,7 +16738,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 68,
+      "line": 67,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/:id/runtime-state",
       "receiver": "router",
       "method": "GET",
@@ -16748,7 +16748,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 70,
+      "line": 69,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/:id/task-sessions",
       "receiver": "router",
       "method": "GET",
@@ -16768,7 +16768,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 67,
+      "line": 66,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/agents/me/inbox-lite",
       "receiver": "router",
       "method": "GET",
@@ -16778,7 +16778,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 71,
+      "line": 70,
       "signature": "server/src/routes/agents.core.ts|http-route|router|GET|/instance/scheduler-heartbeats",
       "receiver": "router",
       "method": "GET",
@@ -16848,7 +16848,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/agents.core.ts",
-      "line": 69,
+      "line": 68,
       "signature": "server/src/routes/agents.core.ts|http-route|router|POST|/agents/:id/runtime-state/reset-session",
       "receiver": "router",
       "method": "POST",
@@ -59148,21 +59148,21 @@
   "reviewed_node_changes": [
     {
       "path": "server/src/routes/agents.core.ts",
-      "base_sha256": "a128cae645f1b51c450f4627de5cc26bbd117b0360e6a40b8b9c65ca19641e5e",
-      "head_sha256": "0d180f301a096030b6bfdd3e413b9721a3aa122a5b88c19d4c4ea98432223367",
+      "base_sha256": "0d180f301a096030b6bfdd3e413b9721a3aa122a5b88c19d4c4ea98432223367",
+      "head_sha256": "083ce4e0b7173241f56e23d6c00ecad1fb82b631c76bc8098533dfc2136e0ff8",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own Agent API-key listing, issuance, and revocation plus the previously reviewed configuration/revision operations in native identity-ingress mode.",
-      "compatibility_boundary": "At startup, Boolean(opts.rustPublicIngress?.identityAuth) selects nativeAgentCorePaths. When true, the Node AgentCore key/configuration/revision handlers are not registered and Rust public ingress owns those paths; there is no request-time fallback. When false, the existing Node compatibility adapter forwards unchanged behavior to Rust.",
-      "retirement_criterion": "Remove these off-mode handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with public acceptance coverage.",
-      "reviewer": "/root/follow347_final_merge_review",
-      "review_reference": "/private/tmp/rakey25/independent-source-review-r1.json",
-      "review_status": "reviewed",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/agent_core.rs and native/crates/d1-persistence/src/agent_core own the five inbox-lite, runtime-state, reset-session, task-session, and scheduler-heartbeat operations in native AgentCore ingress mode; existing key/configuration/revision ownership remains as previously scoped.",
+      "compatibility_boundary": "At startup, Boolean(opts.rustPublicIngress?.identityAuth) selects nativeAgentCorePaths. When true, Rust owns the five added AgentCore public operations and these Node handlers are not registered; no request-time fallback is added. When false, the existing Node adapter forwards those operations to Rust for ingress-off compatibility.",
+      "retirement_criterion": "Remove these ingress-off handlers after supported deployments default to Rust public ingress and the remaining AgentCore compatibility operations are retired with public acceptance coverage.",
+      "reviewer": "pending independent review",
+      "review_reference": "Pending independent review of this exact source hash after local checkpoint; no review receipt exists yet.",
+      "review_status": "pending",
       "allowed_node_duties": [
-        "Preserve unchanged legacy API-key and configuration/revision forwarding only when nativeAgentCorePaths is false (ingress-off compatibility mode)."
+        "Preserve existing forwarding only when nativeAgentCorePaths is false (ingress-off compatibility mode)."
       ],
       "prohibited_node_duties": [
-        "No Agent API-key listing, issuance, revocation, configuration, or revision request handling, authorization, persistence, or fallback when nativeAgentCorePaths is true."
+        "No inbox-lite, runtime-state, reset-session, task-session, or scheduler-heartbeat request handling, authorization, persistence, or fallback when nativeAgentCorePaths is true."
       ]
     }
   ],

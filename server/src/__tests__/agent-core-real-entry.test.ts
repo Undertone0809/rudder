@@ -106,7 +106,7 @@ describe("Agent core foundation binary resolution", () => {
             expect(explicit).toThrow(debug);
     });
 });
-describe("Agent core fifteen-route real HTTP authority", () => {
+describe("Agent core twenty-route real HTTP authority", () => {
     let db: ReturnType<typeof createDb>;
     let pg: Pg | undefined;
     let root = "";
@@ -235,6 +235,10 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/keys\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/agents\/[^/]+\/keys\/?$/i.test(req.path))
                 || (req.method === "DELETE" && /^\/api\/agents\/[^/]+\/keys\/[^/]+\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/me\/inbox-lite\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/(?:runtime-state|task-sessions)\/?$/i.test(req.path))
+                || (req.method === "POST" && /^\/api\/agents\/[^/]+\/runtime-state\/reset-session\/?$/i.test(req.path))
+                || (["GET", "HEAD"].includes(req.method) && /^\/api\/instance\/scheduler-heartbeats\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
                 nodeNativeIngressPathHits += 1;
             }
@@ -499,6 +503,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
             const revokedKeyDenied = await call(base, "get", "/api/agents/me", key.body.token);
             expect(revokedKeyDenied.status, revokedKeyDenied.text).toBe(401);
             expect(nodeNativeIngressPathHits).toBe(0);
+            nodeNativeIngressPathHits = 0;
             await db.execute(sql `INSERT INTO agent_task_sessions(org_id,agent_id,agent_runtime_type,task_key,session_display_id,session_params_json,last_run_id,updated_at) VALUES(${org}::uuid,${agent}::uuid,'process','visible-task','visible-session','{"keep":"yes","password":"synthetic"}',${publicRun}::uuid,now()-interval '1 minute'),(${org}::uuid,${agent}::uuid,'process','private-task','PEER_PRIVATE_SESSION','{"private":"PEER_PRIVATE_VALUE"}',${privateRun}::uuid,now())`);
             const state = await call(base, "get", `/api/agents/${agent}/runtime-state`);
             expect(state.status, state.text).toBe(200);
@@ -521,6 +526,7 @@ describe("Agent core fifteen-route real HTTP authority", () => {
                 id: string;
                 intervalSec: number;
             }) => a.id === agent && a.intervalSec === 60)).toBe(true);
+            expect(nodeNativeIngressPathHits).toBe(0);
         }
     });
     it("preserves API-key schema precedence before board authorization", async () => {
@@ -731,6 +737,21 @@ describe("Agent core fifteen-route real HTTP authority", () => {
         const original = bridge!.agentCore;
         bridge!.agentCore = unavailable.agentCore;
         try {
+            nodeNativeIngressPathHits = 0;
+            for (const [method, route, token] of [
+                ["get", `/api/agents/${agent}/runtime-state`, ownerToken],
+                ["get", `/api/agents/${agent}/task-sessions`, ownerToken],
+                ["get", "/api/agents/me/inbox-lite", agentToken],
+                ["get", "/api/instance/scheduler-heartbeats", ownerToken],
+            ] as const) {
+                const response = await call(publicUrl, method, route, token);
+                expect(response.status, response.text).toBe(200);
+                expect(nodeNativeIngressPathHits).toBe(0);
+            }
+            const resetWhileNodeUnavailable = await call(publicUrl, "post", `/api/agents/${agent}/runtime-state/reset-session`, ownerToken, { taskKey: "not-present" });
+            expect(resetWhileNodeUnavailable.status, resetWhileNodeUnavailable.text).toBe(200);
+            expect(nodeNativeIngressPathHits).toBe(0);
+
             nodeNativeIngressPathHits = 0;
             const nativeConfiguration = await call(publicUrl, "get", `/api/agents/${agent}/configuration`);
             expect(nativeConfiguration.status, nativeConfiguration.text).toBe(200);

@@ -63,11 +63,11 @@ export function agentCoreRoutes(
         router.get("/agents/:id/keys", forward("keys"));
         router.post("/agents/:id/keys", forward("key-create"));
         router.delete("/agents/:id/keys/:keyId", forward("key-revoke"));
+        router.get("/agents/me/inbox-lite", forward("inbox"));
+        router.get("/agents/:id/runtime-state", forward("runtime-state"));
+        router.post("/agents/:id/runtime-state/reset-session", forward("reset-session"));
+        router.get("/agents/:id/task-sessions", forward("task-sessions"));
+        router.get("/instance/scheduler-heartbeats", forward("scheduler-heartbeats"));
     }
-    router.get("/agents/me/inbox-lite", forward("inbox"));
-    router.get("/agents/:id/runtime-state", forward("runtime-state"));
-    router.post("/agents/:id/runtime-state/reset-session", forward("reset-session"));
-    router.get("/agents/:id/task-sessions", forward("task-sessions"));
-    router.get("/instance/scheduler-heartbeats", forward("scheduler-heartbeats"));
     return router;
 }

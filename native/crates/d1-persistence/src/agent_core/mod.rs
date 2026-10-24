@@ -66,6 +66,24 @@ pub trait NativeAgentAuthorizer: Send + Sync {
         Box<dyn Future<Output = std::result::Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>,
     >;
 }
+
+/// Parse public JSON through the same bounded, JavaScript-compatible parser
+/// used by AgentCore commands. Public schemas that strip unknown fields can
+/// then normalize the body before it is forwarded into a command envelope.
+pub fn parse_public_json_value(raw: &str) -> std::result::Result<Value, serde_json::Error> {
+    json_boundary::stack(|| json_boundary::parse(raw))
+}
+
+/// Apply an existing AgentCore input schema at the public transport boundary.
+/// Taking ownership keeps deeply nested, schema-stripped values on the grown
+/// stack while they are validated and dropped.
+pub fn normalize_public_input(
+    operation: &str,
+    input: Value,
+) -> std::result::Result<Value, AgentCoreError> {
+    json_boundary::stack(|| validation::validate(operation, Some(&input)))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCoreRequest {
