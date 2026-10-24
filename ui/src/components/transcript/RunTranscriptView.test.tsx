@@ -1761,6 +1761,37 @@ describe("RunTranscriptView", () => {
     expect(stableHtml).toContain("Completed");
   });
 
+  it("preserves literal Completed responses for canonical empty-input Hermes tools only", () => {
+    const renderTool = (name: string, toolUseId: string) => renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name,
+            toolUseId,
+            input: {},
+            result: "Completed",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    for (const [name, toolUseId] of [["web_search", "hermes-canonical-search"], ["terminal", "hermes-canonical-terminal"]]) {
+      const html = renderTool(name, toolUseId);
+      expect(html).toContain("Response");
+      expect(html).toContain("Completed");
+    }
+
+    for (const [name, toolUseId] of [["Websearch: query", "hermes-legacy-search"], ["Terminal: ls -la", "hermes-legacy-terminal"]]) {
+      const html = renderTool(name, toolUseId);
+      expect(html).not.toContain("Response");
+      expect(html).not.toContain("Completed");
+    }
+  });
+
   it("recovers compact summaries only for recognizable legacy Hermes tool titles", () => {
     expect(describeToolSemanticInfo("Read: /workspace/README.md", {}, undefined, { toolUseId: "hermes-read-1" })).toMatchObject({
       category: "read",

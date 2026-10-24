@@ -1497,6 +1497,17 @@ type TranscriptToolSemanticOptions = {
   toolUseId?: string;
 };
 
+const HERMES_STABLE_TOOL_NAMES = new Set([
+  "execute_code",
+  "read_file",
+  "web_search",
+  "web_extract",
+  "terminal",
+  "write_file",
+  "patch",
+  "search_files",
+]);
+
 function summarizePythonCode(value: string): string | null {
   const firstUsefulLine = value
     .split(/\r?\n/u)
@@ -1520,6 +1531,7 @@ function legacyHermesTitleSemanticInfo(name: string, input: unknown, toolUseId?:
   if (!toolUseId?.startsWith("hermes-") || hasNonEmptyToolPayload(input)) return null;
 
   const title = name.trim();
+  if (HERMES_STABLE_TOOL_NAMES.has(title.toLowerCase())) return null;
   const pythonMatch = title.match(/^python\s*:\s*(.*)$/iu);
   if (pythonMatch) {
     const preview = summarizePythonCode(pythonMatch[1] ?? "");
