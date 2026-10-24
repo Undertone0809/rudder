@@ -187,6 +187,7 @@ async fn stop_dispatch_requires_positive_legacy_target_and_signed_current_sessio
         serde_json::from_slice::<serde_json::Value>(&cap_bytes).unwrap(),
         serde_json::json!({
             "executionAuthority":"native_rust", "firstSend":false, "readTurn":true, "nativeControls":true,
+            "recoveryRead":true,
         })
     );
     // Full message projection deliberately fails for the seeded rich source;

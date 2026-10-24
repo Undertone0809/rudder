@@ -146,10 +146,21 @@ import {
   filterChatSkillOptions,
 } from "@/lib/chat-skill-options";
 import {
+  CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE,
+  CHAT_STOP_OWNER_LOST_MESSAGE,
+  CHAT_STOP_CONFIRMATION_PENDING_MESSAGE,
+  CHAT_STOP_REJECTED_MESSAGE,
+  CHAT_STOP_REQUIRES_FRESH_ACTION_MESSAGE,
+  CHAT_STOP_TARGET_UNVERIFIED_MESSAGE,
+} from "@/lib/chat-stop-feedback";
+import { useNativeChatRecovery } from "@/lib/use-native-chat-recovery";
+import {
   chatStopRecoveryActionKey,
   clearPendingChatStopRecovery,
   createChatStopRecoveryRetrier,
   createPendingChatStopRecovery,
+  hasCompleteNativeStopFence,
+  hydrateIncompleteNativeChatStopRecovery,
   readPendingChatStopRecovery,
   savePendingChatStopRecovery,
   type PendingChatStopRecovery,
@@ -289,6 +300,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     streamDrafts, } = useChatGenerations(); const draftStorageOrgId = selectedOrganizationId!; const draftStorageConversationId = conversationId ?? (searchParams.get("firstTurnRecovery") ? `first-turn-recovery:${searchParams.get("firstTurnRecovery")}` : null) ?? localAppRecoveryDraftStorageScope(searchParams.get("localAppRecoveryDraft")) ?? null; const draftStorageScopeKey = resolveChatPendingAttachmentScopeKey(draftStorageOrgId, draftStorageConversationId); const activeDraftScopeRef = useRef(draftStorageScopeKey);
   const stopRecoveryImmediateRetryKeysRef = useRef(new Set<string>());
   const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
+  const ownerLostStopStreamKeysRef = useRef(new Set<string>());
+  const [confirmedOwnerLoss, setConfirmedOwnerLoss] = useState<{
+    orgId: string;
+    chatId: string;
+    generationId: string;
+    recoveryReadUpdatedAt: number;
+  } | null>(null);
   const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
   const streamDraftsRef = useRef(streamDrafts);
   const transcriptLoadPromisesRef = useRef<Record<string, Promise<TranscriptEntry[] | null>>>({});
@@ -524,7 +542,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     enabled: !!conversationId && activeConversationBelongsToSelectedOrganization,
     refetchInterval: (query) => conversationId && shouldPollChatQueue(query.state.data) ? 2_000 : false,
   });
+  const nativeRecoveryQuery = useNativeChatRecovery(selectedOrganizationId, conversationId ?? null);
   const serverActiveGenerationId = activeGenerationIdFromSnapshot(queueQuery.data);
+  const confirmedOwnerLossApplies = Boolean(confirmedOwnerLoss
+    && confirmedOwnerLoss.orgId === selectedOrganizationId
+    && confirmedOwnerLoss.chatId === conversationId
+    && (nativeRecoveryQuery.status.kind !== "native"
+      || nativeRecoveryQuery.dataUpdatedAt <= confirmedOwnerLoss.recoveryReadUpdatedAt
+      || nativeRecoveryQuery.recovery !== null));
+  const serverOwnerLostGeneration = nativeRecoveryQuery.recovery !== null
+    || confirmedOwnerLossApplies;
+  const nativeRecoveryUnavailable = nativeRecoveryQuery.unavailable;
   const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const liveAgents = useMemo(() => selectableChatAgents(agents), [agents]);
@@ -1120,7 +1148,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   }, [streamScopeKeyForChatId]); const submitStopRecovery = useCallback((
     recovery: PendingChatStopRecovery,
   ) => {
-    const { chatId, frozenDraft, orgId, request } = recovery;
+    const { chatId, frozenDraft, orgId } = recovery;
+    let request = recovery.request;
+    let recoveryToSubmit = recovery;
     const actionKey = chatStopRecoveryActionKey(recovery);
     const stopToastId = `chat-stop:${actionKey}`;
     if (stoppingChatIdsRef.current.has(chatId)) {
@@ -1156,16 +1186,111 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     let stopActionSettled = false;
     void (async () => {
       try {
+        if (recoveryToSubmit.executionAuthority !== "legacy_ts" && !hasCompleteNativeStopFence(request)) {
+          const generationId = request.expectedGenerationId ?? frozenDraft?.generationId ?? null;
+          const attemptEpoch = request.expectedAttemptEpoch ?? frozenDraft?.attemptEpoch ?? null;
+          let control: Awaited<ReturnType<typeof chatsApi.readNativeChatControl>> | null = null;
+          const abandonObsoleteRecovery = async () => {
+            stopRecoveryRetrier.resolve(recoveryToSubmit);
+            stopActionSettled = true;
+            clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+            if (frozenDraft && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
+              setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === frozenDraft.streamKey
+                ? { ...frozenDraft, state: recovery.previousStreamState ?? "streaming" }
+                : current);
+              delete stopRecoveryStreamKeysRef.current[chatId];
+            }
+            await Promise.allSettled([
+              queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(orgId, chatId) }),
+              queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(orgId, chatId) }),
+              queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(orgId, chatId) }),
+            ]);
+            pushToast({
+              title: "Stop needs a fresh confirmation",
+              id: stopToastId,
+              body: CHAT_STOP_REQUIRES_FRESH_ACTION_MESSAGE,
+              tone: "warn",
+            });
+          };
+          if (generationId && attemptEpoch) {
+            try {
+              control = await chatsApi.readNativeChatControl(chatId, orgId, generationId);
+            } catch {
+              // An old incomplete request cannot be safely replayed when its
+              // original target cannot be revalidated after reopening.
+            }
+          }
+          const hydratedRecovery = hydrateIncompleteNativeChatStopRecovery(
+            recoveryToSubmit,
+            control,
+            EMPTY_CHAT_BODY_SHA256,
+          );
+          if (!hydratedRecovery) {
+            await abandonObsoleteRecovery();
+            return;
+          }
+          recoveryToSubmit = hydratedRecovery;
+          request = hydratedRecovery.request;
+          if (!savePendingChatStopRecovery(recoveryToSubmit)) {
+            throw new Error("The saved Stop request could not be refreshed safely.");
+          }
+        }
         const result = await chatsApi.stopMessageStream(chatId, request);
-        const nativeStop = recovery.executionAuthority !== "legacy_ts";
+        const nativeStop = recoveryToSubmit.executionAuthority !== "legacy_ts";
         const acknowledgedActionId = nativeStop ? result.controlActionId : result.controlActionId ?? request.controlActionId;
         if (acknowledgedActionId !== request.controlActionId
           || (nativeStop && (!request.expectedGenerationId || result.generationId !== request.expectedGenerationId))) {
-          stopRecoveryRetrier.schedule(recovery);
+          stopRecoveryRetrier.schedule(recoveryToSubmit);
           pushToast({
             title: "Stop confirmation pending",
             id: stopToastId,
             body: "Rudder did not confirm this exact Stop action and response; the original action will be retried.",
+            tone: "warn",
+          });
+          return;
+        }
+        if (nativeStop && result.disposition === "control_lost") {
+          stopRecoveryRetrier.resolve(recoveryToSubmit);
+          stopActionSettled = true;
+          setConfirmedOwnerLoss({
+            orgId,
+            chatId,
+            generationId: result.generationId!,
+            recoveryReadUpdatedAt: nativeRecoveryQuery.dataUpdatedAt,
+          });
+          if (streamKey) ownerLostStopStreamKeysRef.current.add(streamKey);
+          const mutationId = recoveryToSubmit.sendMutationIdentity?.kind === "chat_send"
+            ? recoveryToSubmit.sendMutationIdentity.mutation.clientMutationId
+            : null;
+          const inputSettled = await settleStoppedChatInput(recoveryToSubmit);
+          if (inputSettled) {
+            setChatSendRecovery((current) => current?.orgId === orgId
+              && current.conversationId === chatId
+              && (!mutationId || current.clientMutationId === mutationId) ? null : current);
+          }
+          clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+          if (inputSettled && recoveryToSubmit.sendMutationIdentity?.kind === "native_first_send") {
+            recoveryDiscovery.clearRecovery();
+          }
+          if (streamKey && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
+            abortChatStream(streamScopeKey);
+            setStreamDraftForChat(streamScopeKey, (current) => (
+              current?.streamKey === streamKey ? null : current
+            ));
+            setChatSendInFlight(streamScopeKey, false);
+          }
+          if (stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
+            delete stopRecoveryStreamKeysRef.current[chatId];
+          }
+          await Promise.allSettled([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(orgId, chatId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(orgId, chatId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.nativeRecovery(orgId, chatId) }),
+          ]);
+          dismissToast(stopToastId);
+          pushToast({
+            title: "Run interrupted",
+            body: CHAT_STOP_OWNER_LOST_MESSAGE,
             tone: "warn",
           });
           return;
@@ -1188,13 +1313,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           : result.stopped || completionCommitted || alreadyTerminal || cutoffAccepted;
 
         if (nativeStop && !terminalConfirmed) {
-          if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recovery)) {
+          if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
             abortChatStream(streamScopeKey);
             setStreamDraftForChat(streamScopeKey, (current) => (
               current?.streamKey === streamKey ? { ...current, state: "stopping" } : current
             ));
           }
-          stopRecoveryRetrier.schedule(recovery);
+          stopRecoveryRetrier.schedule(recoveryToSubmit);
           if (!result.idempotent) {
             pushToast({
               title: "Stop confirmation pending",
@@ -1206,8 +1331,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           return;
         }
 
-        if (nativeStop && !await settleStoppedChatInput(recovery)) {
-          stopRecoveryRetrier.schedule(recovery);
+        if (nativeStop && !await settleStoppedChatInput(recoveryToSubmit)) {
+          stopRecoveryRetrier.schedule(recoveryToSubmit);
           pushToast({
             title: "Stop confirmed; send recovery is still pending",
             body: "The stopped response is confirmed, but the exact send identity could not be settled in browser storage. Rudder will retry safely.",
@@ -1217,8 +1342,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         }
 
         if (nativeStop) {
-          const mutationId = recovery.sendMutationIdentity?.kind === "chat_send"
-            ? recovery.sendMutationIdentity.mutation.clientMutationId : null;
+          const mutationId = recoveryToSubmit.sendMutationIdentity?.kind === "chat_send"
+            ? recoveryToSubmit.sendMutationIdentity.mutation.clientMutationId : null;
           setChatSendRecovery((current) => current?.orgId === orgId
             && current.conversationId === chatId
             && current.clientMutationId === mutationId ? null : current);
@@ -1228,9 +1353,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }
           if (stopped) setConfirmedStoppedChat({ orgId, chatId });
         }
-        stopRecoveryRetrier.resolve(recovery);
+        stopRecoveryRetrier.resolve(recoveryToSubmit);
         stopActionSettled = true;
-        if ((cutoffAccepted || alreadyTerminal) && stopRecoveryMatchesCurrentStream(recovery)) {
+        if ((cutoffAccepted || alreadyTerminal) && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
           abortChatStream(streamScopeKey);
         } else if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
           delete stopRecoveryStreamKeysRef.current[chatId];
@@ -1241,7 +1366,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         void queryClient.invalidateQueries({
           queryKey: queryKeys.chats.queue(orgId, chatId),
         });
-        if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
+        if (streamKey && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
           setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
           setChatSendInFlight(streamScopeKey, false);
         }
@@ -1249,7 +1374,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         const remainingRecovery = readPendingChatStopRecovery(orgId, chatId);
         if (!cleared && remainingRecovery?.request.controlActionId === request.controlActionId) {
           stopActionSettled = false;
-          stopRecoveryRetrier.schedule(recovery);
+          stopRecoveryRetrier.schedule(recoveryToSubmit);
           return;
         }
 
@@ -1281,13 +1406,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         const definitivelyRejected = error instanceof ApiError
           && error.status >= 400
           && error.status < 500;
-        const nativeStop = recovery.executionAuthority !== "legacy_ts";
+        const nativeStop = recoveryToSubmit.executionAuthority !== "legacy_ts";
         if (definitivelyRejected && !nativeStop) {
-          stopRecoveryRetrier.resolve(recovery);
+          stopRecoveryRetrier.resolve(recoveryToSubmit);
           stopActionSettled = true;
-          if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
+          if (streamKey && stopRecoveryMatchesCurrentStream(recoveryToSubmit)) {
             setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey
-              ? { ...frozenDraft!, state: recovery.previousStreamState ?? "streaming" }
+              ? { ...frozenDraft!, state: recoveryToSubmit.previousStreamState ?? "streaming" }
               : current);
           }
           if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
@@ -1295,12 +1420,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }
           clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
         } else {
-          stopRecoveryRetrier.schedule(recovery);
+          stopRecoveryRetrier.schedule(recoveryToSubmit);
         }
         pushToast({
           title: definitivelyRejected && !nativeStop ? "Stop was rejected" : "Stop confirmation pending",
           id: stopToastId,
-          body: error instanceof Error ? error.message : "Rudder will retry automatically.",
+          body: definitivelyRejected && !nativeStop
+            ? CHAT_STOP_REJECTED_MESSAGE
+            : CHAT_STOP_CONFIRMATION_PENDING_MESSAGE,
           tone: definitivelyRejected && !nativeStop ? "error" : "warn",
         });
       } finally {
@@ -1314,7 +1441,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         const retryImmediately = stopRecoveryImmediateRetryKeysRef.current.delete(actionKey)
           && !stopActionSettled;
         const pendingRecovery = retryImmediately
-          ? readPendingChatStopRecovery(orgId, chatId) ?? recovery
+          ? readPendingChatStopRecovery(orgId, chatId) ?? recoveryToSubmit
           : null;
         if (pendingRecovery?.request.controlActionId === request.controlActionId) {
           stopRecoveryRetrier.retryNow(pendingRecovery);
@@ -1382,7 +1509,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           if (!capabilities.readTurn) {
             throw new Error("This server cannot safely verify the active response before Stop.");
           }
-          const generationId = serverGenerationFence?.generationId ?? streamDraft?.generationId ?? null;
+          const generationId = serverGenerationFence?.generationId ?? serverActiveGenerationId ?? streamDraft?.generationId ?? null;
           if (!generationId) {
             throw new Error("Rudder could not identify the active response. Refresh and try Stop again.");
           }
@@ -1525,7 +1652,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (isCurrentScope()) {
           pushToast({
             title: "Stop target could not be verified",
-            body: error instanceof Error ? error.message : "Refresh the conversation and try Stop again.",
+            body: CHAT_STOP_TARGET_UNVERIFIED_MESSAGE,
             tone: "error",
           });
         }
@@ -2028,6 +2155,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pushToast({ title: "Response needs recovery", body: "Resume the accepted response before sending another message in this chat.", tone: "warn" });
         return;
       }
+      if (!isResume && (serverOwnerLostGeneration || nativeRecoveryUnavailable)) {
+        pushToast({
+          title: serverOwnerLostGeneration ? "Run interrupted" : "Recovery status unavailable",
+          body: serverOwnerLostGeneration ? CHAT_STOP_OWNER_LOST_MESSAGE : CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE,
+          tone: "warn",
+        });
+        return;
+      }
       if (!isResume && !options?.queuedMessageId && !options?.forceImmediateSend && (activeDraftForChat || serverActiveGenerationId)) {
         if (editUserMessageId) {
           const isRetry = options?.editIntent === "retry";
@@ -2288,12 +2423,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         recoveryDiscovery.retry();
       }
       if (activeNativeFirstSend && requestDispatched && !userMessageAcknowledged) {
-        await nativeFirstSend.markUnknown(activeNativeFirstSend.clientMutationId).catch(() => undefined);
+        if (!activeStreamKey || !ownerLostStopStreamKeysRef.current.has(activeStreamKey)) {
+          await nativeFirstSend.markUnknown(activeNativeFirstSend.clientMutationId).catch(() => undefined);
+        }
       }
-      if (pendingSendMutation && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+      if (pendingSendMutation && (!activeStreamKey || !ownerLostStopStreamKeysRef.current.has(activeStreamKey))
+        && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
         await pendingSendMutation.markUnknown();
       }
-      if (pendingSendMutation && requestDispatched && !mutationAcknowledged && !mutationTerminal
+      if (pendingSendMutation && (!activeStreamKey || !ownerLostStopStreamKeysRef.current.has(activeStreamKey))
+        && requestDispatched && !mutationAcknowledged && !mutationTerminal
         && conversation
         && activeDraftScopeRef.current === resolveChatPendingAttachmentScopeKey(
           selectedOrganizationId,
@@ -2301,7 +2440,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         )) {
         recoveryDiscovery.retry();
       }
-      if (pendingSendMutation && mutationAcknowledged && !mutationTerminal) {
+      if (pendingSendMutation && (!activeStreamKey || !ownerLostStopStreamKeysRef.current.has(activeStreamKey))
+        && mutationAcknowledged && !mutationTerminal) {
         await pendingSendMutation.markRecoverable();
         if (conversation) {
           setChatSendRecovery({
@@ -2329,6 +2469,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             ? { ...pendingStop.frozenDraft, state: "stopping" }
             : current;
         });
+        return;
+      }
+      if (activeStreamKey && ownerLostStopStreamKeysRef.current.delete(activeStreamKey)) {
+        if (streamScopeKey) {
+          setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === activeStreamKey ? null : current);
+          setChatSendInFlight(streamScopeKey, false);
+        }
+        if (conversation) await refreshChat(conversation.id);
         return;
       }
       if (activeNativeFirstSend && userMessageAcknowledged && !firstTurnTerminalSeen && conversation) {
@@ -2423,7 +2571,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       }
       if (newConversationLockAcquired && activeStreamKey) { firstTurnStore.finish(firstTurnOwner, activeStreamKey); } } };
   const acceptedResponseReconnect = useAcceptedChatResponseReconnect({
-    activeRecovery: activeChatSendRecovery, chatSendRecovery, selectedConversation,
+    activeRecovery: serverOwnerLostGeneration ? null : activeChatSendRecovery, chatSendRecovery, selectedConversation,
     selectedOrganizationId, selectedConversationStreamScopeKey, sendInFlightByChatId,
     activeSendInFlight: readChatScopedFlag(sendInFlightByChatId, selectedConversationStreamScopeKey ?? undefined),
     stoppingChatIds, chatSendLocksRef, recoveryDiscovery, setChatSendRecovery, sendMessage,
@@ -3385,7 +3533,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         },
       },
     );
-  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || serverActiveGenerationId)); const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation); const interruptedContinuationMessage = selectedConversationHasActiveReply ? null : latestContinuableInterruptedChatMessage(visibleMessages); const canContinueInterruptedConversation = Boolean(selectedConversation && interruptedContinuationMessage && !selectedConversationExternalBound); const retryFailedMessage = useCallback(
+  }; const selectedConversationOwnerLoss = Boolean(selectedConversation && serverOwnerLostGeneration); const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || serverActiveGenerationId)); const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation); const interruptedContinuationMessage = selectedConversationHasActiveReply || selectedConversationOwnerLoss ? null : latestContinuableInterruptedChatMessage(visibleMessages); const canContinueInterruptedConversation = Boolean(selectedConversation && interruptedContinuationMessage && !selectedConversationExternalBound); const retryFailedMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (!sourceUserMessage) {
         pushToast({
@@ -3493,7 +3641,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const hasSubmittableComposerDraft = canSubmitChatResponseAnnotations(draft, responseAnnotationState);
   const activeStreamStopState = activeStream?.state === "stopping" || activeStream?.state === "stopped";
   const selectedStopRequestPending = Boolean(selectedConversation && stoppingChatIds.has(selectedConversation.id));
-  const sendButtonMode = chatComposerSendButtonMode({
+  const sendButtonMode = selectedConversationOwnerLoss ? "send" : chatComposerSendButtonMode({
     newConversationSendInFlight,
     activeSendInFlight,
     hasActiveStream: Boolean(activeStream),
@@ -3587,7 +3735,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     composerUnavailable,
     sendButtonMode,
     hasDraft: hasSubmittableComposerDraft,
-  }) || recoveryCheckBlocksSubmit || nativeFirstSendGate || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery);
+  }) || recoveryCheckBlocksSubmit || nativeFirstSendGate || Boolean(recoveryDiscovery.problem) || Boolean(activeChatSendRecovery) || selectedConversationOwnerLoss || nativeRecoveryUnavailable;
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
@@ -3599,7 +3747,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     )
     || activeQueueItems.some((item) => item.status === "queued" || item.status === "failed_actionable"),
   );
-  const canStopSelectedConversationReply = Boolean(selectedConversation && !selectedStopRequestPending && !activeStreamStopState && (activeSendInFlight || serverActiveGenerationId));
+  const canStopSelectedConversationReply = Boolean(selectedConversation && !selectedConversationOwnerLoss && !selectedStopRequestPending && !activeStreamStopState && (activeSendInFlight || serverActiveGenerationId));
   const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
   useEffect(() => {
     const editable = composerSurfaceRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
@@ -3950,7 +4098,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         && !serverActiveGenerationId && !activeSendInFlight ? (
         <p role="status" className="mt-2 text-sm text-muted-foreground">Stopped</p>
       ) : null}
-      {activeChatSendRecovery?.action === "retry" ? (
+      {activeChatSendRecovery?.action === "retry" && !selectedConversationOwnerLoss ? (
         <ChatSendRecoveryNotice
           action="retry"
           disabled={Boolean(selectedConversationStreamScopeKey && sendInFlightByChatId[selectedConversationStreamScopeKey])}
@@ -3968,7 +4116,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             });
           }}
         />
-      ) : acceptedResponseReconnect.showReconnectProblem ? (
+      ) : acceptedResponseReconnect.showReconnectProblem && !selectedConversationOwnerLoss ? (
         <ChatSendRecoveryProblem
           message="The response connection was interrupted."
           onRetry={acceptedResponseReconnect.retry}
@@ -3996,8 +4144,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             {visibleQueueItems.map((item, index) => {
               const itemSteering = steeringQueuedItemIds.has(item.id);
               const delivery = projectChatQueueDelivery(item, itemSteering);
-              const itemEditable = delivery.state === "queued" && !itemSteering;
-              const itemRetryable = delivery.state === "failed" && !itemSteering;
+              const itemEditable = !selectedConversationOwnerLoss && delivery.state === "queued" && !itemSteering;
+              const itemRetryable = !selectedConversationOwnerLoss && delivery.state === "failed" && !itemSteering;
               return (
                 <div key={item.id} data-testid="chat-running-queue-item" className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-background/70 px-2.5 py-2 text-sm">
                   <span className="shrink-0 text-xs font-semibold text-muted-foreground">#{index + 1}</span>
@@ -4139,7 +4287,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           ref={composerEditorRef}
           scrollRef={composerEditorScrollRef}
           value={draft}
-          readOnly={newConversationSendInFlight}
+          readOnly={newConversationSendInFlight || selectedConversationOwnerLoss}
           onChange={handleComposerDraftChange}
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
@@ -4153,7 +4301,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           )}
           placeholder={composerPlaceholder}
           onSubmit={() => {
-            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking || nativeFirstSendGate) return;
+            if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending || recoveryDiscovery.checking || nativeFirstSendGate || selectedConversationOwnerLoss) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
               void queueComposerMessage(selectedConversation);
               return;
@@ -4667,6 +4815,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   localizeText={localizeChatProcessText}
                 />
               </div>
+              {selectedConversationOwnerLoss ? (
+                <div role="status" data-testid="chat-owner-loss-blocked" className="mx-4 mt-2.5 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200 md:mx-5">
+                  {CHAT_STOP_OWNER_LOST_MESSAGE}
+                </div>
+              ) : nativeRecoveryUnavailable ? (
+                <div role="status" data-testid="chat-recovery-status-unavailable" className="mx-4 mt-2.5 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200 md:mx-5">
+                  {CHAT_RECOVERY_STATUS_UNAVAILABLE_MESSAGE}
+                </div>
+              ) : null}
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
                   <div className={cn(

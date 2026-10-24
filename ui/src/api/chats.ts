@@ -6,6 +6,7 @@ import type {
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
+  NativeChatRecoveryRead,
   ChatOperationProposalDecisionAction,
   ChatQueueClaimResponse,
   ChatQueueSnapshot,
@@ -94,6 +95,8 @@ export type NativeChatCapabilities = {
   firstSend: boolean;
   readTurn: boolean;
   nativeControls: boolean;
+  /** Older native listeners predate the durable recovery read endpoint. */
+  recoveryRead?: boolean;
 };
 
 export type NativeChatTurnRead = {
@@ -269,6 +272,62 @@ function parseNativeChatControlRead(
   return value as NativeChatControlRead;
 }
 
+function parseNativeChatRecoveryRead(
+  value: unknown,
+  chatId: string,
+  orgId: string,
+): NativeChatRecoveryRead {
+  const topLevelKeys = ["executionAuthority", "orgId", "conversationId", "recovery"];
+  if (!isRecord(value)
+    || Object.keys(value).length !== topLevelKeys.length
+    || topLevelKeys.some((key) => !Object.hasOwn(value, key))
+    || value.executionAuthority !== "native_rust"
+    || value.orgId !== orgId
+    || value.conversationId !== chatId) {
+    throw new Error("Native Chat returned an invalid recovery projection");
+  }
+  if (value.recovery === null) {
+    return {
+      executionAuthority: "native_rust",
+      orgId,
+      conversationId: chatId,
+      recovery: null,
+    };
+  }
+
+  const recovery = value.recovery;
+  const recoveryKeys = [
+    "generationId", "runId", "attemptEpoch", "generationStatus", "controlState", "cleanupState",
+  ];
+  if (!isRecord(recovery)
+    || Object.keys(recovery).length !== recoveryKeys.length
+    || recoveryKeys.some((key) => !Object.hasOwn(recovery, key))
+    || typeof recovery.generationId !== "string"
+    || recovery.generationId.length === 0
+    || typeof recovery.runId !== "string"
+    || recovery.runId.length === 0
+    || !Number.isSafeInteger(recovery.attemptEpoch)
+    || Number(recovery.attemptEpoch) < 1
+    || recovery.generationStatus !== "interrupted_unverified"
+    || recovery.controlState !== "control_lost"
+    || recovery.cleanupState !== "unknown") {
+    throw new Error("Native Chat returned an invalid recovery projection");
+  }
+  return {
+    executionAuthority: "native_rust",
+    orgId,
+    conversationId: chatId,
+    recovery: {
+      generationId: recovery.generationId as string,
+      runId: recovery.runId as string,
+      attemptEpoch: recovery.attemptEpoch as number,
+      generationStatus: "interrupted_unverified",
+      controlState: "control_lost",
+      cleanupState: "unknown",
+    },
+  };
+}
+
 export type NativeFirstSendInput = {
   clientMutationId: string;
   body: string;
@@ -299,11 +358,15 @@ export type NativeFirstSendReconciliation =
 function isNativeChatCapabilities(value: unknown): value is NativeChatCapabilities {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
-  return Object.keys(candidate).sort().join(",") === "executionAuthority,firstSend,nativeControls,readTurn"
+  const keys = Object.keys(candidate).sort().join(",");
+  const hasRecoveryRead = keys === "executionAuthority,firstSend,nativeControls,readTurn,recoveryRead";
+  const hasLegacyShape = keys === "executionAuthority,firstSend,nativeControls,readTurn";
+  return (hasRecoveryRead || hasLegacyShape)
     && candidate.executionAuthority === "native_rust"
     && typeof candidate.firstSend === "boolean"
     && typeof candidate.readTurn === "boolean"
-    && typeof candidate.nativeControls === "boolean";
+    && typeof candidate.nativeControls === "boolean"
+    && (!hasRecoveryRead || typeof candidate.recoveryRead === "boolean");
 }
 
 
@@ -437,7 +500,7 @@ export const chatsApi = {
       if (!isNativeChatCapabilities(value)) {
         throw new Error("Native Chat capability response was invalid. Sending is paused.");
       }
-      return value;
+      return { ...value, recoveryRead: value.recoveryRead === true };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404
         && error.body !== null && typeof error.body === "object"
@@ -862,6 +925,12 @@ export const chatsApi = {
       chatId,
       orgId,
       generationId,
+    ),
+  readNativeChatRecovery: async (chatId: string, orgId: string) =>
+    parseNativeChatRecoveryRead(
+      await api.get<unknown>(`/chats/${encodeURIComponent(chatId)}/messages/stream/recovery`),
+      chatId,
+      orgId,
     ),
   uploadAttachment: async (orgId: string, chatId: string, messageId: string, file: File) => {
     const buffer = await file.arrayBuffer();

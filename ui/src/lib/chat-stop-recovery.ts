@@ -1,3 +1,4 @@
+import type { NativeChatControlRead } from "@/api/chats";
 import type {
   ChatStreamDraft,
   ChatStreamDraftState,
@@ -17,6 +18,19 @@ export type ChatStopRequest = {
   renderedBodyHash?: string;
 };
 
+export function hasCompleteNativeStopFence(request: ChatStopRequest) {
+  return typeof request.expectedGenerationId === "string"
+    && request.expectedGenerationId.length > 0
+    && Number.isSafeInteger(request.expectedAttemptEpoch)
+    && Number(request.expectedAttemptEpoch) >= 1
+    && Number.isSafeInteger(request.expectedControlVersion)
+    && Number(request.expectedControlVersion) >= 0
+    && Number.isSafeInteger(request.lastCommittedRenderSeq)
+    && Number(request.lastCommittedRenderSeq) >= 0
+    && typeof request.renderedBodyHash === "string"
+    && /^[0-9a-f]{64}$/u.test(request.renderedBodyHash);
+}
+
 export type PendingChatStopRecovery = {
   version: 1;
   orgId: string;
@@ -30,6 +44,81 @@ export type PendingChatStopRecovery = {
   /** Exact send identity associated with this Stop action; never inferred later. */
   sendMutationIdentity?: NativeChatStopInputIdentity;
 };
+
+/**
+ * Repairs old incomplete Native Stop records only when their original target
+ * is still the authoritative generation and attempt. It never derives a
+ * target from the currently active queue snapshot.
+ */
+export function hydrateIncompleteNativeChatStopRecovery(
+  recovery: PendingChatStopRecovery,
+  control: NativeChatControlRead | null,
+  emptyBodyHash: string,
+): PendingChatStopRecovery | null {
+  const { request, frozenDraft } = recovery;
+  if (!control
+    || control.executionAuthority !== "native_rust"
+    || control.orgId !== recovery.orgId
+    || control.conversationId !== recovery.chatId
+    || control.runtimeTerminal) return null;
+
+  const generationId = request.expectedGenerationId ?? frozenDraft?.generationId ?? null;
+  const attemptEpoch = request.expectedAttemptEpoch ?? frozenDraft?.attemptEpoch ?? null;
+  if (!generationId
+    || !Number.isSafeInteger(attemptEpoch)
+    || Number(attemptEpoch) < 1
+    || control.generationId !== generationId
+    || control.attemptEpoch !== attemptEpoch
+    || (request.expectedGenerationId !== undefined && request.expectedGenerationId !== control.generationId)
+    || (request.expectedAttemptEpoch !== undefined && request.expectedAttemptEpoch !== control.attemptEpoch)
+    || (frozenDraft?.generationId && frozenDraft.generationId !== generationId)
+    || (frozenDraft?.attemptEpoch != null && frozenDraft.attemptEpoch !== attemptEpoch)
+    || !Number.isSafeInteger(control.controlVersion)
+    || control.controlVersion < 0
+    || !Number.isSafeInteger(control.lastSequence)
+    || control.lastSequence < 0) return null;
+
+  const draftCutoffIsValid = frozenDraft?.generationId === generationId
+    && frozenDraft.attemptEpoch === attemptEpoch
+    && Number.isSafeInteger(frozenDraft.lastCommittedRenderSeq)
+    && Number(frozenDraft.lastCommittedRenderSeq) >= 0
+    && Number(frozenDraft.lastCommittedRenderSeq) <= control.lastSequence
+    && typeof frozenDraft.renderedBodyHash === "string"
+    && /^[0-9a-f]{64}$/u.test(frozenDraft.renderedBodyHash);
+  const checkpointCutoffIsValid = control.lastClientCheckpointSeq !== null
+    && Number.isSafeInteger(control.lastClientCheckpointSeq)
+    && control.lastClientCheckpointSeq >= 0
+    && control.lastClientCheckpointSeq <= control.lastSequence
+    && typeof control.lastClientCheckpointHash === "string"
+    && /^[0-9a-f]{64}$/u.test(control.lastClientCheckpointHash);
+  const cutoff = draftCutoffIsValid
+    ? {
+        sequence: frozenDraft.lastCommittedRenderSeq!,
+        hash: frozenDraft.renderedBodyHash!,
+      }
+    : checkpointCutoffIsValid
+      ? {
+          sequence: control.lastClientCheckpointSeq!,
+          hash: control.lastClientCheckpointHash!,
+        }
+      : frozenDraft?.body.length
+        ? null
+        : { sequence: 0, hash: emptyBodyHash };
+  if (!cutoff || !/^[0-9a-f]{64}$/u.test(cutoff.hash)) return null;
+
+  return {
+    ...recovery,
+    executionAuthority: "native_rust",
+    request: {
+      controlActionId: request.controlActionId,
+      expectedGenerationId: control.generationId,
+      expectedAttemptEpoch: control.attemptEpoch,
+      expectedControlVersion: control.controlVersion,
+      lastCommittedRenderSeq: cutoff.sequence,
+      renderedBodyHash: cutoff.hash,
+    },
+  };
+}
 
 export type NativeChatStopInputIdentity =
   | { kind: "chat_send"; mutation: ChatSendMutationIdentity }

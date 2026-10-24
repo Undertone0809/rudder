@@ -4,9 +4,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { DESKTOP_UPDATE_FORCE_ARG, DESKTOP_UPDATE_QUIT_ARG } from "./desktop-update-flow.js";
+import { stopNativeChatRun } from "./native-chat-stop.js";
 
 type DesktopOrganization = { id: string; name: string; urlKey?: string | null };
-type DesktopLiveRun = { id: string; status: string; agentId?: string | null; agentName: string; issueId?: string | null };
+type DesktopLiveRun = {
+  id: string;
+  status: string;
+  agentId?: string | null;
+  agentName: string;
+  issueId?: string | null;
+  executionAuthority?: "legacy_ts" | "native_rust";
+  chatGenerationId?: string | null;
+  chatConversationId?: string | null;
+};
 type ActiveRunSummary = { totalRuns: number; organizations: Array<{ id: string; name: string; runs: DesktopLiveRun[] }> };
 type DesktopUpdateBlocker = {
   runId: string;
@@ -20,6 +30,7 @@ type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlock
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
+const QUIT_RUN_INSPECTION_TIMEOUT_MS = 5_000;
 // Reply before the updater's 8s deadline, including cancellation and settlement.
 const UPDATE_QUIT_INSPECTION_TIMEOUT_MS = 7_000;
 const QUIT_RUN_SETTLE_TIMEOUT_MS = 5_000;
@@ -223,17 +234,26 @@ export function createDesktopQuitFlow(context: {
   }
 
   async function cancelActiveRunsBeforeQuit(summary: ActiveRunSummary): Promise<void> {
-    const runIds = summary.organizations.flatMap((organization) => organization.runs.map((run) => run.id));
-    if (runIds.length === 0) return;
+    const targets = summary.organizations.flatMap((organization) => organization.runs.map((run) => ({
+      run, organizationId: organization.id,
+    })));
+    if (targets.length === 0) return;
 
-    const results = await Promise.allSettled(runIds.map(async (runId) => {
+    const results = await Promise.allSettled(targets.map(async ({ run, organizationId }) => {
+      const runId = run.id;
       const controller = new AbortController();
       let timeout: ReturnType<typeof setTimeout> | null = null;
-      const request = desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
-        method: "POST",
-        body: JSON.stringify({}),
-        signal: controller.signal,
-      });
+      const request = run.executionAuthority === "native_rust"
+        ? stopNativeChatRun({
+          target: { organizationId, conversationId: run.chatConversationId, generationId: run.chatGenerationId },
+          request: desktopApiRequest,
+          signal: controller.signal,
+        })
+        : desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({}),
+          signal: controller.signal,
+        });
       const deadline = new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
           controller.abort();
@@ -252,10 +272,10 @@ export function createDesktopQuitFlow(context: {
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length > 0) {
       console.warn(
-        `[rudder-desktop] failed to cancel ${failed.length}/${runIds.length} active runs before quit`,
+        `[rudder-desktop] failed to cancel ${failed.length}/${targets.length} active runs before quit`,
         failed.map((result) => result.status === "rejected" ? result.reason : null),
       );
-      throw new Error(`Could not cancel ${failed.length}/${runIds.length} active run${runIds.length === 1 ? "" : "s"} before quitting.`);
+      throw new Error(`Could not cancel ${failed.length}/${targets.length} active run${targets.length === 1 ? "" : "s"} before quitting.`);
     }
   }
 
@@ -361,10 +381,22 @@ export function createDesktopQuitFlow(context: {
           return;
         }
         let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
+        const inspectionController = new AbortController();
+        let inspectionTimer: ReturnType<typeof setTimeout> | undefined;
         try {
-          activeRuns = await listActiveRunsForQuit();
+          activeRuns = await Promise.race([
+            listActiveRunsForQuit(inspectionController.signal),
+            new Promise<never>((_, reject) => {
+              inspectionTimer = setTimeout(() => {
+                inspectionController.abort();
+                reject(new Error("Timed out inspecting active runs before quit."));
+              }, QUIT_RUN_INSPECTION_TIMEOUT_MS);
+            }),
+          ]);
         } catch (error) {
           console.warn("[rudder-desktop] failed to inspect active runs before quit; continuing with normal quit", error);
+        } finally {
+          clearTimeout(inspectionTimer);
         }
 
         if (activeRuns.totalRuns > 0) {

@@ -87,6 +87,7 @@ export const chatGenerationEventKindSchema = z.enum([
   "stop_requested",
   "output_cutoff",
   "runtime_terminal",
+  "control_lost",
   "late_output_dropped",
   "terminal_projection_requested",
   "terminal_projected",

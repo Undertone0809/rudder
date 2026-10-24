@@ -430,6 +430,23 @@ impl CursorAcpTransport {
         timeout: Duration,
         mut cleanup_tick: impl FnMut(Duration),
     ) -> Result<(), CursorAcpTransportError> {
+        self.stop_with_grace_hook_using(
+            grace,
+            timeout,
+            &mut cleanup_tick,
+            |transport, command| transport.host.send(command),
+            |transport, wait| transport.receive_cleanup_host(wait),
+        )
+    }
+
+    fn stop_with_grace_hook_using(
+        &mut self,
+        grace: Duration,
+        timeout: Duration,
+        cleanup_tick: &mut impl FnMut(Duration),
+        mut send_command: impl FnMut(&mut Self, Command) -> Result<(), HostError>,
+        mut receive_cleanup: impl FnMut(&mut Self, Duration) -> Result<(), CursorAcpTransportError>,
+    ) -> Result<(), CursorAcpTransportError> {
         if grace.is_zero() || grace > Duration::from_secs(60) || timeout.is_zero() {
             return Err(CursorAcpTransportError::InvalidLaunch);
         }
@@ -443,13 +460,18 @@ impl CursorAcpTransport {
                 .map(|_| ())
                 .ok_or(CursorAcpTransportError::Closed);
         }
-        self.host
-            .send(Command::Stop {
-                protocol_version: Some(ProtocolVersion::default()),
-                request_id: Some(self.request_id.clone()),
-                grace_ms: Some(grace.as_millis() as u64),
-            })
-            .map_err(map_host_error)?;
+        let stop = Command::Stop {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some(self.request_id.clone()),
+            grace_ms: Some(grace.as_millis() as u64),
+        };
+        match send_command(self, stop) {
+            Ok(()) => {}
+            Err(HostError::Closed) => {
+                return self.drain_after_closed_stop_send(&mut receive_cleanup);
+            }
+            Err(error) => return Err(map_host_error(error)),
+        }
         let deadline = Instant::now() + timeout;
         cleanup_tick(deadline.saturating_duration_since(Instant::now()));
         while !self.terminal {
@@ -457,7 +479,7 @@ impl CursorAcpTransport {
             if remaining.is_zero() {
                 break;
             }
-            match self.receive_cleanup_host(remaining.min(HOST_RECEIVE_QUANTUM)) {
+            match receive_cleanup(self, remaining.min(HOST_RECEIVE_QUANTUM)) {
                 Ok(()) => {}
                 Err(CursorAcpTransportError::Timeout) => {}
                 Err(error) => return Err(error),
@@ -473,7 +495,7 @@ impl CursorAcpTransport {
             if self.terminal {
                 break;
             }
-            match self.receive_cleanup_host(Duration::ZERO) {
+            match receive_cleanup(self, Duration::ZERO) {
                 Ok(()) => {}
                 Err(CursorAcpTransportError::Timeout) => break,
                 Err(error) => return Err(error),
@@ -481,6 +503,35 @@ impl CursorAcpTransport {
         }
         if !self.terminal {
             return Err(CursorAcpTransportError::Timeout);
+        }
+        if self.cleanup_proof.is_none() {
+            self.cleanup_proof = self.host.take_cleanup_proof();
+        }
+        self.cleanup_proof
+            .as_ref()
+            .map(|_| ())
+            .ok_or(CursorAcpTransportError::Closed)
+    }
+
+    /// A disconnected/full command channel can race with a terminal lifecycle
+    /// event already queued by the owned host. Inspect only that already-ready
+    /// bounded queue; never infer cleanup from EOF or wait for a new event.
+    fn drain_after_closed_stop_send(
+        &mut self,
+        receive_cleanup: &mut impl FnMut(&mut Self, Duration) -> Result<(), CursorAcpTransportError>,
+    ) -> Result<(), CursorAcpTransportError> {
+        for _ in 0..MAX_FINAL_HOST_DRAIN_EVENTS {
+            if self.terminal {
+                break;
+            }
+            match receive_cleanup(self, Duration::ZERO) {
+                Ok(()) => {}
+                Err(CursorAcpTransportError::Timeout | CursorAcpTransportError::Closed) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        if !self.terminal {
+            return Err(CursorAcpTransportError::Closed);
         }
         if self.cleanup_proof.is_none() {
             self.cleanup_proof = self.host.take_cleanup_proof();
@@ -995,6 +1046,142 @@ mod tests {
             cleanup_proof: None,
             session: CursorAcpSession::new(),
         }
+    }
+
+    #[cfg(unix)]
+    fn completed_embedded_transport() -> (CursorAcpTransport, Value) {
+        let mut transport = transport_for_queued_message_test();
+        let cwd = std::env::current_dir().expect("test working directory");
+        let runtime_root = tempdir().expect("isolated runtime root");
+        let start = Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some(transport.request_id.clone()),
+            executable: "/bin/sh".into(),
+            argv: vec!["-c".into(), "exit 0".into()],
+            cwd: cwd.to_string_lossy().into_owned(),
+            env: BTreeMap::new(),
+            owner_token: Some(transport.owner_token.clone()),
+            runtime_root: Some(runtime_root.path().to_string_lossy().into_owned()),
+            stdin: None,
+            interactive_stdin: true,
+            grace_ms: Some(500),
+        };
+        start.validate().expect("valid synthetic child launch");
+        transport.host.send(start).expect("start synthetic child");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let terminal = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "synthetic child reaches terminal");
+            match transport
+                .host
+                .receive(remaining.min(HOST_RECEIVE_QUANTUM))
+                .expect("owned host remains readable through terminal")
+            {
+                HostEvent::Lifecycle(value) if value["type"] == "terminal" => break value,
+                HostEvent::Lifecycle(value) => {
+                    transport.observe_lifecycle(&value).unwrap_or_else(|error| {
+                        panic!(
+                            "unexpected startup lifecycle {} ({:?}): {error:?}",
+                            value["type"], value["errorCode"]
+                        )
+                    })
+                }
+                HostEvent::Stdout(_) => {}
+                HostEvent::Failure => panic!("synthetic child host failed"),
+            }
+        };
+        (transport, terminal)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn closed_stop_sender_drains_only_matching_terminal_cleanup_proof() {
+        fn stop_with_injected_queue(
+            transport: &mut CursorAcpTransport,
+            send_result: Result<(), HostError>,
+            events: &mut VecDeque<Value>,
+        ) -> Result<(), CursorAcpTransportError> {
+            transport.stop_with_grace_hook_using(
+                Duration::from_millis(500),
+                Duration::from_secs(1),
+                &mut |_| {},
+                |_, _| send_result,
+                |transport, _| {
+                    let Some(event) = events.pop_front() else {
+                        return Err(CursorAcpTransportError::Timeout);
+                    };
+                    transport.observe_lifecycle(&event)
+                },
+            )
+        }
+
+        // Seed a real, unforgeable proof by letting the embedded owner launch,
+        // reap, and report a short-lived child. The terminal is then queued at
+        // the adapter boundary while its Stop command sender is closed.
+        let (mut completed, terminal) = completed_embedded_transport();
+        assert!(completed.spawned, "real host startup was observed");
+        assert!(
+            !completed.terminal,
+            "test keeps the terminal queued at adapter"
+        );
+        assert!(completed.cleanup_proof.is_none());
+        assert_eq!(terminal["type"], "terminal");
+        let mut queued_terminal = VecDeque::from([terminal.clone()]);
+        assert_eq!(
+            stop_with_injected_queue(&mut completed, Err(HostError::Closed), &mut queued_terminal,),
+            Ok(())
+        );
+        assert!(queued_terminal.is_empty());
+        assert!(completed.take_cleanup_proof().is_some());
+
+        // EOF/empty queue and a terminal-shaped JSON value without a host
+        // minted proof are not cleanup evidence.
+        let mut absent = transport_for_queued_message_test();
+        absent.spawned = true;
+        assert_eq!(
+            stop_with_injected_queue(&mut absent, Err(HostError::Closed), &mut VecDeque::new(),),
+            Err(CursorAcpTransportError::Closed)
+        );
+
+        let mut unproven = transport_for_queued_message_test();
+        unproven.spawned = true;
+        let mut unproven_terminal = terminal.clone();
+        unproven_terminal["cleanupProven"] = serde_json::Value::Bool(false);
+        let mut unproven_queue = VecDeque::from([unproven_terminal]);
+        assert_eq!(
+            stop_with_injected_queue(&mut unproven, Err(HostError::Closed), &mut unproven_queue,),
+            Err(CursorAcpTransportError::Closed)
+        );
+
+        let mut wrong_owner = transport_for_queued_message_test();
+        wrong_owner.spawned = true;
+        let mut wrong_identity_terminal = terminal.clone();
+        wrong_identity_terminal["ownerToken"] = serde_json::Value::String("other-owner".into());
+        let mut wrong_identity_queue = VecDeque::from([wrong_identity_terminal]);
+        assert_eq!(
+            stop_with_injected_queue(
+                &mut wrong_owner,
+                Err(HostError::Closed),
+                &mut wrong_identity_queue,
+            ),
+            Err(CursorAcpTransportError::InvalidMessage)
+        );
+
+        // Only a closed sender permits the ready-queue drain. Other send
+        // failures retain their original classification and consume nothing.
+        let mut failed_send = transport_for_queued_message_test();
+        failed_send.spawned = true;
+        let mut untouched_queue = VecDeque::from([terminal]);
+        assert_eq!(
+            stop_with_injected_queue(
+                &mut failed_send,
+                Err(HostError::Timeout),
+                &mut untouched_queue,
+            ),
+            Err(CursorAcpTransportError::Timeout)
+        );
+        assert_eq!(untouched_queue.len(), 1);
     }
 
     fn private_extension_request_frame(id: &str) -> Vec<u8> {

@@ -40,7 +40,7 @@ pub async fn request_stop(
     )
     .await?;
     let generation = sqlx::query(
-        "SELECT status,attempt_epoch,control_version,control_owner_token,
+        "SELECT status,attempt_epoch,control_version,control_state,control_owner_token,
                 accepted_through_seq,frozen_body_hash,last_client_checkpoint_seq,last_client_checkpoint_hash,
                 runtime_terminal_at IS NOT NULL AS terminal
          FROM chat_generations WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid
@@ -149,6 +149,25 @@ pub async fn request_stop(
         } else {
             false
         };
+        let control_lost = if reason.as_deref() == Some("native_chat_owner_lost_cleanup_unknown")
+            && local_disposition == "control_lost"
+            && resolved
+        {
+            recovery::action_matches_owner_loss(
+                &mut tx,
+                org,
+                &request.conversation_id,
+                &request.generation_id,
+                &hint.run_id,
+                &attempt_id,
+                request.expected_attempt_epoch,
+                &current_pin,
+                &evidence,
+            )
+            .await?
+        } else {
+            false
+        };
         let input_disposition = if terminal_stop
             && evidence["terminalization"]["receipt"]["controlActionId"]
                 == request.control_action_id
@@ -167,6 +186,9 @@ pub async fn request_stop(
         let outcome = match reason.as_deref() {
             Some("generation_result_already_committed") => StopOutcome::CompletionCommitted,
             Some("generation_runtime_already_terminal") => StopOutcome::AlreadyTerminal,
+            Some("native_chat_owner_lost_cleanup_unknown") if control_lost => {
+                StopOutcome::ControlLost
+            }
             Some("generation_stop_already_in_progress") if terminal_stop => StopOutcome::Stopped,
             Some("generation_stop_already_in_progress")
                 if matches!(local_disposition.as_str(), "stop_requested" | "stopping") =>
@@ -210,6 +232,114 @@ pub async fn request_stop(
     let status: String = generation.try_get("status")?;
     let terminal: bool = generation.try_get("terminal")?;
     let current_version: i32 = generation.try_get("control_version")?;
+    let control_state: String = generation.try_get("control_state")?;
+    if status == "interrupted_unverified" && control_state == "control_lost" {
+        if actor.actor().kind != "user" {
+            return Err(http(
+                403,
+                "Only an authenticated operator can resolve lost Chat control",
+            ));
+        }
+        runtime_bindings::authorize_chat_target_run_mutation_tx(
+            &mut tx,
+            actor,
+            org,
+            &request.conversation_id,
+            &hint.agent_id,
+            &hint.run_id,
+        )
+        .await?;
+        auth::authorize_org(&mut tx, actor, org).await?;
+        if current_version != request.expected_control_version {
+            return Err(http(409, "Chat generation control version changed"));
+        }
+        let incident = recovery::current_owner_loss_incident(
+            &mut tx,
+            org,
+            &request.conversation_id,
+            &request.generation_id,
+            &hint.run_id,
+            &attempt_id,
+            request.expected_attempt_epoch,
+            &pin,
+        )
+        .await?
+        .ok_or_else(|| http(409, "Native Chat owner-loss state is not recoverable"))?;
+        let owner_loss = json!({
+            "version": 1,
+            "incidentControlActionId": incident,
+            "runId": hint.run_id,
+            "attemptId": attempt_id,
+            "generationAttemptEpoch": request.expected_attempt_epoch,
+            "disposition": "control_lost",
+            "cleanupState": "unknown",
+        });
+        sqlx::query(
+            "SELECT set_config('rudder.native_chat_write','native_chat:control_lost_retry',true)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        let inserted: Option<String> = sqlx::query_scalar(
+            "INSERT INTO chat_control_actions(id,org_id,expected_generation_id,expected_attempt_epoch,
+              expected_control_version,action_kind,local_disposition,provider_disposition,
+              control_owner_token,requested_render_seq,requested_body_hash,accepted_through_seq,
+              frozen_body_hash,last_error,resolved_at,provider_evidence)
+             VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,'stop','control_lost','not_sent',$6,$7,$8,$9,$10,$11,
+              clock_timestamp(),$12) ON CONFLICT(id) DO NOTHING RETURNING id::text",
+        )
+        .bind(&request.control_action_id)
+        .bind(org)
+        .bind(&request.generation_id)
+        .bind(request.expected_attempt_epoch)
+        .bind(request.expected_control_version)
+        .bind(generation.try_get::<Option<String>, _>("control_owner_token")?)
+        .bind(request.requested_render_seq)
+        .bind(&requested_hash)
+        .bind(generation.try_get::<Option<i32>, _>("accepted_through_seq")?)
+        .bind(generation.try_get::<Option<String>, _>("frozen_body_hash")?)
+        .bind("native_chat_owner_lost_cleanup_unknown")
+        .bind(json!({"authority":"native_rust_control_v1","executionPin":pin,"ownerLoss":owner_loss}))
+        .fetch_optional(&mut *tx)
+        .await?;
+        if inserted.is_none() {
+            return Err(http(
+                409,
+                "Control action id was already used for a different Stop request",
+            ));
+        }
+        let audit = ActivityActor {
+            actor_type: "user",
+            actor_id: actor.actor().id.clone(),
+            run_id: Some(hint.run_id.clone()),
+        };
+        write_activity(
+            &mut tx,
+            org,
+            &audit,
+            "runtime.native_chat.control_lost_stop_replayed",
+            "chat_generation",
+            &request.generation_id,
+            Some(&json!({
+                "controlActionId": request.control_action_id,
+                "incidentControlActionId": incident,
+                "code": "native_chat_owner_lost_cleanup_unknown",
+                "cleanupState": "unknown",
+            })),
+        )
+        .await?;
+        auth::authorize_org(&mut tx, actor, org).await?;
+        tx.commit().await?;
+        return Ok(StopReceipt {
+            control_action_id: request.control_action_id.clone(),
+            generation_id: request.generation_id.clone(),
+            outcome: StopOutcome::ControlLost,
+            idempotent: false,
+            applied_control_version: None,
+            accepted_through_seq: generation.try_get("accepted_through_seq")?,
+            frozen_body_hash: generation.try_get("frozen_body_hash")?,
+            input_disposition: None,
+        });
+    }
     let mut receipt = StopReceipt {
         control_action_id: request.control_action_id.clone(),
         generation_id: request.generation_id.clone(),

@@ -23,6 +23,9 @@ struct LiveRunReadRequest {
 const PROJECTION: &str = r#"
 jsonb_build_object(
   'id', r.id::text,
+  'executionAuthority', r.execution_authority,
+  'chatGenerationId', r.chat_generation_id::text,
+  'chatConversationId', r.chat_conversation_id::text,
   'status', r.status,
   'executionPhase', r.running_substate,
   'invocationSource', r.invocation_source,

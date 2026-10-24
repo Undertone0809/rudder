@@ -14,6 +14,8 @@ pub(super) mod pin;
 mod preclaim;
 mod projection;
 mod reads;
+mod recovery;
+mod recovery_read;
 mod stop;
 
 pub use authority::{
@@ -23,6 +25,8 @@ pub use checkpoint::{ClientCheckpointReceipt, ClientCheckpointRequest, record_cl
 pub use messages::{ReadTurn, TurnView, read_turn, read_turn_for_control};
 pub use preclaim::{FinalizeUnclaimedStop, UnclaimedStopReceipt, finalize_unclaimed_stop};
 pub use reads::{Event, EventPage, ReadEvents, read_events};
+pub use recovery::recover_expired_claimed_stop;
+pub use recovery_read::{RecoveryView, UnverifiedCleanup, read_recovery_state};
 pub use stop::request_stop;
 
 #[derive(Clone, Deserialize)]
@@ -45,6 +49,9 @@ pub enum StopOutcome {
     Stopped,
     CompletionCommitted,
     AlreadyTerminal,
+    /// Stop intent is settled, but execution ownership was lost and provider
+    /// cleanup remains unverified. This never means the provider stopped.
+    ControlLost,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -134,6 +134,35 @@ async fn control_state(pool: &sqlx::PgPool, generation_id: &str) -> ControlState
     }
 }
 
+async fn expire_control_owner_leases(pool: &sqlx::PgPool, generation_id: &str, run_id: &str) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_control',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let generation_rows = sqlx::query(
+        "UPDATE chat_generations SET control_lease_expires_at=clock_timestamp()-interval '1 second'
+         WHERE id=$1::uuid",
+    )
+    .bind(generation_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap()
+    .rows_affected();
+    let run_rows = sqlx::query(
+        "UPDATE heartbeat_runs SET execution_lease_expires_at=clock_timestamp()-interval '1 second'
+         WHERE id=$1::uuid",
+    )
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(generation_rows, 1);
+    assert_eq!(run_rows, 1);
+    tx.commit().await.unwrap();
+}
+
 async fn add_private_projection_canaries(pool: &sqlx::PgPool, generation_id: &str) {
     let mut tx = pool.begin().await.unwrap();
     sqlx::query(
@@ -652,6 +681,19 @@ async fn public_control_http_uses_real_auth_and_postgres_without_provider_dispat
     assert!(legacy_turn.get("sourceMessage").is_none());
     assert!(legacy_turn.get("runId").is_none());
 
+    // Exercise recovery only after an actual Rust execution claim. Admission
+    // alone is not evidence that a worker owner existed.
+    let _claimed = persistence_chat::execution::claim(
+        &database.pool,
+        &actor,
+        fixture::ORG,
+        &run_id,
+        &_attempt_id,
+        host.context(),
+    )
+    .await
+    .expect("claim the admitted execution before testing owner loss");
+
     let (events_status, events_bytes) = request(
         &client,
         Method::GET,
@@ -757,10 +799,10 @@ async fn public_control_http_uses_real_auth_and_postgres_without_provider_dispat
     let (retry_status, retry_bytes) = request(
         &client,
         Method::POST,
-        stop_url,
+        stop_url.clone(),
         Some(&cookie),
         Some(ALLOWED_ORIGIN),
-        Some(stop),
+        Some(stop.clone()),
     )
     .await;
     assert_eq!(retry_status, StatusCode::OK);
@@ -774,6 +816,156 @@ async fn public_control_http_uses_real_auth_and_postgres_without_provider_dispat
         first_stop["acceptedThroughSeq"]
     );
     assert_eq!(retry_stop["frozenBodyHash"], first_stop["frozenBodyHash"]);
+
+    // An already-claimed Stop remains pending while its owner is live. Once
+    // both DB-clock leases expire, the same public request resolves only the
+    // Stop intent as control_lost; it never claims provider exit or releases
+    // either admission hold.
+    expire_control_owner_leases(&database.pool, &generation_id, &run_id).await;
+    let (lost_status, lost_bytes) = request(
+        &client,
+        Method::POST,
+        stop_url.clone(),
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(stop.clone()),
+    )
+    .await;
+    assert_eq!(lost_status, StatusCode::OK);
+    let lost_stop: serde_json::Value = serde_json::from_slice(&lost_bytes).unwrap();
+    assert_eq!(lost_stop["stopped"], false);
+    assert_eq!(lost_stop["disposition"], "control_lost");
+    assert_eq!(lost_stop["idempotent"], false);
+
+    let recovery_url = format!(
+        "{base}/api/chats/{}/messages/stream/recovery",
+        fixture::CHAT
+    );
+    let (capability_status, capability_bytes) = request(
+        &client,
+        Method::GET,
+        format!("{base}/api/native-chat/capabilities"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(capability_status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&capability_bytes).unwrap()["recoveryRead"],
+        true
+    );
+    let (recovery_status, recovery_bytes) = request(
+        &client,
+        Method::GET,
+        recovery_url.clone(),
+        Some(&cookie),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(recovery_status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&recovery_bytes).unwrap(),
+        serde_json::json!({
+            "executionAuthority":"native_rust","orgId":fixture::ORG,"conversationId":fixture::CHAT,
+            "recovery":{
+                "generationId":generation_id,"runId":run_id,"attemptEpoch":1,
+                "generationStatus":"interrupted_unverified","controlState":"control_lost",
+                "cleanupState":"unknown"
+            }
+        })
+    );
+    assert!(!String::from_utf8_lossy(&recovery_bytes).contains(PRIVATE_OWNER));
+    let (anonymous_recovery, _) =
+        request(&client, Method::GET, recovery_url.clone(), None, None, None).await;
+    assert_eq!(anonymous_recovery, StatusCode::UNAUTHORIZED);
+    let (recovery_query, _) = request(
+        &client,
+        Method::GET,
+        format!("{recovery_url}?generationId={generation_id}"),
+        Some(&cookie),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(recovery_query, StatusCode::BAD_REQUEST);
+
+    let (lost_replay_status, lost_replay_bytes) = request(
+        &client,
+        Method::POST,
+        stop_url,
+        Some(&cookie),
+        Some(ALLOWED_ORIGIN),
+        Some(stop),
+    )
+    .await;
+    assert_eq!(lost_replay_status, StatusCode::OK);
+    let lost_replay: serde_json::Value = serde_json::from_slice(&lost_replay_bytes).unwrap();
+    assert_eq!(lost_replay["stopped"], false);
+    assert_eq!(lost_replay["disposition"], "control_lost");
+    assert_eq!(lost_replay["idempotent"], true);
+    assert_eq!(lost_replay["controlActionId"], lost_stop["controlActionId"]);
+
+    let (lost_turn_status, lost_turn_bytes) = request(
+        &client,
+        Method::GET,
+        turn_url.clone(),
+        Some(&cookie),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(lost_turn_status, StatusCode::OK);
+    let lost_turn: serde_json::Value = serde_json::from_slice(&lost_turn_bytes).unwrap();
+    assert_eq!(lost_turn["generationStatus"], "interrupted_unverified");
+    assert_eq!(lost_turn["runStatus"], "failed");
+    assert_eq!(lost_turn["nativeAdmissionHold"], true);
+
+    let (lost_events_status, lost_events_bytes) = request(
+        &client,
+        Method::GET,
+        events_url.clone(),
+        Some(&cookie),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(lost_events_status, StatusCode::OK);
+    let lost_events: serde_json::Value = serde_json::from_slice(&lost_events_bytes).unwrap();
+    assert_eq!(lost_events["events"].as_array().unwrap().len(), 5);
+    let control_lost_event = lost_events["events"].as_array().unwrap().last().unwrap();
+    assert_eq!(control_lost_event["eventKind"], "control_lost");
+    assert_eq!(
+        control_lost_event["payload"],
+        serde_json::json!({
+            "generationStatus":"interrupted_unverified",
+            "controlState":"control_lost",
+            "cleanupState":"unknown"
+        })
+    );
+    let lost_state: serde_json::Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object(
+           'generationHold',g.native_admission_hold,
+           'generationOwnerRetained',g.control_owner_token IS NOT NULL,
+           'runtimeTerminal',g.runtime_terminal_at IS NOT NULL,
+           'runHold',r.native_admission_hold,
+           'runOwnerRetained',r.execution_owner_token IS NOT NULL,
+           'processExited',r.process_exited_at IS NOT NULL)
+         FROM chat_generations g JOIN heartbeat_runs r ON r.chat_generation_id=g.id
+         WHERE g.id=$1::uuid",
+    )
+    .bind(&generation_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        lost_state,
+        serde_json::json!({
+            "generationHold":true,"generationOwnerRetained":true,"runtimeTerminal":false,
+            "runHold":true,"runOwnerRetained":true,"processExited":false
+        })
+    );
 
     seed_foreign_native_target(&database.pool, &user_id).await;
     let missing_chat = "31000000-0000-4000-8000-000000000002";
@@ -854,10 +1046,11 @@ async fn public_control_http_uses_real_auth_and_postgres_without_provider_dispat
         request(&client, Method::GET, events_url, Some(&cookie), None, None).await;
     assert_eq!(final_events_status, StatusCode::OK);
     let final_events: serde_json::Value = serde_json::from_slice(&final_events_bytes).unwrap();
-    assert_eq!(final_events["events"].as_array().unwrap().len(), 4);
+    assert_eq!(final_events["events"].as_array().unwrap().len(), 5);
     assert_eq!(final_events["events"][1]["eventKind"], "client_checkpoint");
     assert_eq!(final_events["events"][2]["eventKind"], "stop_requested");
     assert_eq!(final_events["events"][3]["eventKind"], "output_cutoff");
+    assert_eq!(final_events["events"][4]["eventKind"], "control_lost");
     let serialized = String::from_utf8_lossy(&final_events_bytes);
     assert!(!serialized.contains(PRIVATE_THREAD));
     assert!(!serialized.contains(PRIVATE_OWNER));
