@@ -902,7 +902,21 @@ pub(crate) async fn replay(
     {
         return Err(StoreError::InvalidReceipt);
     }
-    validate_receipt_result(metadata, &receipt)?;
+    let mut replay_metadata = metadata.clone();
+    if matches!(
+        &metadata.expected_receipt,
+        ExpectedReceipt::ProjectDelete { .. }
+    ) {
+        // Public delete replay begins before reading the Project row because
+        // the matching receipt is the only surviving copy of the response.
+        // Its command fingerprint is independent of these optimistic scope
+        // values, so validate the receipt against the persisted result scope.
+        replay_metadata.expected_version = resulting_version
+            .checked_sub(1)
+            .ok_or(StoreError::InvalidReceipt)?;
+        replay_metadata.fence_epoch = fence_epoch;
+    }
+    validate_receipt_result(&replay_metadata, &receipt)?;
     validate_project_resource_attachment_response(metadata, resource_attachment_response.as_ref())?;
     Ok(Some(CommittedMutation {
         replayed: true,

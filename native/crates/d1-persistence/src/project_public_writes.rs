@@ -85,7 +85,7 @@ pub(crate) async fn delete(
         let (version, fence_epoch) = adopt_legacy_project(
             &mut tx,
             &initial_metadata.org,
-            &initial_metadata
+            initial_metadata
                 .project_id
                 .as_deref()
                 .ok_or(StoreError::InvalidInput)?,

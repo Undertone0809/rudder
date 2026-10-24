@@ -16,7 +16,7 @@ use rudder_d1_persistence::{
     },
 };
 use serde_json::{Map, Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -296,7 +296,7 @@ async fn execute(
                     }
                     _ => mutation_error(&state, StoreError::InvalidReceipt),
                 },
-                Err(error) => state.foundation.mutation_error(error),
+                Err(error) => project_write_error(&state, error),
             }
         }
         Endpoint::Patch { project_ref } => {
@@ -342,7 +342,7 @@ async fn execute(
                         Err(error) => state.foundation.mutation_error(error),
                     }
                 }
-                Err(error) => state.foundation.mutation_error(error),
+                Err(error) => project_write_error(&state, error),
             }
         }
         Endpoint::Delete { project_ref } => {
@@ -389,7 +389,6 @@ async fn execute(
             let operation = attachment_patch("attach", None, data);
             mutate_attachment(
                 &state,
-                pool,
                 store,
                 &authorizer,
                 &request,
@@ -431,7 +430,6 @@ async fn execute(
             };
             mutate_attachment(
                 &state,
-                pool,
                 store,
                 &authorizer,
                 &request,
@@ -447,9 +445,11 @@ async fn execute(
     }
 }
 
+// Keep the transport inputs explicit at this HTTP boundary; the operation
+// delegates persistence and authorization to the existing D1 mutation store.
+#[allow(clippy::too_many_arguments)]
 async fn mutate_attachment(
     state: &IngressState,
-    pool: &PgPool,
     store: &MutationStore,
     authorizer: &dyn NativeAgentAuthorizer,
     request: &HttpRequest,
@@ -504,10 +504,12 @@ async fn mutate_attachment(
             }
             HttpResponse::build(expected_status).json(body)
         }
-        Err(error) => state.foundation.mutation_error(error),
+        Err(error) => project_attachment_error(state, error),
     }
 }
 
+// Returning HttpResponse preserves the established public status/body mapping.
+#[allow(clippy::result_large_err)]
 async fn resolve_project_target(
     pool: &PgPool,
     request: &HttpRequest,
@@ -518,6 +520,8 @@ async fn resolve_project_target(
     resolve_project_target_response(pool, request, identity, authorizer, project_ref).await
 }
 
+// Returning HttpResponse preserves the established public status/body mapping.
+#[allow(clippy::result_large_err)]
 async fn resolve_project_target_response(
     pool: &PgPool,
     request: &HttpRequest,
@@ -572,6 +576,8 @@ async fn resolve_project_target_response(
     Ok((org_id, project_id))
 }
 
+// Returning HttpResponse preserves the established public status/body mapping.
+#[allow(clippy::result_large_err)]
 async fn resolve_delete_target(
     pool: &PgPool,
     request: &HttpRequest,
@@ -705,16 +711,30 @@ fn mutation_error(state: &IngressState, error: StoreError) -> HttpResponse {
     state.foundation.mutation_error(error)
 }
 
+fn project_write_error(state: &IngressState, error: StoreError) -> HttpResponse {
+    match error {
+        StoreError::InvalidInput | StoreError::InvalidResource => invalid_project(),
+        error => state.foundation.mutation_error(error),
+    }
+}
+
+fn project_attachment_error(state: &IngressState, error: StoreError) -> HttpResponse {
+    match error {
+        StoreError::InvalidInput | StoreError::InvalidResource => invalid_project_resource(),
+        error => state.foundation.mutation_error(error),
+    }
+}
+
 fn not_found() -> HttpResponse {
     HttpResponse::NotFound().json(json!({"error":"Project not found"}))
 }
 
 fn invalid_project() -> HttpResponse {
-    HttpResponse::UnprocessableEntity().json(json!({"error":"Invalid project"}))
+    HttpResponse::BadRequest().json(json!({"error":"Invalid project"}))
 }
 
 fn invalid_project_resource() -> HttpResponse {
-    HttpResponse::UnprocessableEntity().json(json!({"error":"Invalid project resource attachment"}))
+    HttpResponse::BadRequest().json(json!({"error":"Invalid project resource attachment"}))
 }
 
 fn internal_error() -> HttpResponse {
