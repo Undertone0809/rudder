@@ -1712,7 +1712,7 @@
     },
     {
       "path": "desktop/src/update-check.ts",
-      "sha256": "9aa411046311291be8f879b2f1371b7266aeede7e67ff078f4e5fc8365873bff",
+      "sha256": "6e9fad3bfc13f98f09c84c714a3bcdf9bb2ceecd02f971a4dec78661a434d36c",
       "families": [
         "electron_process_graph"
       ]
