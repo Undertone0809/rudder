@@ -4368,7 +4368,7 @@
     },
     {
       "path": "server/src/bootstrap/register-api-routes.ts",
-      "sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
+      "sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -59121,11 +59121,25 @@
       "line": 317,
       "method": "GET",
       "expression": "/.*/"
+    },
+    {
+      "type": "dynamic_middleware_mount",
+      "source": "server/src/bootstrap/create-http-app.ts",
+      "line": 191,
+      "receiver": "app",
+      "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
+    },
+    {
+      "type": "dynamic_middleware_mount",
+      "source": "server/src/bootstrap/create-http-app.ts",
+      "line": 217,
+      "receiver": "app",
+      "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })"
     }
   ],
   "completion_gate": {
     "blocked": true,
-    "blocking_unknown_count": 7,
+    "blocking_unknown_count": 9,
     "remaining_backend_node_source_files": 803,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
@@ -59174,7 +59188,7 @@
     {
       "path": "server/src/bootstrap/register-api-routes.ts",
       "base_sha256": "e06fd3ac54ae9067922311c948b0e10bbef093eb2764489a3f4200b6132aa2ed",
-      "head_sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
+      "head_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/cli_auth.rs and cli_auth/persistence.rs own all six public CLI-auth operations in configured Rust public-ingress mode; agent-cli-core owns the native client credential lifecycle.",
@@ -59274,7 +59288,7 @@
     {
       "id": "rust-native-agent-core-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
+      "mount_source_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "mount_receiver": "api",
       "mount_expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
       "mount_guard": "Boolean(opts.rustPublicIngress?.identityAuth)",
@@ -59290,7 +59304,7 @@
     {
       "id": "rust-native-cli-auth-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
+      "mount_source_sha256": "caf4ded137897a198a1a9bdda2c991adf69bb112389f19164095b0656b433fe2",
       "mount_receiver": "api",
       "mount_expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
       "mount_guard": "Boolean(opts.rustPublicIngress)",

@@ -150,7 +150,7 @@ export function registerApiRoutes(
       bindHost: opts.bindHost,
       allowedHostnames: opts.allowedHostnames,
       nativeCliAuthOwner: Boolean(opts.rustPublicIngress),
-    }),
+    })
   );
 
   return api;

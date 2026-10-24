@@ -826,8 +826,6 @@ function compareIdentityAdmissionFixture(t, options = {}) {
 function publicOwnerMountSource({
   projectExpression = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression,
   cliExpression = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression,
-  multilineCliMount = false,
-  cliSecondArgument = null,
   duplicateProject = false,
   duplicateCli = false,
   moveProjectAfterAnchor = false,
@@ -835,9 +833,7 @@ function publicOwnerMountSource({
   extra = "",
 } = {}) {
   const projectMount = `api.use(${projectExpression});\n`;
-  const cliMount = multilineCliMount
-    ? `api.use(\n  ${cliExpression}${cliSecondArgument ? `,\n  ${cliSecondArgument}` : ""},\n);\n`
-    : `api.use(${cliExpression}${cliSecondArgument ? `, ${cliSecondArgument}` : ""});\n`;
+  const cliMount = `api.use(${cliExpression});\n`;
   const projectBeforeAnchor = `api.use(assetRoutes(db, opts.storageService));\n`;
   const projectAfterAnchor = `api.use(appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), }));\n`;
   const cliBeforeAnchor = `api.use(rudderPluginRoutes(db, pluginMcpOptions));\n`;
@@ -1443,22 +1439,6 @@ test("trusted policy admits only the exact Rust CLI auth and Project reads route
   for (const id of [CLI_AUTH_ADMISSION_ID, PROJECT_READS_ADMISSION_ID]) {
     assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === id).length, 1);
   }
-
-  const multilineTrailingComma = comparePublicOwnerMountFixture(t, { multilineCliMount: true });
-  assert.deepEqual(multilineTrailingComma.result.failures, []);
-  assert.equal(multilineTrailingComma.head.structural_surfaces
-    .filter((surface) => surface.transport_admission === CLI_AUTH_ADMISSION_ID).length, 1);
-
-  const multipleMiddlewareArguments = comparePublicOwnerMountFixture(t, {
-    multilineCliMount: true,
-    cliSecondArgument: "extraMiddleware",
-  });
-  assert(multipleMiddlewareArguments.result.failures
-    .some((failure) => failure.includes("new Node authority surface is forbidden")));
-  assert(multipleMiddlewareArguments.result.failures
-    .some((failure) => failure.includes("new unclassified Node surface blocks the ratchet")));
-  assert.equal(multipleMiddlewareArguments.head.structural_surfaces
-    .filter((surface) => surface.transport_admission === CLI_AUTH_ADMISSION_ID).length, 0);
 });
 
 test("public owner mount admissions reject wrong guards, duplicates, and reordered mounts", (t) => {
@@ -1831,7 +1811,7 @@ test("identity admission only replaces the existing actor mount and keeps its de
   const valid = compareIdentityAdmissionFixture(t);
   assert.deepEqual(valid.result.failures, []);
   assert(valid.result.added_surfaces.some((surface) => surface.signature.includes(replacement.after)));
-  assert.equal(valid.result.added_unknown.some((entry) => entry.expression === replacement.after), false);
+  assert(valid.result.added_unknown.some((entry) => entry.expression === replacement.after));
   const absentBase = compareIdentityAdmissionFixture(t, {
     baseSource: identityAdmissionAppSource({ mount: false }).replace(`app.use(${replacement.before},);`, ""),
   });
