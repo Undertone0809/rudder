@@ -571,15 +571,15 @@ function callArguments(tokens, openIndex) {
   let braceDepth = 0;
   let firstEnd = openIndex + 1;
   let argCount = 0;
-  let currentArgumentHasToken = false;
   for (let i = openIndex + 1; i < tokens.length; i += 1) {
     const value = tokens[i].value;
     if (value === "(" ) parenDepth += 1;
     else if (value === ")") {
       if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-        if (currentArgumentHasToken) {
-          if (argCount === 0) firstEnd = i;
-          argCount += 1;
+        if (argCount > 0) argCount += 1;
+        else if (i > openIndex + 1) {
+          firstEnd = i;
+          argCount = 1;
         }
         return { firstStart: openIndex + 1, firstEnd, argCount, closeIndex: i };
       }
@@ -589,14 +589,8 @@ function callArguments(tokens, openIndex) {
     else if (value === "{") braceDepth += 1;
     else if (value === "}") braceDepth -= 1;
     else if (value === "," && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      if (currentArgumentHasToken) {
-        if (argCount === 0) firstEnd = i;
-        argCount += 1;
-        currentArgumentHasToken = false;
-      }
-    }
-    if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && value !== ",") {
-      currentArgumentHasToken = true;
+      if (argCount === 0) firstEnd = i;
+      argCount += 1;
     }
     if (parenDepth < 0 || bracketDepth < 0 || braceDepth < 0) break;
   }
