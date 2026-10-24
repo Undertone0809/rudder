@@ -742,7 +742,7 @@ export type ChatStreamTranscriptEntry =
   | ChatStreamTranscriptTextEntry
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
-  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
+  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; status?: "pending" | "in_progress" | "completed" | "failed" }
   | { kind: "todo_list"; ts: string; todoListId?: string; items: ChatStreamTranscriptTodoItem[] }
   | { kind: "init"; ts: string; model: string; sessionId: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[] }

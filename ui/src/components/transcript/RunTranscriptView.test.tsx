@@ -8,7 +8,8 @@ import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLoca
 import { TranscriptThinkingBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, segmentChatTranscriptBlocks, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatMcpSummary } from "./RunTranscriptView.semantic";
+import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, formatMcpSummary, hasNonEmptyToolPayload, parseStructuredToolResult } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
@@ -363,6 +364,76 @@ describe("RunTranscriptView", () => {
     expect(blocks[0]).toMatchObject({
       type: "command_group",
       items: [{ result: "file-a\nfile-b", status: "running" }],
+    });
+  });
+
+  it("keeps interleaved tool progress attached by ID and replaces snapshots through terminal completion", () => {
+    const blocks = normalizeTranscript([
+      { kind: "tool_call", ts: "2026-03-12T00:00:00.000Z", name: "execute_code", toolUseId: "hermes-a", input: { code: "print('a')" } },
+      { kind: "tool_call", ts: "2026-03-12T00:00:01.000Z", name: "web_search", toolUseId: "hermes-b", input: { query: "b" } },
+      { kind: "tool_call", ts: "2026-03-12T00:00:01.500Z", name: "execute_code", toolUseId: "hermes-c", input: { code: "raise RuntimeError()" } },
+      { kind: "tool_result", ts: "2026-03-12T00:00:02.000Z", toolUseId: "hermes-a", toolName: "execute_code", content: "partial A", isError: false, status: "in_progress" },
+      { kind: "tool_result", ts: "2026-03-12T00:00:03.000Z", toolUseId: "hermes-b", toolName: "web_search", content: "result B", isError: false, status: "completed" },
+      { kind: "tool_result", ts: "2026-03-12T00:00:03.500Z", toolUseId: "hermes-c", toolName: "execute_code", content: "RuntimeError", isError: true, status: "failed" },
+      { kind: "tool_result", ts: "2026-03-12T00:00:04.000Z", toolUseId: "hermes-a", toolName: "execute_code", content: "final A", isError: false, status: "completed" },
+    ], true);
+
+    expect(blocks.filter((block) => block.type === "tool")).toMatchObject([
+      { name: "execute_code", toolUseId: "hermes-a", result: "final A", status: "completed", endTs: "2026-03-12T00:00:04.000Z" },
+      { name: "web_search", toolUseId: "hermes-b", result: "result B", status: "completed", endTs: "2026-03-12T00:00:03.000Z" },
+      { name: "execute_code", toolUseId: "hermes-c", result: "RuntimeError", isError: true, status: "error", endTs: "2026-03-12T00:00:03.500Z" },
+    ]);
+    expect(blocks.filter((block) => block.type === "tool")).toHaveLength(3);
+  });
+
+  it("does not attach an explicit unknown tool result to another running call", () => {
+    const blocks = normalizeTranscript([
+      { kind: "tool_call", ts: "2026-03-12T00:00:00.000Z", name: "execute_code", toolUseId: "hermes-known", input: { code: "print(1)" } },
+      { kind: "tool_result", ts: "2026-03-12T00:00:01.000Z", toolUseId: "hermes-unknown", toolName: "read_file", content: "orphan result", isError: false },
+    ], true);
+
+    expect(blocks.filter((block) => block.type === "tool")).toMatchObject([
+      { name: "execute_code", toolUseId: "hermes-known", status: "running" },
+      { name: "read_file", toolUseId: "hermes-unknown", status: "completed", result: "orphan result" },
+    ]);
+  });
+
+  it("upserts repeated tool calls by ID without duplicating the row or resetting a terminal result", () => {
+    const blocks = normalizeTranscript([
+      { kind: "tool_call", ts: "2026-03-12T00:00:00.000Z", name: "read", toolUseId: "hermes-location", input: { path: "/tmp/old.txt" }, sourceEntryId: "tool-call-start" },
+      { kind: "tool_result", ts: "2026-03-12T00:00:01.000Z", toolUseId: "hermes-location", toolName: "read", content: "initial read result", isError: false, status: "completed", sourceEntryId: "tool-result-complete" },
+      { kind: "tool_call", ts: "2026-03-12T00:00:02.000Z", name: "read_file", toolUseId: "hermes-location", input: { path: "/tmp/current.txt" }, sourceEntryId: "tool-call-location-patch" },
+    ], true);
+
+    const toolBlocks = blocks.filter((block) => block.type === "tool");
+    expect(toolBlocks).toHaveLength(1);
+    expect(toolBlocks[0]).toMatchObject({
+      name: "read_file",
+      toolUseId: "hermes-location",
+      input: { path: "/tmp/current.txt" },
+      result: "initial read result",
+      status: "completed",
+      endTs: "2026-03-12T00:00:01.000Z",
+      sourceEntryIds: ["tool-call-start", "tool-result-complete", "tool-call-location-patch"],
+    });
+  });
+
+  it("applies result content patches after completion to the existing tool row", () => {
+    const blocks = normalizeTranscript([
+      { kind: "tool_call", ts: "2026-03-12T00:00:00.000Z", name: "web_search", toolUseId: "hermes-result-patch", input: { query: "Rudder" } },
+      { kind: "tool_result", ts: "2026-03-12T00:00:01.000Z", toolUseId: "hermes-result-patch", toolName: "web_search", content: "initial search snapshot", isError: false, status: "completed" },
+      { kind: "tool_result", ts: "2026-03-12T00:00:02.000Z", toolUseId: "hermes-result-patch", toolName: "web_search", content: "patched search snapshot", isError: false, status: "completed", sourceEntryId: "tool-result-content-patch" },
+    ], true);
+
+    const toolBlocks = blocks.filter((block) => block.type === "tool");
+    expect(toolBlocks).toHaveLength(1);
+    expect(toolBlocks[0]).toMatchObject({
+      name: "web_search",
+      toolUseId: "hermes-result-patch",
+      result: "patched search snapshot",
+      status: "completed",
+      endTs: "2026-03-12T00:00:02.000Z",
+      sourceEntryIds: ["tool-result-content-patch"],
     });
   });
 
@@ -1620,6 +1691,229 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("max-h-72");
     expect(html).toContain("scrollbar-auto-hide");
     expect(html).toContain("Show full response");
+  });
+
+  it("renders canonical Hermes Python calls with a compact code summary and real request and response", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            endTs: "2026-10-25T00:00:02.000Z",
+            name: "execute_code",
+            toolUseId: "hermes-python-1",
+            input: { code: "from hermes_tools import terminal\nprint(1 + 1)" },
+            result: "2",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Ran Python: print(1 + 1)");
+    expect(html).toContain("from hermes_tools import terminal");
+    expect(html).toContain("print(1 + 1)");
+    expect(html).toContain("Response");
+    expect(html).toContain(">2<");
+  });
+
+  it("keeps legacy Hermes synthetic completion status out of the response while preserving literal new results", () => {
+    const legacyHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "Python: From Hermes Tools Import Terminal",
+            toolUseId: "hermes-legacy-python",
+            input: {},
+            result: "Completed",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+    const stableHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "execute_code",
+            toolUseId: "hermes-new-python",
+            input: { code: "print(1)" },
+            result: "Completed",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(legacyHtml).toContain("Ran Python code");
+    expect(legacyHtml).not.toContain("Input");
+    expect(legacyHtml).not.toContain("Response");
+    expect(legacyHtml).not.toContain("Completed");
+    expect(stableHtml).toContain("Response");
+    expect(stableHtml).toContain("Completed");
+  });
+
+  it("preserves literal Completed responses for canonical empty-input Hermes tools only", () => {
+    const renderTool = (name: string, toolUseId: string) => renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name,
+            toolUseId,
+            input: {},
+            result: "Completed",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    for (const [name, toolUseId] of [["web_search", "hermes-canonical-search"], ["terminal", "hermes-canonical-terminal"]]) {
+      const html = renderTool(name, toolUseId);
+      expect(html).toContain("Response");
+      expect(html).toContain("Completed");
+    }
+
+    for (const [name, toolUseId] of [["Websearch: query", "hermes-legacy-search"], ["Terminal: ls -la", "hermes-legacy-terminal"]]) {
+      const html = renderTool(name, toolUseId);
+      expect(html).not.toContain("Response");
+      expect(html).not.toContain("Completed");
+    }
+  });
+
+  it("recovers compact summaries only for recognizable legacy Hermes tool titles", () => {
+    expect(describeToolSemanticInfo("Read: /workspace/README.md", {}, undefined, { toolUseId: "hermes-read-1" })).toMatchObject({
+      category: "read",
+      summary: "Read README.md",
+    });
+    expect(describeToolSemanticInfo("Readfile", {}, undefined, { toolUseId: "hermes-read-2" })).toMatchObject({
+      category: "read",
+      summary: "Read file",
+    });
+    expect(describeToolSemanticInfo("Websearched", {}, undefined, { toolUseId: "hermes-search-1" })).toMatchObject({
+      category: "web_search",
+      summary: "Web searched",
+    });
+    expect(describeToolSemanticInfo("Terminal: ls -la", {}, undefined, { toolUseId: "hermes-terminal-1" })).toMatchObject({
+      category: "bash",
+      summary: "Ran ls -la",
+    });
+    expect(describeToolSemanticInfo("Read: /workspace/README.md", {}, undefined, { toolUseId: "provider-read-1" }).summary).not.toBe("Read README.md");
+  });
+
+  it("shows meaningful Hermes read_file output without changing other providers' read output policy", () => {
+    const renderRead = (toolUseId: string) => renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "read_file",
+            toolUseId,
+            input: { path: "/workspace/README.md" },
+            result: "README body visible in the Hermes transcript",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+    const hermesHtml = renderRead("hermes-read-file-1");
+    const otherProviderHtml = renderRead("other-provider-read-file-1");
+
+    expect(hermesHtml).toContain("README.md");
+    expect(hermesHtml).toContain("README body visible in the Hermes transcript");
+    expect(otherProviderHtml).toContain("README.md");
+    expect(otherProviderHtml).not.toContain("README body visible in the Hermes transcript");
+  });
+
+  it("renders a failed Hermes tool result with its actual public error content", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider initialShowToolCallFailureIndicators>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "execute_code",
+            toolUseId: "hermes-failed-python",
+            input: { code: "raise ValueError('bad input')" },
+            result: "ValueError: bad input",
+            isError: true,
+            status: "error",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Failed");
+    expect(html).toContain("ValueError: bad input");
+    expect(html).toContain("text-red-700");
+  });
+
+  it("preserves plain terminal text and Hermes markdown output while parsing known legacy envelopes", () => {
+    const plainText = "A plain terminal result\nwith a second line.";
+    const hermesMarkdown = "terminal result\n- **output:** HERMES_TOOL_UI_20261025_TERMINAL_OK\n- **exit_code:** 0";
+    const legacyEnvelope = "command: pwd\nstatus: completed\nexit_code: 0\n\n/workspace/rudder";
+
+    expect(parseStructuredToolResult(plainText)).toBeNull();
+    expect(formatCommandTerminalOutput(plainText)).toBe(plainText);
+    expect(parseStructuredToolResult(hermesMarkdown)).toBeNull();
+    expect(formatCommandTerminalOutput(hermesMarkdown)).toBe(hermesMarkdown);
+    expect(parseStructuredToolResult(legacyEnvelope)).toMatchObject({
+      command: "pwd",
+      status: "completed",
+      exitCode: "0",
+      body: "/workspace/rudder",
+    });
+    expect(formatCommandTerminalOutput(legacyEnvelope)).toBe("/workspace/rudder");
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          density="compact"
+          inline
+          block={{
+            ts: "2026-10-25T00:00:01.000Z",
+            name: "terminal",
+            toolUseId: "hermes-terminal-markdown-output",
+            input: { command: "pwd" },
+            result: hermesMarkdown,
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("data-testid=\"command-terminal-detail\"");
+    expect(html).toContain("HERMES_TOOL_UI_20261025_TERMINAL_OK");
+  });
+
+  it("suppresses empty tool details while retaining meaningful falsy and array payloads", () => {
+    expect(hasNonEmptyToolPayload({})).toBe(false);
+    expect(hasNonEmptyToolPayload(false)).toBe(true);
+    expect(hasNonEmptyToolPayload(0)).toBe(true);
+    expect(hasNonEmptyToolPayload([])).toBe(true);
+    expect(formatNiceToolRequest("tool", {})).toBe("<empty>");
+    expect(formatNiceToolRequest("tool", false)).toBe("false");
+    expect(formatNiceToolRequest("tool", 0)).toBe("0");
+    expect(formatNiceToolRequest("tool", [])).toBe("[]");
+    expect(formatNiceToolRequest("tool", { enabled: false })).toContain("false");
+    expect(formatNiceToolResponse("tool", {}, "   ")).toBeNull();
+    expect(formatNiceToolResponse("tool", {}, "false")).toBe("false");
+    expect(formatNiceToolResponse("tool", {}, "0")).toBe("0");
+    expect(formatNiceToolResponse("tool", {}, "[]")).toBe("[]");
   });
 
   it("keeps compact chat tool rows tight and center-aligned", () => {

@@ -877,6 +877,26 @@ pub(super) async fn submit_in_transaction<'a>(
         "turnVariant": turn_variant,
         "stream": true,
     });
+    if runtime_type == "hermes_local" {
+        let adapter_revision = config
+            .hermes
+            .as_ref()
+            .and_then(|hermes| hermes.instruction_adapter_revision.as_deref())
+            .filter(|revision| !revision.is_empty())
+            .ok_or_else(|| {
+                http(
+                    409,
+                    "Hermes instruction adapter revision is unavailable; retry in a new turn",
+                )
+            })?;
+        context_snapshot
+            .as_object_mut()
+            .expect("context snapshot is an object")
+            .insert(
+                "hermesInstructionAdapterRevision".into(),
+                json!(adapter_revision),
+            );
+    }
     if let Some(initial_draft_snapshot) = initial_draft_snapshot {
         let mut snapshot = initial_draft_snapshot.clone();
         let object = snapshot

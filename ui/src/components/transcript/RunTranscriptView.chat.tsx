@@ -3,16 +3,18 @@ import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef,
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
+import { getTranscriptMcpBrandIcon } from "./RunTranscriptView.chat-brand";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, isLegacyHermesSyntheticCompletion, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
 import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff";
+export { getTranscriptMcpBrandIcon } from "./RunTranscriptView.chat-brand";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 const CHAT_READING_COLUMN_CLASS = "w-full min-w-0 max-w-3xl px-1";
@@ -26,59 +28,6 @@ function useTranscriptText() {
 function transcriptFileDisplayName(label: string) {
   const trimmed = label.replace(/[\\/]+$/, "");
   return trimmed.split(/[\\/]/).pop() || label;
-}
-
-type TranscriptMcpBrandIcon = {
-  aliases: readonly string[];
-  label: string;
-  src: string;
-  imageClassName?: string;
-};
-
-const TRANSCRIPT_MCP_BRAND_ICONS: readonly TranscriptMcpBrandIcon[] = [
-  {
-    aliases: ["rudder", "rudder-tools", "rudder_tools", "rudder-browser", "rudder_browser"],
-    label: "Rudder",
-    src: "/rudder-logo.png",
-  },
-  {
-    aliases: ["github", "github-tools", "github-mcp", "github-mcp-server"],
-    label: "GitHub",
-    src: "/brands/github-logo.svg",
-    imageClassName: "dark:invert",
-  },
-  {
-    aliases: ["gmail"],
-    label: "Gmail",
-    src: "/brands/gmail-logo.svg",
-  },
-  {
-    aliases: ["google-calendar", "google_calendar"],
-    label: "Google Calendar",
-    src: "/brands/google-calendar-logo.svg",
-  },
-  {
-    aliases: ["google-drive", "google_drive"],
-    label: "Google Drive",
-    src: "/brands/google-drive-logo.svg",
-  },
-  {
-    aliases: ["notion"],
-    label: "Notion",
-    src: "/brands/notion-logo.svg",
-    imageClassName: "dark:invert",
-  },
-  {
-    aliases: ["linear"],
-    label: "Linear",
-    src: "/brands/linear-logo.svg",
-  },
-];
-
-export function getTranscriptMcpBrandIcon(server: string | null | undefined): TranscriptMcpBrandIcon | null {
-  const normalizedServer = server?.trim().toLowerCase();
-  if (!normalizedServer) return null;
-  return TRANSCRIPT_MCP_BRAND_ICONS.find((brand) => brand.aliases.includes(normalizedServer)) ?? null;
 }
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
@@ -139,8 +88,14 @@ export function getToolCommand(block: TranscriptToolCardEntry): string | null {
   return null;
 }
 
-export function shouldHideChatToolResult(semantic: TranscriptToolSemanticInfo): boolean {
-  return semantic.category === "read" || semantic.category === "skill";
+export function shouldHideChatToolResult(
+  semantic: TranscriptToolSemanticInfo,
+  toolName?: string,
+  toolUseId?: string,
+): boolean {
+  const normalizedName = toolName?.trim().toLowerCase().replace(/[\s_-]+/gu, "");
+  const showHermesReadResult = toolUseId?.startsWith("hermes-") && normalizedName === "readfile";
+  return (semantic.category === "read" && !showHermesReadResult) || semantic.category === "skill";
 }
 
 function formatChatToolActionSummary(
@@ -358,30 +313,33 @@ export function TranscriptChatToolActionRow({
   const showFailureIndicators = useToolCallFailureIndicators();
   const localizeText = useTranscriptText();
   const renderFailure = showFailureIndicators && block.status === "error";
-  const rawSemantic = describeToolSemanticInfo(block.name, block.input, block.result);
+  const rawSemantic = describeToolSemanticInfo(block.name, block.input, block.result, { toolUseId: block.toolUseId });
   const semantic = showFailureIndicators
     ? rawSemantic
     : neutralizeToolFailureSemanticInfo(rawSemantic);
+  const statusOnlyLegacyResult = isLegacyHermesSyntheticCompletion(block.name, block.input, block.toolUseId, block.result);
+  const displayResult = statusOnlyLegacyResult ? undefined : block.result;
   const displaySummary = localizeText(formatChatToolActionSummary(block, semantic, density, renderFailure));
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
+  const hasRequestText = requestText !== "<empty>" && Boolean(requestText.trim());
   const requestLabel = getNiceToolRequestLabel(block.name, block.input);
   const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
   const rudderPresenter = getRudderMcpPresenterDefinition(block.name, block.input);
-  const responseText = shouldHideChatToolResult(semantic)
+  const responseText = shouldHideChatToolResult(semantic, block.name, block.toolUseId)
     ? null
     : command
-      ? formatCommandTerminalOutput(block.result)
-      : block.result
-        ? formatNiceToolResponse(block.name, block.input, block.result)
+      ? formatCommandTerminalOutput(displayResult)
+      : displayResult
+        ? formatNiceToolResponse(block.name, block.input, displayResult)
         : block.status === "running"
           ? localizeText("Waiting for result...")
           : null;
   const canExpand = semantic.category !== "skill"
     && !(rudderPresenter && block.status === "running")
-    && Boolean(rudderPresenter || command || responseText || (!isCommand && requestText !== "<empty>"));
+    && Boolean(rudderPresenter || command || responseText || (!isCommand && hasRequestText));
   const visualStatus = block.status === "error" && !showFailureIndicators
     ? "completed"
     : block.status;
@@ -782,14 +740,16 @@ export function TranscriptChatToolActionRow({
           />
         ) : (
           <div className="motion-disclosure-enter ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
-            <div>
-              <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-                {requestLabel}
+            {hasRequestText ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                  {requestLabel}
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                  {requestText}
+                </pre>
               </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-                {requestText}
-              </pre>
-            </div>
+            ) : null}
             {requestParameters ? (
               <div>
                 <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
@@ -940,7 +900,7 @@ export function formatChatActionSummary(
   const infos = actions
     .filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool")
     .map((action) => {
-      const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input);
+      const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input, action.entry.result, { toolUseId: action.entry.toolUseId });
       return showFailureIndicators ? semantic : neutralizeToolFailureSemanticInfo(semantic);
     });
   const stdoutCount = actions.filter((action) => action.type === "stdout").length;
@@ -975,7 +935,7 @@ export function getChatActionIconInfo(action: ChatTranscriptAction): {
   if (action.type === "stdout") {
     return { category: "stdout", status: "completed" };
   }
-  const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input);
+  const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input, action.entry.result, { toolUseId: action.entry.toolUseId });
   return {
     category: semantic.category,
     status: action.entry.status === "error" ? "error" : action.entry.status === "running" ? "running" : "completed",

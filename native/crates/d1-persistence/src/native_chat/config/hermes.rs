@@ -215,7 +215,7 @@ pub(crate) async fn resolve_hermes_config(
         "workspaceBindingId":workspace_binding_id,
         "effectiveCwd":cwd.to_string_lossy(), "env":env_facts,
         "instructionsRevision":instructions.revision,
-        "instructionAdapterRevision":instruction_bootstrap.as_ref().map(|adapter| adapter.revision()),
+        "instructionAdapterRevision":instruction_bootstrap.as_ref().map(|adapter| adapter.binding_revision()),
     });
     // Bind the selected profile's non-secret configuration bytes. Do not read
     // Hermes state.db, credentials, or alter the profile.
