@@ -1712,7 +1712,7 @@
     },
     {
       "path": "desktop/src/update-check.ts",
-      "sha256": "9aa411046311291be8f879b2f1371b7266aeede7e67ff078f4e5fc8365873bff",
+      "sha256": "6e9fad3bfc13f98f09c84c714a3bcdf9bb2ceecd02f971a4dec78661a434d36c",
       "families": [
         "electron_process_graph"
       ]
@@ -14951,7 +14951,8 @@
       "line": 146,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentE… [sha256:733551c6ad991af3c47edbc576539c4f728ca874088ce47e20d6cc86cb0c5136]",
       "receiver": "api",
-      "expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })"
+      "expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
+      "transport_admission": "rust-native-cli-auth-router-v1"
     },
     {
       "type": "middleware_mount",
@@ -59120,32 +59121,11 @@
       "line": 317,
       "method": "GET",
       "expression": "/.*/"
-    },
-    {
-      "type": "dynamic_middleware_mount",
-      "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 191,
-      "receiver": "app",
-      "expression": "privateHostnameGuard({ enabled: privateHostnameGateEnabled, allowedHostnames: opts.allowedHostnames, bindHost: opts.bindHost, })"
-    },
-    {
-      "type": "dynamic_middleware_mount",
-      "source": "server/src/bootstrap/create-http-app.ts",
-      "line": 217,
-      "receiver": "app",
-      "expression": "actorMiddleware(db, { deploymentMode: opts.deploymentMode, authRequirement, resolveSession: opts.resolveSession, })"
-    },
-    {
-      "type": "dynamic_middleware_mount",
-      "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 146,
-      "receiver": "api",
-      "expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })"
     }
   ],
   "completion_gate": {
     "blocked": true,
-    "blocking_unknown_count": 10,
+    "blocking_unknown_count": 7,
     "remaining_backend_node_source_files": 803,
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
@@ -59294,7 +59274,7 @@
     {
       "id": "rust-native-agent-core-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "e06fd3ac54ae9067922311c948b0e10bbef093eb2764489a3f4200b6132aa2ed",
+      "mount_source_sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
       "mount_receiver": "api",
       "mount_expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
       "mount_guard": "Boolean(opts.rustPublicIngress?.identityAuth)",
@@ -59305,6 +59285,22 @@
       "retirement_criterion": "Remove this Node mount after native Rust AgentCore ingress is the sole supported owner for these paths in every deployment mode.",
       "reviewer": "agent /root/agent_api_next_slice",
       "review_reference": "Agent core native ingress slice 99fb9506e; current-main authority audit",
+      "review_status": "reviewed"
+    },
+    {
+      "id": "rust-native-cli-auth-router-v1",
+      "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
+      "mount_source_sha256": "d485612eeba03787c0c23c7328d9a39272ef6f29b1f971922c886ce8e05ac487",
+      "mount_receiver": "api",
+      "mount_expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
+      "mount_guard": "Boolean(opts.rustPublicIngress)",
+      "order_after": "rudder_plugin_routes",
+      "order_before": "api_return",
+      "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/cli_auth.rs",
+      "compatibility_boundary": "The existing access router receives only the exact immutable startup-mode option. When Rust public ingress is configured, Rust owns all six CLI-auth operations and Node registers no CLI-auth handlers or lifecycle service; when ingress is off, only unchanged legacy behavior remains explicit migration debt. This admission allows the router mount, not new Node auth/business authority.",
+      "retirement_criterion": "Remove this router admission after the legacy CLI-auth compatibility registrations are retired in every supported deployment and the Rust-owned CLI path remains the supported default.",
+      "reviewer": "/root/follow347_final_merge_review",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261022/email-auth-next/combined-auth-r53/independent-off-mode-compatibility-review-r53.json",
       "review_status": "reviewed"
     }
   ]

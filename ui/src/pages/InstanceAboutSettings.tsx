@@ -1,4 +1,5 @@
 import { healthApi } from "@/api/health";
+import { DesktopRuntimeRestart } from "@/components/DesktopRuntimeRestart";
 import {
   SettingsGroup,
   SettingsItem,
@@ -26,6 +27,7 @@ import { useEffect, useMemo, useState } from "react";
 
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const FEEDBACK_MAILTO = "mailto:zeeland4work@gmail.com";
+const UPDATE_CHECK_TOAST_ID = "desktop-update-check";
 const UPDATE_PHASES: DesktopUpdateProgressPhase[] = [
   "starting",
   "preparing_runtime",
@@ -252,7 +254,7 @@ function UpdateProgressDetails({
 export function InstanceAboutSettings() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { pushToast } = useToast();
+  const { pushToast, dismissToast } = useToast();
   const { progress: updateProgress } = useDesktopUpdateProgress();
   const [desktopBootState, setDesktopBootState] = useState<DesktopBootState | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -317,6 +319,8 @@ export function InstanceAboutSettings() {
   async function handleCheckForUpdates() {
     const desktopShell = readDesktopShell();
     setActionError(null);
+    setUpdateResult(null);
+    dismissToast(UPDATE_CHECK_TOAST_ID);
 
     if (!desktopShell) {
       setUpdateResult(null);
@@ -337,8 +341,8 @@ export function InstanceAboutSettings() {
       if (result.status === "update-available" && result.latestVersion) {
         pushToast({
           ...feedback,
-          id: "desktop-update-available",
-          dedupeKey: `desktop-update-available:${result.latestVersion}`,
+          id: UPDATE_CHECK_TOAST_ID,
+          dedupeKey: `${UPDATE_CHECK_TOAST_ID}:${result.checkedAt}`,
           persistent: true,
           icon: "download",
           action: {
@@ -347,12 +351,18 @@ export function InstanceAboutSettings() {
           },
         });
       } else {
-        pushToast(feedback);
+        pushToast({
+          ...feedback,
+          id: UPDATE_CHECK_TOAST_ID,
+          dedupeKey: `${UPDATE_CHECK_TOAST_ID}:${result.checkedAt}`,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : t("about.updates.failed");
       setActionError(message);
       pushToast({
+        id: UPDATE_CHECK_TOAST_ID,
+        dedupeKey: `${UPDATE_CHECK_TOAST_ID}:error:${Date.now()}`,
         title: t("about.updates.failedToastTitle"),
         body: message,
         tone: "error",
@@ -500,6 +510,9 @@ export function InstanceAboutSettings() {
               value={instanceRoot}
               mono
             />
+          ) : null}
+          {runtimeMode === "owned" ? (
+            <DesktopRuntimeRestart disabled={checkUpdatesPending || installUpdatePending || updateActionInProgress} />
           ) : null}
         </SettingsGroup>
       </SettingsSection>

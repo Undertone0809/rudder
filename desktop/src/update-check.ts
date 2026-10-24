@@ -109,7 +109,8 @@ export function resolveUpdateChannel(currentVersion: string): DesktopUpdateChann
 }
 
 export function normalizeReleaseVersion(tagName: string, channel: DesktopUpdateChannel = "stable"): string | null {
-  const decodedTagName = decodeURIComponent(tagName.trim());
+  const decodedTagName = decodeReleaseTag(tagName);
+  if (!decodedTagName) return null;
   const normalized = channel === "canary"
     ? decodedTagName.replace(/^canary\/v?/, "")
     : decodedTagName.replace(/^v/, "");
@@ -121,7 +122,8 @@ export function normalizeReleaseVersion(tagName: string, channel: DesktopUpdateC
 }
 
 function normalizeReleaseDisplayVersion(tagName: string, channel: DesktopUpdateChannel): string | null {
-  const decodedTagName = decodeURIComponent(tagName.trim());
+  const decodedTagName = decodeReleaseTag(tagName);
+  if (!decodedTagName) return null;
   const normalized = channel === "canary"
     ? decodedTagName.replace(/^canary\/v?/, "")
     : decodedTagName.replace(/^v/, "");
@@ -132,6 +134,14 @@ function normalizeReleaseDisplayVersion(tagName: string, channel: DesktopUpdateC
   return parsed.prerelease
     ? `${parsed.major}.${parsed.minor}.${parsed.patch}-${parsed.prerelease}`
     : `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+}
+
+function decodeReleaseTag(tagName: string): string | null {
+  try {
+    return decodeURIComponent(tagName.trim());
+  } catch {
+    return null;
+  }
 }
 
 export function chooseLatestRelease(
@@ -161,8 +171,8 @@ export function chooseLatestRelease(
       );
       // GitHub creates the release record before uploading Desktop artifacts.
       // Do not advertise a release until the platform package and checksum
-      // marker are both visible in the same API response. HTML fallback data
-      // has no asset inventory, so it remains deliberately ineligible here.
+      // marker are both visible in the release's asset inventory, including
+      // inventories fetched from GitHub's expanded-assets HTML fallback.
       if (requiredAssets.some((name) => !availableAssets.has(name.toLowerCase()))) continue;
     }
 
@@ -192,7 +202,12 @@ function releasesPageToReleaseList(html: string, repo: string): GitHubRelease[] 
   const seenTags = new Set<string>();
   let match: RegExpExecArray | null;
   while ((match = releasePathPattern.exec(html)) !== null) {
-    const tagName = decodeURIComponent(match[1] ?? "");
+    let tagName: string;
+    try {
+      tagName = decodeURIComponent(match[1] ?? "");
+    } catch {
+      continue;
+    }
     if (!tagName || seenTags.has(tagName)) continue;
     seenTags.add(tagName);
     releases.push({
@@ -202,6 +217,30 @@ function releasesPageToReleaseList(html: string, repo: string): GitHubRelease[] 
     });
   }
   return releases;
+}
+
+function releaseAssetsFromHtml(html: string, repo: string, tag: string): GitHubReleaseAsset[] | null {
+  const assets: GitHubReleaseAsset[] = [];
+  let hasReleaseInventory = false;
+  const assetPathPattern = /href=["']([^"'?#]+)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = assetPathPattern.exec(html)) !== null) {
+    try {
+      const assetPath = decodeURIComponent(match[1] ?? "");
+      const prefix = `/${repo}/releases/download/${tag}/`;
+      if (assetPath === `/${repo}/archive/refs/tags/${tag}.zip`
+        || assetPath === `/${repo}/archive/refs/tags/${tag}.tar.gz`) hasReleaseInventory = true;
+      if (!assetPath.startsWith(prefix)) continue;
+      const name = assetPath.slice(prefix.length);
+      if (name && !name.includes("/")) {
+        hasReleaseInventory = true;
+        assets.push({ name });
+      }
+    } catch {
+      // An unrelated malformed link must not hide valid release assets.
+    }
+  }
+  return hasReleaseInventory ? assets : null;
 }
 
 async function fetchLatestReleaseWithFallback(options: {
@@ -237,7 +276,7 @@ async function fetchLatestReleaseWithFallback(options: {
       try {
         const response = await fetchImpl(
           `${apiOrigin}/repos/${repo}/releases?per_page=${GITHUB_RELEASES_PAGE_SIZE}&page=${page}`,
-          { headers },
+          { headers, cache: "no-store" },
         );
         if (!response.ok) {
           throw new Error(`GitHub release lookup failed (${response.status})`);
@@ -269,6 +308,7 @@ async function fetchLatestReleaseWithFallback(options: {
   }
 
   const response = await fetchImpl(releasesUrl, {
+    cache: "no-store",
     headers: {
       Accept: "text/html",
       "User-Agent": `${appName}/${currentVersion}`,
@@ -278,9 +318,39 @@ async function fetchLatestReleaseWithFallback(options: {
     throw new Error(`GitHub releases page lookup failed (${response.status})`);
   }
 
-  return chooseLatestRelease(releasesPageToReleaseList(await response.text(), repo), channel, {
-    requiredAssetNamesForVersion,
-  });
+  const releases = releasesPageToReleaseList(await response.text(), repo);
+  if (!requiredAssetNamesForVersion) return chooseLatestRelease(releases, channel);
+
+  const candidates = releases.flatMap((release) => {
+    const version = normalizeReleaseDisplayVersion(release.tag_name!, channel);
+    return version ? [{ release, version }] : [];
+  }).sort((a, b) => compareRudderVersions(b.version, a.version));
+  let assetLookupFailed = false;
+  for (const { release, version } of candidates) {
+    try {
+      if (requiredAssetNamesForVersion(version).length === 0) return chooseLatestRelease([release], channel);
+      // Derive the URL from the configured repository, never from page content.
+      const assetsResponse = await fetchImpl(
+        `https://github.com/${repo}/releases/expanded_assets/${encodeURIComponent(release.tag_name!)}`,
+        { cache: "no-store", headers: { Accept: "text/html", "User-Agent": `${appName}/${currentVersion}` } },
+      );
+      if (!assetsResponse.ok) throw new Error(`GitHub release assets lookup failed (${assetsResponse.status})`);
+      const assets = releaseAssetsFromHtml(await assetsResponse.text(), repo, release.tag_name!);
+      if (!assets) throw new Error("GitHub release assets lookup returned no matching inventory");
+      const latest = chooseLatestRelease([{
+        ...release,
+        assets,
+      }], channel, { requiredAssetNamesForVersion });
+      if (!latest) continue;
+      // A failed newer lookup cannot establish that this install is current.
+      if (assetLookupFailed && compareRudderVersions(version, currentVersion) <= 0) return null;
+      return latest;
+    } catch (error) {
+      assetLookupFailed = true;
+      console.warn("[rudder-desktop] GitHub release assets fallback failed", error);
+    }
+  }
+  return null;
 }
 
 export async function checkForRudderDesktopUpdates(

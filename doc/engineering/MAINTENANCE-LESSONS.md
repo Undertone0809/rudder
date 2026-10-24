@@ -80,6 +80,83 @@ or not-run results as passes. Record passed/failed/skipped counts and the actual
 runner. A discovered filename is not proof that its assertions executed. Do not
 use a permissive flag or remove a test merely to restore green CI.
 
+## M004: Runtime source repairs must refresh their authority evidence
+
+**Evidence:** PR #356 at `07ddced13403726c1cb0be55773c930eb8f7029a`
+passed its focused Desktop checks, but CI run `39893339993` stopped in the
+qualification planner because the generated authority inventory still recorded
+the old `desktop/src/update-check.ts` hash. The planner's inventory suite passed
+33 tests; the planner failed and downstream qualification jobs were skipped.
+Regenerating exposed the next
+required gate: the changed source also needed a reviewed compatibility-boundary
+record.
+
+**Correction:** regenerate the inventory and bind the scoped existing Electron
+release-discovery repair to its exact base/head hashes and independent review.
+Keep the unchanged structural surfaces and unknown entries visible. This record
+does not claim Rust ownership of the updater or completion of backend migration.
+
+**Regression:** run `node scripts/rust-backend-authority-inventory.mjs check`,
+then the trusted comparison-base checker with `compare --compare-ref <base>`.
+The stale inventory and missing-record cases must fail before repair; both
+checks must pass after repair. The inventory suite and exact-candidate CI remain
+required; local updater or inventory tests do not qualify skipped jobs.
+
+**Reject:** handoff after merely opening a PR, treating pending/skipped CI as a
+pass, or widening an allowlist to avoid the source-bound review requirement.
+
+**Comparison-source recovery:** run `40089641446` passed the regenerated
+inventory check, but its PR event still named comparison base `e6eb1d033` while
+the tested merge's first parent was current main `12724f401`. The trusted
+ratchet consequently also evaluated already-merged database migration changes
+whose diff-local records had been retired. Refreshing the PR's unchanged
+`main` target updated its base metadata. Trigger a fresh PR event after that
+refresh; rerunning the old event preserves the stale comparison input. Keep
+the trusted checker and its findings intact.
+
+## M005: A merged fix is not an installed update
+
+**Evidence:** the Hermes configuration fix in PR #359 was merged after the
+`0.7.24-canary.49` artifact was published. That installed artifact still exposed
+disabled Hermes options even though source acceptance had passed.
+
+**Correction:** resolve the named installed bundle and runtime, then bind repair
+evidence to its UI and Rust binary hashes. Preserve the existing profile and
+database. Expose the existing owned-runtime restart action in Settings > About
+so recovery does not depend on an accessible tray or force-quitting old runs.
+
+**Regression:** `desktop/scripts/smoke.mjs --scenario=runtime-restart-settings`
+clicks the real About control in an isolated packaged copy, observes a replaced
+runtime descriptor, and checks that Electron and saved organization data survive.
+Component tests cover duplicate clicks, update-in-progress blocking and retry
+after failure. This isolated fixture does not replace acceptance of the named
+installation, its account session or real provider profiles.
+
+**Reject:** reporting a branch, merged PR, healthy unrelated server or staged
+artifact as an updated installation. Record the installed path, version, asset
+identity and terminal user workflow separately from release publication.
+
+## M006: Verify the installed CLI launcher chain
+
+**Evidence:** the local Hermes command used a small shell launcher which clears
+`PYTHONPATH` and `PYTHONHOME`, then executes its venv Python and console script.
+The pinned ACP adapter only recognized the inner console script, so readiness
+incorrectly reported that the installed bootstrap was unavailable.
+
+**Correction:** Rust recognizes that exact launcher grammar without invoking a
+shell, validates the pinned inner installation, and requires both interpreter
+paths to resolve to the same file. It fingerprints both launchers and rechecks
+the expected installation revision immediately before the owned process starts.
+Python still runs with isolated mode and an explicit environment. This is a
+trusted local installation check, not an immutable-filesystem execution claim.
+
+**Regression:** Hermes ACP tests cover direct and wrapped entries, malformed
+commands, interpreter mismatch, source/launcher revision changes, and missing
+launch revisions. The named installed-launcher check is read-only; actual
+provider credentials and model responses still require installed-app acceptance.
+The separate ignored empty-profile session-persistence probe failed locally;
+do not report the inclusive suite as green or use it as real-profile evidence.
+
 ## Historical lessons to preserve
 
 The following are source PR records, not newly reproduced runtime results:
