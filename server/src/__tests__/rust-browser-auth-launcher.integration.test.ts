@@ -405,7 +405,6 @@ describe("constructed issuer through the real Rust application launcher", () => 
     expect(effectsAfterPrivateRequests).toEqual(effectsBeforePrivateRequests);
 
     const publicNodeStart = nodePaths.length;
-    const expectedPublicNodePaths: string[] = [];
     const postJson = (pathname: string, body: unknown, headers: Record<string, string> = {}) =>
       fetch(`${base}${pathname}`, {
         method: "POST",
@@ -587,7 +586,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
         },
         body: JSON.stringify({ name: `forbidden-${randomUUID()}` }),
       });
-      expectedPublicNodePaths.push(`/api/orgs/${organizationId}/projects`);
+      // Rust rejects the foreign Project write without a Node hop.
       expect(foreignProject.status).toBe(403);
       const [foreignAccessAfter] = await db.$client`SELECT
           (SELECT COUNT(*)::int FROM projects WHERE org_id=${organizationId}::uuid) AS project_count,
@@ -741,7 +740,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
       FROM organization_mutation_outbox WHERE org_id=${organizationId}::uuid`;
     expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.created")).toHaveLength(expectedCreatedEvents);
     expect(liveEvents.filter((row) => row.event_type === "activity.logged" && row.action === "board_api_key.revoked")).toHaveLength(1);
-    expect(nodePaths.slice(publicNodeStart)).toEqual(expectedPublicNodePaths);
+    expect(nodePaths.slice(publicNodeStart)).toEqual([]);
     return organizationId;
   }
 
