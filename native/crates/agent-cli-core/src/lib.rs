@@ -1,4 +1,4 @@
-//! Explicit Rust CLI transport for board authentication and bounded Agent reads.
+//! Explicit Rust CLI and MCP transports for board authentication and Agent APIs.
 //!
 //! The first command is the canonical organization member directory. It uses
 //! the Agent request planner for contract validation and the shared MCP
@@ -23,6 +23,11 @@ use std::time::Duration;
 use url::Url;
 
 mod board_auth;
+pub(crate) mod issue_transport_budget;
+mod mcp_server;
+mod skill_cli;
+
+pub use mcp_server::run as run_mcp_server;
 
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 10_000;
 const MIN_HTTP_TIMEOUT_MS: u64 = 50;

@@ -1,7 +1,8 @@
 # Rust CLI entry
 
 This explicit Rust executable provides board authentication and the read-only
-`organization.members.list` capability. Build or run it with `cargo run -p rudder-cli -- org members ...`.
+`organization.members.list` capability, plus the shared Rust core MCP transport.
+Build or run it with `cargo run -p rudder-cli -- org members ...`.
 It does not replace or select the existing `rudder` CLI, does not launch Node,
 and has no fallback implementation.
 
@@ -62,6 +63,12 @@ new login is preserved. Context files never contain keys. Member commands and
 `whoami` prefer an explicit key/environment key/profile key over stored board
 credentials.
 
-The existing Node CLI remains the default. Its other commands, interactive
-member-command login, and MCP dispatch are not replaced by this explicit entry.
+`rudder-cli mcp-server` serves the same core tool manifest and stdio protocol as
+`rudder-native mcp-server`, without launching the Node CLI. API-backed tools
+still depend on their respective API owners; a Rust MCP transport does not
+retire an API's remaining Node business implementation. Browser and Computer
+servers are separate surfaces and are not selected by this command.
+
+The existing Node CLI remains the default. Its other commands and interactive
+member-command login are not replaced by this explicit entry.
 `--data-dir` and `--run-id` remain unsupported by `org members`.

@@ -113,7 +113,8 @@ pub(super) async fn assign_desired_skills(
             }
         })
         .collect::<Vec<_>>();
-    let filesystem_catalog = discover_filesystem_skills(runtime_config);
+    let filesystem_catalog =
+        discover_filesystem_skills_with_secrets(tx, org_id, runtime_config).await?;
 
     let mut resolved = BTreeSet::new();
     let mut unknown = BTreeSet::new();
@@ -349,10 +350,44 @@ fn is_retired_creation_skill_reference(reference: &str) -> bool {
     matches!(slug, "rudder-create-agent" | "rudder-create-plugin")
 }
 
+async fn discover_filesystem_skills_with_secrets(
+    tx: &mut Tx<'_>,
+    org_id: &str,
+    runtime_config: &Value,
+) -> Result<Vec<FilesystemSkill>> {
+    let mut resolved_config = runtime_config.clone();
+    let mut resolved_env = resolved_config
+        .get("env")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for key in ["HOME", "CODEX_HOME"] {
+        let Some(binding) = resolved_env.get(key) else {
+            continue;
+        };
+        if binding.get("type").and_then(Value::as_str) != Some("secret_ref") {
+            continue;
+        }
+        if let Some(path) = resolve_configured_path(tx, org_id, binding).await? {
+            resolved_env.insert(
+                key.to_owned(),
+                serde_json::json!({"type":"plain","value":path.to_string_lossy()}),
+            );
+        }
+    }
+    if resolved_config.is_object() {
+        resolved_config
+            .as_object_mut()
+            .expect("object checked")
+            .insert("env".to_owned(), Value::Object(resolved_env));
+    }
+    Ok(discover_filesystem_skills(&resolved_config))
+}
+
 fn discover_filesystem_skills(runtime_config: &Value) -> Vec<FilesystemSkill> {
     let home = configured_home(runtime_config);
     let codex_home =
-        configured_path(runtime_config, "CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
+        configured_plain_path(runtime_config, "CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
     let roots = [
         ("global", home.join(".agents").join("skills")),
         ("adapter:claude_local", home.join(".claude").join("skills")),
@@ -381,22 +416,57 @@ fn discover_filesystem_skills(runtime_config: &Value) -> Vec<FilesystemSkill> {
 }
 
 fn configured_home(runtime_config: &Value) -> PathBuf {
-    configured_path(runtime_config, "HOME").unwrap_or_else(default_home)
+    configured_plain_path(runtime_config, "HOME").unwrap_or_else(default_home)
 }
 
-fn configured_path(runtime_config: &Value, key: &str) -> Option<PathBuf> {
+fn configured_plain_path(runtime_config: &Value, key: &str) -> Option<PathBuf> {
     let env = runtime_config.get("env")?.as_object()?;
-    let value = env.get(key)?;
-    let value = value
-        .as_str()
-        .or_else(|| {
-            (value.get("type").and_then(Value::as_str) == Some("plain"))
-                .then(|| value.get("value").and_then(Value::as_str))
-                .flatten()
-        })
+    let binding = env.get(key)?;
+    let value = binding.as_str().or_else(|| {
+        (binding.get("type").and_then(Value::as_str) == Some("plain"))
+            .then(|| binding.get("value").and_then(Value::as_str))
+            .flatten()
+    })?;
+    let value = js_trim(value);
+    (!value.is_empty()).then(|| resolve_from_process_directory(value))
+}
+
+async fn resolve_configured_path(
+    tx: &mut Tx<'_>,
+    org_id: &str,
+    binding: &Value,
+) -> Result<Option<PathBuf>> {
+    let value = match binding {
+        Value::String(value) => Some(value.clone()),
+        Value::Object(object) if object.get("type").and_then(Value::as_str) == Some("plain") => {
+            object
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        }
+        Value::Object(object)
+            if object.get("type").and_then(Value::as_str) == Some("secret_ref") =>
+        {
+            crate::secrets::resolve_local_runtime_secret_reference(
+                tx,
+                org_id,
+                &Value::Object(object.clone()),
+            )
+            .await
+            .map_err(|error| match error {
+                crate::secrets::SecretsError::Http(status, message) => http(status, message),
+                crate::secrets::SecretsError::Database(error) => AgentCoreError::Database(error),
+            })?
+            .ok_or_else(|| http(503, "Secret provider unavailable"))?
+            .into()
+        }
+        _ => None,
+    };
+    Ok(value
+        .as_deref()
         .map(js_trim)
-        .filter(|value| !value.is_empty())?;
-    Some(resolve_from_process_directory(value))
+        .filter(|value| !value.is_empty())
+        .map(resolve_from_process_directory))
 }
 
 fn resolve_from_process_directory(value: &str) -> PathBuf {
