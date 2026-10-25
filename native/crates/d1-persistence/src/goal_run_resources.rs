@@ -80,6 +80,14 @@ struct OrganizationMember {
     reference: String,
 }
 
+#[derive(Clone, Debug)]
+struct DailyMemory {
+    date_key: String,
+    relative_path: String,
+    content: String,
+    error: Option<String>,
+}
+
 /// Read the same Agent-scoped information the Node run-context builder puts
 /// into `orgResourcesPrompt`. Goal has no project binding, so its project
 /// attachment section is empty just as it is in the current Node workflow.
@@ -118,18 +126,21 @@ pub async fn load_goal_started_resources(
 
     let prompt = build_org_resources_prompt(&integration_tools, &automations);
     let today = OffsetDateTime::now_utc().date();
+    let today_memory = read_daily_memory(memory_dir, today);
+    let yesterday_memory = read_daily_memory(memory_dir, today - Duration::days(1));
     let recent_context = build_recent_context(
         today,
-        read_daily_memory(memory_dir, today),
-        read_daily_memory(memory_dir, today - Duration::days(1)),
+        today_memory.content.clone(),
+        yesterday_memory.content.clone(),
         &issues,
         &chats,
         member_total,
         &members,
     );
     let startup_context = build_startup_context_value(
-        today,
         &recent_context,
+        &today_memory,
+        &yesterday_memory,
         &issues,
         &chats,
         issues.len().saturating_sub(10),
@@ -576,15 +587,14 @@ fn build_recent_context(
 }
 
 fn build_startup_context_value(
-    today: time::Date,
     markdown: &str,
+    today_memory: &DailyMemory,
+    yesterday_memory: &DailyMemory,
     issues: &[RecentIssue],
     chats: &[RecentChat],
     omitted_issues: usize,
     omitted_chats: usize,
 ) -> serde_json::Value {
-    let today_key = today.to_string();
-    let yesterday_key = (today - Duration::days(1)).to_string();
     let issue_refs = issues.iter().take(10).map(|issue| {
         let reference = issue
             .identifier
@@ -604,13 +614,19 @@ fn build_startup_context_value(
         })
     });
     let mut source_refs = vec![
-        serde_json::json!({"kind":"memory","id":today_key,"ref":format!("memory/{today_key}.md")}),
-        serde_json::json!({"kind":"memory","id":yesterday_key,"ref":format!("memory/{yesterday_key}.md")}),
+        serde_json::json!({"kind":"memory","id":today_memory.date_key,"ref":today_memory.relative_path}),
+        serde_json::json!({"kind":"memory","id":yesterday_memory.date_key,"ref":yesterday_memory.relative_path}),
     ];
     source_refs.extend(issue_refs);
     source_refs.extend(chat_refs);
 
     let mut omissions = Vec::new();
+    if let Some(error) = &today_memory.error {
+        omissions.push(format!("{}: {error}", today_memory.relative_path));
+    }
+    if let Some(error) = &yesterday_memory.error {
+        omissions.push(format!("{}: {error}", yesterday_memory.relative_path));
+    }
     if omitted_issues > 0 {
         omissions.push(format!("{omitted_issues} older issues"));
     }
@@ -635,16 +651,33 @@ fn build_startup_context_value(
     })
 }
 
-fn read_daily_memory(memory_dir: &Path, date: time::Date) -> String {
+fn read_daily_memory(memory_dir: &Path, date: time::Date) -> DailyMemory {
     let filename = format!("{date}.md");
-    if fs::create_dir_all(memory_dir).is_err() {
-        return String::new();
+    let relative_path = format!("memory/{filename}");
+    let failed = |error: String| DailyMemory {
+        date_key: date.to_string(),
+        relative_path: relative_path.clone(),
+        content: String::new(),
+        error: Some(error),
+    };
+    if let Err(error) = fs::create_dir_all(memory_dir) {
+        return failed(format!("mkdir failed: {error}"));
     }
     let path = memory_dir.join(&filename);
-    if !path.exists() && fs::write(&path, "").is_err() {
-        return String::new();
+    if !path.exists()
+        && let Err(error) = fs::write(&path, "")
+    {
+        return failed(format!("create failed: {error}"));
     }
-    fs::read_to_string(path).unwrap_or_default()
+    match fs::read_to_string(path) {
+        Ok(content) => DailyMemory {
+            date_key: date.to_string(),
+            relative_path,
+            content,
+            error: None,
+        },
+        Err(error) => failed(format!("read failed: {error}")),
+    }
 }
 
 fn format_triggers(triggers: &[Trigger]) -> String {
@@ -922,7 +955,28 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(actual, expected);
-        let startup_context = build_startup_context_value(today, &actual, &issues, &chats, 0, 0);
+        let today_memory = DailyMemory {
+            date_key: today.to_string(),
+            relative_path: format!("memory/{today}.md"),
+            content: "- 今日：检查完成 ✅\n- owner says café; 🧭".into(),
+            error: None,
+        };
+        let yesterday = today - Duration::days(1);
+        let yesterday_memory = DailyMemory {
+            date_key: yesterday.to_string(),
+            relative_path: format!("memory/{yesterday}.md"),
+            content: "昨日恢复 — keep it short".into(),
+            error: None,
+        };
+        let startup_context = build_startup_context_value(
+            &actual,
+            &today_memory,
+            &yesterday_memory,
+            &issues,
+            &chats,
+            0,
+            0,
+        );
         assert_eq!(startup_context["markdown"], expected);
         assert_eq!(startup_context["version"], "agent-startup-context/v1");
         assert_eq!(
@@ -946,5 +1000,40 @@ mod tests {
         assert_eq!(clip("ab😀cd", 5), "ab...");
         assert_eq!(clip("ab😀cd", 4), "a...");
         assert_eq!(js_string_length("😀"), 2);
+    }
+
+    #[test]
+    fn daily_memory_io_failure_is_preserved_as_a_startup_context_omission() {
+        let directory = tempfile::tempdir().unwrap();
+        let not_a_directory = directory.path().join("file");
+        fs::write(&not_a_directory, "blocking memory path").unwrap();
+        let today = time::Date::from_calendar_date(2026, time::Month::October, 25).unwrap();
+        let yesterday = today - Duration::days(1);
+        let today_memory = read_daily_memory(&not_a_directory, today);
+        let yesterday_memory = DailyMemory {
+            date_key: yesterday.to_string(),
+            relative_path: format!("memory/{yesterday}.md"),
+            content: String::new(),
+            error: None,
+        };
+        let startup_context =
+            build_startup_context_value("", &today_memory, &yesterday_memory, &[], &[], 0, 0);
+
+        assert!(today_memory.content.is_empty());
+        assert!(
+            today_memory
+                .error
+                .as_deref()
+                .unwrap()
+                .starts_with("mkdir failed:")
+        );
+        assert_eq!(
+            startup_context["omissions"][0]
+                .as_str()
+                .unwrap()
+                .split(": ")
+                .next(),
+            Some("memory/2026-10-25.md")
+        );
     }
 }
