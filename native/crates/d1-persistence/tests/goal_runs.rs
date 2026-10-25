@@ -1,8 +1,16 @@
 mod support;
 
-use rudder_d1_persistence::goal_runs::{self, GoalRunClaim};
-use serde_json::json;
+use rudder_d1_persistence::{
+    goal_costs,
+    goal_runs::{self, GoalRunClaim},
+};
+use rudder_native_process_transport::{
+    HostConnection, HostEvent, OwnedHost, read_durable_cleanup_receipt,
+};
+use rudder_native_protocol::{Command, ProtocolVersion};
+use serde_json::{Value, json};
 use sqlx::Row;
+use std::{collections::BTreeMap, path::Path, time::Duration};
 use support::{CEO, Database, GOAL, ORG};
 
 const SECOND_AGENT: &str = "50000000-0000-4000-8000-000000000002";
@@ -354,4 +362,246 @@ async fn only_the_currently_focused_goal_is_claimed_across_agents() {
     .await
     .expect("verify the unfocused Goal did not create a Run");
     assert_eq!(other_run_count, 0);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST and disposable PostgreSQL; launches only a synthetic local child"]
+async fn expired_native_goal_owner_recovers_from_external_host_cleanup_receipt() {
+    let database = Database::start().await;
+    let wakeup_id = goal_wakeup(&database, "native_rust").await;
+    let mut claim = claim_wakeup(&database, &wakeup_id)
+        .await
+        .expect("the Goal wakeup has a native owner");
+    let runtime_root = tempfile::tempdir().expect("create managed process-host runtime root");
+    let runtime_path = runtime_root
+        .path()
+        .canonicalize()
+        .expect("canonicalize process-host runtime root");
+    let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+        .expect("build rudder-process-host and set RUDDER_TEST_PROCESS_HOST");
+    let mut host = OwnedHost::launch_external(
+        HostConnection {
+            request_id: claim.attempt_id.clone(),
+            run_id: claim.run_id.clone(),
+            attempt_id: claim.attempt_id.clone(),
+            owner_token: claim.owner_token.clone(),
+        },
+        Path::new(&process_host),
+        claim.take_connection_launch_permit(),
+    )
+    .expect("launch the external Rust process host with this persisted attempt claim");
+    host.send(Command::StartProcess {
+        protocol_version: Some(ProtocolVersion::default()),
+        request_id: Some(claim.attempt_id.clone()),
+        executable: "/bin/sh".to_owned(),
+        argv: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        cwd: runtime_path.to_string_lossy().into_owned(),
+        env: BTreeMap::new(),
+        owner_token: Some(claim.owner_token.clone()),
+        runtime_root: Some(runtime_path.to_string_lossy().into_owned()),
+        stdin: None,
+        interactive_stdin: true,
+        grace_ms: Some(100),
+    })
+    .expect("send synthetic provider launch to the process host");
+    let process_id = loop {
+        match host
+            .receive(Duration::from_secs(10))
+            .expect("receive host startup lifecycle")
+        {
+            HostEvent::Lifecycle(event) if event["type"] == "spawned" => {
+                break event["pid"].as_u64().expect("spawned child PID") as i32;
+            }
+            HostEvent::Lifecycle(event) if event["type"] == "terminal" => {
+                panic!("synthetic child terminated before caller loss: {event}");
+            }
+            HostEvent::Failure => panic!("external host failed before child spawn"),
+            _ => {}
+        }
+    };
+    assert!(
+        goal_runs::record_process_started(&database.pool, &claim, process_id)
+            .await
+            .expect("persist the started process identity"),
+        "the matching claim records its child before it is lost"
+    );
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin expired-owner fixture");
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+        .execute(&mut *tx)
+        .await
+        .expect("authorize the native Goal lease fixture update");
+    sqlx::query(
+        "UPDATE heartbeat_runs SET execution_lease_expires_at=statement_timestamp()-interval '1 second'
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_owner_token=$3",
+    )
+    .bind(ORG)
+    .bind(&claim.run_id)
+    .bind(&claim.owner_token)
+    .execute(&mut *tx)
+    .await
+        .expect("expire the owner lease after simulated caller loss");
+    tx.commit().await.expect("commit the expired owner fixture");
+
+    // Dropping the original caller closes its command pipe. The real external
+    // process host reaps the synthetic child and durably writes its receipt.
+    drop(host);
+    let operation_root = runtime_path.join(&claim.owner_token);
+    let descriptor_path = operation_root.join("owner-descriptor.json");
+    let receipt_path = operation_root.join("terminal-receipt.json");
+    assert!(
+        descriptor_path.is_file(),
+        "owner identity is durably recorded"
+    );
+    assert!(
+        receipt_path.is_file(),
+        "host wrote its terminal cleanup receipt"
+    );
+    let original_receipt = std::fs::read(&receipt_path).expect("read cleanup receipt");
+
+    let expired = goal_runs::list_expired_native_goal_runs(&database.pool)
+        .await
+        .expect("find the expired native Goal owner")
+        .into_iter()
+        .find(|run| run.run_id == claim.run_id)
+        .expect("the linked native Goal attempt remains recoverable");
+    let mut forged_identity: Value = serde_json::from_slice(&original_receipt)
+        .expect("parse process-host receipt for mismatch test");
+    forged_identity["opaqueOwnerToken"] =
+        Value::String("ffffffff-ffff-4fff-8fff-ffffffffffff".to_owned());
+    std::fs::write(&receipt_path, forged_identity.to_string())
+        .expect("write mismatched receipt identity");
+    assert!(
+        read_durable_cleanup_receipt(
+            &runtime_path,
+            &expired.run_id,
+            &expired.attempt_id,
+            &expired.owner_token,
+            expired.connection_epoch,
+            &expired.connection_claim_id,
+        )
+        .is_err(),
+        "a receipt with another owner token is not cleanup proof"
+    );
+    goal_runs::record_cleanup_unknown(&database.pool, &expired)
+        .await
+        .expect("leave an operator-visible unresolved owner warning");
+    let unresolved: (String, Option<String>, bool) = sqlx::query_as(
+        "SELECT status,execution_owner_token,process_exited_at IS NOT NULL
+         FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&claim.run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read the mismatched-receipt run state");
+    assert_eq!(
+        unresolved,
+        ("running".to_owned(), Some(claim.owner_token.clone()), false)
+    );
+
+    std::fs::write(&receipt_path, original_receipt).expect("restore exact host cleanup receipt");
+    let receipt = read_durable_cleanup_receipt(
+        &runtime_path,
+        &expired.run_id,
+        &expired.attempt_id,
+        &expired.owner_token,
+        expired.connection_epoch,
+        &expired.connection_claim_id,
+    )
+    .expect("read matching process-host cleanup receipt")
+    .expect("matching receipt exists");
+    assert!(
+        goal_runs::recover_expired_with_cleanup_receipt(&database.pool, &expired, &receipt)
+            .await
+            .expect("recover the stopped owner after proven cleanup"),
+        "the exact matching cleanup receipt releases the stale claim"
+    );
+    assert!(
+        !goal_runs::recover_expired_with_cleanup_receipt(&database.pool, &expired, &receipt)
+            .await
+            .expect("repeat recovery safely"),
+        "recovery is idempotent and cannot finalize twice"
+    );
+    assert!(
+        goal_costs::settle_terminal_effects(&database.pool, ORG, &claim.run_id)
+            .await
+            .expect("settle recovered terminal effects"),
+        "terminal settlement clears the ownership hold"
+    );
+
+    let recovered: (String, Option<String>, bool, bool, Value) = sqlx::query_as(
+        "SELECT r.status,r.error_code,r.process_exited_at IS NOT NULL,
+                r.usage_json IS NULL,r.result_json
+         FROM heartbeat_runs r WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&claim.run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read recovered native Goal run");
+    assert_eq!(recovered.0, "failed");
+    assert_eq!(recovered.1.as_deref(), Some("process_lost"));
+    assert!(recovered.2, "process host proved the child exited");
+    assert!(recovered.3, "unknown usage remains SQL NULL");
+    assert_eq!(recovered.4["ownerRecovery"]["providerResult"], "unknown");
+    assert_eq!(recovered.4["ownerRecovery"]["usage"], "unknown");
+
+    let terminal: (String, String, bool, String) = sqlx::query_as(
+        "SELECT r.status,w.status,r.terminal_effects_pending,a.status
+         FROM heartbeat_runs r
+         JOIN agent_wakeup_requests w ON w.org_id=r.org_id AND w.id=r.wakeup_request_id
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+         WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&claim.run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read settled run, wakeup and attempt");
+    assert_eq!(
+        terminal,
+        ("failed".into(), "failed".into(), false, "failed".into())
+    );
+    let ledger_state: (i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM heartbeat_run_attempts WHERE org_id=$1::uuid AND run_id=$2::uuid),
+           (SELECT count(*) FROM cost_events WHERE org_id=$1::uuid AND heartbeat_run_id=$2::uuid)",
+    )
+    .bind(ORG)
+    .bind(&claim.run_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("verify no provider retry or fabricated zero-cost event");
+    assert_eq!(ledger_state, (1, 0));
+
+    let next_wakeup = sqlx::query_scalar::<_, String>(
+        "INSERT INTO agent_wakeup_requests
+           (org_id,agent_id,source,trigger_detail,reason,payload,execution_authority)
+         VALUES($1::uuid,$2::uuid,'on_demand','system','goal_started',$3::jsonb,'native_rust')
+         RETURNING id::text",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .bind(
+        json!({
+            "event":"goal_started",
+            "goalId":GOAL,
+            "taskKey":format!("goal:{GOAL}:goal_started:after-recovery"),
+            "goalStartRequestId":"after-recovery",
+            "_paperclipWakeContext":{"goalId":GOAL,"goal":{"id":GOAL,"title":"Synthetic goal"}}
+        })
+        .to_string(),
+    )
+    .fetch_one(&database.pool)
+    .await
+    .expect("queue another wakeup for the recovered Agent");
+    assert!(
+        claim_wakeup(&database, &next_wakeup).await.is_some(),
+        "the recovered Agent can accept another run instead of remaining locked"
+    );
 }

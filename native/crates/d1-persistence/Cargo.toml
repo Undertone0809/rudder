@@ -42,5 +42,6 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_IO"] }
 
 [dev-dependencies]
+rudder-native-protocol = { path = "../native-protocol" }
 tempfile = "3.23"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "time"] }

@@ -5,7 +5,9 @@
 //! commit in one transaction so the legacy TypeScript queue cannot also claim
 //! a Goal wakeup tagged `native_rust`.
 
-use rudder_native_process_transport::{ConnectionLaunchPermit, HostCleanupProof};
+use rudder_native_process_transport::{
+    ConnectionLaunchPermit, DurableHostCleanupReceipt, HostCleanupProof,
+};
 use serde_json::{Map, Value, json};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::time::Duration;
@@ -15,6 +17,7 @@ use uuid::Uuid;
 const GOAL_WAKE_REASONS: &[&str] = &["goal_started"];
 
 const MAX_DUE_WAKEUPS: i64 = 32;
+const MAX_EXPIRED_GOAL_RUNS: i64 = 32;
 const NATIVE_GOAL_WRITE_MARKER: &str = "native_chat:goal_run";
 
 async fn mark_native_goal_write(tx: &mut Transaction<'_, Postgres>) -> Result<(), GoalRunError> {
@@ -62,6 +65,9 @@ pub struct GoalRunClaim {
     pub reason: String,
     pub wake_payload: Value,
     pub context_snapshot: Value,
+    /// Connection identity is derived from the durable attempt row: the
+    /// attempt epoch is its connection epoch and the attempt ID is its claim
+    /// ID. These values therefore survive owner-process death unchanged.
     connection_epoch: i32,
     connection_claim_id: String,
     connection_launch_permit: Option<ConnectionLaunchPermit>,
@@ -79,6 +85,21 @@ impl GoalRunClaim {
 pub struct DueGoalWakeup {
     pub organization_id: String,
     pub wakeup_request_id: String,
+}
+
+/// Persisted identity required to inspect one expired Goal process-host
+/// receipt. Owner tokens are intentionally omitted from `Debug` and logs.
+pub struct ExpiredNativeGoalRun {
+    pub organization_id: String,
+    pub agent_id: String,
+    pub wakeup_request_id: String,
+    pub run_id: String,
+    pub attempt_id: String,
+    pub owner_token: String,
+    pub attempt_epoch: i32,
+    pub connection_epoch: i32,
+    pub connection_claim_id: String,
+    pub process_id: Option<i32>,
 }
 
 /// Find a bounded batch of due native GoalStarted wake intents for the one
@@ -138,6 +159,378 @@ pub async fn list_due_native_goal_wakeups(
             })
         })
         .collect()
+}
+
+/// Discover native Goal owners whose lease expired. This does not take over a
+/// Run or authorize another provider launch; the worker must first recover a
+/// matching process-host cleanup receipt.
+pub async fn list_expired_native_goal_runs(
+    pool: &PgPool,
+) -> Result<Vec<ExpiredNativeGoalRun>, GoalRunError> {
+    let rows = sqlx::query(
+        "SELECT r.org_id::text AS org_id,r.agent_id::text AS agent_id,
+                r.wakeup_request_id::text AS wakeup_id,r.id::text AS run_id,
+                r.execution_owner_token AS owner_token,r.process_pid,
+                a.id::text AS attempt_id,a.attempt_epoch
+         FROM heartbeat_runs r
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+           AND a.owner_token=r.execution_owner_token AND a.status='started'
+         JOIN agent_wakeup_requests w ON w.org_id=r.org_id AND w.id=r.wakeup_request_id
+           AND w.run_id=r.id AND w.execution_authority='native_rust'
+         WHERE r.execution_authority='native_rust' AND r.goal_id IS NOT NULL
+           AND r.scene='heartbeat' AND r.target_type='wakeup_request'
+           AND r.status='running' AND r.execution_owner_token IS NOT NULL
+           AND r.execution_lease_expires_at <= statement_timestamp()
+           AND r.process_exited_at IS NULL AND r.terminal_effects_pending=false
+         ORDER BY r.execution_lease_expires_at,r.id LIMIT $1",
+    )
+    .bind(MAX_EXPIRED_GOAL_RUNS)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|row| {
+            let attempt_id: String = row.try_get("attempt_id")?;
+            let attempt_epoch: i32 = row.try_get("attempt_epoch")?;
+            Ok(ExpiredNativeGoalRun {
+                organization_id: row.try_get("org_id")?,
+                agent_id: row.try_get("agent_id")?,
+                wakeup_request_id: row.try_get("wakeup_id")?,
+                run_id: row.try_get("run_id")?,
+                owner_token: row.try_get("owner_token")?,
+                process_id: row.try_get("process_pid")?,
+                attempt_id: attempt_id.clone(),
+                attempt_epoch,
+                // Connection identity is derived from the same durable
+                // attempt row: its epoch and ID were persisted before launch.
+                connection_epoch: attempt_epoch,
+                connection_claim_id: attempt_id,
+            })
+        })
+        .collect()
+}
+
+/// Leave a durable operator-facing warning when an expired owner has no
+/// matching cleanup receipt. The Run stays running and no replacement provider
+/// is launched until cleanup can be proven.
+pub async fn record_cleanup_unknown(
+    pool: &PgPool,
+    expired: &ExpiredNativeGoalRun,
+) -> Result<(), GoalRunError> {
+    let mut tx = pool.begin().await?;
+    crate::native_chat::lock_goal_run_budget_state(&mut tx, &expired.organization_id).await?;
+    crate::goal_writes::lock_goal_run_organization(&mut tx, &expired.organization_id)
+        .await
+        .map_err(|error| match error {
+            crate::StoreError::Database(error) => GoalRunError::Database(error),
+            _ => GoalRunError::Ineligible,
+        })?;
+    mark_native_goal_write(&mut tx).await?;
+    let row = sqlx::query(
+        "UPDATE heartbeat_runs SET
+           error=COALESCE(error,'Previous native Goal owner lease expired, but the exact process-host cleanup receipt is not available. No provider retry was started.'),
+           error_code=CASE WHEN error_code IS NULL THEN 'goal_owner_cleanup_unknown' ELSE error_code END,
+           updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
+           AND goal_id IS NOT NULL AND scene='heartbeat' AND target_type='wakeup_request'
+           AND status='running' AND execution_owner_token=$3
+           AND execution_lease_expires_at <= statement_timestamp()
+           AND process_exited_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM heartbeat_run_events e
+             WHERE e.org_id=heartbeat_runs.org_id AND e.run_id=heartbeat_runs.id
+               AND e.idempotency_key='goal-run-owner-cleanup-unknown:' || heartbeat_runs.id::text
+           )
+         RETURNING agent_id::text AS agent_id,error_code",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&expired.owner_token)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(row) = row {
+        let agent_id: String = row.try_get("agent_id")?;
+        let error_code: String = row.try_get("error_code")?;
+        sqlx::query(
+            "INSERT INTO heartbeat_run_events
+               (org_id,run_id,agent_id,seq,event_type,stream,level,message,idempotency_key)
+             SELECT $1::uuid,$2::uuid,$3::uuid,
+               coalesce((SELECT max(seq) FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid),0)+1,
+               'lifecycle','system','warn',$4,$5
+             ON CONFLICT (run_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING",
+        )
+        .bind(&expired.organization_id)
+        .bind(&expired.run_id)
+        .bind(agent_id)
+        .bind("Native Goal owner was lost; waiting for its matching process-host cleanup receipt")
+        .bind(format!("goal-run-owner-cleanup-unknown:{}", expired.run_id))
+        .execute(&mut *tx)
+        .await?;
+        tracing::warn!(
+            event = "native_goal_owner_cleanup_unknown",
+            run_id = %expired.run_id,
+            error_code,
+        );
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Finalize one expired Goal Run only after the process host's durable receipt
+/// proves cleanup for the exact persisted attempt identity. Provider work is
+/// never retried by this recovery path.
+pub async fn recover_expired_with_cleanup_receipt(
+    pool: &PgPool,
+    expired: &ExpiredNativeGoalRun,
+    receipt: &DurableHostCleanupReceipt,
+) -> Result<bool, GoalRunError> {
+    if !receipt.cleanup_proof().matches_connection_claim(
+        &expired.run_id,
+        &expired.attempt_id,
+        &expired.owner_token,
+        expired.connection_epoch,
+        &expired.connection_claim_id,
+    ) || expired.connection_epoch != expired.attempt_epoch
+        || expired.connection_claim_id != expired.attempt_id
+        || receipt.process_id().is_some_and(|pid| pid <= 1)
+        || receipt
+            .process_id()
+            .is_some_and(|pid| expired.process_id.is_some_and(|expected| expected != pid))
+        || (expired.process_id.is_some() && receipt.process_id().is_none())
+    {
+        record_cleanup_unknown(pool, expired).await?;
+        return Ok(false);
+    }
+
+    let mut tx = pool.begin().await?;
+    crate::native_chat::lock_goal_run_budget_state(&mut tx, &expired.organization_id).await?;
+    crate::goal_writes::lock_goal_run_organization(&mut tx, &expired.organization_id)
+        .await
+        .map_err(|error| match error {
+            crate::StoreError::Database(error) => GoalRunError::Database(error),
+            _ => GoalRunError::Ineligible,
+        })?;
+    mark_native_goal_write(&mut tx).await?;
+    let run = sqlx::query(
+        "SELECT agent_id::text AS agent_id,error,error_code,
+                result_json::text AS result_json,usage_json::text AS usage_json
+         FROM heartbeat_runs
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
+           AND goal_id IS NOT NULL AND scene='heartbeat' AND target_type='wakeup_request'
+           AND status='running' AND execution_owner_token=$3
+           AND execution_lease_expires_at <= statement_timestamp()
+           AND process_exited_at IS NULL AND terminal_effects_pending=false
+         FOR UPDATE",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&expired.owner_token)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(run) = run else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    let attempt = sqlx::query(
+        "SELECT id::text AS id,owner_token,attempt_epoch,status
+         FROM heartbeat_run_attempts
+         WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid
+         FOR UPDATE",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&expired.attempt_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(attempt) = attempt else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    if attempt.try_get::<String, _>("owner_token")? != expired.owner_token
+        || attempt.try_get::<i32, _>("attempt_epoch")? != expired.attempt_epoch
+        || attempt.try_get::<String, _>("status")? != "started"
+    {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    let agent_id: String = run.try_get("agent_id")?;
+    let current_error: Option<String> = run.try_get("error")?;
+    let current_error_code: Option<String> = run.try_get("error_code")?;
+    let existing_result = run
+        .try_get::<Option<String>, _>("result_json")?
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        .filter(|value| !value.is_null());
+    let existing_usage = run
+        .try_get::<Option<String>, _>("usage_json")?
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        .filter(|value| !value.is_null());
+    let provider_result_observed = existing_result.is_some();
+    let cancelled = current_error_code.as_deref() == Some("cancel_requested");
+    let result_status = existing_result
+        .as_ref()
+        .and_then(|result| result.get("status"))
+        .and_then(Value::as_str);
+    let final_status = if cancelled {
+        "cancelled"
+    } else if result_status == Some("succeeded") && receipt.host_status() == "succeeded" {
+        "succeeded"
+    } else {
+        "failed"
+    };
+    let recovery_error = if cancelled {
+        current_error.clone()
+    } else if final_status == "failed" {
+        Some(if existing_result.is_some() {
+            format!(
+                "Goal provider cleanup completed after owner loss, but terminal status was not successful ({})",
+                receipt.host_error_code().unwrap_or(receipt.host_status())
+            )
+        } else {
+            "Goal owner was lost after provider launch; the process host proved cleanup, but provider result and usage were not durably observed".to_owned()
+        })
+    } else {
+        existing_result
+            .as_ref()
+            .and_then(|result| result.get("error"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let error_code = if cancelled {
+        "cancelled".to_owned()
+    } else if final_status == "failed" && existing_result.is_none() {
+        "process_lost".to_owned()
+    } else if final_status == "failed" {
+        existing_result
+            .as_ref()
+            .and_then(|result| result.get("errorCode"))
+            .and_then(Value::as_str)
+            .unwrap_or("process_lost")
+            .to_owned()
+    } else {
+        String::new()
+    };
+    let mut result = existing_result.unwrap_or_else(|| {
+        json!({
+            "provider": "anthropic",
+            "errorCode": if cancelled { "cancelled" } else { "process_lost" },
+            "error": recovery_error,
+            "recovery": {
+                "processHostCleanup": "proven",
+                "providerResult": "unknown",
+                "usage": "unknown",
+                "hostStatus": receipt.host_status(),
+                "hostErrorCode": receipt.host_error_code()
+            }
+        })
+    });
+    if let Some(recovery) = result.as_object_mut() {
+        recovery.insert(
+            "ownerRecovery".to_owned(),
+            json!({
+                "processHostCleanup": "proven",
+                "providerResult": if provider_result_observed { "observed" } else { "unknown" },
+                "usage": if existing_usage.is_some() { "observed" } else { "unknown" },
+                "hostStatus": receipt.host_status(),
+                "hostErrorCode": receipt.host_error_code()
+            }),
+        );
+    }
+    let summary = existing_usage
+        .as_ref()
+        .and_then(|usage| summarize_result_json(&result, usage))
+        .map(|value| value.to_string());
+    let run_update = sqlx::query(
+        "UPDATE heartbeat_runs SET
+           process_pid=COALESCE(process_pid,$4),
+           process_exited_at=statement_timestamp(),
+           execution_owner_token=NULL,execution_lease_expires_at=NULL,
+           status=$5,finished_at=COALESCE(finished_at,statement_timestamp()),
+           error_code=NULLIF($6,''),error=CASE WHEN $7 THEN error ELSE $8 END,
+           result_json=$9::jsonb,usage_json=$10::jsonb,result_summary_json=$11::jsonb,
+           terminal_effects_pending=true,
+           terminal_effects_json=$12::jsonb,terminal_effects_completed_json=NULL,
+           terminal_effects_dead_lettered_json=NULL,terminal_effects_attempts_json=NULL,
+           terminal_effects_next_attempt_at=NULL,terminal_effects_dead_lettered_at=NULL,
+           terminal_effects_claim_token=NULL,terminal_effects_claimed_at=NULL,
+           terminal_effects_attempt_count=0,terminal_effects_last_error=NULL,
+           updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_owner_token=$3
+           AND status='running' AND execution_lease_expires_at <= statement_timestamp()
+           AND process_exited_at IS NULL RETURNING id",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&expired.owner_token)
+    .bind(receipt.process_id())
+    .bind(final_status)
+    .bind(&error_code)
+    .bind(cancelled)
+    .bind(recovery_error.as_deref())
+    .bind(result.to_string())
+    .bind(existing_usage.as_ref().map(Value::to_string))
+    .bind(summary)
+    .bind(json!({"version":1,"goalRunCostSettlement":true}).to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if run_update.is_none() {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query(
+        "UPDATE heartbeat_run_attempts SET status=$4,usage_delta_json=$5::jsonb,
+           error=$6,error_code=NULLIF($7,''),finished_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid
+           AND owner_token=$8 AND attempt_epoch=$9 AND status='started'",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&expired.attempt_id)
+    .bind(final_status)
+    .bind(existing_usage.as_ref().map(Value::to_string))
+    .bind(recovery_error.as_deref())
+    .bind(&error_code)
+    .bind(&expired.owner_token)
+    .bind(expired.attempt_epoch)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE agent_wakeup_requests SET status=$4,finished_at=statement_timestamp(),
+           error=$5,updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid AND run_id=$3::uuid
+           AND execution_authority='native_rust'",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.wakeup_request_id)
+    .bind(&expired.run_id)
+    .bind(match final_status {
+        "succeeded" => "completed",
+        "cancelled" => "cancelled",
+        _ => "failed",
+    })
+    .bind(recovery_error.as_deref())
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO heartbeat_run_events
+           (org_id,run_id,agent_id,seq,event_type,stream,level,message,idempotency_key)
+         SELECT $1::uuid,$2::uuid,$3::uuid,
+           coalesce((SELECT max(seq) FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid),0)+1,
+           'lifecycle','system','warn',$4,$5
+         ON CONFLICT (run_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING",
+    )
+    .bind(&expired.organization_id)
+    .bind(&expired.run_id)
+    .bind(&agent_id)
+    .bind(if final_status == "cancelled" {
+        "run cancelled after process-host cleanup receipt recovery"
+    } else {
+        "run finalized after process-host cleanup receipt recovery"
+    })
+    .bind(format!("goal-run-owner-recovered:{}", expired.run_id))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Claim one already-tagged Goal wakeup. A missing, legacy-owned, linked, or
@@ -414,11 +807,11 @@ pub async fn claim_wakeup(
     .fetch_one(&mut *tx)
     .await?;
     let run_id: String = run.try_get("id")?;
-    let attempt_id: String = sqlx::query_scalar(
+    let attempt = sqlx::query(
         "INSERT INTO heartbeat_run_attempts
            (org_id,run_id,agent_id,attempt_index,runtime_type,status,owner_token,attempt_epoch,started_at)
          VALUES($1::uuid,$2::uuid,$3::uuid,1,'claude_local','started',$4,1,statement_timestamp())
-         RETURNING id::text",
+         RETURNING id::text,attempt_epoch",
     )
     .bind(&organization_id)
     .bind(&run_id)
@@ -426,6 +819,8 @@ pub async fn claim_wakeup(
     .bind(&owner_token)
     .fetch_one(&mut *tx)
     .await?;
+    let attempt_id: String = attempt.try_get("id")?;
+    let attempt_epoch: i32 = attempt.try_get("attempt_epoch")?;
     let linked = sqlx::query(
         "UPDATE agent_wakeup_requests
          SET status='claimed', run_id=$3::uuid, claimed_at=statement_timestamp(),
@@ -461,8 +856,8 @@ pub async fn claim_wakeup(
     .await?;
     tx.commit().await?;
 
-    let connection_epoch = 1;
-    let connection_claim_id = Uuid::new_v4().to_string();
+    let connection_epoch = attempt_epoch;
+    let connection_claim_id = attempt_id.clone();
     let connection_launch_permit = ConnectionLaunchPermit::from_claim(
         run_id.clone(),
         attempt_id.clone(),
@@ -481,7 +876,7 @@ pub async fn claim_wakeup(
         run_id,
         attempt_id,
         owner_token,
-        attempt_epoch: 1,
+        attempt_epoch,
         invocation_source: source,
         trigger_detail,
         reason,

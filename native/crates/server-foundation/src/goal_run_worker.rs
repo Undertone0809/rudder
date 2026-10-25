@@ -16,6 +16,7 @@ use rudder_d1_persistence::{
 use rudder_native_chat_executor::{
     GoalRunExecutionObservation, GoalRunExecutionState, execute_goal_claude_run,
 };
+use rudder_native_process_transport::read_durable_cleanup_receipt;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::path::Path;
@@ -143,6 +144,68 @@ async fn run_queue(
     shutdown: Arc<AtomicBool>,
 ) {
     while !shutdown.load(Ordering::Acquire) {
+        let expired_owners = match goal_runs::list_expired_native_goal_runs(&pool).await {
+            Ok(expired) => expired,
+            Err(error) => {
+                tracing::warn!(event = "native_goal_owner_recovery_scan_failed", error = %error);
+                Vec::new()
+            }
+        };
+        for expired in expired_owners {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            match read_durable_cleanup_receipt(
+                &runtime.paths.runtime_root,
+                &expired.run_id,
+                &expired.attempt_id,
+                &expired.owner_token,
+                expired.connection_epoch,
+                &expired.connection_claim_id,
+            ) {
+                Ok(Some(receipt)) => {
+                    match goal_runs::recover_expired_with_cleanup_receipt(&pool, &expired, &receipt)
+                        .await
+                    {
+                        Ok(true) => tracing::warn!(
+                            event = "native_goal_owner_recovered_after_cleanup",
+                            run_id = %expired.run_id,
+                            host_status = receipt.host_status(),
+                        ),
+                        Ok(false) => {}
+                        Err(error) => tracing::error!(
+                            event = "native_goal_owner_recovery_failed",
+                            run_id = %expired.run_id,
+                            error = %error,
+                        ),
+                    }
+                }
+                Ok(None) => {
+                    if let Err(error) = goal_runs::record_cleanup_unknown(&pool, &expired).await {
+                        tracing::error!(
+                            event = "native_goal_owner_cleanup_diagnostic_failed",
+                            run_id = %expired.run_id,
+                            error = %error,
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        event = "native_goal_owner_cleanup_receipt_invalid",
+                        run_id = %expired.run_id,
+                        error = %error,
+                    );
+                    if let Err(error) = goal_runs::record_cleanup_unknown(&pool, &expired).await {
+                        tracing::error!(
+                            event = "native_goal_owner_cleanup_diagnostic_failed",
+                            run_id = %expired.run_id,
+                            error = %error,
+                        );
+                    }
+                }
+            }
+        }
+
         let pending_effects = match goal_costs::list_due_terminal_effects(&pool).await {
             Ok(pending) => pending,
             Err(error) => {

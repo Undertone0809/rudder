@@ -9,7 +9,8 @@ mod external;
 mod strict_json;
 
 pub use connection::{
-    ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
+    ConnectionIdentity, ConnectionLaunchPermit, ConnectionReceipt, DurableCleanupReceiptError,
+    DurableHostCleanupReceipt, HostCleanupProof, read_durable_cleanup_receipt,
 };
 
 use rudder_native_protocol::Command;
