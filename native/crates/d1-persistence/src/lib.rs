@@ -18,6 +18,7 @@ pub mod cost_reads;
 pub mod goal_budget;
 pub mod goal_costs;
 pub mod goal_reads;
+pub mod goal_run_cancellation;
 pub mod goal_run_resources;
 pub mod goal_runs;
 mod goal_sets;
