@@ -5,6 +5,7 @@ import * as localAccountRoutes from "../routes/local-account-auth.js";
 
 const mocks = vi.hoisted(() => ({
   organizationRoutes: vi.fn(), projectRoutes: vi.fn(), goalRoutes: vi.fn(),
+  approvalRoutes: vi.fn(), issueRoutes: vi.fn(),
   localAccountAuthRoutes: vi.fn(), otherRoute: vi.fn(), rudderPluginService: vi.fn(),
 }));
 
@@ -13,7 +14,7 @@ vi.mock("../routes/activity.js", () => ({ activityRoutes: mocks.otherRoute }));
 vi.mock("../routes/agents.js", () => ({ agentRoutes: mocks.otherRoute }));
 vi.mock("../routes/ai-search.js", () => ({ aiSearchRoutes: mocks.otherRoute }));
 vi.mock("../routes/app-builder.js", () => ({ appBuilderRoutes: mocks.otherRoute }));
-vi.mock("../routes/approvals.js", () => ({ approvalRoutes: mocks.otherRoute }));
+vi.mock("../routes/approvals.js", () => ({ approvalRoutes: mocks.approvalRoutes }));
 vi.mock("../routes/assets.js", () => ({ assetRoutes: mocks.otherRoute }));
 vi.mock("../routes/automations.js", () => ({ automationRoutes: mocks.otherRoute }));
 vi.mock("../routes/browser.js", () => ({ browserRoutes: mocks.otherRoute }));
@@ -26,7 +27,7 @@ vi.mock("../routes/execution-workspaces.js", () => ({ runWorkspaceRoutes: mocks.
 vi.mock("../routes/health.js", () => ({ healthRoutes: mocks.otherRoute }));
 vi.mock("../routes/instance-settings.js", () => ({ instanceSettingsRoutes: mocks.otherRoute }));
 vi.mock("../routes/integrations.js", () => ({ integrationRoutes: mocks.otherRoute }));
-vi.mock("../routes/issues.js", () => ({ issueRoutes: mocks.otherRoute }));
+vi.mock("../routes/issues.js", () => ({ issueRoutes: mocks.issueRoutes }));
 vi.mock("../routes/local-account-auth.js", () => ({ localAccountAuthRoutes: mocks.localAccountAuthRoutes }));
 vi.mock("../routes/managed-mcp-agent-bindings.js", () => ({ managedMcpAgentBindingRoutes: mocks.otherRoute }));
 vi.mock("../routes/managed-mcp-connections.js", () => ({ managedMcpConnectionRoutes: mocks.otherRoute }));
@@ -53,6 +54,10 @@ beforeEach(() => {
   mocks.projectRoutes.mockImplementation(() => Router());
   mocks.goalRoutes.mockReset();
   mocks.goalRoutes.mockImplementation(() => Router());
+  mocks.approvalRoutes.mockReset();
+  mocks.approvalRoutes.mockImplementation(() => Router());
+  mocks.issueRoutes.mockReset();
+  mocks.issueRoutes.mockImplementation(() => Router());
   mocks.localAccountAuthRoutes.mockReset();
   mocks.localAccountAuthRoutes.mockImplementation(() => Router());
   mocks.otherRoute.mockReset();
@@ -62,7 +67,7 @@ beforeEach(() => {
 });
 
 describe("registerApiRoutes", () => {
-  it("passes native organization and Project route gates only when public ingress is configured", () => {
+  it("passes native route gates only when public ingress is configured", () => {
     const baseOptions = {
       uiMode: "none", serverPort: 3100, storageService: {}, deploymentMode: "local_trusted",
       deploymentExposure: "private", allowedHostnames: [], bindHost: "127.0.0.1",
@@ -78,6 +83,8 @@ describe("registerApiRoutes", () => {
       nativeProjectReads: true,
     });
     expect(mocks.goalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeGoalWrites: true });
+    expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: true });
+    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({ nativeApprovalReads: true });
 
     registerApiRoutes({} as never, baseOptions as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: false });
@@ -85,6 +92,8 @@ describe("registerApiRoutes", () => {
       nativeProjectReads: false,
     });
     expect(mocks.goalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeGoalWrites: false });
+    expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: false });
+    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({ nativeApprovalReads: false });
   });
 
   it("builds the API router from the current server dependencies", () => {

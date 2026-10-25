@@ -108,7 +108,9 @@ export function registerApiRoutes(
   }));
   api.use(onboardingRoutes(db, rustFoundationBridge));
   api.use(productAnalyticsRoutes(db));
-  api.use(issueRoutes(db, opts.storageService, rustFoundationBridge));
+  api.use(issueRoutes(db, opts.storageService, rustFoundationBridge, {
+    nativeApprovalReads: Boolean(opts.rustPublicIngress),
+  }));
   api.use(messengerRoutes(db, rustFoundationBridge));
   api.use(chatRoutes(
     db,
@@ -136,7 +138,9 @@ export function registerApiRoutes(
   api.use(goalRoutes(db, rustFoundationBridge, {
     nativeGoalWrites: Boolean(opts.rustPublicIngress),
   }));
-  api.use(approvalRoutes(db, rustFoundationBridge));
+  api.use(approvalRoutes(db, rustFoundationBridge, {
+    nativeApprovalReads: Boolean(opts.rustPublicIngress),
+  }));
   api.use(requestRoutes(db, rustFoundationBridge));
   api.use(secretRoutes(db, rustFoundationBridge));
   api.use(costRoutes(db, rustFoundationBridge));
