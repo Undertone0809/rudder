@@ -1,16 +1,21 @@
 //! Canonical Agent-create skill selection.
 //!
-//! This module intentionally resolves references from the organization skill
-//! catalog while the Agent create transaction is open. It persists only
-//! canonical selection keys (`org:<organization_skills.key>`); bundled Rudder
-//! skills are validated and omitted because they are always enabled by the
-//! runtime. Markdown, file inventories, and other skill payloads never cross
-//! this boundary.
+//! This module resolves organization selections from the org-scoped database
+//! catalog and global/adapter selections from their configured local skill
+//! roots while the Agent create transaction is open. It persists only
+//! canonical selection keys (`org:<key>`, `global:<slug>`, or
+//! `adapter:<runtime>:<slug>`); bundled Rudder skills are validated and
+//! omitted because they are always enabled by the runtime. Markdown, file
+//! inventories, and other skill payloads never cross this boundary.
 
 use super::{AgentCoreError, AgentCreateRequest, common::*};
 use serde_json::Value;
 use sqlx::Row;
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
 const BUNDLED_SKILL_SLUGS: &[&str] = &[
     "app-builder",
@@ -29,6 +34,12 @@ struct CatalogSkill {
     source_type: String,
     source_ref: Option<String>,
     metadata: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FilesystemSkill {
+    selection_key: String,
+    slug: String,
 }
 
 impl CatalogSkill {
@@ -61,6 +72,7 @@ pub(super) async fn assign_desired_skills(
     org_id: &str,
     agent_id: &str,
     request: &AgentCreateRequest,
+    runtime_config: &Value,
 ) -> Result<Vec<String>> {
     let requested = normalize_requested_refs(&request.desired_skills);
     if requested.is_empty() {
@@ -101,20 +113,36 @@ pub(super) async fn assign_desired_skills(
             }
         })
         .collect::<Vec<_>>();
+    let filesystem_catalog = discover_filesystem_skills(runtime_config);
 
     let mut resolved = BTreeSet::new();
     let mut unknown = BTreeSet::new();
     let mut ambiguous = BTreeSet::new();
+    let mut selections_by_slug = BTreeMap::<String, BTreeSet<String>>::new();
     for reference in requested {
-        match resolve_reference(&catalog, org_id, &organization_url_key, &reference) {
-            Resolution::Bundled => {}
-            Resolution::Organization(key) => {
-                resolved.insert(format!("org:{key}"));
+        match resolve_create_reference(
+            &catalog,
+            &filesystem_catalog,
+            org_id,
+            &organization_url_key,
+            &request.agent_runtime_type,
+            &reference,
+        ) {
+            CreateResolution::Bundled => {}
+            CreateResolution::Selection {
+                selection_key,
+                slug,
+            } => {
+                selections_by_slug
+                    .entry(slug)
+                    .or_default()
+                    .insert(selection_key.clone());
+                resolved.insert(selection_key);
             }
-            Resolution::Unknown => {
+            CreateResolution::Unknown => {
                 unknown.insert(reference);
             }
-            Resolution::Ambiguous => {
+            CreateResolution::Ambiguous => {
                 ambiguous.insert(reference);
             }
         }
@@ -137,6 +165,28 @@ pub(super) async fn assign_desired_skills(
         return Err(AgentCoreError::Http(
             422,
             format!("Invalid skill selection ({}).", problems.join("; ")),
+            None,
+        ));
+    }
+
+    let conflicts = selections_by_slug
+        .into_iter()
+        .filter_map(|(slug, selection_keys)| {
+            (selection_keys.len() > 1).then(|| {
+                format!(
+                    "{slug}: {}",
+                    selection_keys.into_iter().collect::<Vec<_>>().join(", ")
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if !conflicts.is_empty() {
+        return Err(AgentCoreError::Http(
+            422,
+            format!(
+                "Invalid skill selection (conflicting skill names: {}).",
+                conflicts.join("; ")
+            ),
             None,
         ));
     }
@@ -172,6 +222,239 @@ pub(super) async fn assign_desired_skills(
     .fetch_all(&mut **tx)
     .await?;
     Ok(persisted)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum CreateResolution {
+    Bundled,
+    Selection { selection_key: String, slug: String },
+    Unknown,
+    Ambiguous,
+}
+
+fn resolve_create_reference(
+    catalog: &[CatalogSkill],
+    filesystem_catalog: &[FilesystemSkill],
+    org_id: &str,
+    organization_url_key: &str,
+    agent_runtime_type: &str,
+    reference: &str,
+) -> CreateResolution {
+    let reference = js_trim(reference);
+    if is_retired_creation_skill_reference(reference) {
+        return CreateResolution::Unknown;
+    }
+
+    if reference.starts_with("global:") {
+        return exact_filesystem_selection(filesystem_catalog, reference);
+    }
+    if reference.starts_with("adapter:") {
+        return exact_filesystem_selection(filesystem_catalog, reference);
+    }
+    if reference.starts_with("agent:") {
+        // A new Agent has no AGENT_HOME catalog yet, matching the Node create
+        // resolver's empty agent-home entries for id:null.
+        return CreateResolution::Unknown;
+    }
+
+    match resolve_reference(catalog, org_id, organization_url_key, reference) {
+        Resolution::Bundled => return CreateResolution::Bundled,
+        Resolution::Organization(key) => {
+            let slug = catalog
+                .iter()
+                .find(|skill| skill.key == key)
+                .map(|skill| normalize_skill_segment(&skill.slug))
+                .unwrap_or_else(|| normalize_skill_segment(key.rsplit('/').next().unwrap_or(&key)));
+            return CreateResolution::Selection {
+                selection_key: format!("org:{key}"),
+                slug,
+            };
+        }
+        Resolution::Ambiguous => return CreateResolution::Ambiguous,
+        Resolution::Unknown => {}
+    }
+
+    // Explicit organization references never turn into filesystem references
+    // just because an external skill happens to use a similar name.
+    let lowered = reference.to_ascii_lowercase();
+    if lowered.starts_with("org:")
+        || lowered.starts_with("org/")
+        || lowered.starts_with("organization/")
+        || explicit_bundled(reference)
+    {
+        return CreateResolution::Unknown;
+    }
+
+    let slug = normalize_skill_segment(reference);
+    if slug.is_empty() {
+        return CreateResolution::Unknown;
+    }
+
+    // Node first resolves an untyped name to the current adapter's selection
+    // key. Only when that key is absent does it search all external catalogs,
+    // where multiple source matches are an ambiguity.
+    let current_adapter_key = format!("adapter:{agent_runtime_type}:{slug}");
+    if let Some(skill) = filesystem_catalog
+        .iter()
+        .find(|skill| skill.selection_key == current_adapter_key)
+    {
+        return CreateResolution::Selection {
+            selection_key: skill.selection_key.clone(),
+            slug: skill.slug.clone(),
+        };
+    }
+
+    let matches = filesystem_catalog
+        .iter()
+        .filter(|skill| skill.slug == slug)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [skill] => CreateResolution::Selection {
+            selection_key: skill.selection_key.clone(),
+            slug: skill.slug.clone(),
+        },
+        [] => CreateResolution::Unknown,
+        _ => CreateResolution::Ambiguous,
+    }
+}
+
+fn exact_filesystem_selection(
+    filesystem_catalog: &[FilesystemSkill],
+    selection_key: &str,
+) -> CreateResolution {
+    filesystem_catalog
+        .iter()
+        .find(|skill| skill.selection_key == selection_key)
+        .map(|skill| CreateResolution::Selection {
+            selection_key: skill.selection_key.clone(),
+            slug: skill.slug.clone(),
+        })
+        .unwrap_or(CreateResolution::Unknown)
+}
+
+fn is_retired_creation_skill_reference(reference: &str) -> bool {
+    let normalized = reference.to_ascii_lowercase();
+    let value = normalized.strip_prefix("bundled:").unwrap_or(&normalized);
+    let segments = value
+        .split('/')
+        .map(normalize_skill_segment)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let slug = match segments.as_slice() {
+        [slug] => slug.as_str(),
+        [prefix, slug] if prefix == "rudder" => slug.as_str(),
+        [first, second, slug] if first == "rudder" && second == "rudder" => slug.as_str(),
+        _ => return false,
+    };
+    matches!(slug, "rudder-create-agent" | "rudder-create-plugin")
+}
+
+fn discover_filesystem_skills(runtime_config: &Value) -> Vec<FilesystemSkill> {
+    let home = configured_home(runtime_config);
+    let codex_home =
+        configured_path(runtime_config, "CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
+    let roots = [
+        ("global", home.join(".agents").join("skills")),
+        ("adapter:claude_local", home.join(".claude").join("skills")),
+        (
+            "adapter:opencode_local",
+            home.join(".claude").join("skills"),
+        ),
+        ("adapter:codex_local", codex_home.join("skills")),
+        ("adapter:cursor", home.join(".cursor").join("skills")),
+        (
+            "adapter:pi_local",
+            home.join(".pi").join("agent").join("skills"),
+        ),
+    ];
+    let mut skills = BTreeMap::<String, String>::new();
+    for (selection_prefix, root) in roots {
+        discover_skill_root(&root, selection_prefix, &mut skills);
+    }
+    skills
+        .into_iter()
+        .map(|(selection_key, slug)| FilesystemSkill {
+            selection_key,
+            slug,
+        })
+        .collect()
+}
+
+fn configured_home(runtime_config: &Value) -> PathBuf {
+    configured_path(runtime_config, "HOME").unwrap_or_else(default_home)
+}
+
+fn configured_path(runtime_config: &Value, key: &str) -> Option<PathBuf> {
+    let env = runtime_config.get("env")?.as_object()?;
+    let value = env.get(key)?;
+    let value = value
+        .as_str()
+        .or_else(|| {
+            (value.get("type").and_then(Value::as_str) == Some("plain"))
+                .then(|| value.get("value").and_then(Value::as_str))
+                .flatten()
+        })
+        .map(js_trim)
+        .filter(|value| !value.is_empty())?;
+    Some(resolve_from_process_directory(value))
+}
+
+fn resolve_from_process_directory(value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn default_home() -> PathBuf {
+    #[cfg(windows)]
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    home.map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn discover_skill_root(root: &Path, selection_prefix: &str, skills: &mut BTreeMap<String, String>) {
+    for candidate_root in [root.to_path_buf(), root.join("skills")] {
+        if !fs::metadata(&candidate_root).is_ok_and(|metadata| metadata.is_dir()) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&candidate_root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // Node's Dirent.isDirectory() excludes symlink directories. Keep
+            // the same boundary while allowing SKILL.md itself to be a file
+            // symlink, as its stat-based check does.
+            if !file_type.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let slug = normalize_skill_segment(&name);
+            if slug.is_empty()
+                || !fs::metadata(entry.path().join("SKILL.md"))
+                    .is_ok_and(|metadata| metadata.is_file())
+            {
+                continue;
+            }
+            let selection_key = if selection_prefix == "global" {
+                format!("global:{slug}")
+            } else {
+                format!("{selection_prefix}:{slug}")
+            };
+            skills.entry(selection_key).or_insert(slug);
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -391,6 +674,137 @@ mod tests {
         assert_eq!(
             resolve_reference(&catalog, "org-1", "acme", "org/other/alpha"),
             Resolution::Unknown
+        );
+    }
+
+    fn add_skill(root: &Path, relative: &str, contents: &str) {
+        let skill_file = root.join(relative).join("SKILL.md");
+        fs::create_dir_all(skill_file.parent().unwrap()).unwrap();
+        fs::write(skill_file, contents).unwrap();
+    }
+
+    #[test]
+    fn filesystem_catalog_matches_global_and_adapter_skill_roots() {
+        let home = tempfile::tempdir().unwrap();
+        add_skill(home.path(), ".agents/skills/release notes", "global");
+        add_skill(home.path(), ".agents/skills/skills/one-level", "nested");
+        add_skill(home.path(), ".claude/skills/reviewer", "claude");
+        add_skill(home.path(), ".codex/skills/codex-review", "codex");
+        add_skill(home.path(), ".cursor/skills/cursor-review", "cursor");
+        add_skill(home.path(), ".pi/agent/skills/pi-review", "pi");
+        fs::create_dir_all(home.path().join(".agents/skills/no-markdown")).unwrap();
+
+        let config = serde_json::json!({
+            "env": {
+                "HOME": {"type":"plain", "value":home.path()},
+                "CODEX_HOME": {"type":"plain", "value":home.path().join(".codex")},
+            }
+        });
+        let catalog = discover_filesystem_skills(&config);
+        let keys = catalog
+            .iter()
+            .map(|skill| skill.selection_key.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(keys.contains("global:release-notes"));
+        assert!(keys.contains("global:one-level"));
+        assert!(keys.contains("adapter:claude_local:reviewer"));
+        assert!(keys.contains("adapter:opencode_local:reviewer"));
+        assert!(keys.contains("adapter:codex_local:codex-review"));
+        assert!(keys.contains("adapter:cursor:cursor-review"));
+        assert!(keys.contains("adapter:pi_local:pi-review"));
+        assert!(!keys.iter().any(|key| key.ends_with("no-markdown")));
+    }
+
+    #[test]
+    fn create_selection_uses_exact_typed_refs_and_node_bare_name_precedence() {
+        let home = tempfile::tempdir().unwrap();
+        add_skill(home.path(), ".agents/skills/reviewer", "global");
+        add_skill(home.path(), ".claude/skills/reviewer", "adapter");
+        add_skill(home.path(), ".agents/skills/unique", "global");
+        let config = serde_json::json!({
+            "env":{"HOME":{"type":"plain","value":home.path()}}
+        });
+        let filesystem = discover_filesystem_skills(&config);
+        let org_catalog = vec![skill(
+            "organization/org-1/reviewer",
+            "reviewer",
+            "local_path",
+        )];
+
+        assert_eq!(
+            resolve_create_reference(
+                &org_catalog,
+                &filesystem,
+                "org-1",
+                "acme",
+                "claude_local",
+                "global:reviewer"
+            ),
+            CreateResolution::Selection {
+                selection_key: "global:reviewer".into(),
+                slug: "reviewer".into()
+            }
+        );
+        assert_eq!(
+            resolve_create_reference(
+                &org_catalog,
+                &filesystem,
+                "org-1",
+                "acme",
+                "claude_local",
+                "adapter:claude_local:reviewer"
+            ),
+            CreateResolution::Selection {
+                selection_key: "adapter:claude_local:reviewer".into(),
+                slug: "reviewer".into()
+            }
+        );
+        assert_eq!(
+            resolve_create_reference(
+                &org_catalog,
+                &filesystem,
+                "org-1",
+                "acme",
+                "claude_local",
+                "reviewer"
+            ),
+            CreateResolution::Selection {
+                selection_key: "org:organization/org-1/reviewer".into(),
+                slug: "reviewer".into()
+            }
+        );
+        assert_eq!(
+            resolve_create_reference(&[], &filesystem, "org-1", "acme", "process", "unique"),
+            CreateResolution::Selection {
+                selection_key: "global:unique".into(),
+                slug: "unique".into()
+            }
+        );
+        assert_eq!(
+            resolve_create_reference(&[], &filesystem, "org-1", "acme", "process", "reviewer"),
+            CreateResolution::Ambiguous
+        );
+        assert_eq!(
+            resolve_create_reference(
+                &[],
+                &filesystem,
+                "org-1",
+                "acme",
+                "process",
+                "agent:reviewer"
+            ),
+            CreateResolution::Unknown
+        );
+        assert_eq!(
+            resolve_create_reference(
+                &[],
+                &filesystem,
+                "org-1",
+                "acme",
+                "process",
+                "global:missing"
+            ),
+            CreateResolution::Unknown
         );
     }
 }

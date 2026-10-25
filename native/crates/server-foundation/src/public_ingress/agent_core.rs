@@ -5,10 +5,11 @@ mod host_paths;
 
 use super::*;
 use crate::{MemberDirectoryNativeAuth, native_session_auth::NativeIngressIdentity};
-use actix_web::http::header::CONTENT_TYPE;
+use actix_web::{FromRequest, http::header::CONTENT_TYPE};
 use futures_util::StreamExt;
 use rudder_d1_persistence::agent_core::{
     AgentCoreError, AgentCoreRequest, admit_agent, execute_agent_with_native_auth,
+    execute_public_agent_create_with_native_auth, normalize_public_agent_create_input,
     normalize_public_input, parse_public_json_value,
 };
 use serde_json::{Map, Value, json};
@@ -75,9 +76,8 @@ pub(super) async fn permissions(
 
 pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     endpoint_for_path(path).is_some_and(|endpoint| match endpoint {
-        Endpoint::Roster(_) | Endpoint::Detail(_) | Endpoint::Me => {
-            matches!(*method, Method::GET | Method::HEAD)
-        }
+        Endpoint::Roster(_) => matches!(*method, Method::GET | Method::HEAD | Method::POST),
+        Endpoint::Detail(_) | Endpoint::Me => matches!(*method, Method::GET | Method::HEAD),
         Endpoint::Permissions(_) => *method == Method::PATCH,
         Endpoint::Configurations(_) | Endpoint::NameSuggestion(_) => {
             matches!(*method, Method::GET | Method::HEAD)
@@ -116,10 +116,15 @@ pub(super) fn is_detail_path(path: &str, method: &Method) -> bool {
         )
 }
 
+pub(super) fn is_agent_create_path(path: &str, method: &Method) -> bool {
+    *method == Method::POST && matches!(endpoint_for_path(path), Some(Endpoint::Roster(_)))
+}
+
 /// Handles Express-compatible casing and the optional trailing slash from the
 /// default service. Matched endpoint families never continue to Node.
 pub(super) async fn dispatch_alias(
     state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
     request: HttpRequest,
     mut payload: web::Payload,
 ) -> HttpResponse {
@@ -140,7 +145,85 @@ pub(super) async fn dispatch_alias(
         }
         body.extend_from_slice(&chunk);
     }
-    execute(state, request, web::Bytes::from(body), endpoint).await
+    let body = web::Bytes::from(body);
+    if is_agent_create_endpoint(&endpoint, &request) && is_legacy_agent_create(&request, &body) {
+        let Some(response) = super::private_host_rejection(&state, &request) else {
+            let mut buffered = actix_web::dev::Payload::from(body);
+            let payload = match web::Payload::from_request(&request, &mut buffered).await {
+                Ok(payload) => payload,
+                Err(_) => {
+                    return state.foundation.json_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "compatibility_body_unavailable",
+                    );
+                }
+            };
+            return super::forward_compatibility(state, proxy, request, payload).await;
+        };
+        return response;
+    }
+    execute(state, request, body, endpoint).await
+}
+
+fn is_agent_create_endpoint(endpoint: &Endpoint, request: &HttpRequest) -> bool {
+    matches!(endpoint, Endpoint::Roster(_)) && *request.method() == Method::POST
+}
+
+/// Existing Node-only model/first-Agent preflights and secret-derived skill
+/// roots remain explicit compatibility cohorts. Preserve the exact original
+/// request before selecting native create authority; failures after selection
+/// never fall back.
+fn is_legacy_agent_create(request: &HttpRequest, body: &[u8]) -> bool {
+    if !is_json_content_type(
+        request
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default(),
+    ) || body.is_empty()
+    {
+        return false;
+    }
+    let Ok(Value::Object(input)) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let adapter_preflight = input
+        .get("agentRuntimeType")
+        .and_then(Value::as_str)
+        .is_some_and(|runtime| matches!(runtime, "opencode_local" | "pi_local"));
+    let intelligence_preflight = input
+        .get("seedOrganizationIntelligenceDefaults")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let filesystem_skill_selection = input
+        .get("desiredSkills")
+        .and_then(Value::as_array)
+        .is_some_and(|skills| {
+            skills.iter().any(|skill| {
+                let Some(skill) = skill.as_str().map(str::trim) else {
+                    return false;
+                };
+                !skill.is_empty()
+                    && !["org:", "bundled:", "agent:"]
+                        .iter()
+                        .any(|prefix| skill.starts_with(prefix))
+            })
+        });
+    let secret_filesystem_root = input
+        .get("agentRuntimeConfig")
+        .and_then(|config| config.get("env"))
+        .and_then(Value::as_object)
+        .is_some_and(|env| {
+            ["HOME", "CODEX_HOME"].iter().any(|key| {
+                env.get(*key)
+                    .and_then(|binding| binding.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("secret_ref")
+            })
+        });
+    adapter_preflight
+        || intelligence_preflight
+        || (filesystem_skill_selection && secret_filesystem_root)
 }
 
 fn endpoint_for_path(path: &str) -> Option<Endpoint> {
@@ -318,7 +401,10 @@ fn decode_capture(value: &str) -> Option<String> {
 
 fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
     match endpoint {
-        Endpoint::Roster(_) | Endpoint::Detail(_) | Endpoint::Me => {
+        Endpoint::Roster(_) => {
+            matches!(*request.method(), Method::GET | Method::HEAD | Method::POST)
+        }
+        Endpoint::Detail(_) | Endpoint::Me => {
             matches!(*request.method(), Method::GET | Method::HEAD)
         }
         Endpoint::Permissions(_) => *request.method() == Method::PATCH,
@@ -362,7 +448,8 @@ async fn execute(
     endpoint: Endpoint,
 ) -> HttpResponse {
     let requested_org = match &endpoint {
-        Endpoint::InstructionsPath { org_id, .. }
+        Endpoint::Roster(org_id)
+        | Endpoint::InstructionsPath { org_id, .. }
         | Endpoint::Configurations(org_id)
         | Endpoint::NameSuggestion(org_id) => Some(org_id.clone()),
         _ => None,
@@ -390,11 +477,18 @@ async fn execute(
             .foundation
             .json_error(StatusCode::BAD_REQUEST, "invalid_forwarding_identity");
     }
+    let public_agent_create = is_agent_create_endpoint(&endpoint, &request);
     if state.config.identity_auth.is_none() {
         return state.foundation.json_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "native_identity_unavailable",
         );
+    }
+    if public_agent_create {
+        parsed_body = match normalize_public_agent_create_input(parsed_body.take()) {
+            Ok(input) => Some(input),
+            Err(error) => return response_error(error),
+        };
     }
     if matches!(&endpoint, Endpoint::Keys(_))
         && *request.method() == Method::POST
@@ -408,7 +502,8 @@ async fn execute(
     // These Express routes validate their bodies before checking board access.
     // Reuse AgentCore's validator so invalid UUID-addressed requests keep that
     // observable error precedence without duplicating their schemas here.
-    if (matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST)
+    if (public_agent_create)
+        || (matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST)
         || matches!(&endpoint, Endpoint::ResetSession(_))
     {
         let command = request_command(&state, &request, endpoint.clone(), parsed_body.clone());
@@ -454,6 +549,7 @@ async fn execute(
     if matches!(
         &endpoint,
         Endpoint::Permissions(_)
+            | Endpoint::Roster(_)
             | Endpoint::Rollback { .. }
             | Endpoint::Keys(_)
             | Endpoint::KeyRevoke { .. }
@@ -495,6 +591,29 @@ async fn execute(
     command["localImplicit"] = json!(matches!(&identity, NativeIngressIdentity::LocalImplicit));
     if let NativeIngressIdentity::AgentJwt(jwt) = &identity {
         command["actorRunId"] = json!(jwt.run_id);
+    }
+    if public_agent_create && command["input"]["nodeOwned"]["instructionsBundle"].is_object() {
+        let Some(org_id) = command["orgId"].as_str() else {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_core_host_context_unavailable",
+            );
+        };
+        let Ok(facts) = host_paths::AgentHostFacts::resolve(org_id) else {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_core_host_context_unavailable",
+            );
+        };
+        command["homeDirectory"] = json!(facts.home_directory);
+        command["processWorkingDirectory"] = json!(facts.process_working_directory);
+        command["instructionsHost"] = json!({
+            "instanceRoot": facts.instructions_host.instance_root,
+            "workspaceHome": facts.instructions_host.workspace_home,
+            "previousDocumentsRoot": facts.instructions_host.previous_documents_root,
+            "friendlyWorkspaceHome": facts.instructions_host.friendly_workspace_home,
+            "hostname": facts.instructions_host.hostname,
+        });
     }
     let DatabaseState::Configured(pool) = &state.foundation.database else {
         return state
@@ -665,7 +784,12 @@ async fn execute(
     if let Err(error) = admit_agent(&actor, &command) {
         return response_error(error);
     }
-    match execute_agent_with_native_auth(pool, &actor, &command, &native_auth).await {
+    let execution = if public_agent_create {
+        execute_public_agent_create_with_native_auth(pool, &actor, &command, &native_auth).await
+    } else {
+        execute_agent_with_native_auth(pool, &actor, &command, &native_auth).await
+    };
+    match execution {
         Ok((status, body)) => agent_response(request.method(), status, body),
         Err(error) => response_error(error),
     }
@@ -739,7 +863,14 @@ fn request_command(
         _ => None,
     };
     let (operation, org_id, id, revision_id) = match endpoint {
-        Endpoint::Roster(org_id) => ("list", Some(org_id), None, None),
+        Endpoint::Roster(org_id) => {
+            let operation = if *request.method() == Method::POST {
+                "create"
+            } else {
+                "list"
+            };
+            (operation, Some(org_id), None, None)
+        }
         Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id), None),
         Endpoint::Me => ("me", None, None, None),
         Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id), None),
@@ -819,6 +950,7 @@ fn request_command(
             | "rollback"
             | "key-create"
             | "reset-session"
+            | "create"
             | "instructions-path-patch"
             | "instructions-bundle-patch"
             | "instructions-file-put"
@@ -1049,6 +1181,56 @@ mod tests {
         assert!(!is_detail_path("/api/agents/me/inbox-lite", &Method::GET));
         assert!(!is_detail_path("/api/agents/a//", &Method::GET));
         assert_eq!(endpoint_for_path("/api/agents/%FF"), None);
+    }
+
+    #[test]
+    fn public_agent_create_is_native_only_on_the_organization_collection_post() {
+        for path in ["/api/orgs/org-1/agents", "/API/ORGS/org-1/AGENTS/"] {
+            assert!(is_agent_create_path(path, &Method::POST));
+            assert!(is_reserved_path(path, &Method::POST));
+            assert!(!is_agent_create_path(path, &Method::GET));
+        }
+        for path in ["/api/agents/agent-1", "/api/agents/me"] {
+            assert!(!is_agent_create_path(path, &Method::POST));
+            assert!(!is_reserved_path(path, &Method::POST));
+        }
+        assert!(!is_agent_create_path(
+            "/api/orgs/org-1/agents/name-suggestion",
+            &Method::POST
+        ));
+    }
+
+    #[test]
+    fn compatibility_preclassification_is_limited_to_existing_node_preflights() {
+        let request = |body: &[u8]| {
+            let request = TestRequest::post()
+                .uri("/api/orgs/org-1/agents")
+                .insert_header((CONTENT_TYPE, "application/json"))
+                .to_http_request();
+            assert!(is_legacy_agent_create(&request, body));
+        };
+        request(br#"{"agentRuntimeType":"opencode_local"}"#);
+        request(br#"{"agentRuntimeType":"pi_local"}"#);
+        request(br#"{"seedOrganizationIntelligenceDefaults":true}"#);
+        request(br#"{"desiredSkills":["global:reviewer"],"agentRuntimeConfig":{"env":{"HOME":{"type":"secret_ref","secretId":"10000000-0000-4000-8000-000000000001"}}}}"#);
+
+        let ordinary = TestRequest::post()
+            .uri("/api/orgs/org-1/agents")
+            .insert_header((CONTENT_TYPE, "application/json"))
+            .to_http_request();
+        for body in [
+            br#"{"agentRuntimeType":"process"}"#.as_slice(),
+            br#"{"agentRuntimeType":"codex_local","seedOrganizationIntelligenceDefaults":false}"#,
+            br#"{"desiredSkills":["org:organization/org-1/release-notes"]}"#,
+            br#"{"desiredSkills":["bundled:rudder/browser"]}"#,
+            br#"{"desiredSkills":["agent:reviewer"]}"#,
+            br#"{"desiredSkills":["global:reviewer"]}"#,
+            br#"{"desiredSkills":["adapter:claude_local:reviewer"]}"#,
+            br#"{"desiredSkills":["release-notes"],"agentRuntimeConfig":{"env":{"HOME":{"type":"plain","value":"/tmp/home"}}}}"#,
+            b"not-json",
+        ] {
+            assert!(!is_legacy_agent_create(&ordinary, body));
+        }
     }
 
     #[test]

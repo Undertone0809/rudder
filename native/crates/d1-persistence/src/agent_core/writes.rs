@@ -53,9 +53,10 @@ pub(super) async fn execute(
     current: Option<&Value>,
     input: &Value,
     native_auth: Option<&dyn super::NativeAgentAuthorizer>,
+    public_agent_create: bool,
 ) -> Result<Value> {
     if op == "create" {
-        return create(tx, ctx, input).await;
+        return create(tx, ctx, input, public_agent_create).await;
     }
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
@@ -136,7 +137,12 @@ pub(super) async fn execute(
     }
 }
 
-async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Value> {
+async fn create(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    input: &Value,
+    public_agent_create: bool,
+) -> Result<Value> {
     let request = AgentCreateRequest::parse(input)?;
     let config_source = request
         .node_owned
@@ -144,7 +150,11 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         .map(|prepared| &prepared.normalized_agent_runtime_config)
         .unwrap_or(&request.agent_runtime_config);
     let mut config_source = config_source.clone();
-    super::validation::apply_codex_create_defaults(&request.agent_runtime_type, &mut config_source);
+    super::validation::apply_create_defaults(
+        &request.agent_runtime_type,
+        &mut config_source,
+        public_agent_create,
+    )?;
     let normalized_runtime_config =
         super::validation::normalize_runtime_config(tx, ctx.org, &config_source).await?;
     let requested_name = request
@@ -218,7 +228,7 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
     // The instruction plan is an outbox row in the same Agent transaction.
     // No host filesystem call is allowed before commit; a later detail read
     // or recovery worker can replay the row without changing Agent identity.
-    if super::instructions::create_feature_enabled()
+    if (public_agent_create || super::instructions::create_feature_enabled())
         && let Some(bundle) = request
             .node_owned
             .as_ref()
@@ -241,15 +251,20 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
         .execute(&mut **tx)
         .await?;
 
-    // Skill assignment is part of the same gated Agent-create transaction.
-    // The public POST remains Node-owned while this gate is disabled; when it
-    // is enabled, only canonical selection keys are persisted and bundled
-    // skills are validated then omitted as always-enabled runtime skills.
-    if super::agent_create_feature_enabled() {
-        super::skills::assign_desired_skills(tx, ctx.org, &id, &request).await?;
+    // Public Rust creates apply validated skill selection in the same
+    // transaction. The private compatibility bridge retains its pilot gate.
+    if public_agent_create || super::agent_create_feature_enabled() {
+        super::skills::assign_desired_skills(
+            tx,
+            ctx.org,
+            &id,
+            &request,
+            &normalized_runtime_config,
+        )
+        .await?;
     }
 
-    if super::intelligence::feature_enabled() {
+    if public_agent_create || super::intelligence::feature_enabled() {
         super::intelligence::ensure_default(tx, ctx.org, &id, &request, &normalized_runtime_config)
             .await?;
     }
@@ -264,11 +279,9 @@ async fn create(tx: &mut Tx<'_>, ctx: &Context<'_>, input: &Value) -> Result<Val
             .await?;
     }
 
-    // Managed MCP inheritance stays private to the Rust create transaction
-    // until its own migration gate is explicitly enabled. The public POST
-    // remains Node-owned, and an opt-in binding failure rolls back identity
-    // creation with the surrounding transaction.
-    if super::managed_mcp::feature_enabled() {
+    // The public Rust create path applies the existing managed MCP helper in
+    // the Agent transaction; private bridge callers retain the pilot gate.
+    if public_agent_create || super::managed_mcp::feature_enabled() {
         super::managed_mcp::ensure_default_bindings_for_agent(tx, ctx.org, &id).await?;
     }
 
@@ -335,7 +348,7 @@ fn extract_avatar_asset_id(icon: &str) -> Option<&str> {
     (valid_uuid_suffix(value) && uuid_like(uuid)).then_some(uuid)
 }
 
-fn supported_avatar_icon(icon: &str) -> bool {
+pub(super) fn supported_avatar_icon(icon: &str) -> bool {
     let lowered = icon.to_ascii_lowercase();
     if let Some(value) = lowered.strip_prefix("oreo:") {
         let mut parts = value.split(':');
