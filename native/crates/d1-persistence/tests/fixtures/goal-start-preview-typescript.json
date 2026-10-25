@@ -1,0 +1,66 @@
+{
+  "valid": true,
+  "packetHash": "6dba76dbcf28f7c1382b0e5bd9de794b30070e7796dbaa8504a1c43ad0c4b3fa",
+  "packet": {
+    "version": 1,
+    "title": "Publish a verified Goal Workspace release candidate",
+    "description": "Keep the result inspectable.",
+    "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+    "activation": {
+      "confirmed": true,
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "outcomeStatement": "Publish a verified Goal Workspace release candidate",
+      "objectiveMode": "target",
+      "criteria": [
+        {
+          "id": "primary-outcome",
+          "label": "We will know it worked when Publish a verified Goal Workspace release candidate and this context is satisfied: Keep the result inspectable.",
+          "evaluator": "artifact"
+        }
+      ],
+      "autonomyEnvelope": {
+        "allowed": [
+          "bounded_reversible_work"
+        ],
+        "requiresHumanApproval": [
+          "external_or_irreversible_action",
+          "authority_expansion"
+        ]
+      },
+      "humanAuthorities": {
+        "acceptance": "board_human",
+        "consequentialChanges": "board_human"
+      },
+      "evaluationPolicy": {
+        "terminalEvidenceRequired": true,
+        "humanAcceptanceRequired": true
+      },
+      "actionDeadline": null,
+      "evaluationDeadline": "2026-08-20T10:00:00.000Z",
+      "initialContinuation": {
+        "kind": "commitment",
+        "summary": "Inspect the available context and produce the first bounded, reviewable artifact."
+      },
+      "initialPlan": {
+        "summary": "Inspect the available context and produce the first bounded, reviewable artifact.",
+        "hypotheses": [],
+        "selectedPaths": [],
+        "rejectedPaths": [],
+        "sequencing": [],
+        "budgetAllocations": {},
+        "invalidationConditions": []
+      }
+    }
+  },
+  "review": {
+    "outcome": "Publish a verified Goal Workspace release candidate",
+    "success": "We will know it worked when Publish a verified Goal Workspace release candidate and this context is satisfied: Keep the result inspectable.",
+    "boundary": "The Owner may perform bounded, reversible work; consequential or irreversible actions require human approval.",
+    "firstAction": "Inspect the available context and produce the first bounded, reviewable artifact.",
+    "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+    "targetTime": "2026-08-20T10:00:00.000Z"
+  },
+  "blockers": [],
+  "alignmentQuestion": null,
+  "warning": null
+}

@@ -21,6 +21,7 @@ pub mod goal_reads;
 pub mod goal_run_resources;
 pub mod goal_runs;
 mod goal_sets;
+pub mod goal_start;
 pub mod goal_writes;
 pub mod issue_checkout;
 pub mod issue_metadata_reads;

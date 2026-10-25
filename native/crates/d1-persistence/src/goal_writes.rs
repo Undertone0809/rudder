@@ -151,7 +151,7 @@ pub async fn apply_goal_write(
     }
 }
 
-async fn lock_organization(
+pub(super) async fn lock_organization(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,
 ) -> Result<(), StoreError> {
@@ -240,7 +240,7 @@ fn goal_short_ref_prefix(reference: &str) -> Option<String> {
     .then(|| prefix.to_ascii_lowercase())
 }
 
-async fn lock_goal(
+pub(super) async fn lock_goal(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,
     id: &str,
@@ -249,7 +249,7 @@ async fn lock_goal(
         .bind(org).bind(id).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
 }
 
-async fn create(
+pub(super) async fn create(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     context: &GoalWriteContext<'_>,
     org: &str,
@@ -357,6 +357,57 @@ async fn activate(
     current: &sqlx::postgres::PgRow,
     input: &Value,
 ) -> Result<(), StoreError> {
+    activate_with_options(
+        tx,
+        context,
+        org,
+        id,
+        current,
+        input,
+        "activation",
+        None,
+        None,
+    )
+    .await
+}
+
+pub(super) async fn activate_goal_start(
+    tx: &mut Transaction<'_, sqlx::Postgres>,
+    context: &GoalWriteContext<'_>,
+    org: &str,
+    id: &str,
+    current: &sqlx::postgres::PgRow,
+    input: &Value,
+    request_id: &str,
+    owner_agent_id: &str,
+) -> Result<(), StoreError> {
+    let authority_ref = format!("goal_start:{request_id}");
+    let activity_idempotency_key = format!("goal-start:{request_id}");
+    activate_with_options(
+        tx,
+        context,
+        org,
+        id,
+        current,
+        input,
+        &authority_ref,
+        Some(&activity_idempotency_key),
+        Some(owner_agent_id),
+    )
+    .await
+}
+
+async fn activate_with_options(
+    tx: &mut Transaction<'_, sqlx::Postgres>,
+    context: &GoalWriteContext<'_>,
+    org: &str,
+    id: &str,
+    current: &sqlx::postgres::PgRow,
+    input: &Value,
+    authority_ref: &str,
+    activity_idempotency_key: Option<&str>,
+    progress_owner_agent_id: Option<&str>,
+) -> Result<(), StoreError> {
     ensure_actor_matches(context)?;
     let lifecycle: String = current.try_get("lifecycle")?;
     if lifecycle != "draft" {
@@ -420,8 +471,8 @@ async fn activate(
     if result.rows_affected() != 1 {
         return Err(StoreError::GoalConflict);
     }
-    sqlx::query("INSERT INTO goal_owner_assignments (org_id,goal_id,agent_id,assignment_revision,assigned_by_authority_ref) VALUES ($1::uuid,$2::uuid,$3::uuid,1,'activation')")
-        .bind(org).bind(id).bind(&owner).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO goal_owner_assignments (org_id,goal_id,agent_id,assignment_revision,assigned_by_authority_ref) VALUES ($1::uuid,$2::uuid,$3::uuid,1,$4)")
+        .bind(org).bind(id).bind(&owner).bind(authority_ref).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO goal_plans (org_id,goal_id,revision,summary,hypotheses,selected_paths,rejected_paths,sequencing,budget_allocations,invalidation_conditions,created_by_agent_id) VALUES ($1::uuid,$2::uuid,1,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::uuid)")
         .bind(org).bind(id).bind(plan_summary).bind(array_or_default(plan,"hypotheses")?.to_string())
         .bind(array_or_default(plan,"selectedPaths")?.to_string()).bind(array_or_default(plan,"rejectedPaths")?.to_string())
@@ -431,8 +482,8 @@ async fn activate(
     let summary = crate::goal_reads::public_goal_text(&format!(
         "The Agent is starting with: {continuation_summary}"
     ));
-    sqlx::query("INSERT INTO goal_activities (org_id,goal_id,contract_revision,submitted_by_agent_id,agent_owner_ref_at_time,activity_kind,summary,evidence_refs) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,'progress',$6,'[]'::jsonb)")
-        .bind(org).bind(id).bind(revision).bind(context.actor_agent_id).bind(owner_current.as_deref().or(Some(owner.as_str()))).bind(summary)
+    sqlx::query("INSERT INTO goal_activities (org_id,goal_id,contract_revision,submitted_by_agent_id,agent_owner_ref_at_time,activity_kind,summary,evidence_refs,idempotency_key) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,'progress',$6,'[]'::jsonb,$7)")
+        .bind(org).bind(id).bind(revision).bind(context.actor_agent_id).bind(progress_owner_agent_id.or(owner_current.as_deref()).or(Some(owner.as_str()))).bind(summary).bind(activity_idempotency_key)
         .execute(&mut **tx).await?;
     Ok(())
 }
@@ -712,7 +763,7 @@ async fn require_invokable_owner(
     Ok(())
 }
 
-async fn public_goal(
+pub(super) async fn public_goal(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,
     id: &str,
@@ -811,7 +862,7 @@ async fn log_goal_activity(
     Ok(())
 }
 
-fn require_board(context: &GoalWriteContext<'_>) -> Result<(), StoreError> {
+pub(super) fn require_board(context: &GoalWriteContext<'_>) -> Result<(), StoreError> {
     if context.actor_kind == "user" && context.actor_agent_id.is_none() {
         Ok(())
     } else {
@@ -828,7 +879,7 @@ fn ensure_actor_matches(context: &GoalWriteContext<'_>) -> Result<(), StoreError
 fn required_goal_id(id: Option<&str>) -> Result<&str, StoreError> {
     id.ok_or(StoreError::InvalidInput)
 }
-fn canonical_uuid(value: &str) -> Result<String, StoreError> {
+pub(super) fn canonical_uuid(value: &str) -> Result<String, StoreError> {
     if value.len() != 36
         || !value.bytes().enumerate().all(|(index, byte)| {
             if [8, 13, 18, 23].contains(&index) {
