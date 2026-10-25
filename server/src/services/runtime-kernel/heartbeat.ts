@@ -19,7 +19,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -1243,6 +1243,21 @@ export function heartbeatService(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (pendingTerminalEffects) return null;
+      const activeNativeGoalRun = await tx
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.agentId, run.agentId),
+          eq(heartbeatRuns.executionAuthority, "native_rust"),
+          isNotNull(heartbeatRuns.goalId),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (activeNativeGoalRun) return null;
       if (initialIsGoalWake) {
         await tx.execute(sql`select id from goals where id = ${initialGoalId} and org_id = ${run.orgId} for update`);
       }
