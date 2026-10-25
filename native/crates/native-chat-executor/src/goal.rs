@@ -64,6 +64,7 @@ pub enum GoalRunExecutorError {
 /// provider path. The returned claim remains available for D1 finalization.
 /// No prompt is accepted from an HTTP request; Foundation builds it from the
 /// claimed wakeup and the current trusted runtime context.
+#[allow(clippy::too_many_arguments)] // Mirror the provider execution boundary without changing its contract.
 pub async fn execute_goal_claude_run(
     pool: PgPool,
     claim: GoalRunClaim,
@@ -170,6 +171,7 @@ pub async fn execute_goal_claude_run(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Synchronous counterpart of the owned provider execution call.
 fn execute_goal_claude_blocking(
     handle: &Handle,
     pool: &PgPool,
@@ -243,16 +245,16 @@ fn execute_goal_claude_blocking(
             let now = Instant::now();
             if let Some(cleanup_deadline) = cleanup_deadline {
                 cleanup_started = true;
-                if now.duration_since(last_cleanup_renewal) >= CLEANUP_LEASE_RENEW_INTERVAL {
-                    if now + DATABASE_OPERATION_TIMEOUT < cleanup_deadline {
-                        let renewed = bounded_database_call(
-                            handle,
-                            goal_runs::renew_cleanup_lease(pool, &claim, OWNER_LEASE),
-                        )?;
-                        last_cleanup_renewal = Instant::now();
-                        if !renewed {
-                            return Err(ClaudeExecutionError::GoalRunOwnershipLost);
-                        }
+                if now.duration_since(last_cleanup_renewal) >= CLEANUP_LEASE_RENEW_INTERVAL
+                    && now + DATABASE_OPERATION_TIMEOUT < cleanup_deadline
+                {
+                    let renewed = bounded_database_call(
+                        handle,
+                        goal_runs::renew_cleanup_lease(pool, &claim, OWNER_LEASE),
+                    )?;
+                    last_cleanup_renewal = Instant::now();
+                    if !renewed {
+                        return Err(ClaudeExecutionError::GoalRunOwnershipLost);
                     }
                 }
                 return Ok(false);

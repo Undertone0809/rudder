@@ -1219,49 +1219,6 @@ fn runtime_sibling_content(
         .collect()
 }
 
-#[cfg(test)]
-mod runtime_sibling_tests {
-    use super::runtime_sibling_content;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn runtime_instruction_siblings_use_node_order_and_omit_missing_files() {
-        let contents = BTreeMap::from([
-            ("nested/custom.md".to_owned(), b"entry".to_vec()),
-            ("nested/MEMORY.md".to_owned(), b"memory".to_vec()),
-            ("nested/SOUL.md".to_owned(), b"soul".to_vec()),
-            ("nested/TOOLS.md".to_owned(), b"tools".to_vec()),
-            ("SOUL.md".to_owned(), b"wrong directory".to_vec()),
-        ]);
-
-        assert_eq!(
-            runtime_sibling_content("nested/custom.md", &contents),
-            vec![
-                ("nested/SOUL.md".to_owned(), "soul".to_owned()),
-                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
-                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
-            ],
-        );
-        assert_eq!(
-            runtime_sibling_content("nested/SOUL.md", &contents),
-            vec![
-                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
-                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
-            ],
-            "the selected entry must not be loaded a second time as its own sibling",
-        );
-        let optional_only = BTreeMap::from([
-            ("custom.md".to_owned(), b"entry".to_vec()),
-            ("SOUL.md".to_owned(), b"soul".to_vec()),
-        ]);
-        assert_eq!(
-            runtime_sibling_content("custom.md", &optional_only),
-            vec![("SOUL.md".to_owned(), "soul".to_owned())],
-            "absent optional sibling files stay absent",
-        );
-    }
-}
-
 fn default_path_key(runtime: &str) -> Option<&'static str> {
     match runtime {
         "claude_local" | "codex_local" | "opencode_local" | "cursor" | "pi_local" => {
@@ -2323,4 +2280,47 @@ pub(super) async fn provision_created_agent_after_commit(
     let _ = library_path(&mut tx, &ctx, &row, native_auth).await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_sibling_tests {
+    use super::runtime_sibling_content;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn runtime_instruction_siblings_use_node_order_and_omit_missing_files() {
+        let contents = BTreeMap::from([
+            ("nested/custom.md".to_owned(), b"entry".to_vec()),
+            ("nested/MEMORY.md".to_owned(), b"memory".to_vec()),
+            ("nested/SOUL.md".to_owned(), b"soul".to_vec()),
+            ("nested/TOOLS.md".to_owned(), b"tools".to_vec()),
+            ("SOUL.md".to_owned(), b"wrong directory".to_vec()),
+        ]);
+
+        assert_eq!(
+            runtime_sibling_content("nested/custom.md", &contents),
+            vec![
+                ("nested/SOUL.md".to_owned(), "soul".to_owned()),
+                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
+                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
+            ],
+        );
+        assert_eq!(
+            runtime_sibling_content("nested/SOUL.md", &contents),
+            vec![
+                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
+                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
+            ],
+            "the selected entry must not be loaded a second time as its own sibling",
+        );
+        let optional_only = BTreeMap::from([
+            ("custom.md".to_owned(), b"entry".to_vec()),
+            ("SOUL.md".to_owned(), b"soul".to_vec()),
+        ]);
+        assert_eq!(
+            runtime_sibling_content("custom.md", &optional_only),
+            vec![("SOUL.md".to_owned(), "soul".to_owned())],
+            "absent optional sibling files stay absent",
+        );
+    }
 }

@@ -1629,6 +1629,6 @@ mod tests {
             preview["packet"]["activation"]["criteria"][0]["evaluator"],
             "human"
         );
-        assert_eq!(preview["warning"].is_string(), true);
+        assert!(preview["warning"].is_string());
     }
 }
