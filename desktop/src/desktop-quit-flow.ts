@@ -121,6 +121,7 @@ type DesktopLiveRun = {
   agentId?: string | null;
   agentName: string;
   issueId?: string | null;
+  goalId?: string | null;
   executionAuthority?: "legacy_ts" | "native_rust";
   chatGenerationId?: string | null;
   chatConversationId?: string | null;
@@ -351,7 +352,16 @@ export function createDesktopQuitFlow(context: {
       const runId = run.id;
       const controller = new AbortController();
       let timeout: ReturnType<typeof setTimeout> | null = null;
-      const request = run.executionAuthority === "native_rust"
+      const nativeGoal = run.executionAuthority === "native_rust"
+        && typeof run.goalId === "string" && UUID.test(run.goalId)
+        && !run.chatConversationId && !run.chatGenerationId;
+      const request = nativeGoal
+        ? desktopApiRequest(`/agent-runs/${encodeURIComponent(runId)}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({}),
+          signal: controller.signal,
+        })
+        : run.executionAuthority === "native_rust"
         ? stopNativeChatRun({
           target: { organizationId, conversationId: run.chatConversationId, generationId: run.chatGenerationId },
           request: desktopApiRequest,
