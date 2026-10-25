@@ -1417,11 +1417,11 @@ test("trusted policy admits only the exact Rust CLI auth and Project reads route
   const cliPolicy = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID];
   assert.equal(projectPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
   assert.equal(projectPolicy.receiver, "api");
-  assert.equal(projectPolicy.mount_expression, "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), nativeProjectWrites: Boolean(opts.rustPublicIngress), })");
+  assert.equal(projectPolicy.mount_expression, "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })");
   assert.equal(projectPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
   assert.equal(projectPolicy.order_after_expression, "assetRoutes(db, opts.storageService)");
   assert.equal(projectPolicy.order_before_expression, "appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })");
-  assert.equal(projectPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/project_reads.rs and project_writes.rs");
+  assert.equal(projectPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/project_reads.rs");
   assert.equal(cliPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
   assert.equal(cliPolicy.receiver, "api");
   assert.equal(cliPolicy.mount_expression, "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })");
@@ -1466,15 +1466,6 @@ test("public owner mount admissions reject wrong guards, duplicates, and reorder
       .replace("nativeProjectReads:", "unreviewedProjectReads:"),
   });
   assert(wrongProjectOptionName.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
-
-  for (const replacement of ["", "nativeProjectWrites: Boolean(opts.rustPublicIngress?.projectWrites), "]) {
-    const wrongProjectWriteGuard = comparePublicOwnerMountFixture(t, {
-      projectExpression: TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression
-        .replace("nativeProjectWrites: Boolean(opts.rustPublicIngress), ", replacement),
-    });
-    assert(wrongProjectWriteGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
-    assert(wrongProjectWriteGuard.result.failures.some((failure) => failure.includes(`stale reviewed_transport_admissions record: ${PROJECT_READS_ADMISSION_ID}`)));
-  }
 
   const duplicateCli = comparePublicOwnerMountFixture(t, { duplicateCli: true });
   assert(duplicateCli.result.failures.some((failure) => failure.includes(`${CLI_AUTH_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));

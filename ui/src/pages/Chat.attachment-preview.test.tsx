@@ -6214,6 +6214,9 @@ describe("Chat streaming controls", () => {
       body: "Rudder confirmed that the response stopped.",
       tone: "info",
     });
+    expect(mockState.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["messenger", "org-1", "threads"],
+    });
   });
 
   it("uses an empty persisted cutoff when Native has no client checkpoint", async () => {

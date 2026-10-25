@@ -102,7 +102,6 @@ export function registerApiRoutes(
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db, rustFoundationBridge, {
     nativeProjectReads: Boolean(opts.rustPublicIngress),
-    nativeProjectWrites: Boolean(opts.rustPublicIngress),
   }));
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),

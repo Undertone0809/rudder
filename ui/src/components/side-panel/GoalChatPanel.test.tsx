@@ -520,6 +520,11 @@ describe("GoalChatPanel", () => {
     });
 
     const rendered = renderPanel();
+    const threadPagesKey = queryKeys.messenger.threadPages("org-1", false);
+    rendered.queryClient.setQueryData(threadPagesKey, {
+      pages: [{ items: [{ threadKey: "chat:chat-goal-1", metadata: { activeGenerationId: "generation-1" } }] }],
+      pageParams: [null],
+    });
     await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
     change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
@@ -541,6 +546,7 @@ describe("GoalChatPanel", () => {
     await waitUntil(() => expect(rendered.container.textContent).toContain("Response stopped."));
     expect(rendered.container.textContent).toContain("Retry message");
     expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+    expect(rendered.queryClient.getQueryState(threadPagesKey)?.isInvalidated).toBe(true);
   });
 
   it("settles an owner-lost Stop without claiming cleanup or offering retry", async () => {
