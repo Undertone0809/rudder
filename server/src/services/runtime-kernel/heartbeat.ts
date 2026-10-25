@@ -2254,14 +2254,24 @@ export function heartbeatService(
     ...wakeupHandlers,
     afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
   });
+  let cancelRunInternalForExecution: ((...args: any[]) => Promise<any>) | null = null;
   const executeHandlers = createHeartbeatExecuteHandlers({
     ...baseContext,
     ...recoveryHandlers,
     ...releaseHandlers,
     ...wakeupHandlers,
+    // Execution needs to honor budget cancellation through the same misc
+    // cleanup path, but that handler is assembled after executeHandlers.
+    cancelRunInternal: (...args: any[]) => {
+      if (!cancelRunInternalForExecution) {
+        throw new Error("Heartbeat run cancellation handler is not initialized");
+      }
+      return cancelRunInternalForExecution(...args);
+    },
     beforeAssignmentRecoveryEnqueue: testHooks?.beforeAssignmentRecoveryEnqueue,
   });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
+  cancelRunInternalForExecution = miscHandlers.cancelRunInternal;
   const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy, warnInactiveRuns } = recoveryHandlers;
   const { enqueueWakeup } = wakeupHandlers;
   const { releaseIssueExecutionAndPromote } = releaseHandlers;

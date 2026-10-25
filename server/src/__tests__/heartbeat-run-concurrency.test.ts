@@ -1346,6 +1346,73 @@ describe("heartbeat run concurrency", () => {
     }
   }, 30_000);
 
+  it("honors a persisted budget stop after setup but before adapter invocation", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy:budget-stop-during-setup",
+      reason: "test_queue",
+      createdAt: new Date(Date.now() - 1_000),
+    });
+
+    let releaseRuntimeStateSetup!: () => void;
+    let runtimeStateSetupReached!: () => void;
+    const runtimeStateSetupGate = new Promise<void>((resolve) => { releaseRuntimeStateSetup = resolve; });
+    const runtimeStateSetupLockReached = new Promise<void>((resolve) => { runtimeStateSetupReached = resolve; });
+    const runtimeStateSetupLock = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table agent_runtime_state in access exclusive mode`);
+      runtimeStateSetupReached();
+      await runtimeStateSetupGate;
+    });
+
+    let claim: Promise<unknown> | null = null;
+    try {
+      await runtimeStateSetupLockReached;
+      const baselineWaiters = await countPostgresLockWaiters();
+      const heartbeat = heartbeatService(db);
+      claim = heartbeat.startNextQueuedRunForAgent(agentId);
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+
+      const [setupGatedRun] = await db
+        .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      expect(setupGatedRun).toMatchObject({ status: "running", errorCode: null });
+      await db.update(heartbeatRuns).set({
+        error: "Cancelled due to budget pause",
+        errorCode: "cancel_requested",
+      }).where(eq(heartbeatRuns.id, runId));
+      const [markedRun] = await db
+        .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      expect(markedRun).toMatchObject({ status: "running", errorCode: "cancel_requested" });
+
+      releaseRuntimeStateSetup();
+      await claim;
+      await waitForCondition(async () => {
+        const run = await heartbeat.getRun(runId);
+        return run?.status === "cancelled" && run.errorCode === "cancelled" && !run.terminalEffectsPending;
+      });
+
+      const run = await heartbeat.getRun(runId);
+      expect(run).toMatchObject({ status: "cancelled", errorCode: "cancelled" });
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      const [wakeup] = await db.select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+        .where(eq(heartbeatRuns.id, runId));
+      expect(wakeup?.status).toBe("cancelled");
+    } finally {
+      releaseRuntimeStateSetup();
+      await Promise.allSettled([
+        runtimeStateSetupLock,
+        ...(claim ? [claim] : []),
+      ]);
+    }
+  }, 30_000);
+
   it("does not claim an issue run after cancellation wins the issue lock", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });

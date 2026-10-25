@@ -991,6 +991,18 @@ export function createHeartbeatExecuteHandlers(context: any) {
         );
       }
       const runBeforeAdapter = await getRun(run.id);
+      if (runBeforeAdapter?.errorCode === "cancel_requested") {
+        // A Rust budget stop may land while workspace/runtime setup is in
+        // progress. Honor the durable intent before starting a billable
+        // adapter, using the same cleanup path as the initial lease check.
+        activeRunExecutions.delete(run.id);
+        await cancelRunInternal(
+          run.id,
+          runBeforeAdapter.error ?? "Cancelled due to budget pause",
+          { startNext: false },
+        );
+        return;
+      }
       if (runBeforeAdapter?.status !== "running") {
         throw new Error("Run was finalized before adapter invocation");
       }
