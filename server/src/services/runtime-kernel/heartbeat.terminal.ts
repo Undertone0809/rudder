@@ -516,7 +516,12 @@ export async function renewHeartbeatRunExecutionLease(
       eq(heartbeatRuns.status, "running"),
       eq(heartbeatRuns.executionOwnerToken, ownerToken),
     ))
-    .returning({ id: heartbeatRuns.id })
+    .returning({
+      id: heartbeatRuns.id,
+      errorCode: heartbeatRuns.errorCode,
+      error: heartbeatRuns.error,
+      chatConversationId: heartbeatRuns.chatConversationId,
+    })
     .then((rows) => rows[0] ?? null);
 }
 

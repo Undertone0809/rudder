@@ -474,3 +474,99 @@ async fn hard_budget_pause_cancels_pending_wakeups_and_requests_owned_run_stop()
     .expect("read budget audit actions");
     assert_eq!(audit_count, 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_budget_stop_marks_only_that_agents_legacy_work() {
+    let database = Database::start().await;
+    insert_budget_policy(&database, "agent", CEO, 10, 80, true, true).await;
+    let billed_run = finalize_unlaunched_costed_goal(&database, CEO, GOAL).await;
+    sqlx::query(
+        "INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type)
+         VALUES($1::uuid,$2::uuid,'Sibling Agent','general','idle','claude_local')
+         ON CONFLICT(id) DO NOTHING",
+    )
+    .bind(SECOND_AGENT)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .expect("seed sibling Agent");
+    let target_run = uuid::Uuid::new_v4().to_string();
+    let other_agent_run = uuid::Uuid::new_v4().to_string();
+    let target_wakeup = sqlx::query_scalar::<_, String>(
+        "INSERT INTO agent_wakeup_requests(org_id,agent_id,source,reason,execution_authority)
+         VALUES($1::uuid,$2::uuid,'on_demand','manual','legacy_ts') RETURNING id::text",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .fetch_one(&database.pool)
+    .await
+    .expect("seed target Agent legacy wakeup");
+    let other_agent_wakeup = sqlx::query_scalar::<_, String>(
+        "INSERT INTO agent_wakeup_requests(org_id,agent_id,source,reason,execution_authority)
+         VALUES($1::uuid,$2::uuid,'on_demand','manual','legacy_ts') RETURNING id::text",
+    )
+    .bind(ORG)
+    .bind(SECOND_AGENT)
+    .fetch_one(&database.pool)
+    .await
+    .expect("seed sibling Agent legacy wakeup");
+    sqlx::query(
+        "INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,status,started_at,
+           execution_owner_token,execution_lease_expires_at)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','running',clock_timestamp(),
+           'target-agent-owner',clock_timestamp()+interval '5 minutes'),
+               ($4::uuid,$2::uuid,$5::uuid,'on_demand','running',clock_timestamp(),
+           'sibling-agent-owner',clock_timestamp()+interval '5 minutes')",
+    )
+    .bind(&target_run)
+    .bind(ORG)
+    .bind(CEO)
+    .bind(&other_agent_run)
+    .bind(SECOND_AGENT)
+    .execute(&database.pool)
+    .await
+    .expect("seed legacy runs for the target and sibling Agents");
+
+    assert!(
+        goal_costs::settle_terminal_effects(&database.pool, ORG, &billed_run)
+            .await
+            .expect("settle cost and apply the Agent budget stop")
+    );
+
+    let target_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT status,error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&target_run)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read target Agent cancellation intent");
+    assert_eq!(
+        target_state,
+        ("running".into(), Some("cancel_requested".into()))
+    );
+    let sibling_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT status,error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&other_agent_run)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read sibling Agent run");
+    assert_eq!(sibling_state, ("running".into(), None));
+    let wakeup_states: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id::text,status FROM agent_wakeup_requests WHERE org_id=$1::uuid
+           AND id = ANY(ARRAY[$2::uuid,$3::uuid]) ORDER BY id",
+    )
+    .bind(ORG)
+    .bind(&target_wakeup)
+    .bind(&other_agent_wakeup)
+    .fetch_all(&database.pool)
+    .await
+    .expect("read Agent scoped pending wakeups");
+    let mut statuses = wakeup_states
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(statuses.remove(&target_wakeup), Some("cancelled".into()));
+    assert_eq!(statuses.remove(&other_agent_wakeup), Some("queued".into()));
+}

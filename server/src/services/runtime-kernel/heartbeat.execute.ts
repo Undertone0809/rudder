@@ -223,12 +223,33 @@ export function createHeartbeatExecuteHandlers(context: any) {
         abortRunExecution(run.id);
         return;
       }
+      if (renewed.errorCode === "cancel_requested") {
+        // The Rust budget transaction owns the decision. The legacy run
+        // owner only honors its durable intent through the existing cleanup
+        // path; it does not re-evaluate budget policy here.
+        activeRunExecutions.delete(run.id);
+        await cancelRunInternal(
+          run.id,
+          renewed.error ?? "Cancelled due to budget pause",
+          { startNext: false },
+        );
+        return;
+      }
       executionLeaseTimer = setInterval(() => {
         void renewRunExecutionLease(run.id, executionOwnerToken)
-          .then((renewed) => {
+          .then(async (renewed) => {
             if (!renewed) abortRunExecution(run.id);
+            else if (renewed.errorCode === "cancel_requested") {
+              await cancelRunInternal(
+                run.id,
+                renewed.error ?? "Cancelled due to budget pause",
+                { startNext: false },
+              );
+            }
           })
-          .catch(() => undefined);
+          .catch((error) => {
+            logger.warn({ err: error, runId: run.id }, "failed to honor persisted run cancellation");
+          });
       }, 60_000);
       executionLeaseTimer.unref?.();
     }

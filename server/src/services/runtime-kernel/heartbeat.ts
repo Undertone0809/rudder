@@ -1166,6 +1166,29 @@ export function heartbeatService(
       return null;
     }
 
+    if (run.errorCode === "cancel_requested") {
+      return await cancelQueuedRunDuringClaim(run.error ?? "Cancelled due to budget pause");
+    }
+
+    const persistedRun = await db
+      .select({
+        errorCode: heartbeatRuns.errorCode,
+        error: heartbeatRuns.error,
+      })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, run.id),
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
+        eq(heartbeatRuns.status, "queued"),
+      ))
+      .limit(1)
+      .then((rows: Array<{ errorCode: string | null; error: string | null }>) => rows[0] ?? null);
+    if (persistedRun?.errorCode === "cancel_requested") {
+      return await cancelQueuedRunDuringClaim(
+        persistedRun.error ?? "Cancelled due to budget pause",
+      );
+    }
+
     const agent = await getAgent(run.agentId);
     if (!agent) {
       return await cancelQueuedRunDuringClaim("Cancelled because the agent no longer exists");
@@ -1268,6 +1291,13 @@ export function heartbeatService(
         .where(eq(heartbeatRuns.id, run.id))
         .then((rows) => rows[0] ?? null);
       if (!currentRun || currentRun.status !== "queued") return null;
+      if (currentRun.errorCode === "cancel_requested") {
+        return issueCancellationHandlers.cancelQueuedRunWithinClaimTransaction(
+          tx,
+          currentRun,
+          currentRun.error ?? "Cancelled due to budget pause",
+        );
+      }
 
       const currentContext = parseObject(currentRun.contextSnapshot);
       const issueCancellationReason = await issueCancellationHandlers.getQueuedIssueCancellationReason({

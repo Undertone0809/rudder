@@ -10,11 +10,12 @@ use rudder_d1_persistence::native_chat::execution::{
     current_checkpoint, load_submission, renew_lease,
 };
 use rudder_d1_persistence::native_chat::{Error, Request as AdmissionRequest, execute};
+use rudder_d1_persistence::{goal_costs, goal_runs};
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase as Phase;
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{fs, path::PathBuf, time::Duration};
-use support::{CEO, Database, ORG, OTHER};
+use support::{CEO, Database, GOAL, ORG, OTHER};
 use tempfile::TempDir;
 
 const USER: &str = "native-chat-execution-owner";
@@ -22,6 +23,8 @@ const CHAT: &str = "21000000-0000-4000-8000-000000000201";
 const SECRET: &[u8] = b"native-chat-execution-test-key";
 const OPAQUE_THREAD: &str = " 线程-α==  ";
 const OPAQUE_TURN: &str = " turn/δ== ";
+const BUDGET_AGENT: &str = "50000000-0000-4000-8000-000000000002";
+const FOREIGN_AGENT: &str = "50000000-0000-4000-8000-000000000003";
 
 pub struct ExecutionHost {
     _root: TempDir,
@@ -404,6 +407,223 @@ async fn wait_for_lock_wait(pool: &PgPool, fragment: &str) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for lock: {fragment}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hard_budget_stop_uses_native_chat_cleanup_and_marks_only_scoped_legacy_work() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, chat_run, _chat_attempt) = prepare(&database, &host).await;
+    claim(
+        &database.pool,
+        &actor,
+        ORG,
+        &chat_run,
+        &_chat_attempt,
+        host.context(),
+    )
+    .await
+    .expect("claim Native Chat execution owner");
+
+    sqlx::query(
+        "INSERT INTO agents (id,org_id,name,role,status,agent_runtime_type)
+         VALUES ($1::uuid,$2::uuid,'Budget Goal Agent','general','idle','claude_local'),
+                ($3::uuid,$4::uuid,'Foreign Budget Agent','general','idle','claude_local')",
+    )
+    .bind(BUDGET_AGENT)
+    .bind(ORG)
+    .bind(FOREIGN_AGENT)
+    .bind(OTHER)
+    .execute(&database.pool)
+    .await
+    .expect("seed budget scope Agents");
+    sqlx::query(
+        "UPDATE goals SET owner_agent_id=$2::uuid,lifecycle='active',status='active',
+           plan_revision=1 WHERE org_id=$1::uuid AND id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(BUDGET_AGENT)
+    .bind(GOAL)
+    .execute(&database.pool)
+    .await
+    .expect("assign the billed Goal to its Agent");
+    let goal_wakeup: String = sqlx::query_scalar(
+        "INSERT INTO agent_wakeup_requests(org_id,agent_id,source,trigger_detail,reason,payload,execution_authority)
+         VALUES($1::uuid,$2::uuid,'on_demand','system','goal_started',$3::jsonb,'native_rust')
+         RETURNING id::text",
+    )
+    .bind(ORG)
+    .bind(BUDGET_AGENT)
+    .bind(json!({
+        "event":"goal_started",
+        "goalId":GOAL,
+        "taskKey":format!("goal:{GOAL}:goal_started:budget-stop"),
+        "goalStartRequestId":"budget-stop",
+        "_paperclipWakeContext":{
+            "goalId":GOAL,
+            "goal":{"id":GOAL,"title":"Budget stop"},
+            "plan":{"revision":1},
+            "continuation":{"summary":"Continue the Goal"}
+        }
+    }).to_string())
+    .fetch_one(&database.pool)
+    .await
+    .expect("persist Goal Start wakeup");
+    let goal_claim = goal_runs::claim_wakeup(&database.pool, ORG, &goal_wakeup)
+        .await
+        .expect("claim the native Goal run")
+        .expect("Goal run launch permit");
+    let usage = json!({
+        "rawInputTokens":100,
+        "rawCachedInputTokens":0,
+        "rawOutputTokens":50,
+        "billingType":"metered_api",
+        "costUsd":0.25,
+        "provider":"anthropic",
+        "biller":"anthropic",
+        "model":"claude-test"
+    });
+    let result = json!({"provider":"anthropic","biller":"anthropic","model":"claude-test"});
+    goal_runs::finalize_unlaunched(
+        &database.pool,
+        &goal_claim,
+        "succeeded",
+        None,
+        &usage,
+        &result,
+    )
+    .await
+    .expect("persist costed Goal terminal receipt");
+
+    let legacy_running = uuid::Uuid::new_v4().to_string();
+    let legacy_queued = uuid::Uuid::new_v4().to_string();
+    let foreign_running = uuid::Uuid::new_v4().to_string();
+    let pending_legacy_wakeup: String = sqlx::query_scalar(
+        "INSERT INTO agent_wakeup_requests(org_id,agent_id,source,reason,execution_authority)
+         VALUES($1::uuid,$2::uuid,'on_demand','manual','legacy_ts') RETURNING id::text",
+    )
+    .bind(ORG)
+    .bind(BUDGET_AGENT)
+    .fetch_one(&database.pool)
+    .await
+    .expect("seed pending legacy wakeup");
+    sqlx::query(
+        "INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,status,started_at,
+           execution_owner_token,execution_lease_expires_at)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','running',clock_timestamp(),
+           'legacy-budget-owner',clock_timestamp()+interval '5 minutes'),
+               ($4::uuid,$2::uuid,$3::uuid,'on_demand','queued',NULL,NULL,NULL),
+               ($5::uuid,$6::uuid,$7::uuid,'on_demand','running',clock_timestamp(),
+           'foreign-budget-owner',clock_timestamp()+interval '5 minutes')",
+    )
+    .bind(&legacy_running)
+    .bind(ORG)
+    .bind(BUDGET_AGENT)
+    .bind(&legacy_queued)
+    .bind(&foreign_running)
+    .bind(OTHER)
+    .bind(FOREIGN_AGENT)
+    .execute(&database.pool)
+    .await
+    .expect("seed legacy owners inside and outside the budget scope");
+    sqlx::query(
+        "INSERT INTO budget_policies(org_id,scope_type,scope_id,metric,window_kind,amount,
+           warn_percent,hard_stop_enabled,notify_enabled,is_active)
+         VALUES($1::uuid,'organization',$1::uuid,'billed_cents','calendar_month_utc',10,80,true,true,true)",
+    )
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .expect("seed organization hard-stop policy");
+
+    assert!(
+        goal_costs::settle_terminal_effects(&database.pool, ORG, &goal_claim.run_id)
+            .await
+            .expect("settle cost and dispatch the budget decision")
+    );
+
+    let chat_state: (
+        String,
+        Option<String>,
+        Option<String>,
+        bool,
+        String,
+        String,
+        bool,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT r.status,r.execution_owner_token,r.finished_at::text,r.native_admission_hold,
+                    g.status,g.control_state,g.native_admission_hold,g.runtime_terminal_at::text
+             FROM heartbeat_runs r JOIN chat_generations g
+               ON g.org_id=r.org_id AND g.id=r.chat_generation_id
+             WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&chat_run)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read Native Chat run and stop state");
+    assert_eq!(chat_state.0, "running");
+    assert!(chat_state.1.is_some());
+    assert!(chat_state.2.is_none());
+    assert!(chat_state.3);
+    assert_eq!(chat_state.4, "stop_requested");
+    assert_eq!(chat_state.5, "stopping");
+    assert!(chat_state.6);
+    assert!(chat_state.7.is_none());
+    let stop_actions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chat_control_actions WHERE expected_generation_id=(
+           SELECT chat_generation_id FROM heartbeat_runs WHERE id=$1::uuid)",
+    )
+    .bind(&chat_run)
+    .fetch_one(&database.pool)
+    .await
+    .expect("count durable Native Chat stop action");
+    assert_eq!(stop_actions, 1);
+
+    let legacy_state: (String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status,error_code,error,execution_owner_token FROM heartbeat_runs
+         WHERE id=$1::uuid",
+    )
+    .bind(&legacy_running)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read scoped running legacy intent");
+    assert_eq!(legacy_state.0, "running");
+    assert_eq!(legacy_state.1.as_deref(), Some("cancel_requested"));
+    assert_eq!(
+        legacy_state.2.as_deref(),
+        Some("Cancelled due to budget pause")
+    );
+    assert_eq!(legacy_state.3.as_deref(), Some("legacy-budget-owner"));
+    let queued_state: (String, Option<String>) =
+        sqlx::query_as("SELECT status,error_code FROM heartbeat_runs WHERE id=$1::uuid")
+            .bind(&legacy_queued)
+            .fetch_one(&database.pool)
+            .await
+            .expect("read scoped queued legacy intent");
+    assert_eq!(
+        queued_state,
+        ("queued".into(), Some("cancel_requested".into()))
+    );
+    let wakeup_status: String = sqlx::query_scalar(
+        "SELECT status FROM agent_wakeup_requests WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(pending_legacy_wakeup)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read cancelled pending legacy wakeup");
+    assert_eq!(wakeup_status, "cancelled");
+    let foreign_error: Option<String> = sqlx::query_scalar(
+        "SELECT error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(OTHER)
+    .bind(foreign_running)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read out-of-scope legacy run");
+    assert_eq!(foreign_error, None);
 }
 
 #[path = "native_chat_execution/checkpoints.rs"]

@@ -27,6 +27,7 @@ pub use preclaim::{FinalizeUnclaimedStop, UnclaimedStopReceipt, finalize_unclaim
 pub use reads::{Event, EventPage, ReadEvents, read_events};
 pub use recovery::recover_expired_claimed_stop;
 pub use recovery_read::{RecoveryView, UnverifiedCleanup, read_recovery_state};
+pub(crate) use stop::request_budget_stop_in_transaction;
 pub use stop::request_stop;
 
 #[derive(Clone, Deserialize)]

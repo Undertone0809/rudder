@@ -2,6 +2,233 @@ use super::*;
 use crate::activity::{ActivityActor, write_activity};
 use serde_json::json;
 
+/// Record the system-owned budget stop in the same fenced ledger the Native
+/// Chat worker already observes. This is deliberately transaction-scoped: the
+/// budget evaluator owns the policy decision and this helper only persists a
+/// stop for the exact active Rust execution. It never marks the Run terminal.
+pub(crate) async fn request_budget_stop_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &str,
+    run_id: &str,
+) -> Result<bool> {
+    let hint = sqlx::query(
+        "SELECT chat_conversation_id::text AS conversation_id,
+                chat_generation_id::text AS generation_id,
+                agent_id::text AS agent_id
+         FROM heartbeat_runs
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
+           AND chat_generation_id IS NOT NULL AND scene='chat'
+           AND target_type='chat_conversation' AND target_id=chat_conversation_id::text",
+    )
+    .bind(org)
+    .bind(run_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(hint) = hint else {
+        return Ok(false);
+    };
+    let conversation_id: String = hint.try_get("conversation_id")?;
+    let generation_id: String = hint.try_get("generation_id")?;
+    let agent_id: String = hint.try_get("agent_id")?;
+
+    // Match admission, public Stop, and finalization lock order so output
+    // projection cannot move while the checkpoint is selected and frozen.
+    runtime_bindings::lock_native_chat_target_tx(tx, org, &conversation_id).await?;
+    let generation = sqlx::query(
+        "SELECT status,attempt_epoch,control_version,control_state,control_owner_token,
+                last_client_checkpoint_seq,last_client_checkpoint_hash,
+                runtime_terminal_at IS NOT NULL AS terminal
+         FROM chat_generations
+         WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid
+           AND execution_authority='native_rust' AND native_admission_hold=true
+         FOR UPDATE",
+    )
+    .bind(org)
+    .bind(&conversation_id)
+    .bind(&generation_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(generation) = generation else {
+        return Ok(false);
+    };
+    let generation_status: String = generation.try_get("status")?;
+    let attempt_epoch: i32 = generation.try_get("attempt_epoch")?;
+    let current_control_version: i32 = generation.try_get("control_version")?;
+    let control_state: String = generation.try_get("control_state")?;
+    let control_owner_token: Option<String> = generation.try_get("control_owner_token")?;
+    let checkpoint_seq: Option<i32> = generation.try_get("last_client_checkpoint_seq")?;
+    let checkpoint_hash: Option<String> = generation.try_get("last_client_checkpoint_hash")?;
+    let terminal: bool = generation.try_get("terminal")?;
+    if terminal
+        || !matches!(
+            generation_status.as_str(),
+            "starting" | "active" | "running" | "waiting_for_network" | "tool_busy" | "closing"
+        )
+        || !matches!(control_state.as_str(), "unregistered" | "ready")
+    {
+        return Ok(false);
+    }
+
+    let run = sqlx::query(
+        "SELECT execution_owner_token
+         FROM heartbeat_runs
+         WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid
+           AND chat_conversation_id=$4::uuid AND chat_generation_id=$5::uuid
+           AND execution_authority='native_rust' AND native_admission_hold=true
+           AND scene='chat' AND target_type='chat_conversation' AND target_id=$4::text
+           AND status='running'
+         FOR UPDATE",
+    )
+    .bind(org)
+    .bind(run_id)
+    .bind(&agent_id)
+    .bind(&conversation_id)
+    .bind(&generation_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    let run_owner_token: Option<String> = run.try_get("execution_owner_token")?;
+    let Some(run_owner_token) = run_owner_token.filter(|token| !token.is_empty()) else {
+        return Ok(false);
+    };
+
+    let attempt = sqlx::query(
+        "SELECT id::text AS id,attempt_epoch,generation_attempt_epoch,owner_token
+         FROM heartbeat_run_attempts
+         WHERE org_id=$1::uuid AND run_id=$2::uuid
+         ORDER BY attempt_index DESC LIMIT 1 FOR UPDATE",
+    )
+    .bind(org)
+    .bind(run_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(attempt) = attempt else {
+        return Ok(false);
+    };
+    let attempt_id: String = attempt.try_get("id")?;
+    if attempt.try_get::<Option<i32>, _>("generation_attempt_epoch")? != Some(attempt_epoch)
+        || attempt
+            .try_get::<Option<String>, _>("owner_token")?
+            .as_deref()
+            != Some(run_owner_token.as_str())
+    {
+        return Ok(false);
+    }
+
+    let (cutoff, expected_hash) = match (checkpoint_seq, checkpoint_hash) {
+        (Some(seq), Some(hash)) if seq >= 0 => match normalize_hash(&hash) {
+            Ok(hash) => {
+                let persisted_hash =
+                    projection::hash_at(tx, org, &generation_id, attempt_epoch, seq, run_id)
+                        .await?;
+                if persisted_hash.as_deref() == Some(hash.as_str()) {
+                    (seq, hash)
+                } else {
+                    (0, projection::body_hash(""))
+                }
+            }
+            Err(_) => (0, projection::body_hash("")),
+        },
+        _ => (0, projection::body_hash("")),
+    };
+    let next_control_version = current_control_version
+        .checked_add(1)
+        .ok_or_else(|| http(409, "Control version exhausted"))?;
+    let action_id = uuid::Uuid::new_v4().to_string();
+    let pin = pin::capture(tx, org, run_id, &attempt_id).await?;
+    let request = StopRequest {
+        conversation_id: conversation_id.clone(),
+        generation_id: generation_id.clone(),
+        control_action_id: action_id.clone(),
+        expected_attempt_epoch: attempt_epoch,
+        expected_control_version: current_control_version,
+        requested_render_seq: cutoff,
+        requested_body_hash: expected_hash.clone(),
+    };
+
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:stop_intent',true)")
+        .execute(&mut **tx)
+        .await?;
+    projection::freeze(tx, org, &request, run_id, cutoff, &expected_hash).await?;
+    sqlx::query(
+        "INSERT INTO chat_control_actions(id,org_id,expected_generation_id,expected_attempt_epoch,
+          expected_control_version,applied_control_version,action_kind,local_disposition,provider_disposition,
+          control_owner_token,requested_render_seq,requested_body_hash,accepted_through_seq,frozen_body_hash,
+          last_error,resolved_at,provider_evidence)
+         VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,'stop','stop_requested','not_sent',$7,$8,$9,$8,$9,
+          NULL,NULL,$10::jsonb)",
+    )
+    .bind(&action_id)
+    .bind(org)
+    .bind(&generation_id)
+    .bind(attempt_epoch)
+    .bind(current_control_version)
+    .bind(next_control_version)
+    .bind(control_owner_token)
+    .bind(cutoff)
+    .bind(&expected_hash)
+    .bind(json!({"authority":"native_rust_control_v1","executionPin":pin}).to_string())
+    .execute(&mut **tx)
+    .await?;
+
+    let payload = json!({
+        "controlActionId": action_id,
+        "acceptedThroughSeq": cutoff,
+        "frozenBodyHash": expected_hash,
+        "appliedControlVersion": next_control_version,
+        "reason": "budget_hard_stop",
+    });
+    for kind in ["stop_requested", "output_cutoff"] {
+        sqlx::query(
+            "INSERT INTO chat_generation_events(org_id,generation_id,generation_seq,attempt_epoch,
+              event_kind,payload,control_action_id,run_id)
+             SELECT $1::uuid,$2::uuid,COALESCE(max(generation_seq),0)+1,$3,$4,$5::jsonb,$6::uuid,$7::uuid
+             FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid",
+        )
+        .bind(org)
+        .bind(&generation_id)
+        .bind(attempt_epoch)
+        .bind(kind)
+        .bind(payload.to_string())
+        .bind(&action_id)
+        .bind(run_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE chat_generations SET status='stop_requested',terminal_reason='operator_stop',
+          control_state='stopping',control_version=$4,accepted_through_seq=$5,frozen_body_hash=$6,
+          stop_requested_at=clock_timestamp(),updated_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(org)
+    .bind(&conversation_id)
+    .bind(&generation_id)
+    .bind(next_control_version)
+    .bind(cutoff)
+    .bind(&expected_hash)
+    .execute(&mut **tx)
+    .await?;
+    let audit = ActivityActor {
+        actor_type: "system",
+        actor_id: "budget-enforcement".into(),
+        run_id: Some(run_id.into()),
+    };
+    write_activity(
+        tx,
+        org,
+        &audit,
+        "runtime.native_chat.stop_requested",
+        "chat_generation",
+        &generation_id,
+        Some(&payload),
+    )
+    .await?;
+    Ok(true)
+}
+
 /// Persist operator intent under the same target/Conversation/Generation lock
 /// order as admission and finalization. No transport authority is returned.
 pub async fn request_stop(

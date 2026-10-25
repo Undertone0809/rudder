@@ -16,6 +16,8 @@ pub enum GoalBudgetError {
     Database(#[from] sqlx::Error),
     #[error(transparent)]
     GoalRun(#[from] crate::goal_runs::GoalRunError),
+    #[error(transparent)]
+    NativeChat(#[from] crate::native_chat::Error),
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +132,9 @@ pub(crate) async fn evaluate_cost_event(
             pause_scope(tx, event.org_id, &policy).await?;
             cancel_pending_native_goal_wakeups(tx, event.org_id, &policy).await?;
             cancel_active_native_goal_runs(tx, event, &policy).await?;
+            cancel_pending_legacy_wakeups(tx, event.org_id, &policy).await?;
+            request_legacy_run_cancellation(tx, event.org_id, &policy).await?;
+            request_native_chat_stops(tx, event.org_id, &policy).await?;
             if incident.created {
                 log_budget_activity(tx, event, &policy, &incident, "hard", observed).await?;
             }
@@ -447,6 +452,80 @@ async fn cancel_active_native_goal_runs(
             "Cancelled due to budget pause",
         )
         .await?;
+    }
+    Ok(())
+}
+
+async fn cancel_pending_legacy_wakeups(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    policy: &BudgetPolicy,
+) -> Result<(), GoalBudgetError> {
+    let agent_filter = (policy.scope_type == "agent")
+        .then_some(" AND agent_id=$2::uuid")
+        .unwrap_or("");
+    let sql = format!(
+        "UPDATE agent_wakeup_requests SET status='cancelled',finished_at=statement_timestamp(),
+           error='Cancelled due to budget pause',updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND execution_authority='legacy_ts' AND run_id IS NULL
+           AND status IN ('queued','deferred_issue_execution'){agent_filter}"
+    );
+    let mut query = sqlx::query(&sql).bind(org_id);
+    if policy.scope_type == "agent" {
+        query = query.bind(&policy.scope_id);
+    }
+    query.execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Persist a Rust-selected cancellation intent for legacy owners. Their
+/// existing renewal/cleanup path owns process termination and terminal state;
+/// this transaction never clears their lease or claims cleanup proof.
+async fn request_legacy_run_cancellation(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    policy: &BudgetPolicy,
+) -> Result<(), GoalBudgetError> {
+    let agent_filter = (policy.scope_type == "agent")
+        .then_some(" AND agent_id=$2::uuid")
+        .unwrap_or("");
+    let sql = format!(
+        "UPDATE heartbeat_runs SET error='Cancelled due to budget pause',
+           error_code='cancel_requested',updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND execution_authority='legacy_ts'
+           AND status IN ('queued','running') AND error_code IS DISTINCT FROM 'cancel_requested'
+           {agent_filter}"
+    );
+    let mut query = sqlx::query(&sql).bind(org_id);
+    if policy.scope_type == "agent" {
+        query = query.bind(&policy.scope_id);
+    }
+    query.execute(&mut **tx).await?;
+    Ok(())
+}
+
+async fn request_native_chat_stops(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    policy: &BudgetPolicy,
+) -> Result<(), GoalBudgetError> {
+    let agent_filter = (policy.scope_type == "agent")
+        .then_some(" AND agent_id=$2::uuid")
+        .unwrap_or("");
+    let sql = format!(
+        "SELECT id::text FROM heartbeat_runs WHERE org_id=$1::uuid
+           AND execution_authority='native_rust' AND chat_generation_id IS NOT NULL
+           AND scene='chat' AND target_type='chat_conversation' AND status='running'{agent_filter}
+         ORDER BY chat_conversation_id,id"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(org_id);
+    if policy.scope_type == "agent" {
+        query = query.bind(&policy.scope_id);
+    }
+    let run_ids = query.fetch_all(&mut **tx).await?;
+    for run_id in run_ids {
+        crate::native_chat::control::request_budget_stop_in_transaction(tx, org_id, &run_id)
+            .await?;
     }
     Ok(())
 }

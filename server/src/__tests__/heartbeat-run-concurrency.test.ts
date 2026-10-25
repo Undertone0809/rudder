@@ -1300,6 +1300,52 @@ describe("heartbeat run concurrency", () => {
     }
   }, 30_000);
 
+  it("cancels a queued legacy run when a persisted budget stop lands after its capacity snapshot", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy:budget-stop-race",
+      reason: "test_queue",
+      createdAt: new Date(Date.now() - 1_000),
+    });
+    let reachBeforeRunClaim!: () => void;
+    let resumeBeforeRunClaim!: () => void;
+    const beforeRunClaimReached = new Promise<void>((resolve) => { reachBeforeRunClaim = resolve; });
+    const beforeRunClaimGate = new Promise<void>((resolve) => { resumeBeforeRunClaim = resolve; });
+    const heartbeat = heartbeatService(db, {
+      beforeRunClaim: async (candidate) => {
+        if (candidate.id !== runId) return;
+        reachBeforeRunClaim();
+        await beforeRunClaimGate;
+      },
+    });
+    let claim: Promise<unknown> | null = null;
+    try {
+      claim = heartbeat.startNextQueuedRunForAgent(agentId);
+      await beforeRunClaimReached;
+      await db.update(heartbeatRuns).set({
+        error: "Cancelled due to budget pause",
+        errorCode: "cancel_requested",
+      }).where(eq(heartbeatRuns.id, runId));
+      resumeBeforeRunClaim();
+      await claim;
+
+      const run = await heartbeat.getRun(runId);
+      expect(run).toMatchObject({ status: "cancelled", errorCode: "cancelled" });
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      expect(mockBudgetService.getInvocationBlock).not.toHaveBeenCalled();
+      const [wakeup] = await db.select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+        .where(eq(heartbeatRuns.id, runId));
+      expect(wakeup?.status).toBe("cancelled");
+    } finally {
+      resumeBeforeRunClaim();
+      if (claim) await Promise.allSettled([claim]);
+    }
+  }, 30_000);
+
   it("does not claim an issue run after cancellation wins the issue lock", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });

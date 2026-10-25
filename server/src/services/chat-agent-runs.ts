@@ -10,6 +10,7 @@ import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
 import { buildHeartbeatAdapterInvokePayload, networkWaitBackoffMs } from "./runtime-kernel/heartbeat.core.js";
+import { interruptActiveChatGeneration } from "./chat-generation-locks.js";
 import {
   claimExpiredHeartbeatRunExecution,
   reconcileHeartbeatRunEvidence,
@@ -38,6 +39,16 @@ function stopOwningChatRun(runId: string, ownerToken?: string | null) {
   if (!owned || (ownerToken && owned.ownerToken !== ownerToken)) return;
   if (owned.renewalTimer) clearInterval(owned.renewalTimer);
   ownedChatRuns.delete(runId);
+}
+
+function honorPersistedBudgetStop(renewed: {
+  errorCode?: string | null;
+  chatConversationId?: string | null;
+} | null) {
+  if (renewed?.errorCode !== "cancel_requested" || !renewed.chatConversationId) return;
+  // Rust has already made the budget decision. The legacy Chat owner routes
+  // the durable intent through its existing AbortController/provider stop path.
+  void interruptActiveChatGeneration(renewed.chatConversationId, "operator_stop");
 }
 
 type RuntimeSkillSummary = Array<{
@@ -91,7 +102,9 @@ export function chatAgentRunService(db: Db) {
   ) {
     const owned = ownedChatRuns.get(run.id);
     if (owned) {
-      await renewHeartbeatRunExecutionLease(db, run.id, owned.ownerToken);
+      honorPersistedBudgetStop(
+        await renewHeartbeatRunExecutionLease(db, run.id, owned.ownerToken),
+      );
     }
     const message = boundedText(event.message, 500);
     const inserted = await appendHeartbeatRunEvent(db, {
@@ -266,6 +279,7 @@ export function chatAgentRunService(db: Db) {
         // Keep the original token until finalization so a late completion stays
         // fenced after recovery has claimed the run with a replacement owner.
         if (!renewed) stopRenewingChatRun(run.id, executionOwnerToken);
+        else honorPersistedBudgetStop(renewed);
       }).catch(() => undefined);
     }, RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS);
     renewalTimer.unref?.();
@@ -316,6 +330,7 @@ export function chatAgentRunService(db: Db) {
     const renewalTimer = setInterval(() => {
       void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) => {
         if (!renewed) stopRenewingChatRun(runId, ownerToken);
+        else honorPersistedBudgetStop(renewed);
       }).catch(() => undefined);
     }, RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS);
     renewalTimer.unref?.();
