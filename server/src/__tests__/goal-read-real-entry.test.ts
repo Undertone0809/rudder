@@ -60,6 +60,7 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
   let database: { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> };
   let root = ""; let fixtureBinary = ""; let bridge: RustFoundationBridge; let server: Server; let target: Server | string;
   let nodeGoalWriteRequests = 0;
+  let nodeGoalReadRequests = 0;
   const postgresErrors: string[] = [];
   const orgId = randomUUID(); const foreignOrg = randomUUID(); const goalId = randomUUID(); const foreignGoal = randomUUID();
   const activeEmptyId = randomUUID(); const cardRunGoalId = randomUUID(); const cardProposalGoalId = randomUUID(); const childId = randomUUID(); const agentId = randomUUID(); const nonOwnerAgentId = randomUUID(); const foreignAgent = randomUUID(); const projectId = randomUUID();
@@ -282,6 +283,12 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     if (ingress === "required") {
       app.use("/api", (req, res, next) => {
         const route = req.path.toLowerCase().replace(/\/+$/, "");
+        if ((req.method === "GET" || req.method === "HEAD")
+          && /^\/goals\/[^/]+(?:\/(activities|history|dependencies|workspace|timeline|agent-context))?$/.test(route)) {
+          nodeGoalReadRequests += 1;
+          res.status(599).json({ error: "Native Goal read reached the Node fixture" });
+          return;
+        }
         const directGoalWrite = (req.method === "POST" && (
           /^\/orgs\/[^/]+\/goals$/.test(route)
           || /^\/goals\/[^/]+\/(activate|plan|activities|owner)$/.test(route)
@@ -408,7 +415,24 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     for (const query of ["limit=0", "limit=101", "limit=NaN", "limit=1.5", "cursor=invalid"]) expect((await get(`/api/goals/${goalId}/history?${query}`)).status).toBe(400);
     expect(await snapshot()).toEqual(baseline);
   });
-  it("serves Goal collection reads from the managed public ingress without a Node fallback", async () => {
+  it("keeps typed reference scope, ambiguity and runtime-owner authorization", async () => {
+    const compact = goalId.replaceAll("-", "");
+    const collision = `${goalId.slice(0, 8)}${randomUUID().slice(8)}`;
+    expect((await get(`/api/goals/GOL_${compact.toUpperCase()}`)).body).toEqual(expected.detail);
+    expect((await get(`/api/goals/gol_${compact.slice(0, 8)}`, boardToken)).status).toBe(404);
+    expect((await get(`/api/goals/${goalId}/agent-context`, nonOwnerToken)).status).toBe(403);
+    await db.insert(goals).values({ id: collision, orgId, title: "Reference collision" });
+    try {
+      const ambiguous = await get(`/api/goals/gol_${compact.slice(0, 8)}`);
+      expect(ambiguous.status).toBe(409);
+      expect(ambiguous.body.error).toBe("Goal short reference is ambiguous. Use a longer typed ref.");
+      expect((await get(`/api/goals/gol_${compact}`)).body).toEqual(expected.detail);
+    } finally {
+      await db.delete(goals).where(eq(goals.id, collision));
+    }
+    expect(await snapshot()).toEqual(baseline);
+  });
+  it("serves all ten Goal reads from the managed public ingress without a Node fallback", async () => {
     if (ingress !== "required") return;
     const nativeGoalRead = bridge.goalRead;
     bridge.goalRead = async () => { throw new Error("Node Goal read bridge must not be used"); };
@@ -418,22 +442,31 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
         `/api/orgs/${orgId}/goals/`,
         `/API/ORGS/${orgId}/GOALS/WORKSPACE`,
         `/api/orgs/${orgId}/goals/assigned?lifecycle=all&focus=true&facet=ready_for_acceptance&limit=1`,
+        `/api/goals/${goalId}`,
+        `/api/goals/${goalId}/activities`,
+        `/api/goals/${goalId}/history`,
+        `/api/goals/${goalId}/dependencies`,
+        `/api/goals/${goalId}/workspace`,
+        `/api/goals/${goalId}/timeline`,
+        `/api/goals/${goalId}/agent-context`,
       ];
       for (const path of paths) {
         const response = await get(path);
         expect(response.status, JSON.stringify(response.body)).toBe(200);
       }
       expect((await get(`/api/orgs/${orgId}/goals/unknown`)).status).toBe(404);
+      expect(nodeGoalReadRequests).toBe(0);
     } finally {
       bridge.goalRead = nativeGoalRead;
     }
   });
-  it("revalidates revoked Agent API keys before every native Goal collection read", async () => {
+  it("revalidates revoked Agent API keys before every native Goal read", async () => {
     if (ingress !== "required") return;
     const keyHash = createHash("sha256").update(agentToken).digest("hex");
     await db.update(agentApiKeys).set({ revokedAt: new Date() }).where(eq(agentApiKeys.keyHash, keyHash));
     try {
-      for (const url of [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`]) {
+      for (const url of [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`,
+        ...["", "/activities", "/history", "/dependencies", "/workspace", "/timeline", "/agent-context"].map((suffix) => `/api/goals/${goalId}${suffix}`)]) {
         const response = await get(url);
         expect(response.status, JSON.stringify(response.body)).toBe(401);
       }
@@ -641,7 +674,7 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     expect((await get(`/api/goals/${goalId}`, boardToken)).status).toBe(200);
     expect(await snapshot()).toEqual(before);
   });
-  it("fails closed when the native Goal read transport is unavailable", async () => {
+  it("keeps direct native reads independent of the private bridge while legacy transport fails closed", async () => {
     const nativeGoalRead = bridge.goalRead;
     bridge.goalRead = async () => { throw new Error("simulated native Goal read transport failure"); };
     try {
@@ -650,20 +683,13 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
         expect((await request(target).get("/api/health")).status).toBe(200);
       }
       const collectionUrls = [`/api/orgs/${orgId}/goals`, `/api/orgs/${orgId}/goals/workspace`, `/api/orgs/${orgId}/goals/assigned`];
-      if (ingress === "required") {
-        for (const url of collectionUrls) {
-          const response = await request(target).get(url).set("authorization", `Bearer ${agentToken}`);
-          expect(response.status, JSON.stringify(response.body)).toBe(200);
-        }
-      }
-      const nodeOwnedUrls = ingress === "required"
-        ? [`/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`]
-        : [...collectionUrls, `/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`];
-      for (const url of nodeOwnedUrls) {
+      const urls = [...collectionUrls, `/api/goals/${goalId}`, `/api/goals/${goalId}/workspace`, `/api/goals/${goalId}/agent-context`, `/api/goals/${goalId}/activities`, `/api/goals/${goalId}/history`, `/api/goals/${goalId}/timeline`, `/api/goals/${goalId}/dependencies`];
+      for (const url of urls) {
         const response = await request(target).get(url).set("authorization", `Bearer ${agentToken}`);
-        expect(response.status, JSON.stringify(response.body)).toBe(503);
-        expect(response.body.error).toBe("Rust Goal reads are unavailable");
+        expect(response.status, JSON.stringify(response.body)).toBe(ingress === "required" ? 200 : 503);
+        if (ingress !== "required") expect(response.body.error).toBe("Rust Goal reads are unavailable");
       }
+      expect(nodeGoalReadRequests).toBe(0);
       expect(await snapshot()).toEqual(baseline);
     } finally { bridge.goalRead = nativeGoalRead; }
   });

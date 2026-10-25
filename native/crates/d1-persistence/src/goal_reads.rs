@@ -14,6 +14,7 @@ use std::{collections::HashMap, sync::OnceLock};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 
+pub mod reference;
 mod workspace;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +32,7 @@ pub enum GoalReadView {
     Timeline,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GoalReadRequest {
     pub view: GoalReadView,
