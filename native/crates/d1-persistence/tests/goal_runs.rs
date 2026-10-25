@@ -13,8 +13,9 @@ use rudder_native_protocol::{Command, ProtocolVersion};
 use serde_json::Value;
 use serde_json::json;
 use sqlx::Row;
+use std::time::Duration;
 #[cfg(unix)]
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path};
 use support::{CEO, Database, GOAL, GOAL_TWO, ORG};
 
 const SECOND_AGENT: &str = "50000000-0000-4000-8000-000000000002";
