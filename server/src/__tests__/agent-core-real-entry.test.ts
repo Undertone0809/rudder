@@ -3,7 +3,7 @@ import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudde
 import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema, updateAgentSchema } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import express from "express";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { Server } from "node:http";
@@ -979,18 +979,27 @@ describe("Agent core twenty-route real HTTP authority", () => {
             expect(nodeNativeIngressPathHits).toBe(0);
             const afterCreate = await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`);
             expect(afterCreate).toBe(count + 1);
+            const agentCountBeforeOutage = await scalar(sql`SELECT count(*) AS value FROM agents`);
 
             await pg!.stop();
             try {
                 nodeNativeIngressPathHits = 0;
                 const nativeDatabaseFailure = await call(publicUrl, "post", `/api/agents/${agent}/keys`, ownerToken, {});
                 expect(nativeDatabaseFailure.status, nativeDatabaseFailure.text).toBe(503);
+                for (const input of [
+                    { name: "Outage OpenCode", agentRuntimeType: "opencode_local", agentRuntimeConfig: { model: "test-provider/test-model" } },
+                    { name: "Outage seed", agentRuntimeType: "codex_local", seedOrganizationIntelligenceDefaults: true },
+                ]) {
+                    const failedCreate = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, input);
+                    expect(failedCreate.status, failedCreate.text).toBe(503);
+                }
                 expect(nodeNativeIngressPathHits).toBe(0);
             }
             finally {
                 await pg!.start();
             }
             expect(await scalar(sql `SELECT count(*) AS value FROM agent_api_keys`)).toBe(afterCreate);
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents`)).toBe(agentCountBeforeOutage);
         }
         finally {
             bridge!.agentCore = original;
@@ -1129,6 +1138,131 @@ describe("Agent core twenty-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
         return { id, token, workspace };
     }
+    it.runIf(process.platform !== "win32")("seeds a first Codex Agent through the packaged Rust MCP command", async () => {
+        const seedOrg = randomUUID();
+        await db.execute(sql`INSERT INTO organizations(id,name,url_key,issue_prefix) VALUES(${seedOrg}::uuid,'Native seed acceptance',${seedOrg},${`S${seedOrg.slice(0, 8)}`})`);
+        await db.execute(sql`INSERT INTO organization_mutation_state(org_id,owner,fence_epoch) VALUES(${seedOrg}::uuid,'rust',7)`);
+        await db.execute(sql`INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${seedOrg}::uuid,'user',${owner},'active','member')`);
+        const probeRoot = path.join(root, `native-codex-probe-${randomUUID()}`);
+        const sourceHome = path.join(probeRoot, "source-codex-home");
+        const evidencePath = path.join(probeRoot, "mcp-result.json");
+        fs.mkdirSync(sourceHome, { recursive: true });
+        const sourceConfig = '[mcp_servers.rudder-tools]\ncommand = "must-not-run-legacy-rudder"\nargs = ["mcp-server"]\n';
+        fs.writeFileSync(path.join(sourceHome, "config.toml"), sourceConfig);
+        const script = path.join(probeRoot, "codex");
+        // This synthetic provider verifies the actual managed Rust MCP child;
+        // it does not represent a real Codex account or model completion.
+        fs.writeFileSync(script, `#!${process.execPath}
+const fs = require("node:fs"), path = require("node:path"), {spawnSync} = require("node:child_process");
+const config = fs.readFileSync(path.join(process.env.CODEX_HOME, "config.toml"), "utf8");
+const section = config.split("[mcp_servers.rudder-tools]")[1]?.split(/\\r?\\n\\[/)[0] || "";
+const command = JSON.parse(section.match(/^command\\s*=\\s*(.+)$/m)?.[1] || "null");
+const args = JSON.parse(section.match(/^args\\s*=\\s*(.+)$/m)?.[1] || "null");
+if (!path.isAbsolute(command) || !/rudder-(native|cli)(\\.exe)?$/.test(command)) throw new Error("Expected installed Rust MCP executable");
+const requests = [{jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2024-11-05",capabilities:{},clientInfo:{name:"synthetic-codex",version:"1"}}},{jsonrpc:"2.0",id:2,method:"tools/list",params:{}},{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"rudder_agent_capabilities",arguments:{}}}];
+const child = spawnSync(command, args, {input:requests.map(JSON.stringify).join("\\n")+"\\n",encoding:"utf8",timeout:10000,maxBuffer:2000000});
+if (child.status !== 0) throw new Error("Rust MCP failed: "+child.stderr);
+const responses = child.stdout.trim().split(/\\r?\\n/).map(JSON.parse);
+if (responses.length !== 3 || responses[0].result?.serverInfo?.name !== "rudder-tools" || responses[1].result?.tools?.length !== 83 || responses[2].result?.isError !== false) throw new Error("Rust MCP contract failure");
+fs.writeFileSync(${JSON.stringify(evidencePath)}, JSON.stringify({command,args,toolCount:responses[1].result.tools.length,serverInfo:responses[0].result.serverInfo,childStatus:child.status}));
+console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"hello"}}));
+console.log(JSON.stringify({type:"turn.completed"}));
+`, { mode: 0o755 });
+        nodeNativeIngressPathHits = 0;
+        nodeNativeIngressPaths = [];
+        const created = await call(publicUrl, "post", `/api/orgs/${seedOrg}/agents`, ownerToken, {
+            name: "Native first Codex seed", agentRuntimeType: "codex_local", seedOrganizationIntelligenceDefaults: true,
+            agentRuntimeConfig: { command: script, helloProbeTimeoutSec: 15, env: { CODEX_HOME: { type: "plain", value: sourceHome } } },
+        });
+        expect(created.status, created.text).toBe(201);
+        const [profile] = await db.execute(sql`SELECT status,last_error,last_verified_at FROM organization_intelligence_profiles WHERE org_id=${seedOrg}::uuid AND purpose='default'`);
+        expect(profile).toMatchObject({ status: "enabled", last_error: null });
+        expect(profile!.last_verified_at).not.toBeNull();
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+        expect(evidence).toMatchObject({ toolCount: 83, childStatus: 0, serverInfo: { name: "rudder-tools" } });
+        expect(fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8")).toBe(sourceConfig);
+        expect(nodeNativeIngressPathHits, nodeNativeIngressPaths.join(", ")).toBe(0);
+        expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${created.body.id} AND action='agent.created'`)).toBe(1);
+    });
+    it("creates former compatibility cohorts through Rust without invoking Node", async () => {
+        const previousKey = process.env.RUDDER_SECRETS_MASTER_KEY;
+        const key = randomBytes(32);
+        const skillHome = path.join(root, `encrypted-skill-home-${randomUUID()}`);
+        const skill = path.join(skillHome, ".agents", "skills", "native-encrypted-root");
+        fs.mkdirSync(skill, { recursive: true });
+        fs.writeFileSync(path.join(skill, "SKILL.md"), "# Native encrypted root\nSynthetic acceptance skill.\n");
+        const secretId = randomUUID();
+        const iv = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", key, iv);
+        const ciphertext = Buffer.concat([cipher.update(skillHome, "utf8"), cipher.final()]);
+        const material = { scheme: "local_encrypted_v1", iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") };
+        await db.execute(sql`INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES(${secretId}::uuid,${org}::uuid,${`native-skill-home-${secretId}`},'local_encrypted','user_managed',1,${owner})`);
+        await db.execute(sql`INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES(${secretId}::uuid,1,${JSON.stringify(material)}::jsonb,${hash(skillHome)},${owner})`);
+        try {
+            process.env.RUDDER_SECRETS_MASTER_KEY = key.toString("base64");
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+            nodeNativeIngressPathHits = 0;
+            nodeNativeIngressPaths = [];
+            for (const runtime of ["opencode_local", "pi_local"]) {
+                const created = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                    name: `Native model ${runtime} ${randomUUID()}`, agentRuntimeType: runtime,
+                    agentRuntimeConfig: { model: "test-provider/test-model", command: "synthetic-uninstalled-discovery-command" },
+                });
+                expect(created.status, created.text).toBe(201);
+                expect(created.body.agentRuntimeType).toBe(runtime);
+                expect(created.body.agentRuntimeConfig.model).toBe("test-provider/test-model");
+                expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE id=${created.body.id}::uuid AND org_id=${org}::uuid`)).toBe(1);
+                expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${created.body.id} AND action='agent.created'`)).toBe(1);
+                const rejected = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                    name: `Invalid model ${randomUUID()}`, agentRuntimeType: runtime, agentRuntimeConfig: { model: "missing-provider" },
+                });
+                expect(rejected.status, rejected.text).toBe(422);
+            }
+            const seeded = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                name: `Native no-probe seed ${randomUUID()}`, agentRuntimeType: "process",
+                agentRuntimeConfig: { command: "synthetic-uninstalled-command" }, seedOrganizationIntelligenceDefaults: true,
+            });
+            expect(seeded.status, seeded.text).toBe(201);
+            expect(await scalar(sql`SELECT count(*) AS value FROM organization_intelligence_profiles WHERE org_id=${org}::uuid`)).toBeGreaterThan(0);
+            const selected = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                name: `Native encrypted HOME ${randomUUID()}`, agentRuntimeType: "codex_local",
+                agentRuntimeConfig: { env: { HOME: { type: "secret_ref", secretId } } }, desiredSkills: ["global:native-encrypted-root"],
+            });
+            expect(selected.status, selected.text).toBe(201);
+            expect(selected.body.agentRuntimeConfig.env.HOME).toMatchObject({ type: "secret_ref", secretId });
+            expect(await scalar(sql`SELECT count(*) AS value FROM agent_enabled_skills WHERE agent_id=${selected.body.id}::uuid AND skill_key='global:native-encrypted-root'`)).toBe(1);
+            const [saved] = await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${selected.body.id}::uuid`);
+            expect(JSON.stringify(saved!.agent_runtime_config)).not.toContain(skillHome);
+            expect(JSON.stringify(selected.body)).not.toContain(skillHome);
+            const count = await scalar(sql`SELECT count(*) AS value FROM agents`);
+            const denied = await call(publicUrl, "post", `/api/orgs/${org}/agents`, outsiderToken, {
+                name: `Foreign encrypted HOME ${randomUUID()}`, agentRuntimeType: "codex_local",
+                agentRuntimeConfig: { env: { HOME: { type: "secret_ref", secretId } } }, desiredSkills: ["global:native-encrypted-root"],
+            });
+            expect(denied.status).toBe(403);
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents`)).toBe(count);
+            process.env.RUDDER_SECRETS_MASTER_KEY = randomBytes(32).toString("base64");
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+            const wrongKey = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                name: `Unreadable encrypted HOME ${randomUUID()}`, agentRuntimeType: "codex_local",
+                agentRuntimeConfig: { env: { HOME: { type: "secret_ref", secretId } } }, desiredSkills: ["global:native-encrypted-root"],
+            });
+            expect(wrongKey.status, wrongKey.text).toBe(503);
+            expect(wrongKey.body.error).toBe("Secret provider unavailable");
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents`)).toBe(count);
+            expect(nodeNativeIngressPathHits, nodeNativeIngressPaths.join(", ")).toBe(0);
+        } finally {
+            if (previousKey === undefined) delete process.env.RUDDER_SECRETS_MASTER_KEY;
+            else process.env.RUDDER_SECRETS_MASTER_KEY = previousKey;
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+        }
+    });
     it("creates Agents through the default public Rust path with Node-compatible permissions", async () => {
         const gates = agentCreateGates;
         const previous = gates.map(key => process.env[key]);

@@ -3,7 +3,7 @@
 use super::{
     AgentCoreError, AgentCreateInstructionsBundle, AgentCreateIntelligenceDefaults,
     AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
-    common::{Result, Tx, js_trim, uuid_like},
+    common::{Result, Tx, http, js_trim, uuid_like},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -539,6 +539,32 @@ fn validate_public_adapter_config_schema(
     }
 }
 
+fn validate_create_model_format(agent_runtime_type: &str, config: &Value) -> Result<()> {
+    let adapter = match agent_runtime_type {
+        "opencode_local" => "OpenCode",
+        "pi_local" => "Pi",
+        _ => return Ok(()),
+    };
+
+    let model = config
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let mut parts = model.splitn(2, '/');
+    let provider = parts.next().unwrap_or_default().trim();
+    let model_id = parts.next().unwrap_or_default().trim();
+    if provider.is_empty() || model_id.is_empty() {
+        return Err(http(
+            422,
+            format!(
+                "Invalid {agent_runtime_type} agentRuntimeConfig: {adapter} requires `agentRuntimeConfig.model` in provider/model format."
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate the public Agent-create contract and translate it to the private
 /// create command. Unknown request fields follow Zod's strip behavior; the
 /// private `nodeOwned` preparation object is never accepted from a client.
@@ -550,17 +576,6 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
             json!([]),
         )]));
     };
-    if source
-        .get("seedOrganizationIntelligenceDefaults")
-        .is_some_and(|value| value == true)
-    {
-        return Err(AgentCoreError::Http(
-            503,
-            "First-Agent intelligence runtime-chain preflight requires the compatibility handler"
-                .into(),
-            None,
-        ));
-    }
     if let Some(seed) = source.get("seedOrganizationIntelligenceDefaults")
         && !seed.is_boolean()
     {
@@ -592,6 +607,10 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
     if let Some(Value::Object(permissions)) = public.get_mut("permissions") {
         permissions.retain(|key, _| matches!(key.as_str(), "canCreateAgents" | "canManageSkills"));
     }
+    let seed_intelligence_defaults = source
+        .get("seedOrganizationIntelligenceDefaults")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let icon = match source.get("icon") {
         None | Some(Value::Null) => None,
@@ -676,6 +695,7 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
             None,
         ));
     }
+    let runtime_probe_config = seed_intelligence_defaults.then(|| config.clone());
     strip_node_owned_runtime_keys(&mut config);
     public.insert("agentRuntimeConfig".to_owned(), config.clone());
 
@@ -693,8 +713,8 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
             .as_ref()
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let files =
-            super::instructions::default_create_bundle_files(role_for_bundle(&public["role"]));
+        let bundle_role = public.get("role").map(role_for_bundle).unwrap_or("default");
+        let files = super::instructions::default_create_bundle_files(bundle_role);
         let mut files = files;
         if !js_trim(prompt).is_empty() {
             files.insert("SOUL.md".to_owned(), prompt.to_owned());
@@ -703,6 +723,12 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
             "instructionsBundle".to_owned(),
             json!({"entryFile":"SOUL.md","files":files,"clearLegacyPromptTemplate":true}),
         );
+    }
+    if seed_intelligence_defaults {
+        node_owned.insert("seedIntelligenceDefaults".to_owned(), Value::Bool(true));
+        if let Some(runtime_probe_config) = runtime_probe_config {
+            node_owned.insert("runtimeProbeConfig".to_owned(), runtime_probe_config);
+        }
     }
     public.insert("nodeOwned".to_owned(), Value::Object(node_owned));
     let normalized = validate("create", Some(&Value::Object(public)))?;
@@ -1317,6 +1343,7 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             json!(["agentRuntimeConfig"]),
         )]));
     }
+    validate_create_model_format(&agent_runtime_type, &agent_runtime_config)?;
     if agent_runtime_type == "openclaw_gateway" {
         reject_secret_like_except_device_key(&agent_runtime_config, "agentRuntimeConfig")?;
     } else {
@@ -1489,13 +1516,26 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                 )]));
             }
             reject_secret_like(config, "nodeOwned.normalizedAgentRuntimeConfig")?;
+            let runtime_probe_config = match node.get("runtimeProbeConfig") {
+                None => None,
+                Some(Value::Object(config)) => Some(Value::Object(config.clone())),
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "object",
+                        value,
+                        json!(["nodeOwned", "runtimeProbeConfig"]),
+                    )]));
+                }
+            };
             if node.keys().any(|key| {
                 !matches!(
                     key.as_str(),
                     "normalizedAgentRuntimeConfig"
+                        | "runtimeProbeConfig"
                         | "instructionsBundle"
                         | "avatarIcon"
                         | "intelligenceDefaults"
+                        | "seedIntelligenceDefaults"
                 )
             }) {
                 return Err(unsupported_field("nodeOwned"));
@@ -1627,6 +1667,17 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
                         "string",
                         value,
                         json!(["nodeOwned", "avatarIcon"]),
+                    )]));
+                }
+            };
+            let seed_intelligence_defaults = match node.get("seedIntelligenceDefaults") {
+                None => false,
+                Some(Value::Bool(value)) => *value,
+                value => {
+                    return Err(validation_error(vec![wrong(
+                        "boolean",
+                        value,
+                        json!(["nodeOwned", "seedIntelligenceDefaults"]),
                     )]));
                 }
             };
@@ -1764,9 +1815,11 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             };
             Some(AgentCreateNodeOwned {
                 normalized_agent_runtime_config: config.clone(),
+                runtime_probe_config,
                 instructions_bundle,
                 avatar_icon,
                 intelligence_defaults,
+                seed_intelligence_defaults,
             })
         }
         value => {
@@ -2253,13 +2306,36 @@ mod tests {
     }
 
     #[test]
-    fn public_agent_create_preflight_does_not_accept_intelligence_seed() {
-        let error = normalize_public_agent_create(Some(json!({
+    fn public_agent_create_translates_only_the_intelligence_seed_choice() {
+        let normalized = normalize_public_agent_create(Some(json!({
             "name":"First Agent",
-            "seedOrganizationIntelligenceDefaults":true
+            "seedOrganizationIntelligenceDefaults":true,
+            "agentRuntimeConfig":{"cwd":"/tmp/probe-cwd","command":"custom-codex","model":"openai/gpt-test"}
         })))
-        .unwrap_err();
-        assert!(matches!(error, AgentCoreError::Http(503, ..)));
+        .unwrap();
+        let request = AgentCreateRequest::parse(&normalized).unwrap();
+        let node = request.node_owned.unwrap();
+        assert!(node.seed_intelligence_defaults);
+        assert!(node.intelligence_defaults.is_none());
+        assert_eq!(
+            node.runtime_probe_config.as_ref().unwrap()["cwd"],
+            "/tmp/probe-cwd"
+        );
+        assert_eq!(
+            node.runtime_probe_config.as_ref().unwrap()["command"],
+            "custom-codex"
+        );
+        assert!(node.normalized_agent_runtime_config.get("cwd").is_none());
+
+        let normalized = normalize_public_agent_create(Some(json!({
+            "seedOrganizationIntelligenceDefaults":false,
+            "agentRuntimeConfig":{"cwd":"/tmp/not-probed"}
+        })))
+        .unwrap();
+        let request = AgentCreateRequest::parse(&normalized).unwrap();
+        let node = request.node_owned.unwrap();
+        assert!(!node.seed_intelligence_defaults);
+        assert!(node.runtime_probe_config.is_none());
     }
 
     #[test]
@@ -2418,6 +2494,38 @@ mod tests {
                 "{key}: {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn create_requires_valid_opencode_and_pi_primary_model_syntax() {
+        for (runtime, adapter) in [("opencode_local", "OpenCode"), ("pi_local", "Pi")] {
+            for model in ["", "provider", "/model", "provider/"] {
+                let error = parse_create(&json!({
+                    "agentRuntimeType": runtime,
+                    "agentRuntimeConfig": {"model": model}
+                }))
+                .expect_err("malformed provider/model syntax");
+                assert!(
+                    matches!(error, AgentCoreError::Http(422, ref message, None)
+                        if message == &format!("Invalid {runtime} agentRuntimeConfig: {adapter} requires `agentRuntimeConfig.model` in provider/model format.")),
+                    "{runtime} with {model:?}: {error:?}"
+                );
+            }
+
+            for model in ["provider/model", " provider / model /variant "] {
+                parse_create(&json!({
+                    "agentRuntimeType": runtime,
+                    "agentRuntimeConfig": {"model": model}
+                }))
+                .expect("valid provider/model syntax");
+            }
+        }
+
+        parse_create(&json!({
+            "agentRuntimeType": "codex_local",
+            "agentRuntimeConfig": {"model": "model-without-provider-slash"}
+        }))
+        .expect("other providers keep their existing model contract");
     }
 
     #[test]

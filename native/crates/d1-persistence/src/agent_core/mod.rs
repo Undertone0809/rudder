@@ -5,6 +5,7 @@ mod constants;
 mod detail;
 pub(crate) mod instructions;
 mod intelligence;
+mod intelligence_runtime;
 mod json_boundary;
 mod managed_mcp;
 mod reads;
@@ -116,7 +117,7 @@ pub fn normalize_public_agent_create_input(
     json_boundary::stack(|| validation::normalize_public_agent_create(input))
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCoreRequest {
     pub operation: String,
@@ -193,12 +194,26 @@ pub struct AgentCreateNodeOwned {
     /// bindings or organization secret references; provider material is never
     /// carried over the AgentCreate boundary.
     pub normalized_agent_runtime_config: Value,
+    /// Original validated adapter config used only by the first-Agent
+    /// intelligence probe. Persistence still uses the stripped normalized
+    /// config above; this transient copy preserves probe inputs such as cwd.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_probe_config: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions_bundle: Option<AgentCreateInstructionsBundle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intelligence_defaults: Option<AgentCreateIntelligenceDefaults>,
+    /// A public create request's first-Agent seeding choice. The public
+    /// ingress constructs this flag; it never accepts a caller-prepared
+    /// runtime verification result.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub seed_intelligence_defaults: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -386,7 +401,121 @@ pub async fn execute_public_agent_create_with_native_auth(
     if r.operation != "create" {
         return Err(common::http(400, "Invalid Agent command"));
     }
+    if let Some(prepared) = prepare_public_agent_seed(pool, actor, r, native_auth).await? {
+        return execute_agent_inner(pool, actor, &prepared, Some(native_auth), true).await;
+    }
     execute_agent_inner(pool, actor, r, Some(native_auth), true).await
+}
+
+/// Run the optional first-Agent intelligence preflight in a short authorized
+/// read phase. Resolve organization-owned secret references before closing
+/// that transaction, then run adapter probes without holding the Agent/issue
+/// mutation locks. The create transaction rechecks authorization, first-Agent
+/// ownership, and profile existence before applying the prepared result.
+async fn prepare_public_agent_seed(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    r: &AgentCoreRequest,
+    native_auth: &dyn NativeAgentAuthorizer,
+) -> Result<Option<AgentCoreRequest>> {
+    let mut input = validation::validate("create", Some(&r.input))?;
+    let mut create = AgentCreateRequest::parse(&input)?;
+    let seed = create
+        .node_owned
+        .as_ref()
+        .is_some_and(|node| node.seed_intelligence_defaults);
+    if !seed {
+        return Ok(None);
+    }
+
+    let mut tx = pool.begin().await?;
+    let admin = actor.actor().kind == "user"
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')",
+        )
+        .bind(&actor.actor().id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if actor.actor().kind == "user" {
+        authorize_user(
+            &mut tx,
+            &Context {
+                org: "",
+                actor,
+                request: r,
+                admin,
+            },
+        )
+        .await?;
+    }
+    let id = resolve_id(&mut tx, actor, r, admin).await?;
+    if id.is_some() {
+        return Err(common::http(400, "Invalid Agent command"));
+    }
+    let org = r
+        .org_id
+        .as_deref()
+        .ok_or_else(|| common::http(404, "Agent not found"))?;
+    let ctx = Context {
+        org,
+        actor,
+        request: r,
+        admin,
+    };
+    authorize_org(&mut tx, &ctx).await?;
+    require_create(&mut tx, &ctx).await?;
+    revalidate_native_auth(Some(native_auth), &mut tx, org).await?;
+
+    let mut config_source = create
+        .node_owned
+        .as_ref()
+        .and_then(|node| node.runtime_probe_config.clone())
+        .or_else(|| {
+            create
+                .node_owned
+                .as_ref()
+                .map(|node| node.normalized_agent_runtime_config.clone())
+        })
+        .unwrap_or_else(|| create.agent_runtime_config.clone());
+    validation::apply_create_defaults(&create.agent_runtime_type, &mut config_source, true)?;
+    let normalized_runtime_config =
+        validation::normalize_runtime_config(&mut tx, org, &config_source).await?;
+    let preparation = intelligence::prepare_public_seed(
+        &mut tx,
+        org,
+        &create.agent_runtime_type,
+        &normalized_runtime_config,
+    )
+    .await?;
+    tx.commit().await?;
+
+    if let Some(node) = create.node_owned.as_mut() {
+        node.seed_intelligence_defaults = false;
+        node.intelligence_defaults = intelligence::finish_public_seed(preparation).await?;
+    }
+    let Some(Value::Object(node)) = input.get_mut("nodeOwned") else {
+        return Err(common::http(
+            500,
+            "Agent create seed preparation is unavailable",
+        ));
+    };
+    node.insert("seedIntelligenceDefaults".to_owned(), Value::Bool(false));
+    node.remove("intelligenceDefaults");
+    if let Some(defaults) = create
+        .node_owned
+        .as_ref()
+        .and_then(|node| node.intelligence_defaults.as_ref())
+    {
+        node.insert(
+            "intelligenceDefaults".to_owned(),
+            serde_json::to_value(defaults)
+                .map_err(|_| common::http(500, "Internal server error"))?,
+        );
+    }
+
+    let mut prepared = r.clone();
+    prepared.input = input;
+    Ok(Some(prepared))
 }
 
 /// Check whether an already authenticated browser user may inspect Agent

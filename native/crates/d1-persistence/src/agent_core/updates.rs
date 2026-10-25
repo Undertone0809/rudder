@@ -83,9 +83,12 @@ pub(super) async fn execute(
         let mut effective_config = requested_config
             .clone()
             .unwrap_or_else(|| existing_config.clone());
-        if requested_config.is_some() && !changing_runtime_type && !replace_runtime_config {
+        if let Some(requested) = &requested_config
+            && !changing_runtime_type
+            && !replace_runtime_config
+        {
             effective_config = existing_config.clone();
-            effective_config.extend(requested_config.expect("checked above"));
+            effective_config.extend(requested.clone());
         }
         if changing_runtime_type
             && !effective_config
@@ -113,10 +116,10 @@ pub(super) async fn execute(
         patch.insert("agentRuntimeConfig".into(), effective_config);
     }
 
-    if let Some(icon) = patch.get("icon") {
-        if let Some(icon) = icon.as_str() {
-            super::writes::assert_avatar_asset_belongs_to_org(tx, ctx.org, icon).await?;
-        }
+    if let Some(icon) = patch.get("icon")
+        && let Some(icon) = icon.as_str()
+    {
+        super::writes::assert_avatar_asset_belongs_to_org(tx, ctx.org, icon).await?;
     }
 
     if let Some(status) = patch.get("status").and_then(Value::as_str) {
@@ -134,29 +137,27 @@ pub(super) async fn execute(
         }
     }
 
-    if let Some(name) = patch.get("name").and_then(Value::as_str) {
-        if slug(text(row, "name")) != slug(name) {
-            let existing = sqlx::query_as::<_, (String, String)>(
-                "SELECT name,status FROM agents WHERE org_id=$1::uuid AND id<>$2::uuid",
-            )
-            .bind(ctx.org)
-            .bind(id)
-            .fetch_all(&mut **tx)
-            .await?;
-            let candidate_slug = slug(name);
-            let collision = existing.iter().any(|(existing_name, status)| {
-                status != "terminated" && slug(existing_name) == candidate_slug
-            });
-            if collision {
-                if !candidate_slug.is_empty() {
-                    return Err(http(
-                        409,
-                        format!(
-                            "Agent shortname '{candidate_slug}' is already in use in this organization"
-                        ),
-                    ));
-                }
-            }
+    if let Some(name) = patch.get("name").and_then(Value::as_str)
+        && slug(text(row, "name")) != slug(name)
+    {
+        let existing = sqlx::query_as::<_, (String, String)>(
+            "SELECT name,status FROM agents WHERE org_id=$1::uuid AND id<>$2::uuid",
+        )
+        .bind(ctx.org)
+        .bind(id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let candidate_slug = slug(name);
+        let collision = existing.iter().any(|(existing_name, status)| {
+            status != "terminated" && slug(existing_name) == candidate_slug
+        });
+        if collision && !candidate_slug.is_empty() {
+            return Err(http(
+                409,
+                format!(
+                    "Agent shortname '{candidate_slug}' is already in use in this organization"
+                ),
+            ));
         }
     }
 
@@ -347,8 +348,6 @@ fn config_snapshot(row: &Value) -> Value {
             "metadata" => {
                 if row[*key].is_object() {
                     redaction::sanitize(&row[*key])
-                } else if row[*key].is_null() {
-                    Value::Null
                 } else {
                     Value::Null
                 }

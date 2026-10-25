@@ -158,6 +158,14 @@ async fn create(
     )?;
     let normalized_runtime_config =
         super::validation::normalize_runtime_config(tx, ctx.org, &config_source).await?;
+    if public_agent_create
+        && request
+            .node_owned
+            .as_ref()
+            .is_some_and(|node| node.seed_intelligence_defaults)
+    {
+        return Err(http(500, "Agent create seed preflight was not applied"));
+    }
     let requested_name = request
         .name
         .as_deref()
