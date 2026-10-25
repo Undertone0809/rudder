@@ -560,8 +560,8 @@ describe("Agent core twenty-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash)
             VALUES(${org}::uuid,${deniedActor}::uuid,'profile deny regression',${hash(deniedToken)})`);
         await db.execute(sql`INSERT INTO assets(id,org_id,provider,object_key,content_type,byte_size,sha256)
-            VALUES(${ownedAsset}::uuid,${org}::uuid,'local','profile/${ownedAsset}','image/png',12,${hash(ownedAsset)}),
-                  (${foreignAsset}::uuid,${otherOrg}::uuid,'local','profile/${foreignAsset}','image/png',12,${hash(foreignAsset)})`);
+            VALUES(${ownedAsset}::uuid,${org}::uuid,'local','profile/' || ${ownedAsset}::text,'image/png',12,${hash(ownedAsset)}),
+                  (${foreignAsset}::uuid,${otherOrg}::uuid,'local','profile/' || ${foreignAsset}::text,'image/png',12,${hash(foreignAsset)})`);
         await db.execute(sql`INSERT INTO organization_secrets(id,org_id,name,purpose)
             VALUES(${ownedSecret}::uuid,${org}::uuid,${`profile-${ownedSecret}`},'user_managed'),
                   (${foreignSecret}::uuid,${otherOrg}::uuid,${`profile-${foreignSecret}`},'user_managed')`);
@@ -634,7 +634,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
             expect(await state(subject)).toEqual(withProfile);
 
             const foreignTargetBefore = await state(foreignAgent);
-            const foreignTargetPatch = await call(publicUrl, "patch", `/api/agents/${foreignAgent}`, ownerToken, { title: "cross-org" });
+            const foreignTargetPatch = await call(publicUrl, "patch", `/api/agents/${foreignAgent}`, otherToken, { title: "cross-org" });
             expect(foreignTargetPatch.status, foreignTargetPatch.text).toBe(403);
             expect(await state(foreignAgent)).toEqual(foreignTargetBefore);
 
@@ -668,10 +668,12 @@ describe("Agent core twenty-route real HTTP authority", () => {
             expect(validOpenCode.body.agentRuntimeConfig.model).toBe("provider/model");
 
             const replaceConfig = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeType: "process",
                 agentRuntimeConfig: { replacementOnly: "yes" },
                 replaceAgentRuntimeConfig: true,
             });
             expect(replaceConfig.status, replaceConfig.text).toBe(200);
+            expect(replaceConfig.body.agentRuntimeType).toBe("process");
             expect(replaceConfig.body.agentRuntimeConfig).toEqual({ replacementOnly: "yes" });
 
             const managedInstructionsPath = path.join(nativeOrganizationAgents, workspaceKey, "instructions", "AGENTS.md");
