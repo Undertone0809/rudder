@@ -605,3 +605,95 @@ async fn expired_native_goal_owner_recovers_from_external_host_cleanup_receipt()
         "the recovered Agent can accept another run instead of remaining locked"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_goal_agent_and_organization_pauses_request_stop_without_releasing_owner() {
+    for (pause_scope, paused_status) in [
+        ("agent", "paused"),
+        ("agent", "terminated"),
+        ("organization", "paused"),
+    ] {
+        let database = Database::start().await;
+        let wakeup_id = goal_wakeup(&database, "native_rust").await;
+        let claim = claim_wakeup(&database, &wakeup_id)
+            .await
+            .expect("the Goal wakeup has a running native owner");
+
+        let mut tx = database
+            .pool
+            .begin()
+            .await
+            .expect("begin the manual-pause fixture");
+        sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+            .execute(&mut *tx)
+            .await
+            .expect("authorize the status fixture update");
+        match pause_scope {
+            "agent" => {
+                sqlx::query("UPDATE agents SET status=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+                    .bind(ORG)
+                    .bind(CEO)
+                    .bind(paused_status)
+                    .execute(&mut *tx)
+                    .await
+                    .expect("pause the running Goal Agent");
+            }
+            "organization" => {
+                sqlx::query("UPDATE organizations SET status=$2 WHERE id=$1::uuid")
+                    .bind(ORG)
+                    .bind(paused_status)
+                    .execute(&mut *tx)
+                    .await
+                    .expect("pause the Goal organization");
+            }
+            _ => unreachable!("test enumerates only pause scopes"),
+        }
+        tx.commit().await.expect("commit the manual pause");
+
+        assert!(
+            goal_runs::cancellation_requested(&database.pool, &claim)
+                .await
+                .expect("observe the manual pause and persist stop intent"),
+            "the current Claude owner is told to stop after a pause"
+        );
+        let state: (String, Option<String>, bool, bool, Option<String>, String) = sqlx::query_as(
+            "SELECT r.status,r.error_code,r.finished_at IS NOT NULL,
+                    r.process_exited_at IS NOT NULL,r.execution_owner_token,a.status
+             FROM heartbeat_runs r
+             JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+             WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND a.id=$3::uuid",
+        )
+        .bind(ORG)
+        .bind(&claim.run_id)
+        .bind(&claim.attempt_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("read state before host cleanup proof");
+        assert_eq!(state.0, "running");
+        assert_eq!(state.1.as_deref(), Some("cancel_requested"));
+        assert!(!state.2, "a stop request is not a terminal Run state");
+        assert!(!state.3, "no process exit has been proven yet");
+        assert_eq!(state.4.as_deref(), Some(claim.owner_token.as_str()));
+        assert_eq!(state.5, "started");
+        assert!(
+            !goal_runs::renew_lease(&database.pool, &claim, Duration::from_secs(30))
+                .await
+                .expect("cancelled provider work cannot renew its normal lease")
+        );
+        assert!(
+            goal_runs::renew_cleanup_lease(&database.pool, &claim, Duration::from_secs(30))
+                .await
+                .expect("the owner may retain its cleanup lease while stopping"),
+            "cleanup ownership stays with the original attempt until proof"
+        );
+        let wakeup_status: String = sqlx::query_scalar(
+            "SELECT status FROM agent_wakeup_requests WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&wakeup_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("read wakeup before host cleanup proof");
+        assert_eq!(wakeup_status, "claimed");
+    }
+}

@@ -991,17 +991,43 @@ pub async fn cancellation_requested(
     pool: &PgPool,
     claim: &GoalRunClaim,
 ) -> Result<bool, GoalRunError> {
-    let cancelled: Option<bool> = sqlx::query_scalar(
-        "SELECT COALESCE(error_code='cancel_requested', false) FROM heartbeat_runs
-         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
-           AND execution_owner_token=$3",
+    let row = sqlx::query(
+        "SELECT r.error_code,a.status AS agent_status,o.status AS organization_status
+         FROM heartbeat_runs r
+         JOIN agents a ON a.org_id=r.org_id AND a.id=r.agent_id
+         JOIN organizations o ON o.id=r.org_id
+         WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust'
+           AND r.execution_owner_token=$3",
     )
     .bind(&claim.organization_id)
     .bind(&claim.run_id)
     .bind(&claim.owner_token)
     .fetch_optional(pool)
     .await?;
-    Ok(cancelled.unwrap_or(true))
+    let Some(row) = row else {
+        return Ok(true);
+    };
+    if row.try_get::<Option<String>, _>("error_code")?.as_deref() == Some("cancel_requested") {
+        return Ok(true);
+    }
+
+    let agent_status: String = row.try_get("agent_status")?;
+    let organization_status: String = row.try_get("organization_status")?;
+    let pause_reason = match agent_status.as_str() {
+        "paused" => Some("Cancelled because the Agent was paused"),
+        "terminated" => Some("Cancelled because the Agent was terminated"),
+        _ if organization_status == "paused" => {
+            Some("Cancelled because the organization was paused")
+        }
+        _ => None,
+    };
+    if let Some(reason) = pause_reason {
+        // Reuse the native Goal's cleanup-gated cancellation intent. The run
+        // remains running and owned until the live host proves cleanup.
+        request_cancel(pool, &claim.organization_id, &claim.run_id, reason).await?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Keep ownership alive while a cancelled provider process is being reaped.
