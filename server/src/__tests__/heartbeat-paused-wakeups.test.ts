@@ -1426,9 +1426,20 @@ describe("heartbeat paused wakeups", () => {
       },
       status: "queued",
       executionAuthority: "legacy_ts",
+      requestedAt: new Date(Date.now() - 1_000),
       requestedByActorType: "user",
       requestedByActorId: "board-user",
     });
+
+    const legacyFeedbackWakeup = await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, legacyFeedbackWakeupId))
+      .then((rows) => rows[0]);
+    expect(legacyFeedbackWakeup).toMatchObject({
+      executionAuthority: "legacy_ts",
+      status: "queued",
+      runId: null,
+    });
+    expect(legacyFeedbackWakeup.requestedAt.getTime()).toBeLessThanOrEqual(Date.now());
 
     const blockedLegacyRecovery = await heartbeat.resumePendingWakeupRequests({ startImmediately: true });
 
