@@ -3058,7 +3058,7 @@
     },
     {
       "path": "packages/db/src/schema/agent_wakeup_requests.ts",
-      "sha256": "e7f1baf0835b857a2c45098d2e2670a9a593cced020c63bb24b36f55cf0b81bf",
+      "sha256": "4685c063ade050fe61172b767a9f91892eadcb6b341355e6e1d459853955ab79",
       "families": [
         "database_queries_and_writers",
         "schema_and_migration_apply"
@@ -5533,7 +5533,7 @@
     },
     {
       "path": "server/src/services/chat-agent-runs.ts",
-      "sha256": "d97223451600d68aa5caf7b06f10afa2c5ced6ca62c1e53626e624a85a8a68d4",
+      "sha256": "113b1e7d3d32078172c379eb432dd88cdedc3f551cf2b5b111f4d710214cf69f",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -59125,14 +59125,14 @@
     {
       "path": "packages/db/src/schema/agent_wakeup_requests.ts",
       "base_sha256": "b21044857421e60e8cdcddc143ba9749e5062668471b104f615750ec1ec8b7d4",
-      "head_sha256": "e7f1baf0835b857a2c45098d2e2670a9a593cced020c63bb24b36f55cf0b81bf",
+      "head_sha256": "4685c063ade050fe61172b767a9f91892eadcb6b341355e6e1d459853955ab79",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/d1-persistence/src/goal_run_worker.rs and native/crates/d1-persistence/src/goal_runs.rs",
       "compatibility_boundary": "Node-created wakeups use the legacy_ts database default and Node resumption/recovery is restricted to legacy_ts. Rust Goal wakeups are explicitly created as native_rust and remain owned and processed by the Rust Goal worker.",
       "retirement_criterion": "Retire the Node queue compatibility path only after all first-party wakeup creation, resumption and recovery is Rust-owned and no live legacy_ts wakeups remain. Retain the authority column while persisted owner classes need to be distinguished.",
       "reviewer": "/root/rust_delivery_review_r15",
-      "review_reference": "/private/tmp/gcost25/native-goal-public-cancel-r1/independent-stage-and-authority-map-r2.json#/reviewed_node_changes/0",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
       "review_status": "reviewed",
       "allowed_node_duties": [
         "Create and process explicitly legacy_ts wakeups during migration.",
@@ -59175,14 +59175,14 @@
     {
       "path": "server/src/services/chat-agent-runs.ts",
       "base_sha256": "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
-      "head_sha256": "d97223451600d68aa5caf7b06f10afa2c5ced6ca62c1e53626e624a85a8a68d4",
+      "head_sha256": "113b1e7d3d32078172c379eb432dd88cdedc3f551cf2b5b111f4d710214cf69f",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/d1-persistence/src/goal_budget.rs makes the budget decision; native/crates/d1-persistence/src/native_chat/control/ owns native Chat Stop.",
       "compatibility_boundary": "Only the existing legacy Chat stream owner observes a persisted cancel_requested marker returned by its legacy lease renewal and forwards it through interruptActiveChatGeneration. The run remains owned until existing stream cleanup; Node adds no budget decision or native Chat control.",
       "retirement_criterion": "Retire this bridge when first-party Chat execution and stop cleanup are Rust-owned and no legacy_ts Chat run can be active.",
       "reviewer": "/root/rust_delivery_review_r15",
-      "review_reference": "/private/tmp/gcost25/native-goal-public-cancel-r1/independent-stage-and-authority-map-r2.json#/reviewed_node_changes/2",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
       "review_status": "reviewed",
       "allowed_node_duties": [
         "Forward a Rust-persisted stop intent to the existing legacy Chat interrupt/abort path.",
@@ -59323,7 +59323,162 @@
       ]
     }
   ],
-  "reviewed_legacy_fence_changes": [],
+  "reviewed_legacy_fence_changes": [
+    {
+      "id": "goal-budget-cross-owner-stop-v1.chat-agent-runs",
+      "path": "server/src/services/chat-agent-runs.ts",
+      "base_sha256": "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
+      "head_sha256": "113b1e7d3d32078172c379eb432dd88cdedc3f551cf2b5b111f4d710214cf69f",
+      "change_kind": "goal_legacy_owner_bridge",
+      "goal_owner_bridge_id": "goal-budget-cross-owner-stop-v1",
+      "semantic_operation": "goal_budget.request_legacy_run_cancellation",
+      "rust_authority": "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
+      "compatibility_boundary": "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
+      "retirement_criterion": "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
+      "review_status": "reviewed",
+      "base_surfaces": [
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then(… [sha256:db9d44c3fc3e87cdc4d35d59e619c61046997d2aa931833b4999761448d3d780]",
+          "line": 264
+        },
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) … [sha256:1b20f031737c5c3a6e0d83b5a10f4ff5edbb3ced489e5103c1a727efe2ad48bf]",
+          "line": 316
+        }
+      ],
+      "head_surfaces": [
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then(… [sha256:eccf2270d7ca46882e23cbe4fe4b1cc84d08100fa7f9b373f5886a30328de729]",
+          "line": 277
+        },
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) … [sha256:21f19118252deb0322ff42fd531f225091d313e1bcc6b59a5234ced9a0c9b48c]",
+          "line": 330
+        }
+      ]
+    },
+    {
+      "id": "goal-budget-cross-owner-stop-v1.heartbeat-execute",
+      "path": "server/src/services/runtime-kernel/heartbeat.execute.ts",
+      "base_sha256": "18157d02b952fe862640e2baff40cb402c9d6e319bf3ea63b3644d40410fd53b",
+      "head_sha256": "4ead95d590da855fb28ee50f81d81fea8d616cf712c8dde3d7760e2fd05cd84e",
+      "change_kind": "goal_legacy_owner_bridge",
+      "goal_owner_bridge_id": "goal-budget-cross-owner-stop-v1",
+      "semantic_operation": "goal_budget.request_legacy_run_cancellation",
+      "rust_authority": "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
+      "compatibility_boundary": "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
+      "retirement_criterion": "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
+      "review_status": "reviewed",
+      "base_surfaces": [
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:7e6bf3e963e22430341e9e36ac48ee706fb73568acc5e76dd807ffcb3843cc4a]",
+          "line": 226
+        }
+      ],
+      "head_surfaces": [
+        {
+          "type": "worker_schedule_candidate",
+          "signature": "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:d5314bf1d926737a96502855b4fc786524fc5a3454a099e44165643147ad0339]",
+          "line": 238
+        }
+      ]
+    },
+    {
+      "id": "goal-budget-cross-owner-stop-v1.heartbeat",
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "base_sha256": "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
+      "head_sha256": "860e65a14ef3d71328e31cc9994dfc7d675dbb68f39b6d7ce037453d1c442236",
+      "change_kind": "goal_legacy_owner_bridge",
+      "goal_owner_bridge_id": "goal-budget-cross-owner-stop-v1",
+      "semantic_operation": "goal_budget.request_legacy_run_cancellation",
+      "rust_authority": "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
+      "compatibility_boundary": "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
+      "retirement_criterion": "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
+      "review_status": "reviewed",
+      "transaction_mapping_id": "goal-budget-cross-owner-stop-v1.heartbeat-transaction",
+      "base_surfaces": [],
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error, }",
+          "line": 1174
+        },
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-call|tx|select|{ id: heartbeatRuns.id }",
+          "line": 1260
+        }
+      ]
+    },
+    {
+      "id": "goal-budget-cross-owner-stop-v1.heartbeat-wakeup",
+      "path": "server/src/services/runtime-kernel/heartbeat.wakeup.ts",
+      "base_sha256": "6971e52ce92eb53a3154c868605f88446cc0925be576438fc280233d9a6cd538",
+      "head_sha256": "48ab0ab158549c3eae9df4be993d2cc22e234ecea6e1124fae57e7c4f567ef82",
+      "change_kind": "goal_legacy_owner_bridge",
+      "goal_owner_bridge_id": "goal-budget-cross-owner-stop-v1",
+      "semantic_operation": "goal_budget.request_legacy_run_cancellation",
+      "rust_authority": "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
+      "compatibility_boundary": "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
+      "retirement_criterion": "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
+      "review_status": "reviewed",
+      "base_surfaces": [],
+      "head_surfaces": [
+        {
+          "type": "database_call_candidate",
+          "signature": "server/src/services/runtime-kernel/heartbeat.wakeup.ts|db-call|db|select|{ executionAuthority: agentWakeupRequests.executionAuthority }",
+          "line": 67
+        }
+      ]
+    },
+    {
+      "id": "goal-budget-cross-owner-stop-v1.heartbeat-transaction",
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "base_sha256": "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
+      "head_sha256": "860e65a14ef3d71328e31cc9994dfc7d675dbb68f39b6d7ce037453d1c442236",
+      "change_kind": "existing_operation_mapping",
+      "semantic_operation": "goal_budget.request_legacy_run_cancellation",
+      "rust_authority": "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
+      "compatibility_boundary": "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
+      "retirement_criterion": "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/goal-cancel-public-pav-r1/independent-content-equivalence-review-2f5-r1.json",
+      "review_status": "reviewed",
+      "base_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5f9c3c5febbb625c83dc10992e6e6f9e00e56d7ce5babb1f1b318de853946b47]",
+        "line": 1209
+      },
+      "head_surface": {
+        "type": "database_call_candidate",
+        "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5591854ce77e200e0d05f3e3f7a78b03057b416bdb63a540497d9321b0d5670c]",
+        "line": 1232
+      },
+      "base_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns",
+        "line": 1285
+      },
+      "head_protected_surface": {
+        "type": "database_write_candidate",
+        "signature": "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns",
+        "line": 1330
+      }
+    }
+  ],
   "reviewed_transport_admissions": [
     {
       "mount_receiver": "router",
