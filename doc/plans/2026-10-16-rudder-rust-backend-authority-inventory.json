@@ -16,7 +16,7 @@
         "server/src/app.ts"
       ],
       "source_files": 74,
-      "structural_surfaces": 527
+      "structural_surfaces": 526
     },
     {
       "id": "http_middleware_and_auth",
@@ -4930,7 +4930,7 @@
     },
     {
       "path": "server/src/routes/goals.ts",
-      "sha256": "9c400d44ca60e48e577612d8a32a67600a9424e7cc4bc4b1a44e7516b881eae4",
+      "sha256": "77fdfd60e164c28d0f2e3b6170decf4543c1f4f3c8f818b2de4f9f153952221a",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -8907,7 +8907,7 @@
     "cli_command_candidate": 189,
     "database_call_candidate": 2591,
     "database_write_candidate": 1141,
-    "http_route": 527,
+    "http_route": 526,
     "http_server_construction": 6,
     "listener_start": 5,
     "middleware_mount": 65,
@@ -19168,16 +19168,6 @@
       "receiver": "router",
       "method": "POST",
       "path": "/orgs/:orgId/goals/start"
-    },
-    {
-      "type": "http_route",
-      "family": "public_http_and_routes",
-      "source": "server/src/routes/goals.ts",
-      "line": 323,
-      "signature": "server/src/routes/goals.ts|http-route|router|POST|/orgs/:orgId/goals/start-preview",
-      "receiver": "router",
-      "method": "POST",
-      "path": "/orgs/:orgId/goals/start-preview"
     },
     {
       "type": "database_call_candidate",
@@ -59320,6 +59310,27 @@
       "independent_evidence": [
         "/private/tmp/rudder-goal-authority-20261025/goal-run-owner-stage-r1/independent-review-c6-r1.json (exact file inspected as part of enqueue/claim ownership review).",
         "/private/tmp/rudder-goal-authority-20261025/budget-cross-stop-stage-r1/author-receipt.md (legacy queue boundary tests and focused owner evidence; author-claimed PASS)."
+      ]
+    },
+    {
+      "path": "server/src/routes/goals.ts",
+      "base_sha256": "9c400d44ca60e48e577612d8a32a67600a9424e7cc4bc4b1a44e7516b881eae4",
+      "head_sha256": "77fdfd60e164c28d0f2e3b6170decf4543c1f4f3c8f818b2de4f9f153952221a",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/goal_writes.rs and native/crates/d1-persistence/src/goal_start.rs::compile_goal_start_preview_for_actor",
+      "compatibility_boundary": "When nativeGoalWrites is enabled, Node does not register POST /orgs/:orgId/goals/start-preview; Rust public ingress authenticates the Board identity, revalidates organization access, reads the selected owner within that organization, and compiles a read-only preview. When nativeGoalWrites is disabled, the existing Node preview route remains registered as migration compatibility. This admission adds no Goal creation, activation, wakeup, worker dispatch, Node preview computation in native mode, or fallback from Rust failure.",
+      "retirement_criterion": "Retire the legacy Node preview route after native Rust preview is the default and the legacy Goal preview path has no active consumers; this record grants no other Node Goal route or business authority.",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/goal-preview-g-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
+      "allowed_node_duties": [
+        "Serve the pre-existing Node preview only while native Goal writes are disabled."
+      ],
+      "prohibited_node_duties": [
+        "Do not register or compute this preview in native mode.",
+        "Do not mutate, start, activate, queue, wake, or execute a Goal from preview.",
+        "Do not fall back to Node when matched Rust preview fails."
       ]
     }
   ],
