@@ -123,10 +123,10 @@ impl GoalRunWorker {
 
     pub(crate) async fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Release);
-        if let Some(task) = self.task.take() {
-            if let Err(error) = task.await {
-                tracing::error!(event = "native_goal_worker_join_failed", error = %error);
-            }
+        if let Some(task) = self.task.take()
+            && let Err(error) = task.await
+        {
+            tracing::error!(event = "native_goal_worker_join_failed", error = %error);
         }
     }
 }
