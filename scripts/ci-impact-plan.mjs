@@ -25,6 +25,9 @@ const PATH_RULES = [
   ["cli", (file) => file.startsWith("cli/")],
   ["identity", (file) => file.startsWith("identity/") || file.startsWith("packages/identity/")],
   ["e2e", (file) => file.startsWith("tests/e2e/") || file.startsWith("tests/release-smoke/")],
+  ["authority-policy", (file) =>
+    file === "scripts/rust-backend-authority-inventory.mjs"
+      || file === "scripts/rust-backend-authority-inventory.test.mjs"],
   ["docs", (file) => file.startsWith("docs/") || file.startsWith("doc/") || /(?:^|\/)(?:README|CHANGELOG)(?:\.|$)/i.test(file)],
 ];
 
