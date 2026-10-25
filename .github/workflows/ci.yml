@@ -584,6 +584,10 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --test native_chat -- --test-threads=1
 
+      - name: Windows suspended database launcher preflight
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-postgres-lifecycle --lib process::windows_spawn::tests -- --test-threads=1 --nocapture
+
       - name: Windows migration parent-death preflight
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-migration-service --test process_tree_windows -- --test-threads=1
