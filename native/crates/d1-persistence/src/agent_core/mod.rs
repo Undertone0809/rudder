@@ -10,6 +10,7 @@ mod managed_mcp;
 mod reads;
 mod redaction;
 mod skills;
+mod updates;
 mod validation;
 mod writes;
 use common::*;
@@ -315,6 +316,7 @@ pub fn admit_agent(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
 fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
     if ![
         "create",
+        "update",
         "list",
         "detail",
         "me",
@@ -466,7 +468,7 @@ async fn execute_agent_inner(
             revalidate_native_auth(native_auth, &mut tx, &org).await?;
             tx.commit().await?;return Ok((200,json!({"orgId":org,"id":id}).to_string()))
         }
-        let op=r.operation.as_str();let is_write=matches!(op,"create"|"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions"|"instructions-path-patch"|"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete");
+        let op=r.operation.as_str();let is_write=matches!(op,"create"|"update"|"key-create"|"key-revoke"|"rollback"|"reset-session"|"permissions"|"instructions-path-patch"|"instructions-bundle-patch"|"instructions-file-put"|"instructions-file-delete");
         if is_write{
             // Match runtime admission lock order: Issues, Agents, organization.
             sqlx::query("SELECT id FROM issues WHERE org_id=$1::uuid ORDER BY id FOR UPDATE").bind(&org).execute(&mut *tx).await?;
@@ -480,7 +482,7 @@ async fn execute_agent_inner(
             revalidate_native_auth(native_auth, &mut tx, &org).await?;
             // The pre-lock row is never authority for concurrent transitions.
             let current=if let Some(id)=&id{stored(&mut tx,id).await?}else{None};
-            let current=if op!="key-revoke"{if let Some(row)=current{Some(reads::ensure_workspace_key(&mut tx,&ctx,row).await?)}else{None}}else{current};
+            let current=if !matches!(op,"key-revoke"|"update"){if let Some(row)=current{Some(reads::ensure_workspace_key(&mut tx,&ctx,row).await?)}else{None}}else{current};
             if id.is_some()&&current.is_none(){return Err(http(404,"Agent not found"))}
             let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
             let ctx=Context{admin:fresh_admin,..ctx};

@@ -1405,7 +1405,7 @@ fn operation_path(
 /// Match the legacy Node adapter route's path.resolve semantics. Relative
 /// values are accepted only when the adapter config carries an absolute cwd;
 /// absolute values are normalized lexically so `..` and `.` behave like Node.
-fn resolve_instructions_file_path(candidate: &str, config: &Value) -> Result<String> {
+pub(super) fn resolve_instructions_file_path(candidate: &str, config: &Value) -> Result<String> {
     let candidate = js_trim(candidate);
     if Path::new(candidate).is_absolute() {
         return Ok(path(candidate, Path::new("/"))
