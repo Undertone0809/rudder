@@ -1,5 +1,7 @@
 mod support;
 
+use base64::Engine as _;
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use rudder_auth_core::{
     ActorEnvelope, ActorIdentity, NonceReplayGuard, RequestContext, VerifiedActor,
 };
@@ -7,11 +9,16 @@ use rudder_d1_persistence::agent_core::{
     AgentCoreError, AgentCoreRequest, NativeAgentAccess, NativeAgentAuthorizer,
     execute_agent_with_native_auth,
 };
+#[cfg(unix)]
+use rudder_d1_persistence::agent_core::{
+    execute_public_agent_create_with_native_auth, normalize_public_agent_create_input,
+};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{future::Future, path::Path, pin::Pin, sync::OnceLock};
+use std::{fs, future::Future, path::Path, pin::Pin, sync::OnceLock};
 use support::{ASSET, Database, FOREIGN_ASSET, ORG, OTHER};
 use tokio::sync::Mutex;
 
@@ -21,7 +28,58 @@ const CREATE_USER: &str = "create-board-user";
 const SECRET_ID: &str = "20000000-0000-4000-8000-000000000001";
 const OTHER_SECRET_ID: &str = "20000000-0000-4000-8000-000000000002";
 const MANAGED_SECRET_ID: &str = "20000000-0000-4000-8000-000000000003";
+const SKILL_HOME_SECRET_ID: &str = "20000000-0000-4000-8000-000000000004";
+const SKILL_CODEX_HOME_SECRET_ID: &str = "20000000-0000-4000-8000-000000000005";
+const EXTERNAL_SKILL_HOME_SECRET_ID: &str = "20000000-0000-4000-8000-000000000006";
 static CREATE_FEATURE_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct RestoreEnvironmentVariable {
+    name: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl RestoreEnvironmentVariable {
+    fn set(name: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(name);
+        unsafe { std::env::set_var(name, value) };
+        Self { name, previous }
+    }
+}
+
+impl Drop for RestoreEnvironmentVariable {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe { std::env::set_var(self.name, value) },
+            None => unsafe { std::env::remove_var(self.name) },
+        }
+    }
+}
+
+fn local_secret_material(value: &str) -> (serde_json::Value, String) {
+    let key_bytes = *b"01234567890123456789012345678901";
+    let nonce_bytes = [7; 12];
+    let unbound = UnboundKey::new(&AES_256_GCM, &key_bytes).expect("AES key");
+    let key = LessSafeKey::new(unbound);
+    let mut ciphertext_and_tag = value.as_bytes().to_vec();
+    key.seal_in_place_append_tag(
+        Nonce::assume_unique_for_key(nonce_bytes),
+        Aad::empty(),
+        &mut ciphertext_and_tag,
+    )
+    .expect("encrypt local secret fixture");
+    let tag_offset = ciphertext_and_tag.len() - 16;
+    let tag = ciphertext_and_tag.split_off(tag_offset);
+    let value_sha256 = format!("{:x}", Sha256::digest(value.as_bytes()));
+    (
+        json!({
+            "scheme":"local_encrypted_v1",
+            "iv":base64::engine::general_purpose::STANDARD.encode(nonce_bytes),
+            "tag":base64::engine::general_purpose::STANDARD.encode(tag),
+            "ciphertext":base64::engine::general_purpose::STANDARD.encode(ciphertext_and_tag)
+        }),
+        value_sha256,
+    )
+}
 
 fn verified_board_user() -> VerifiedActor {
     let actor = ActorIdentity::new("user", BOARD_USER).expect("valid board user identity");
@@ -1475,6 +1533,187 @@ async fn rust_create_assigns_canonical_org_skills_and_omits_bundled_skills() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn rust_create_resolves_local_encrypted_home_roots_without_persisting_plaintext() {
+    let database = Database::start().await;
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Secret Skill User','secret-skill-user@example.test',now(),now()) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active') ON CONFLICT DO NOTHING",
+    )
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed skill membership");
+
+    let home = tempfile::tempdir().expect("secret HOME root");
+    let codex_home = tempfile::tempdir().expect("secret CODEX_HOME root");
+    let home_skill = home.path().join(".agents/skills/home-secret/SKILL.md");
+    let codex_skill = codex_home.path().join("skills/codex-secret/SKILL.md");
+    fs::create_dir_all(home_skill.parent().expect("HOME skill directory"))
+        .expect("create HOME skill directory");
+    fs::create_dir_all(codex_skill.parent().expect("Codex skill directory"))
+        .expect("create Codex skill directory");
+    fs::write(&home_skill, "# Home secret skill\n").expect("write HOME skill");
+    fs::write(&codex_skill, "# Codex secret skill\n").expect("write Codex skill");
+
+    for (secret_id, name, value) in [
+        (
+            SKILL_HOME_SECRET_ID,
+            "skill-home",
+            home.path().to_string_lossy(),
+        ),
+        (
+            SKILL_CODEX_HOME_SECRET_ID,
+            "skill-codex-home",
+            codex_home.path().to_string_lossy(),
+        ),
+    ] {
+        let (material, value_sha256) = local_secret_material(&value);
+        sqlx::query(
+            "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,$3,'local_encrypted','user_managed',1,$4)",
+        )
+        .bind(secret_id)
+        .bind(ORG)
+        .bind(name)
+        .bind(CREATE_USER)
+        .execute(&database.pool)
+        .await
+        .expect("seed local encrypted secret");
+        sqlx::query(
+            "INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES ($1::uuid,1,$2::jsonb,$3,$4)",
+        )
+        .bind(secret_id)
+        .bind(material.to_string())
+        .bind(value_sha256)
+        .bind(CREATE_USER)
+        .execute(&database.pool)
+        .await
+        .expect("seed encrypted secret version");
+    }
+    sqlx::query(
+        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,'external-skill-home','vault','user_managed',1,$3)",
+    )
+    .bind(EXTERNAL_SKILL_HOME_SECRET_ID)
+    .bind(ORG)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed external provider secret");
+    sqlx::query(
+        "INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES ($1::uuid,1,'{}'::jsonb,$2,$3)",
+    )
+    .bind(EXTERNAL_SKILL_HOME_SECRET_ID)
+    .bind("0".repeat(64))
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed external provider secret version");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    let _create_feature = RestoreEnvironmentVariable::set("RUDDER_AGENT_CREATE_RUST_ENABLED", "1");
+    let _master_key = RestoreEnvironmentVariable::set(
+        "RUDDER_SECRETS_MASTER_KEY",
+        "01234567890123456789012345678901",
+    );
+    let result = execute_create_body(
+        &database,
+        json!({
+            "operation":"create",
+            "orgId":ORG,
+            "input":{
+                "name":"Secret Root Skills",
+                "agentRuntimeType":"codex_local",
+                "agentRuntimeConfig":{
+                    "env":{
+                        "HOME":{"type":"secret_ref","secretId":SKILL_HOME_SECRET_ID},
+                        "CODEX_HOME":{"type":"secret_ref","secretId":SKILL_CODEX_HOME_SECRET_ID}
+                    }
+                },
+                "desiredSkills":["global:home-secret","adapter:codex_local:codex-secret"]
+            }
+        }),
+    )
+    .await
+    .expect("Create resolves local encrypted skill roots");
+
+    assert_eq!(result.0, 201);
+    let response: serde_json::Value = serde_json::from_str(&result.1).expect("response JSON");
+    let agent_id = response["id"].as_str().expect("created Agent id");
+    let assigned = sqlx::query_scalar::<_, String>(
+        "SELECT skill_key FROM agent_enabled_skills WHERE org_id=$1::uuid AND agent_id=$2::uuid ORDER BY skill_key",
+    )
+    .bind(ORG)
+    .bind(agent_id)
+    .fetch_all(&database.pool)
+    .await
+    .expect("assigned secret-root skills");
+    assert_eq!(
+        assigned,
+        ["adapter:codex_local:codex-secret", "global:home-secret"]
+    );
+    let config = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT agent_runtime_config FROM agents WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(agent_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted runtime config");
+    assert_eq!(config["env"]["HOME"]["type"], "secret_ref");
+    assert_eq!(config["env"]["CODEX_HOME"]["type"], "secret_ref");
+    assert!(
+        !config
+            .to_string()
+            .contains(home.path().to_string_lossy().as_ref())
+    );
+    assert!(
+        !config
+            .to_string()
+            .contains(codex_home.path().to_string_lossy().as_ref())
+    );
+    assert!(!result.1.contains(home.path().to_string_lossy().as_ref()));
+    assert!(
+        !result
+            .1
+            .contains(codex_home.path().to_string_lossy().as_ref())
+    );
+
+    let external_secret_result = execute_create_body(
+        &database,
+        json!({
+            "operation":"create",
+            "orgId":ORG,
+            "input":{
+                "name":"External Skill Root",
+                "agentRuntimeType":"codex_local",
+                "agentRuntimeConfig":{
+                    "env":{"HOME":{"type":"secret_ref","secretId":EXTERNAL_SKILL_HOME_SECRET_ID}}
+                },
+                "desiredSkills":["global:home-secret"]
+            }
+        }),
+    )
+    .await;
+    assert!(
+        matches!(
+            external_secret_result,
+            Err(AgentCoreError::Http(422, ref message, _))
+                if message == "vault provider is not configured in this deployment"
+        ),
+        "external secret references preserve the provider's 422 diagnostic: {external_secret_result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rust_create_rejects_unknown_ambiguous_and_cross_org_skills_atomically() {
     let database = Database::start().await;
     sqlx::query(
@@ -1550,4 +1789,585 @@ async fn rust_create_rejects_unknown_ambiguous_and_cross_org_skills_atomically()
         assert_eq!(before, after, "{name} must roll back the Agent row");
     }
     unsafe { std::env::remove_var("RUDDER_AGENT_CREATE_RUST_ENABLED") };
+}
+
+#[cfg(unix)]
+fn verified_public_create_user_for_org(org: &str, body: &[u8]) -> VerifiedActor {
+    let actor = ActorIdentity::new("user", CREATE_USER).expect("valid board user identity");
+    let path = format!("/api/orgs/{org}/agents");
+    let request_id = "agent-core-public-create-request";
+    let nonce = "agent-core-public-create-nonce";
+    let envelope = ActorEnvelope::new(
+        actor.clone(),
+        org,
+        "board-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
+        &path,
+        "agent-core.execute",
+        body,
+        request_id,
+        nonce,
+        1_000,
+        1_100,
+    )
+    .expect("unsigned public Agent-create envelope")
+    .sign(SECRET)
+    .expect("signed public Agent-create envelope");
+    let request = RequestContext::new(
+        &actor,
+        org,
+        "board-session",
+        1,
+        "rudder-server-foundation",
+        "POST",
+        &path,
+        "agent-core.execute",
+        body,
+        request_id,
+        1_050,
+    );
+    envelope
+        .verify_to_actor(SECRET, &request, &mut NonceReplayGuard::new())
+        .expect("verified public Agent-create actor")
+}
+
+#[cfg(unix)]
+async fn seed_public_create_membership(database: &Database) {
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES ($1,'Seed User','seed-user@example.test',now(),now())",
+    )
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed public-create user");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES ($1::uuid,'user',$2,'member','active')",
+    )
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed public-create membership");
+    sqlx::query(
+        "INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key) VALUES ($1::uuid,'user',$2,'agents:create')",
+    )
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("grant public-create permission");
+}
+
+#[cfg(unix)]
+fn write_probe_script(path: &Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::write(path, script).expect("write synthetic Codex executable");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("make synthetic Codex executable");
+}
+
+#[cfg(unix)]
+async fn execute_public_seed_create(
+    database: &Database,
+    name: &str,
+    command: &Path,
+    model_fallbacks: serde_json::Value,
+    environment: serde_json::Value,
+) -> Result<(u16, String), AgentCoreError> {
+    execute_public_seed_create_for_runtime(
+        database,
+        name,
+        "codex_local",
+        command,
+        model_fallbacks,
+        environment,
+    )
+    .await
+}
+
+#[cfg(unix)]
+async fn execute_public_seed_create_for_runtime(
+    database: &Database,
+    name: &str,
+    runtime_type: &str,
+    command: &Path,
+    model_fallbacks: serde_json::Value,
+    environment: serde_json::Value,
+) -> Result<(u16, String), AgentCoreError> {
+    let command = command.to_string_lossy().into_owned();
+    let input = normalize_public_agent_create_input(Some(json!({
+        "name": name,
+        "agentRuntimeType": runtime_type,
+        "agentRuntimeConfig": {
+            "command": command,
+            "env": environment,
+            "modelFallbacks": model_fallbacks
+        },
+        "seedOrganizationIntelligenceDefaults": true
+    })))
+    .expect("normalize public Agent-create input");
+    let bytes = serde_json::to_vec(&json!({
+        "operation": "create",
+        "orgId": OTHER,
+        "input": input
+    }))
+    .expect("serialize normalized public Agent-create request");
+    let request =
+        AgentCoreRequest::parse(&bytes).expect("parse normalized public Agent-create request");
+    execute_public_agent_create_with_native_auth(
+        &database.pool,
+        &verified_public_create_user_for_org(OTHER, &bytes),
+        &request,
+        &NoopNativeAuthorizer,
+    )
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_first_agent_seed_runs_codex_and_process_fallback_without_persisting_secret_plaintext()
+ {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+
+    let temp = tempfile::tempdir().expect("public seed runtime fixture");
+    let operator_home = temp.path().join("operator-home");
+    fs::create_dir_all(&operator_home).expect("create isolated operator home");
+    let source_codex_home = temp.path().join("source-codex-home");
+    fs::create_dir_all(&source_codex_home).expect("create source Codex home");
+    let source_codex_config =
+        "[mcp_servers.rudder-tools]\ncommand = \"rudder\"\nargs = [\"mcp-server\"]\n";
+    fs::write(source_codex_home.join("config.toml"), source_codex_config)
+        .expect("write source Codex MCP config");
+    let codex = temp.path().join("codex");
+    write_probe_script(
+        &codex,
+        r###"#!/bin/sh
+MCP_COMMAND=$(awk '
+/^\[mcp_servers\.rudder-tools\]$/ { in_rudder=1; next }
+/^\[/ { in_rudder=0 }
+in_rudder && /^command = / { sub(/^command = "/, ""); sub(/"$/, ""); print; exit }
+' "$CODEX_HOME/config.toml")
+case "$MCP_COMMAND" in */rudder-native|*/rudder-cli) ;; *) echo "untrusted MCP command: $MCP_COMMAND" >&2; exit 3;; esac
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"seed-probe","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | "$MCP_COMMAND" mcp-server > "$CODEX_HOME/native-tools.jsonl" || exit 4
+grep -q '"name":"rudder_issue_search"' "$CODEX_HOME/native-tools.jsonl" || { echo "Rust MCP issue tool missing" >&2; exit 5; }
+grep -q '"name":"rudder_agent_skills_create"' "$CODEX_HOME/native-tools.jsonl" || { echo "Rust MCP Skill tool missing" >&2; exit 6; }
+cat >/dev/null
+if [ "$OPENAI_API_KEY" != "seed-probe-secret-value" ]; then echo missing-secret >&2; exit 2; fi
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}' '{"type":"turn.completed"}'
+"###,
+    );
+    let (material, value_sha256) = local_secret_material("seed-probe-secret-value");
+    sqlx::query(
+        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,'seed-probe','local_encrypted','user_managed',1,$3)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed runtime-chain secret");
+    sqlx::query(
+        "INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES ($1::uuid,1,$2::jsonb,$3,$4)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind(material.to_string())
+    .bind(value_sha256)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed runtime-chain secret version");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    let _operator_home = RestoreEnvironmentVariable::set(
+        "RUDDER_OPERATOR_HOME",
+        operator_home.to_str().expect("operator home path"),
+    );
+    let _rudder_home = RestoreEnvironmentVariable::set(
+        "RUDDER_HOME",
+        temp.path()
+            .join("rudder-home")
+            .to_str()
+            .expect("Rudder home path"),
+    );
+    let _master_key = RestoreEnvironmentVariable::set(
+        "RUDDER_SECRETS_MASTER_KEY",
+        "01234567890123456789012345678901",
+    );
+    let result = execute_public_seed_create(
+        &database,
+        "Public seeded Agent",
+        &codex,
+        json!([{
+            "agentRuntimeType": "process",
+            "model": "fallback-check",
+            "config": {"command": codex.to_string_lossy().into_owned()}
+        }]),
+        json!({
+            "OPENAI_API_KEY": {"type": "secret_ref", "secretId": SKILL_HOME_SECRET_ID},
+            "CODEX_HOME": source_codex_home.to_string_lossy()
+        }),
+    )
+    .await
+    .expect("public seeded create");
+    assert_eq!(result.0, 201, "{}", result.1);
+
+    let profile: (serde_json::Value, String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT agent_runtime_config,status,last_error,last_verified_at::text FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted seeded profile");
+    assert_eq!(profile.0["env"]["OPENAI_API_KEY"]["type"], "secret_ref");
+    assert_eq!(profile.1, "configured");
+    assert_eq!(profile.2, None);
+    assert!(profile.3.is_some());
+    assert!(!profile.0.to_string().contains("seed-probe-secret-value"));
+    assert!(!result.1.contains("seed-probe-secret-value"));
+    assert_eq!(
+        fs::read_to_string(source_codex_home.join("config.toml")).unwrap(),
+        source_codex_config,
+        "configured Codex source must remain untouched"
+    );
+    let managed_codex_config = temp
+        .path()
+        .join("rudder-home/instances/default/organizations/100000000000/codex-home/config.toml");
+    let managed_codex_config = fs::read_to_string(managed_codex_config)
+        .expect("managed Codex config with trusted native MCP command");
+    assert!(managed_codex_config.contains("[mcp_servers.rudder-tools]"));
+    assert!(!managed_codex_config.contains("command = \"rudder\""));
+    assert!(managed_codex_config.contains("command = \""));
+
+    let fallback_agent_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid AND name='Public seeded Agent')",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("created public Agent");
+    assert!(fallback_agent_exists);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_first_agent_seed_persists_invalid_profile_for_runtime_auth_warning() {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+
+    let temp = tempfile::tempdir().expect("public seed runtime failure fixture");
+    let operator_home = temp.path().join("operator-home");
+    fs::create_dir_all(&operator_home).expect("create isolated operator home");
+    let codex = temp.path().join("codex");
+    write_probe_script(
+        &codex,
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"error\",\"message\":\"authentication required\"}' >&2\nexit 1\n",
+    );
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    let _operator_home = RestoreEnvironmentVariable::set(
+        "RUDDER_OPERATOR_HOME",
+        operator_home.to_str().expect("operator home path"),
+    );
+    let _rudder_home = RestoreEnvironmentVariable::set(
+        "RUDDER_HOME",
+        temp.path()
+            .join("rudder-home")
+            .to_str()
+            .expect("Rudder home path"),
+    );
+    let result = execute_public_seed_create(
+        &database,
+        "Invalid seeded Agent",
+        &codex,
+        json!([]),
+        json!({}),
+    )
+    .await
+    .expect("runtime warning should persist as an invalid default, not abort Agent creation");
+    assert_eq!(result.0, 201, "{}", result.1);
+    let profile: (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status,last_error,last_verified_at::text FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted invalid profile");
+    assert_eq!(profile.0, "invalid");
+    assert_eq!(
+        profile.1.as_deref(),
+        Some("Runtime chain test failed for Primary: Runtime environment returned warn status.")
+    );
+    assert_eq!(profile.2, None);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_first_agent_seed_records_secret_resolution_failure_without_launching_probe() {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+
+    let temp = tempfile::tempdir().expect("public seed secret-resolution fixture");
+    let operator_home = temp.path().join("operator-home");
+    fs::create_dir_all(&operator_home).expect("create isolated operator home");
+    let codex = temp.path().join("codex");
+    let launched = temp.path().join("codex-launched");
+    write_probe_script(
+        &codex,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", launched.display()),
+    );
+    let (material, value_sha256) = local_secret_material("secret-value-must-not-persist");
+    sqlx::query(
+        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,'seed-probe','local_encrypted','user_managed',1,$3)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed runtime-chain secret");
+    sqlx::query(
+        "INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES ($1::uuid,1,$2::jsonb,$3,$4)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind(material.to_string())
+    .bind(value_sha256)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed runtime-chain secret version");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    let _operator_home = RestoreEnvironmentVariable::set(
+        "RUDDER_OPERATOR_HOME",
+        operator_home.to_str().expect("operator home path"),
+    );
+    let _rudder_home = RestoreEnvironmentVariable::set(
+        "RUDDER_HOME",
+        temp.path()
+            .join("rudder-home")
+            .to_str()
+            .expect("Rudder home path"),
+    );
+    let _wrong_master_key = RestoreEnvironmentVariable::set(
+        "RUDDER_SECRETS_MASTER_KEY",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    let result = execute_public_seed_create(
+        &database,
+        "Secret failure seeded Agent",
+        &codex,
+        json!([]),
+        json!({
+            "OPENAI_API_KEY": {"type": "secret_ref", "secretId": SKILL_HOME_SECRET_ID}
+        }),
+    )
+    .await
+    .expect("secret-resolution failure should persist as an invalid profile");
+    assert_eq!(result.0, 201, "{}", result.1);
+    assert!(
+        !launched.exists(),
+        "the CLI must not run after secret resolution fails"
+    );
+
+    let profile: (serde_json::Value, String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT agent_runtime_config,status,last_error,last_verified_at::text FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted invalid profile after secret resolution failure");
+    assert_eq!(profile.0["env"]["OPENAI_API_KEY"]["type"], "secret_ref");
+    assert_eq!(profile.1, "invalid");
+    assert_eq!(
+        profile.2.as_deref(),
+        Some("Secret provider is not configured in this deployment"),
+        "the unresolved local secret_ref should persist its diagnostic"
+    );
+    assert_eq!(profile.3, None);
+    assert!(
+        !profile
+            .0
+            .to_string()
+            .contains("secret-value-must-not-persist")
+    );
+    assert!(!result.1.contains("secret-value-must-not-persist"));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_first_agent_seed_preserves_external_secret_provider_diagnostic() {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+
+    let temp = tempfile::tempdir().expect("public external secret fixture");
+    let operator_home = temp.path().join("operator-home");
+    fs::create_dir_all(&operator_home).expect("create isolated operator home");
+    let codex = temp.path().join("codex");
+    let launched = temp.path().join("codex-launched");
+    write_probe_script(
+        &codex,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", launched.display()),
+    );
+    sqlx::query(
+        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,'external-seed','aws_secrets_manager','user_managed',1,$3)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind(OTHER)
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed external provider secret");
+    sqlx::query(
+        "INSERT INTO organization_secret_versions(secret_id,version,material,value_sha256,created_by_user_id) VALUES ($1::uuid,1,'{}'::jsonb,$2,$3)",
+    )
+    .bind(SKILL_HOME_SECRET_ID)
+    .bind("0".repeat(64))
+    .bind(CREATE_USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed external provider secret version");
+
+    let _feature_env_guard = CREATE_FEATURE_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+    let _operator_home = RestoreEnvironmentVariable::set(
+        "RUDDER_OPERATOR_HOME",
+        operator_home.to_str().expect("operator home path"),
+    );
+    let _rudder_home = RestoreEnvironmentVariable::set(
+        "RUDDER_HOME",
+        temp.path()
+            .join("rudder-home")
+            .to_str()
+            .expect("Rudder home path"),
+    );
+    let result = execute_public_seed_create(
+        &database,
+        "External secret seeded Agent",
+        &codex,
+        json!([]),
+        json!({
+            "OPENAI_API_KEY": {"type": "secret_ref", "secretId": SKILL_HOME_SECRET_ID}
+        }),
+    )
+    .await
+    .expect("external provider warning should persist as an invalid default");
+    assert_eq!(result.0, 201, "{}", result.1);
+    assert!(!launched.exists(), "the Codex CLI must not run");
+
+    let profile: (serde_json::Value, String, Option<String>) = sqlx::query_as(
+        "SELECT agent_runtime_config,status,last_error FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted external-provider profile");
+    assert_eq!(profile.0["env"]["OPENAI_API_KEY"]["type"], "secret_ref");
+    assert_eq!(profile.1, "invalid");
+    assert_eq!(
+        profile.2.as_deref(),
+        Some("aws_secrets_manager provider is not configured in this deployment")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_non_codex_first_agent_seed_persists_disabled_without_running_cli() {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+
+    let temp = tempfile::tempdir().expect("public non-Codex seed runtime fixture");
+    let command = temp.path().join("process-probe");
+    let launched = temp.path().join("process-launched");
+    write_probe_script(
+        &command,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", launched.display()),
+    );
+
+    let result = execute_public_seed_create_for_runtime(
+        &database,
+        "Non-Codex seeded Agent",
+        "process",
+        &command,
+        json!([]),
+        json!({}),
+    )
+    .await
+    .expect("non-Codex create should not run the Codex preflight");
+    assert_eq!(result.0, 201, "{}", result.1);
+    assert!(
+        !launched.exists(),
+        "a non-Codex seed must not run a CLI probe"
+    );
+
+    let profile: (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status,last_error,last_verified_at::text FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("persisted disabled profile for non-Codex first Agent");
+    assert_eq!(profile, ("disabled".to_owned(), None, None));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn public_seed_with_existing_default_profile_skips_codex_probe() {
+    let database = Database::start().await;
+    seed_public_create_membership(&database).await;
+    sqlx::query(
+        "INSERT INTO organization_intelligence_profiles(org_id,purpose,agent_runtime_type,agent_runtime_config,status) VALUES ($1::uuid,'default','codex_local',$2::jsonb,'disabled')",
+    )
+    .bind(OTHER)
+    .bind(json!({"model":"preserved-default-model"}).to_string())
+    .execute(&database.pool)
+    .await
+    .expect("seed existing default intelligence profile");
+
+    let temp = tempfile::tempdir().expect("existing-profile seed runtime fixture");
+    let codex = temp.path().join("codex");
+    let launched = temp.path().join("codex-launched");
+    write_probe_script(
+        &codex,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", launched.display()),
+    );
+    let result = execute_public_seed_create(
+        &database,
+        "Agent with existing default profile",
+        &codex,
+        json!([]),
+        json!({}),
+    )
+    .await
+    .expect("existing default profile should skip preflight");
+    assert_eq!(result.0, 201, "{}", result.1);
+    assert!(
+        !launched.exists(),
+        "existing default must short-circuit the probe"
+    );
+
+    let profile: (serde_json::Value, String, String) = sqlx::query_as(
+        "SELECT agent_runtime_config,status,purpose FROM organization_intelligence_profiles WHERE org_id=$1::uuid AND purpose='default'",
+    )
+    .bind(OTHER)
+    .fetch_one(&database.pool)
+    .await
+    .expect("existing default profile remains present");
+    assert_eq!(profile.0["model"], "preserved-default-model");
+    assert_eq!(profile.1, "disabled");
+    assert_eq!(profile.2, "default");
 }

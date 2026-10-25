@@ -29,9 +29,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["unbounded_depth"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+awc = { version = "3.8.2", default-features = false, features = ["rustls-0_23-webpki-roots"] }
+futures-util = "0.3"
 thiserror = "2.0"
 tracing = "0.1"
-tokio = { version = "1.47", features = ["rt", "time"] }
+tokio = { version = "1.47", features = ["rt", "time", "process", "io-util", "net"] }
 uuid = { version = "1", default-features = false, features = ["v4", "v5"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 

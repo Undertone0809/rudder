@@ -1,8 +1,8 @@
-//! Contract and transport primitives for the first-party Rust Agent surfaces.
+//! Contract and transport primitives for explicit first-party Rust Agent CLI/MCP surfaces.
 //!
 //! The crate intentionally does not own authentication, product writes, or
 //! database state. It validates the host-provided runtime envelope and exposes
-//! bounded protocol helpers that a future Rust CLI/MCP binary can reuse.
+//! bounded protocol helpers shared by the explicit Rust CLI/MCP entries.
 
 use rudder_workspace_manifest_core::{ManifestLimits, list_directory};
 use serde::Serialize;
@@ -612,10 +612,13 @@ impl InputParser {
         }
         if self.mode.is_none() {
             const CONTENT_LENGTH_PREFIX: &[u8] = b"Content-Length:";
-            if CONTENT_LENGTH_PREFIX.starts_with(&self.buffer) {
+            let prefix_len = self.buffer.len().min(CONTENT_LENGTH_PREFIX.len());
+            let matching_prefix = self.buffer[..prefix_len]
+                .eq_ignore_ascii_case(&CONTENT_LENGTH_PREFIX[..prefix_len]);
+            if matching_prefix && self.buffer.len() < CONTENT_LENGTH_PREFIX.len() {
                 return Ok(Vec::new());
             }
-            self.mode = Some(if self.buffer.starts_with(CONTENT_LENGTH_PREFIX) {
+            self.mode = Some(if matching_prefix {
                 FrameMode::ContentLength
             } else {
                 FrameMode::Newline
@@ -893,6 +896,21 @@ mod tests {
             framed_messages.extend(framed_parser.push(chunk).unwrap());
         }
         assert_eq!(framed_messages, vec![response]);
+    }
+
+    #[test]
+    fn content_length_header_detection_is_case_insensitive() {
+        let message = json!({"jsonrpc":"2.0","id":1,"method":"ping"});
+        let frame =
+            encode_frame(&message, FrameMode::ContentLength, FrameLimits::default()).unwrap();
+        let mut frame = frame;
+        frame[..b"Content-Length:".len()].make_ascii_lowercase();
+        let mut parser = InputParser::default();
+        let mut parsed = Vec::new();
+        for chunk in frame.chunks(3) {
+            parsed.extend(parser.push(chunk).unwrap());
+        }
+        assert_eq!(parsed, vec![message]);
     }
 
     #[test]

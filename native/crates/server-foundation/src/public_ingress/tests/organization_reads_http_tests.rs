@@ -149,6 +149,7 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
     let (foundation, runtime) = organization_reads_runtime(
         Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
         &upstream,
+        true,
     );
     let address = runtime.bound_addr();
     let control = runtime.control();
@@ -456,7 +457,41 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
     control.stop(true).await;
     task.await.unwrap().unwrap();
 
-    let (_disabled_foundation, disabled_runtime) = organization_reads_runtime(None, &upstream);
+    let (_authenticated_foundation, authenticated_runtime) = organization_reads_runtime(
+        Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
+        &upstream,
+        false,
+    );
+    let authenticated_base = format!("http://{}", authenticated_runtime.bound_addr());
+    let authenticated_control = authenticated_runtime.control();
+    let authenticated_task = actix_web::rt::spawn(authenticated_runtime.run());
+    let mut anonymous_list = client
+        .get(format!("{authenticated_base}/api/orgs"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous_list.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        anonymous_list.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"error":"Unauthorized"})
+    );
+    let mut agent_list = client
+        .get(format!("{authenticated_base}/api/orgs"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {agent_token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_list.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        agent_list.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"error":"Board access required"})
+    );
+    assert_eq!(node_requests.load(Ordering::SeqCst), 2);
+    authenticated_control.stop(true).await;
+    authenticated_task.await.unwrap().unwrap();
+
+    let (_disabled_foundation, disabled_runtime) =
+        organization_reads_runtime(None, &upstream, true);
     let disabled_address = disabled_runtime.bound_addr();
     let disabled_control = disabled_runtime.control();
     let disabled_task = actix_web::rt::spawn(disabled_runtime.run());
@@ -555,6 +590,7 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
 fn organization_reads_runtime(
     database_url: Option<String>,
     upstream: &str,
+    local_implicit_enabled: bool,
 ) -> (Arc<AppState>, PublicIngressRuntime) {
     let foundation = Arc::new(
         AppState::new(ServerConfig {
@@ -573,7 +609,7 @@ fn organization_reads_runtime(
             "native-organization-read-agent-jwt-secret",
             "rudder-test",
             "rudder-api",
-            true,
+            local_implicit_enabled,
         )
         .unwrap(),
     );

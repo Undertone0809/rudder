@@ -261,8 +261,8 @@
     "updated_at": "2026-10-25T23:38:48+00:00",
     "observed_main": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
     "branch": "codex/rust-organization-core-writes-20261026",
-    "status": "organization_core_writes_author_validation_pass_local_checkpointed_independent_stage_review_and_PAV_pending",
-    "scope": "Current G author slice implements the five organization write routes in Rust when native public ingress is selected. Ingress-off/default development and standalone mode keep the existing Node compatibility handlers. The overall Rust-backend migration remains incomplete.",
+    "status": "bounded_rust_api_slices_author_validated_with_independent_review_and_protected_ci_pending",
+    "scope": "The current G slice adds Rust-owned organization write routes when native public ingress is selected; ingress-off/default development and standalone modes keep the Node compatibility handlers. The inherited Rust organization-read and Agent/MCP/Create slices remain separately scoped. Overall first-party backend retirement is incomplete.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -304,7 +304,7 @@
         "head_sha": "923e412c4edc475cee0eb9e792f73b4e018266b0",
         "merge_sha": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
         "merged_at": "2026-10-25T23:35:29Z",
-        "scope": "Windows PostgreSQL owned-process port-closure timeout correction; source-only delivery, not a Rust organization-write or global-backend completion claim",
+        "scope": "Windows PostgreSQL owned-process port-closure timeout correction; source-only delivery, not organization-write or global-backend completion",
         "ci": "21 required checks succeeded; 1 expected skip",
         "final_review": "/private/tmp/c384-final-review-20261026/final-handoff-review.md",
         "packaged_verification": "/private/tmp/c384v-7ty1t579/desktop-qualification-resumed-r2.json; resumed stages passed on unchanged artifact; original command exit 1 retained",
@@ -633,27 +633,118 @@
       },
       "remaining_debt_note": "Public PATCH ownership does not retire all private legacy Agent handlers or first-party CLI/MCP paths. Native Create still has three explicit legacy cohorts on current main. Their follow-up implementation is local and not counted as delivered."
     },
+    "rust_core_mcp_and_create_candidate_20261026": {
+      "status": "independent scoped acceptance PASS; ready for protected PR, merge gates pending",
+      "source_checkpoint": "fbd16223aa5cb8c1a514cc8ab009314e5e3e1993",
+      "source_tree": "8a84e67325b7f1bf72417ce308098e23944c3e13",
+      "composed_main": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
+      "core_mcp": {
+        "implemented_core_tools": 83,
+        "separate_browser_tools": 25,
+        "cli_only_contract_capabilities": 11,
+        "default_cli_switched": false,
+        "http_domain_authority": "unchanged by MCP transport port; inspect each API owner",
+        "focused_author_tests": 89,
+        "strict_scoped_clippy": "PASS",
+        "real_existing_managed_preflight": "PASS, 83 names/schema/semantic hash match",
+        "artifact_sha256": "a028e9b3c5f87d1fe938b4016167eab2812ef6f3e2ce3cbc5d4302dc96373d22",
+        "author_receipt": "/private/tmp/rudder-mcp-c-20261026/author-receipt-r2.json"
+      },
+      "create_scope": {
+        "implemented": "OpenCode/Pi model contract; seeded intelligence defaults and runtime probes; encrypted local skill roots; public Rust ingress removes the three Node cohort selections",
+        "acceptance": "Independent real public HTTP/PostgreSQL acceptance PASS on frozen matching server/Rust MCP pair; synthetic provider, not real account/model completion",
+        "provider_scope": "External AWS/GCP/Vault provider names remain pre-existing unconfigured stubs; no new integrations",
+        "frozen_server_sha256": "46c40c3614af7a0e45e5719a2d35ff6e36417d57a27fa170525658ec9901ce5e",
+        "frozen_native_mcp_sha256": "a748ed6e083eda4f8a7873bdaa5aeba74fe79689aec825744ea520eec10e64b0",
+        "runtime_unit_tests": "9/9 PASS; public HTTP/PostgreSQL still pending",
+        "public_author_proof": {
+          "configured_codex_first_seed": "r5 PASS: actual Rust MCP child83, configured profile/last_verified_at, unchanged sourceCODEX_HOME, public issued Agent key authenticates MCP agent_me to RustAPI",
+          "formerly_legacy_cohorts": "r2 PASS: OpenCode/Pi, seed suppression for non-first Agent, encrypted local skill root, cross-org denial, wrong-key generic503/no writes, zero Node fallback",
+          "database_outage": "r1 PASS: public create503 and no additional Agents or Node route hits",
+          "logs": "/private/tmp/rudder-rust-mcp-r15/root-preflight-r1/public-author-r{1,2,4}.log",
+          "earlier_failures": "Preserved: duplicate fixture owner row, attempted fixture fence regression, and incorrect test expectation enabled instead of existing configured status. Production implementation was not changed to satisfy these fixture errors."
+        }
+      },
+      "standalone_packaging": {
+        "implemented": "Build, target-validate, stage and restore execute mode of sibling rudder-native; CI produces it for six server targets",
+        "tests": "17/17 stage tests including real npm installation mode restoration",
+        "actual_cross_target_binaries": "pending CI"
+      },
+      "baseline": {
+        "workspace_typecheck": "PASS",
+        "generated_mcp_contract_check": "PASS",
+        "lint": "FAIL on 20 files byte-identical to composed main; no candidate-changed file reported",
+        "full_tests_and_build": "pending",
+        "rustfmt": "PASS whole workspace",
+        "strict_affected_clippy": "PASS D1/FoundationCore all targets and MCP CLI/planner scoped targets; failed wrong-toolchain first attempt retained",
+        "full_agent_core": "49/49 PASS with explicit friendly workspace mode. Original48/49 nonfriendly-env run retained; old qualified main artifact reproduces same map assertion in that environment; same candidate single case passes when intended friendly mode is enabled. No production change or assertion weakening.",
+        "maintenance_guards": "24/24 PASS",
+        "node_suites": "21/21 PASS"
+      },
+      "bounded_limits": [
+        "The existing 1 MB HTTP cap rejects complete oversized non-2xx bodies before budget failure classification; Node reads the entire body.",
+        "Synthetic provider acceptance is not a real Codex account/model qualification.",
+        "Public route authority does not remove private legacy handlers, all domain APIs, browser/computer tools, other CLI commands, or all default Node processes.",
+        "Unreadable local secret material returns the generic native 503 contract, rather than reproducing an unhandled Node cryptography exception; public regression verifies no plaintext, no Agent write, and no Node fallback."
+      ],
+      "remaining_gates": [
+        "Bounded final source publication review rebind for this evidence-only commit",
+        "Full repository tests/build and required exact-head cross-platform/packaged CI",
+        "Local desktop:verify or explicit user exception for this candidate",
+        "Protected PR merge; source delivery remains separate from production/installed delivery"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "recorded_at": "2026-10-25T19:48:58.005686+00:00",
+      "runtime_source_patch_sha256": "29c988ef2b0ff709f81ac84d4619f201439339a257b4f9387b942767a80877b7",
+      "author_corrections": [
+        "Initial Foundation build failed ENOSPC because package-level CARGO_PROFILE_*_PACKAGE_* environment variables did not apply; actual rustc debuginfo=2. Retry with explicit Cargo --config package debug=0 succeeded; actual FoundationCore invocation no debuginfo=2.",
+        "Only exact unused cache files and independently audited generated E Desktop copies were cleaned; all frozen evidence/user data preserved. Logical output sizes were not reported as physical reclaimed space."
+      ],
+      "independent_acceptance": {
+        "verdict": "PASS",
+        "source": "fbd16223aa5cb8c1a514cc8ab009314e5e3e1993",
+        "criteria_fingerprint": "eece8666c09e5d5ee45b1d95003595a2877b6995a9a964ebceca0082ffea075e",
+        "public_cases": "4 passed; 45 unrelated cases skipped",
+        "canonical_core_contract": "83/83 names/schema/hash matched",
+        "receipt_sha256": "15f1b6af078d2d8e7363efdb6514e7541f19a139d40b8c3aa5b6ca755f9989fe",
+        "receipt": "/private/tmp/rudder-agent-profile-update-20261025/create-completion-r1/independent-pav-r1/acceptance-ledger.json",
+        "wrapper_note": "Vitest0; wrapper1 only for postprocessing missing sys import; preserved, no passing product cases rerun"
+      }
+    },
+    "delivered_role_fix_20261026": {
+      "pr": 383,
+      "head": "5a4d2db5c84afdf6b9ae4a4dfeee11cdec67ae2d",
+      "merge": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
+      "merged_at": "2026-10-25T19:14:53Z",
+      "test_run": 40220624686,
+      "test_jobs": "18 success +1 expected skip",
+      "d1_run": 40220624774,
+      "authority_run": 40220624681,
+      "independent_merge_review": "accept",
+      "production_released": false,
+      "installed_app_replaced": false
+    },
     "current_slice_author_validation": {
       "name": "Organization core writes",
       "state": "author_validation_pass; local source checkpoint created; independent overall stage review, PAV, protected PR/CI and production delivery pending",
       "repository": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
       "branch": "codex/rust-organization-core-writes-20261026",
       "base_commit": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
-      "dirty_source_fingerprint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r6.json",
+      "source_parent_commit": "77f6879c4e8d7d4abb74bd1847928f934f9fe97d",
+      "source_parent_tree": "753c47405e4651fee5fc6b492543bae53fce7af1",
+      "local_checkpoint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
       "rust_ingress_selected": "Rust owns POST /api/orgs, PATCH /api/orgs/:orgId, PATCH /api/orgs/:orgId/branding, POST /api/orgs/:orgId/archive, and DELETE /api/orgs/:orgId; selected Rust errors do not fall back to Node.",
-      "ingress_off": "The five existing Node handlers remain registered for the default development/standalone compatibility mode; removing this mode and handlers remains migration debt.",
-      "checks": "See author-validation-r6.json for exact receipts and log hashes. Focused real HTTP/PostgreSQL workflow, Rust compile/strict Clippy/filesystem tests, Node route-gate tests, recursive workspace typecheck, inventory and trusted-base checks passed.",
+      "ingress_off": "The five existing Node handlers remain registered for default development/standalone compatibility; removing that mode and handlers remains migration debt.",
+      "author_checks": "Exact compile/workflow and current typecheck, route-gate, inventory/trusted-base, import-lint evidence is recorded in author-validation-r7.json.",
       "not_claimed": [
         "full organization API retirement",
         "global Rust-backend completion",
         "independent PAV",
         "protected CI",
         "production release or installed-artifact acceptance"
-      ],
-      "source_parent_commit": "77f6879c4e8d7d4abb74bd1847928f934f9fe97d",
-      "source_parent_tree": "753c47405e4651fee5fc6b492543bae53fce7af1",
-      "local_checkpoint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
-      "checkpoint_commit_identity": "Recorded in the linked external author-validation receipt to avoid a self-referential commit SHA in this ledger."
+      ]
     }
   }
 }
