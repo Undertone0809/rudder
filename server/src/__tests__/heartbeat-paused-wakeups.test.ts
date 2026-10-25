@@ -16,7 +16,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import express, { Router } from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -131,8 +131,11 @@ describe("heartbeat paused wakeups", () => {
       try {
         await db.delete(activityLog);
         await db.delete(issues);
-        await db.delete(heartbeatRunEvents);
-        await db.delete(heartbeatRuns);
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:test_cleanup', true)`);
+          await tx.delete(heartbeatRunEvents);
+          await tx.delete(heartbeatRuns);
+        });
         await db.delete(agentWakeupRequests);
         await db.delete(agentTaskSessions);
         await db.delete(agentRuntimeState);
@@ -1292,4 +1295,153 @@ describe("heartbeat paused wakeups", () => {
     await db.update(agents).set({ status: "idle" }).where(eq(agents.id, agentId));
     await recoverExactlyOnce(unavailable.wakeupRequestId);
   }, 30_000);
+
+  it("does not let legacy wakeup recovery claim a native Rust Goal intent", async () => {
+    const { orgId, agentId } = await seedAgentFixture("idle");
+    const goalId = randomUUID();
+    const wakeupRequestId = randomUUID();
+    await db.insert(goals).values({
+      id: goalId,
+      orgId,
+      title: "Native Goal execution",
+      outcomeStatement: "Keep native execution under Rust ownership",
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: agentId,
+      planRevision: 1,
+      criteria: [{ id: "native-owner", label: "Rust owns dispatch", evaluator: "artifact" }],
+      continuationKind: "action",
+      continuationSummary: "Run through the native worker",
+    });
+    await db.insert(agentWakeupRequests).values({
+      id: wakeupRequestId,
+      orgId,
+      agentId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_started",
+      payload: {
+        event: "goal_started",
+        goalId,
+        taskKey: `goal:${goalId}:goal_started:request`,
+        _paperclipWakeContext: {
+          goalId,
+          goal: { id: goalId, title: "Native Goal execution" },
+          plan: { revision: 1 },
+          continuation: { summary: "Run through the native worker" },
+        },
+      },
+      status: "queued",
+      executionAuthority: "native_rust",
+      requestedByActorType: "user",
+      requestedByActorId: "board-user",
+    });
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.wakeup(agentId, {
+      existingWakeupRequestId: wakeupRequestId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_started",
+      payload: { goalId },
+      contextSnapshot: { goalId },
+      startImmediately: false,
+    })).rejects.toThrow("Native Rust wakeups are controlled by the Rust runtime");
+
+    const recovery = await heartbeat.resumePendingWakeupRequests({ startImmediately: false });
+
+    expect(recovery).toMatchObject({ checked: 0, resumed: 0, deferred: 0, terminalized: 0 });
+    expect(await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0])).toMatchObject({
+      executionAuthority: "native_rust",
+      status: "queued",
+      runId: null,
+      finishedAt: null,
+    });
+    expect(await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, wakeupRequestId))).toHaveLength(0);
+
+    const runId = randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:goal_owner_test', true)`);
+      await tx.insert(heartbeatRuns).values({
+        id: runId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        triggerDetail: "system",
+        status: "running",
+        startedAt: new Date(),
+        wakeupRequestId,
+        goalId,
+        contextSnapshot: { goalId, wakeReason: "goal_started" },
+        executionAuthority: "native_rust",
+        nativeAdmissionHold: false,
+        scene: "heartbeat",
+        targetType: "wakeup_request",
+        targetId: wakeupRequestId,
+        idempotencyKey: `goal-wakeup:${wakeupRequestId}`,
+        sessionReuseScope: "none",
+        sessionIntentJson: {
+          kind: "fresh",
+          reuseScope: "none",
+          sourceRunId: null,
+          sessionId: null,
+          sessionParams: null,
+        },
+      });
+      await tx.update(agentWakeupRequests).set({ status: "claimed", runId, claimedAt: new Date() })
+        .where(eq(agentWakeupRequests.id, wakeupRequestId));
+    });
+
+    await expect(heartbeat.cancelRun(runId))
+      .rejects.toThrow("Native Rust runs are controlled by the Rust runtime");
+    expect(await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0])).toMatchObject({
+      executionAuthority: "native_rust",
+      status: "running",
+      finishedAt: null,
+    });
+
+    const legacyFeedbackWakeupId = randomUUID();
+    await db.insert(agentWakeupRequests).values({
+      id: legacyFeedbackWakeupId,
+      orgId,
+      agentId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_feedback",
+      payload: {
+        event: "goal_feedback",
+        goalId,
+        taskKey: `goal:${goalId}:goal_feedback:feedback`,
+        _paperclipWakeContext: {
+          goalId,
+          goal: { id: goalId, title: "Native Goal execution" },
+          plan: { revision: 1 },
+          continuation: { summary: "Continue after feedback" },
+        },
+      },
+      status: "queued",
+      executionAuthority: "legacy_ts",
+      requestedByActorType: "user",
+      requestedByActorId: "board-user",
+    });
+
+    const blockedLegacyRecovery = await heartbeat.resumePendingWakeupRequests({ startImmediately: true });
+
+    expect(blockedLegacyRecovery).toMatchObject({ checked: 1, resumed: 0, deferred: 1, terminalized: 0 });
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId)))
+      .toHaveLength(1);
+    expect(await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, legacyFeedbackWakeupId))
+      .then((rows) => rows[0])).toMatchObject({
+      executionAuthority: "legacy_ts",
+      status: "deferred_goal_blocked",
+      runId: null,
+      finishedAt: null,
+    });
+  });
 });

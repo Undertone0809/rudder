@@ -187,6 +187,15 @@ async fn lock_organization(
     Ok(())
 }
 
+/// Use the same mutation-state then organization-row lock order for the
+/// internal Goal Run claim that serializes Goal Start and focus mutations.
+pub(crate) async fn lock_goal_run_organization(
+    tx: &mut Transaction<'_, sqlx::Postgres>,
+    org: &str,
+) -> Result<(), StoreError> {
+    lock_organization(tx, org).await
+}
+
 async fn resolve_goal_reference(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,

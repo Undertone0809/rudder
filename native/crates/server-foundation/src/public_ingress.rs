@@ -154,6 +154,7 @@ pub struct PublicIngressRuntime {
     server: actix_web::dev::Server,
     handle: actix_web::dev::ServerHandle,
     bound_addr: SocketAddr,
+    goal_run_worker: Option<crate::goal_run_worker::GoalRunWorker>,
     session_auth_kind: Option<NativeSessionAuthKind>,
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
@@ -274,6 +275,8 @@ impl PublicIngressRuntime {
         let native_identity_enabled = config.identity_auth.is_some();
         let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
         let local_account_lifecycle_enabled = config.local_account_auth.is_some();
+        let goal_run_runtime = config.native_chat_runtime.clone();
+        let goal_run_identity = config.identity_auth.clone();
         let local_implicit_enabled = config
             .identity_auth
             .as_ref()
@@ -444,10 +447,24 @@ impl PublicIngressRuntime {
         .bind(listen_addr)?;
         let bound_addr = *http.addrs().first().ok_or(ServerError::NoBoundAddress)?;
         let server = http.run();
+        let goal_run_worker = match (&foundation.database, goal_run_runtime, goal_run_identity) {
+            (DatabaseState::Configured(pool), Some(runtime), Some(identity))
+                if runtime.host.claude_runtime().is_some()
+                    && runtime.host.has_trusted_executable_search_path() =>
+            {
+                Some(crate::goal_run_worker::GoalRunWorker::start(
+                    pool.clone(),
+                    runtime,
+                    identity,
+                ))
+            }
+            _ => None,
+        };
         Ok(Self {
             handle: server.handle(),
             server,
             bound_addr,
+            goal_run_worker,
             session_auth_kind,
             native_identity_enabled,
             local_account_lifecycle_enabled,
@@ -485,7 +502,16 @@ impl PublicIngressRuntime {
         self.handle.clone()
     }
     pub async fn run(self) -> std::io::Result<()> {
-        self.server.await
+        let Self {
+            server,
+            mut goal_run_worker,
+            ..
+        } = self;
+        let result = server.await;
+        if let Some(worker) = goal_run_worker.as_mut() {
+            worker.shutdown().await;
+        }
+        result
     }
 }
 

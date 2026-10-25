@@ -31,7 +31,7 @@ export function createHeartbeatMiscHandlers(context: any) {
 
   function assertLegacyRunAuthority(run: any) {
     if (run?.executionAuthority === "native_rust") {
-      throw conflict("Native Chat runs are controlled by the Rust runtime");
+      throw conflict("Native Rust runs are controlled by the Rust runtime");
     }
   }
 
@@ -49,6 +49,7 @@ export function createHeartbeatMiscHandlers(context: any) {
           and(
             eq(agentWakeupRequests.orgId, agent.orgId),
             eq(agentWakeupRequests.agentId, agentId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             eq(agentWakeupRequests.status, "deferred_agent_paused"),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -150,6 +151,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .where(
         and(
           eq(agentWakeupRequests.orgId, orgId),
+          eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
           inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
           sql`${agentWakeupRequests.runId} is null`,
           sql`${effectiveProjectId} = ${projectId}`,
@@ -170,6 +172,7 @@ export function createHeartbeatMiscHandlers(context: any) {
         .where(
           and(
             eq(agentWakeupRequests.orgId, scope.orgId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -183,6 +186,7 @@ export function createHeartbeatMiscHandlers(context: any) {
           and(
             eq(agentWakeupRequests.orgId, scope.orgId),
             eq(agentWakeupRequests.agentId, scope.scopeId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -200,7 +204,10 @@ export function createHeartbeatMiscHandlers(context: any) {
         error: "Cancelled due to budget pause",
         updatedAt: now,
       })
-      .where(inArray(agentWakeupRequests.id, wakeupIds));
+      .where(and(
+        inArray(agentWakeupRequests.id, wakeupIds),
+        eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
+      ));
 
     return wakeupIds.length;
   }
@@ -283,6 +290,7 @@ export function createHeartbeatMiscHandlers(context: any) {
             "deferred_goal_focus",
             "deferred_goal_blocked",
           ]),
+          eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
           sql`${agentWakeupRequests.requestedAt} <= (
             select ${issues.executionCancellationAt}
             from ${issues}

@@ -4,6 +4,9 @@
 //! receipt.  Durable admission, provider checkpoints, transcript projection,
 //! and finalization remain in the shared Native Chat worker.
 
+use crate::rudder_instructions::{
+    RUDDER_AGENT_HEARTBEAT_INSTRUCTION, RUDDER_AGENT_OPERATING_CONTRACT,
+};
 use crate::{HostExecutionFailure, HostPaths, native_turn::cleanup_tick_budget_is_safe};
 use rudder_claude_code::{
     ClaudeError, ClaudeEvent, ClaudeInvocation, ClaudeLaunch, ClaudeRuntimeProfile,
@@ -17,9 +20,15 @@ use rudder_d1_persistence::native_chat::{
 use rudder_native_process_transport::{
     ConnectionLaunchPermit, ConnectionReceipt, HostCleanupProof,
 };
-use std::time::{Duration, Instant};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use tokio::runtime::Handle;
+use uuid::Uuid;
 
 const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(3600);
 const PROCESS_GRACE: Duration = Duration::from_secs(10);
@@ -37,6 +46,10 @@ pub enum ClaudeExecutionError {
     Transport(#[from] ClaudeError),
     #[error("Claude Code durable execution fence rejected dispatch")]
     Persistence(#[from] rudder_d1_persistence::runtime_bindings::Error),
+    #[error(transparent)]
+    GoalRunPersistence(#[from] rudder_d1_persistence::goal_runs::GoalRunError),
+    #[error("Goal Run execution ownership was lost")]
+    GoalRunOwnershipLost,
     #[error("Claude Code requested an interactive control decision")]
     ControlRequest,
     #[error("Claude Code emitted an unknown stream event")]
@@ -45,6 +58,8 @@ pub enum ClaudeExecutionError {
     Timeout,
     #[error("Claude Code process exited before a terminal result")]
     ProcessExited,
+    #[error("Claude Code instruction context could not be prepared")]
+    InstructionContext,
 }
 
 impl ClaudeExecutionError {
@@ -64,6 +79,9 @@ impl ClaudeExecutionError {
             Self::UnknownEvent => "claude_unknown_event",
             Self::ProcessExited => "claude_process_exited",
             Self::Persistence(_) => "claude_persistence_conflict",
+            Self::GoalRunPersistence(_) => "goal_run_persistence",
+            Self::GoalRunOwnershipLost => "goal_run_ownership_lost",
+            Self::InstructionContext => "claude_instruction_context",
         }
     }
 }
@@ -92,6 +110,10 @@ pub(crate) fn execute_turn(
     attempt_id: &str,
     owner_token: &str,
     existing_session: Option<&str>,
+    extra_env: &std::collections::BTreeMap<String, String>,
+    instruction_context_sections: &[String],
+    include_goal_runtime_prefix: bool,
+    on_spawned: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     mut poll_control: impl FnMut(
         &mut ClaudeTransport,
@@ -130,6 +152,21 @@ pub(crate) fn execute_turn(
         .map(Duration::from_secs)
         .map_or(timeout, |configured| timeout.min(configured));
 
+    let has_context_sections = instruction_context_sections
+        .iter()
+        .any(|section| !section.trim().is_empty());
+    let generated_instruction_file = if include_goal_runtime_prefix || has_context_sections {
+        Some(write_combined_instruction_context(
+            paths,
+            config,
+            local,
+            instruction_context_sections,
+            include_goal_runtime_prefix,
+        )?)
+    } else {
+        None
+    };
+
     let profile = if local.profile_id == "operator-default" {
         ClaudeRuntimeProfile::operator_default(config.operator_home.clone())
     } else {
@@ -140,6 +177,21 @@ pub(crate) fn execute_turn(
         .environment()
         .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
     for (key, value) in &local.env {
+        if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
+            || key.is_empty()
+            || key.contains('=')
+            || key.contains('\0')
+            || value.contains('\0')
+        {
+            return Err(ClaudeExecutionError::InvalidConfiguration.into());
+        }
+        env.insert(key.clone(), value.clone());
+    }
+    // Agent-controlled runtime environment cannot forge Rudder Agent JWT
+    // authentication. The context bridge may re-add this exact key only after
+    // signing it from trusted identity/run state.
+    env.remove("RUDDER_API_KEY");
+    for (key, value) in extra_env {
         if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
             || key.is_empty()
             || key.contains('=')
@@ -164,11 +216,16 @@ pub(crate) fn execute_turn(
     invocation.effort = config.reasoning_effort.clone();
     invocation.permission_mode = local.permission_mode.clone();
     invocation.max_turns = local.max_turns_per_run;
-    invocation.append_system_prompt_file = claude_instruction_entry_path(
-        config.instruction_source_path.as_deref(),
-        &config.instruction_entry_file,
-        config.instruction_content.is_some(),
-    );
+    invocation.append_system_prompt_file = generated_instruction_file
+        .as_ref()
+        .map(|file| file.path.clone())
+        .or_else(|| {
+            claude_instruction_entry_path(
+                config.instruction_source_path.as_deref(),
+                &config.instruction_entry_file,
+                config.instruction_content.is_some(),
+            )
+        });
     let launch = ClaudeLaunch {
         executable: config.executable.clone(),
         cwd: config.cwd.clone(),
@@ -183,7 +240,13 @@ pub(crate) fn execute_turn(
     let mut transport = ClaudeTransport::launch_for_execution(launch, permit)
         .map_err(ClaudeExecutionError::from)?;
     let deadline = Instant::now() + timeout;
-    let result = run_turn(&mut transport, send_input, &mut poll_control, deadline);
+    let result = run_turn(
+        &mut transport,
+        on_spawned,
+        send_input,
+        &mut poll_control,
+        deadline,
+    );
     let connection = transport.connection_receipt();
 
     // A result is a provider receipt; the process remains owned until the
@@ -292,8 +355,159 @@ fn claude_instruction_entry_path(
     source_root.map(|root| root.join(entry_file))
 }
 
+struct GeneratedInstructionContext {
+    path: PathBuf,
+}
+
+impl Drop for GeneratedInstructionContext {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(event = "goal_instruction_context_cleanup_failed", error = %error);
+        }
+    }
+}
+
+fn write_combined_instruction_context(
+    paths: &HostPaths,
+    config: &ResolvedCodexConfig,
+    local: &ClaudeLocalConfig,
+    instruction_context_sections: &[String],
+    include_goal_runtime_prefix: bool,
+) -> Result<GeneratedInstructionContext, ClaudeExecutionError> {
+    let contents = compose_instruction_context(
+        config.instruction_content.as_deref(),
+        config.instruction_source_path.as_deref(),
+        &config.instruction_entry_file,
+        &local.agent_home,
+        instruction_context_sections,
+        include_goal_runtime_prefix,
+    )?;
+    let path = paths
+        .runtime_root
+        .join(format!("goal-instructions-{}.md", Uuid::new_v4()));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|_| ClaudeExecutionError::InstructionContext)?;
+    let generated = GeneratedInstructionContext { path };
+    file.write_all(contents.as_bytes())
+        .and_then(|()| file.flush())
+        .map_err(|_| ClaudeExecutionError::InstructionContext)?;
+    Ok(generated)
+}
+
+fn compose_instruction_context(
+    instruction_content: Option<&str>,
+    instruction_source_path: Option<&Path>,
+    instruction_entry_file: &str,
+    agent_home: &Path,
+    instruction_context_sections: &[String],
+    include_goal_runtime_prefix: bool,
+) -> Result<String, ClaudeExecutionError> {
+    let mut sections = Vec::new();
+    if include_goal_runtime_prefix {
+        sections.push(wrap_system_prompt_section(
+            "rudder_agent_operating_contract",
+            &format!(
+                "{}\n\nThe above Rudder agent operating contract was injected by Rudder at runtime.",
+                RUDDER_AGENT_OPERATING_CONTRACT.trim()
+            ),
+        ));
+    }
+    if let Some(instructions) = instruction_content
+        .map(str::trim)
+        .filter(|instructions| !instructions.is_empty())
+    {
+        let file_path = instruction_source_path.map(|root| root.join(instruction_entry_file));
+        let file_name = file_path
+            .as_deref()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or(instruction_entry_file);
+        let instruction_section = if matches!(
+            file_name,
+            "AGENTS.md" | "SOUL.md" | "TOOLS.md" | "MEMORY.md"
+        ) {
+            format!("<{file_name}>\n{instructions}\n</{file_name}>")
+        } else if let Some(file_path) = file_path.as_deref() {
+            let display_path = display_instruction_path(file_path, agent_home);
+            format!(
+                "<agent_instruction_file path=\"{}\">\n{instructions}\n</agent_instruction_file>",
+                escape_prompt_attribute(&display_path),
+            )
+        } else {
+            format!("<agent_instruction_file>\n{instructions}\n</agent_instruction_file>")
+        };
+        sections.push(instruction_section);
+
+        if let Some(file_path) = file_path.as_deref()
+            && let Some(instructions_dir) = file_path.parent()
+        {
+            let display_dir = display_instruction_path(instructions_dir, agent_home);
+            let display_dir = display_dir.trim_end_matches('/');
+            sections.push(format!(
+                "The above {file_name} instruction file was loaded from {display_dir}.\nResolve any relative file references from {display_dir}."
+            ));
+        }
+    }
+
+    sections.extend(
+        instruction_context_sections
+            .iter()
+            .map(|section| section.trim())
+            .filter(|section| !section.is_empty())
+            .map(str::to_owned),
+    );
+    if include_goal_runtime_prefix {
+        sections.push(wrap_system_prompt_section(
+            "rudder_heartbeat_instruction",
+            &format!(
+                "{}\n\nThe above Rudder heartbeat instruction was injected by Rudder at runtime.",
+                RUDDER_AGENT_HEARTBEAT_INSTRUCTION.trim()
+            ),
+        ));
+    }
+
+    if sections.is_empty() {
+        return Err(ClaudeExecutionError::InstructionContext);
+    }
+    Ok(format!(
+        "<rudder_agent_instruction>\n{}\n</rudder_agent_instruction>",
+        sections.join("\n\n"),
+    ))
+}
+
+fn wrap_system_prompt_section(tag: &str, content: &str) -> String {
+    format!("<{tag}>\n{}\n</{tag}>", content.trim())
+}
+
+fn display_instruction_path(path: &Path, agent_home: &Path) -> String {
+    let display = path
+        .strip_prefix(agent_home)
+        .map(|relative| format!("$AGENT_HOME/{}", relative.to_string_lossy()))
+        .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+    display.replace('\\', "/")
+}
+
+fn escape_prompt_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn run_turn(
     transport: &mut ClaudeTransport,
+    on_spawned: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     send_input: impl FnOnce(&mut ClaudeTransport) -> Result<(), ClaudeExecutionError>,
     poll_control: &mut impl FnMut(
         &mut ClaudeTransport,
@@ -303,6 +517,7 @@ fn run_turn(
     deadline: Instant,
 ) -> Result<ClaudeTurnReceipt, ClaudeExecutionError> {
     transport.wait_spawned(remaining(deadline, Duration::from_secs(10)))?;
+    on_spawned(transport)?;
     send_input(transport)?;
     let mut next_control_poll = Instant::now();
     loop {
@@ -358,7 +573,7 @@ fn remaining(deadline: Instant, cap: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::claude_instruction_entry_path;
+    use super::{claude_instruction_entry_path, compose_instruction_context};
     use std::path::Path;
 
     #[test]
@@ -381,5 +596,42 @@ mod tests {
             None,
             "ignored heartbeat content is not passed as an instruction file"
         );
+    }
+
+    #[test]
+    fn goal_instruction_prefix_matches_node_section_order() {
+        let resources = "<recent_rudder_context>recent context</recent_rudder_context>".to_owned();
+        let contents = compose_instruction_context(
+            Some("Agent-specific instructions"),
+            Some(Path::new("/agents/alpha/instructions")),
+            "AGENTS.md",
+            Path::new("/agents/alpha"),
+            &[resources],
+            true,
+        )
+        .expect("compose trusted Goal instruction prefix");
+
+        let operating = contents
+            .find("<rudder_agent_operating_contract>")
+            .expect("operating contract is included");
+        let agent_instructions = contents
+            .find("<AGENTS.md>")
+            .expect("Agent instructions are included");
+        let instruction_footer = contents
+            .find("Resolve any relative file references from $AGENT_HOME/instructions.")
+            .expect("relative instruction path is preserved");
+        let resources = contents
+            .find("<recent_rudder_context>")
+            .expect("resource context is included");
+        let heartbeat = contents
+            .find("<rudder_heartbeat_instruction>")
+            .expect("heartbeat contract is included");
+
+        assert!(operating < agent_instructions);
+        assert!(agent_instructions < instruction_footer);
+        assert!(instruction_footer < resources);
+        assert!(resources < heartbeat);
+        assert!(contents.starts_with("<rudder_agent_instruction>\n"));
+        assert!(contents.ends_with("\n</rudder_agent_instruction>"));
     }
 }

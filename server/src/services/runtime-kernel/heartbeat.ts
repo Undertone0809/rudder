@@ -2388,6 +2388,7 @@ export function heartbeatService(
   async function resumePendingWakeupRequests(opts: { orgId?: string; startImmediately?: boolean } = {}) {
     const pendingWakeups = await db.select().from(agentWakeupRequests).where(and(
       opts.orgId ? eq(agentWakeupRequests.orgId, opts.orgId) : undefined,
+      eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
       inArray(agentWakeupRequests.status, [
         "queued",
         "deferred_agent_paused",
