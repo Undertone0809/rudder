@@ -10,12 +10,12 @@ import {
   compareInventoriesWithLegacyFenceSourcePolicyForTests,
   compareInventoriesWithTransportPolicyForTests,
   compareInventories as compareProductionInventories,
+  consumeReviewedTransportSurfaces,
   scanSource,
   sha256,
   TRUSTED_NODE_TRANSPORT_SOURCES,
   TRUSTED_TRANSPORT_ADMISSIONS,
   TRUSTED_TRANSPORT_SURFACES,
-  consumeReviewedTransportSurfaces,
   validateTrustedNodeTransportSourceRecord,
 } from "./rust-backend-authority-inventory.mjs";
 
@@ -629,6 +629,8 @@ const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
 const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
 const PROJECT_READS_ADMISSION_ID = "rust-native-project-reads-router-v1";
 const GOAL_WRITES_ADMISSION_ID = "rust-native-goal-writes-router-v1";
+const ISSUE_APPROVAL_READS_ADMISSION_ID = "rust-native-issue-approval-reads-router-v1";
+const APPROVAL_READS_ADMISSION_ID = "rust-native-approval-reads-router-v1";
 const CLI_AUTH_ADMISSION_ID = "rust-native-cli-auth-router-v1";
 const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
   return (request, _response, next) => next();
@@ -828,25 +830,38 @@ function publicOwnerMountSource({
   projectExpression = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression,
   cliExpression = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression,
   goalExpression = null,
+  issueExpression = null,
+  approvalExpression = null,
   includeGoalAnchors = goalExpression !== null,
+  includeIssueApprovalAnchors = false,
   duplicateProject = false,
   duplicateCli = false,
   duplicateGoal = false,
+  duplicateIssue = false,
+  duplicateApproval = false,
   moveProjectAfterAnchor = false,
   moveCliBeforeAnchor = false,
   moveGoalBeforeAnchor = false,
   moveGoalAfterAnchor = false,
+  moveIssueAfterAnchor = false,
+  moveApprovalBeforeGoal = false,
+  moveApprovalAfterAnchor = false,
   extra = "",
 } = {}) {
   const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
+  const issuePolicy = TRUSTED_TRANSPORT_ADMISSIONS[ISSUE_APPROVAL_READS_ADMISSION_ID];
   const projectMount = `api.use(${projectExpression});\n`;
   const cliMount = `api.use(${cliExpression});\n`;
   const goalMount = goalExpression ? `api.use(${goalExpression});\n` : "";
+  const issueMount = `api.use(${issueExpression ?? "issueRoutes(db, opts.storageService, rustFoundationBridge)"});\n`;
+  const approvalMount = `api.use(${approvalExpression ?? "approvalRoutes(db, rustFoundationBridge)"});\n`;
   const projectBeforeAnchor = `api.use(assetRoutes(db, opts.storageService));\n`;
   const projectAfterAnchor = `api.use(appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), }));\n`;
   const cliBeforeAnchor = `api.use(rudderPluginRoutes(db, pluginMcpOptions));\n`;
   const goalBeforeAnchor = `api.use(${goalPolicy.order_after_expression});\n`;
   const goalAfterAnchor = `api.use(${goalPolicy.order_before_expression});\n`;
+  const issueBeforeAnchor = `api.use(${issuePolicy.order_after_expression});\n`;
+  const issueAfterAnchor = `api.use(${issuePolicy.order_before_expression});\n`;
   const initialProject = moveProjectAfterAnchor
     ? `${projectBeforeAnchor}${projectAfterAnchor}${projectMount}${duplicateProject ? projectMount : ""}`
     : `${projectBeforeAnchor}${projectMount}${duplicateProject ? projectMount : ""}${projectAfterAnchor}`;
@@ -854,12 +869,20 @@ function publicOwnerMountSource({
     ? `${cliMount}${duplicateCli ? cliMount : ""}${cliBeforeAnchor}`
     : `${cliBeforeAnchor}${cliMount}${duplicateCli ? cliMount : ""}`;
   const goalMounts = `${goalMount}${duplicateGoal ? goalMount : ""}`;
+  const approvalMounts = includeIssueApprovalAnchors ? `${approvalMount}${duplicateApproval ? approvalMount : ""}` : "";
   const goal = !includeGoalAnchors ? ""
-    : moveGoalBeforeAnchor ? `${goalMounts}${goalBeforeAnchor}${goalAfterAnchor}`
-      : moveGoalAfterAnchor ? `${goalBeforeAnchor}${goalAfterAnchor}${goalMounts}`
-        : `${goalBeforeAnchor}${goalMounts}${goalAfterAnchor}`;
+    : moveGoalBeforeAnchor ? `${goalMounts}${approvalMounts}${goalBeforeAnchor}${goalAfterAnchor}`
+      : moveGoalAfterAnchor ? `${goalBeforeAnchor}${goalAfterAnchor}${goalMounts}${approvalMounts}`
+        : moveApprovalBeforeGoal ? `${goalBeforeAnchor}${approvalMounts}${goalMounts}${goalAfterAnchor}`
+          : moveApprovalAfterAnchor ? `${goalBeforeAnchor}${goalMounts}${goalAfterAnchor}${approvalMounts}`
+            : `${goalBeforeAnchor}${goalMounts}${approvalMounts}${goalAfterAnchor}`;
+  const issueMounts = `${issueMount}${duplicateIssue ? issueMount : ""}`;
+  const issue = !includeIssueApprovalAnchors ? ""
+    : moveIssueAfterAnchor
+      ? `${issueBeforeAnchor}${issueAfterAnchor}${issueMounts}`
+      : `${issueBeforeAnchor}${issueMounts}${issueAfterAnchor}`;
   return `function register(api, opts) {
-${initialProject}${goal}${cli}${extra}return api;
+${initialProject}${issue}${goal}${cli}${extra}return api;
 }
 `;
 }
@@ -889,13 +912,23 @@ function comparePublicOwnerMountFixture(t, options = {}) {
   const sourcePath = "server/src/bootstrap/register-api-routes.ts";
   const projectPolicy = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID];
   const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
+  const issuePolicy = TRUSTED_TRANSPORT_ADMISSIONS[ISSUE_APPROVAL_READS_ADMISSION_ID];
+  const approvalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[APPROVAL_READS_ADMISSION_ID];
   const cliPolicy = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID];
   const baseSource = publicOwnerMountSource({
     projectExpression: "projectRoutes(db, rustFoundationBridge)",
     cliExpression: "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, })",
+    goalExpression: options.includeGoalAdmission ? "goalRoutes(db, rustFoundationBridge)" : null,
     includeGoalAnchors: options.includeGoalAdmission,
+    issueExpression: options.includeIssueApprovalAnchors ? "issueRoutes(db, opts.storageService, rustFoundationBridge)" : null,
+    approvalExpression: options.includeIssueApprovalAnchors ? "approvalRoutes(db, rustFoundationBridge)" : null,
+    includeIssueApprovalAnchors: options.includeIssueApprovalAnchors,
   });
-  const headSource = options.headSource ?? publicOwnerMountSource(options);
+  const headSource = options.headSource ?? publicOwnerMountSource({
+    ...options,
+    includeGoalAnchors: options.includeGoalAdmission,
+    includeIssueApprovalAnchors: options.includeIssueApprovalAnchors,
+  });
   put(baseRoot, sourcePath, baseSource);
   put(headRoot, sourcePath, headSource);
   const base = buildInventory(baseRoot);
@@ -918,6 +951,12 @@ function comparePublicOwnerMountFixture(t, options = {}) {
   ];
   if (options.includeGoalAdmission && !options.omitGoalAdmission) {
     admissionRecords.push(publicOwnerMountReviewRecord(goalPolicy, headSource));
+  }
+  if (options.includeIssueAdmission && !options.omitIssueAdmission) {
+    admissionRecords.push(publicOwnerMountReviewRecord(issuePolicy, headSource));
+  }
+  if (options.includeApprovalAdmission && !options.omitApprovalAdmission) {
+    admissionRecords.push(publicOwnerMountReviewRecord(approvalPolicy, headSource));
   }
   const head = buildInventory(headRoot, nodeRecords, admissionRecords);
   const result = compareProductionInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
@@ -1401,9 +1440,11 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
   assert.deepEqual(Object.keys(TRUSTED_TRANSPORT_ADMISSIONS).sort(), [
     "rust-native-agent-core-handler-v1",
     "rust-native-agent-core-router-v1",
+    APPROVAL_READS_ADMISSION_ID,
     CLI_AUTH_ADMISSION_ID,
     GOAL_WRITES_ADMISSION_ID,
     IDENTITY_ADMISSION_ID,
+    ISSUE_APPROVAL_READS_ADMISSION_ID,
     PROJECT_READS_ADMISSION_ID,
     SESSION_ADMISSION_ID,
   ].sort());
@@ -1470,9 +1511,10 @@ test("trusted policy admits only the exact Rust Goal writes router between its f
   assert.equal(goalPolicy.mount_expression, "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })");
   assert.equal(goalPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
   assert.equal(goalPolicy.order_after_expression, "managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.mcpDeploymentAllowlists ?? { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [], }, hostEnv: opts.mcpHostEnv ?? process.env, })");
-  assert.equal(goalPolicy.order_before_expression, "approvalRoutes(db, rustFoundationBridge)");
-  assert.equal(goalPolicy.order_after_call, true);
+  assert.equal(goalPolicy.order_before_expression, "requestRoutes(db, rustFoundationBridge)");
+  assert.equal(goalPolicy.order_before, "request_routes");
   assert.equal(goalPolicy.order_before_call, true);
+  assert.equal(goalPolicy.order_after_call, true);
   assert.equal(goalPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/goal_writes.rs");
 
   const accepted = comparePublicOwnerMountFixture(t, {
@@ -1509,6 +1551,132 @@ test("trusted policy admits only the exact Rust Goal writes router between its f
     duplicateGoal: true,
   });
   assert(duplicate.result.failures.some((failure) => failure.includes(`${GOAL_WRITES_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
+});
+
+test("trusted policy admits only the exact Rust Issue and Approval reads mounts at fixed anchors", (t) => {
+  const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
+  const issuePolicy = TRUSTED_TRANSPORT_ADMISSIONS[ISSUE_APPROVAL_READS_ADMISSION_ID];
+  const approvalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[APPROVAL_READS_ADMISSION_ID];
+
+  assert.equal(goalPolicy.order_before_expression, "requestRoutes(db, rustFoundationBridge)");
+  assert.equal(issuePolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
+  assert.equal(issuePolicy.receiver, "api");
+  assert.equal(issuePolicy.mount_expression, "issueRoutes(db, opts.storageService, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })");
+  assert.equal(issuePolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
+  assert.equal(issuePolicy.order_after, "product_analytics_routes");
+  assert.equal(issuePolicy.order_before, "messenger_routes");
+  assert.equal(issuePolicy.order_after_call, true);
+  assert.equal(issuePolicy.order_before_call, true);
+  assert.equal(issuePolicy.order_after_expression, "productAnalyticsRoutes(db)");
+  assert.equal(issuePolicy.order_before_expression, "messengerRoutes(db, rustFoundationBridge)");
+  assert.equal(issuePolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/approval_reads.rs");
+
+  assert.equal(approvalPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
+  assert.equal(approvalPolicy.receiver, "api");
+  assert.equal(approvalPolicy.mount_expression, "approvalRoutes(db, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })");
+  assert.equal(approvalPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
+  assert.equal(approvalPolicy.order_after, "goal_routes");
+  assert.equal(approvalPolicy.order_before, "request_routes");
+  assert.equal(approvalPolicy.order_after_call, true);
+  assert.equal(approvalPolicy.order_before_call, true);
+  assert.equal(approvalPolicy.order_after_expression, goalPolicy.mount_expression);
+  assert.equal(approvalPolicy.order_before_expression, "requestRoutes(db, rustFoundationBridge)");
+  assert.equal(approvalPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/approval_reads.rs");
+
+  const accepted = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    includeIssueApprovalAnchors: true,
+    includeIssueAdmission: true,
+    includeApprovalAdmission: true,
+    goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression,
+    approvalExpression: approvalPolicy.mount_expression,
+  });
+  assert.deepEqual(accepted.result.failures, []);
+  for (const id of [GOAL_WRITES_ADMISSION_ID, ISSUE_APPROVAL_READS_ADMISSION_ID, APPROVAL_READS_ADMISSION_ID]) {
+    assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === id).length, 1);
+    assert(accepted.result.allowed_transport_admissions.some((entry) => entry.id === id));
+  }
+
+  const missingIssueRecord = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    omitIssueAdmission: true,
+  });
+  assert(missingIssueRecord.result.failures.some((failure) => failure.includes(`${ISSUE_APPROVAL_READS_ADMISSION_ID}: missing reviewed_transport_admissions record`)));
+
+  const missingApprovalRecord = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    omitApprovalAdmission: true,
+  });
+  assert(missingApprovalRecord.result.failures.some((failure) => failure.includes(`${APPROVAL_READS_ADMISSION_ID}: missing reviewed_transport_admissions record`)));
+
+  const wrongIssueGuard = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression.replace("Boolean(opts.rustPublicIngress)", "Boolean(opts.rustPublicIngress?.issueReads)"),
+    approvalExpression: approvalPolicy.mount_expression,
+  });
+  assert(wrongIssueGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const wrongApprovalGuard = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression,
+    approvalExpression: approvalPolicy.mount_expression.replace("Boolean(opts.rustPublicIngress)", "Boolean(opts.rustPublicIngress?.approvalReads)"),
+  });
+  assert(wrongApprovalGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const wrongIssueOption = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression.replace("nativeApprovalReads:", "unreviewedReads:"),
+    approvalExpression: approvalPolicy.mount_expression,
+  });
+  assert(wrongIssueOption.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const wrongApprovalOption = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression,
+    approvalExpression: approvalPolicy.mount_expression.replace("nativeApprovalReads:", "unreviewedReads:"),
+  });
+  assert(wrongApprovalOption.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const duplicateIssue = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    duplicateIssue: true,
+  });
+  assert(duplicateIssue.result.failures.some((failure) => failure.includes(`${ISSUE_APPROVAL_READS_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
+
+  const duplicateApproval = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    duplicateApproval: true,
+  });
+  assert(duplicateApproval.result.failures.some((failure) => failure.includes(`${APPROVAL_READS_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
+
+  const reorderedIssue = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    moveIssueAfterAnchor: true,
+  });
+  assert(reorderedIssue.result.failures.some((failure) => failure.includes("native Issue router approval reads adapter must appear before its order-before anchor")));
+
+  const reorderedApproval = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true, includeIssueApprovalAnchors: true, includeIssueAdmission: true,
+    includeApprovalAdmission: true, goalExpression: goalPolicy.mount_expression,
+    issueExpression: issuePolicy.mount_expression, approvalExpression: approvalPolicy.mount_expression,
+    moveApprovalBeforeGoal: true,
+  });
+  assert(reorderedApproval.result.failures.some((failure) => failure.includes("native Approval reads router adapter must appear after its order-after anchor")));
 });
 
 test("public owner mount admissions reject wrong guards, duplicates, and reordered mounts", (t) => {
