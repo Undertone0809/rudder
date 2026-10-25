@@ -542,7 +542,7 @@ async fn hard_budget_stop_uses_native_chat_cleanup_and_marks_only_scoped_legacy_
             .expect("settle cost and dispatch the budget decision")
     );
 
-    let chat_state: (
+    type ChatStopState = (
         String,
         Option<String>,
         Option<String>,
@@ -551,7 +551,8 @@ async fn hard_budget_stop_uses_native_chat_cleanup_and_marks_only_scoped_legacy_
         String,
         bool,
         Option<String>,
-    ) = sqlx::query_as(
+    );
+    let chat_state: ChatStopState = sqlx::query_as(
         "SELECT r.status,r.execution_owner_token,r.finished_at::text,r.native_admission_hold,
                     g.status,g.control_state,g.native_admission_hold,g.runtime_terminal_at::text
              FROM heartbeat_runs r JOIN chat_generations g
