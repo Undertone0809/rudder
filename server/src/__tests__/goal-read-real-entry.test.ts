@@ -613,6 +613,34 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
       expect(await snapshot()).toEqual(baseline);
     }
   }, 60_000);
+  publicGoalWriteTest("rolls back a native Goal write when PostgreSQL audit insertion fails without Node fallback", async () => {
+    const before = await snapshot();
+    nodeGoalWriteRequests = 0;
+    await db.execute(sql`CREATE FUNCTION goal_write_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.entity_type = 'goal' AND NEW.action = 'goal.created' THEN
+          RAISE EXCEPTION 'goal_write_test_audit_unavailable';
+        END IF;
+        RETURN NEW;
+      END;
+    $$`);
+    try {
+      await db.execute(sql`CREATE TRIGGER goal_write_test_reject_audit BEFORE INSERT ON activity_log
+        FOR EACH ROW EXECUTE FUNCTION goal_write_test_reject_audit()`);
+      const response = await request(target)
+        .post(`/api/orgs/${orgId}/goals`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ title: `Goal audit rollback ${randomUUID()}` });
+      expect(response.status, JSON.stringify(response.body)).toBe(500);
+      expect(await snapshot()).toEqual(before);
+      expect(nodeGoalWriteRequests).toBe(0);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS goal_write_test_reject_audit ON activity_log`);
+      await db.execute(sql`DROP FUNCTION IF EXISTS goal_write_test_reject_audit()`);
+    }
+    expect((await get(`/api/goals/${goalId}`, boardToken)).status).toBe(200);
+    expect(await snapshot()).toEqual(before);
+  });
   it("fails closed when the native Goal read transport is unavailable", async () => {
     const nativeGoalRead = bridge.goalRead;
     bridge.goalRead = async () => { throw new Error("simulated native Goal read transport failure"); };
