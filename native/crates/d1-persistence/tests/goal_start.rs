@@ -200,11 +200,10 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     assert_eq!(result.dispatch.source, "on_demand");
     assert_eq!(result.dispatch.trigger_detail, "system");
     assert_eq!(result.dispatch.payload["event"], "goal_started");
-    assert_eq!(
+    assert!(
         result.dispatch.payload["goalStartRequestId"]
             .as_str()
-            .is_some(),
-        true
+            .is_some()
     );
     assert_eq!(
         result.dispatch.context_snapshot["goal"]["contractRevision"],
