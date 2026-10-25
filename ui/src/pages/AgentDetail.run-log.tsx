@@ -518,7 +518,7 @@ export function LogViewer({
       : logTranscript;
     return mergeTranscriptEntries(effectiveLogTranscript, eventTranscript);
   }, [eventTranscript, liveLogTranscript, logTranscript]);
-  const chatTranscriptTarget = resolveRunChatTranscriptTarget(run);
+  const chatTranscriptTarget = resolveRunChatTranscriptTarget(run, events);
   const shouldLoadChatTranscriptFallback = !isLive
     && Boolean(chatTranscriptTarget)
     && !loading
@@ -559,6 +559,16 @@ export function LogViewer({
     : run.logRef
       ? "Waiting for transcript..."
       : "No persisted transcript for this run.";
+  const renderChatTranscriptError = () => shouldLoadChatTranscriptFallback && chatTranscriptQuery.isError ? (
+    <div role="alert" className="mt-3 flex items-center justify-between gap-3 rounded-md border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
+      <span>
+        Transcript unavailable. {chatTranscriptQuery.error instanceof Error ? chatTranscriptQuery.error.message : "Could not read the referenced transcript."}
+      </span>
+      <Button variant="ghost" size="xs" onClick={() => void chatTranscriptQuery.refetch()}>
+        Retry
+      </Button>
+    </div>
+  ) : null;
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload);
   const invocationPromptText =
@@ -714,7 +724,7 @@ export function LogViewer({
         </div>
 
         {transcriptVisible ? (
-          <div className="max-h-[38rem] overflow-y-auto p-3 sm:p-4">
+          <div role="region" aria-label="Run transcript" className="max-h-[38rem] overflow-y-auto p-3 sm:p-4">
             <RunTranscriptView
               entries={transcript}
               mode={transcriptMode}
@@ -732,6 +742,7 @@ export function LogViewer({
               onOpenSkill={openTranscriptSkill}
               canOpenSkill={(target) => Boolean(target.path)}
             />
+            {renderChatTranscriptError()}
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
                 {logError}
@@ -859,7 +870,7 @@ export function LogViewer({
               </div>
             </div>
           </DialogHeader>
-          <div className="transcript-modal-body min-h-0 overflow-y-auto p-3 sm:p-4">
+          <div role="region" aria-label="Run transcript" className="transcript-modal-body min-h-0 overflow-y-auto p-3 sm:p-4">
             <RunTranscriptView
               entries={transcript}
               mode={transcriptMode}
@@ -877,6 +888,7 @@ export function LogViewer({
               onOpenSkill={openTranscriptSkill}
               canOpenSkill={(target) => Boolean(target.path)}
             />
+            {renderChatTranscriptError()}
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
                 {logError}
