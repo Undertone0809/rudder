@@ -703,7 +703,7 @@ pub(crate) fn spawn_postgres(
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        return supervised_spawn(&mut command);
+        supervised_spawn(&mut command)
     }
 
     #[cfg(not(windows))]
