@@ -6,8 +6,10 @@
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::Sha256;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -98,6 +100,77 @@ pub(super) fn verify(
     })
 }
 
+/// Sign the same short-lived Agent credential used by local runtime adapters.
+/// The claim order mirrors `server/src/agent-auth-jwt.ts`; token verification
+/// is still performed by the normal Rust bearer resolver on every request.
+pub(super) fn sign_local_agent_jwt(
+    agent_id: &str,
+    org_id: &str,
+    adapter_type: &str,
+    run_id: &str,
+    config: &NativeAgentJwtConfig,
+) -> Option<String> {
+    if config.secret.is_empty() {
+        return None;
+    }
+    let issued_at = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let ttl_seconds = parse_ttl_seconds(
+        std::env::var("RUDDER_AGENT_JWT_TTL_SECONDS")
+            .ok()
+            .as_deref(),
+    );
+    let claims = LocalAgentJwtClaimsForSigning {
+        sub: agent_id,
+        org_id,
+        adapter_type,
+        run_id,
+        iat: issued_at,
+        exp: issued_at.saturating_add(ttl_seconds),
+        iss: &config.issuer,
+        aud: &config.audience,
+    };
+    let header = JwtHeaderForSigning {
+        alg: "HS256",
+        typ: "JWT",
+    };
+    let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).ok()?);
+    let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).ok()?);
+    let signing_input = format!("{header}.{claims}");
+    let mut mac = HmacSha256::new_from_slice(config.secret.as_bytes()).ok()?;
+    mac.update(signing_input.as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    Some(format!("{signing_input}.{signature}"))
+}
+
+fn parse_ttl_seconds(value: Option<&str>) -> u64 {
+    const DEFAULT_TTL_SECONDS: u64 = 60 * 60 * 48;
+    let Some(parsed) = value.and_then(|value| value.parse::<f64>().ok()) else {
+        return DEFAULT_TTL_SECONDS;
+    };
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return DEFAULT_TTL_SECONDS;
+    }
+    parsed.floor().min(u64::MAX as f64) as u64
+}
+
+#[derive(Serialize)]
+struct JwtHeaderForSigning {
+    alg: &'static str,
+    typ: &'static str,
+}
+
+#[derive(Serialize)]
+struct LocalAgentJwtClaimsForSigning<'a> {
+    sub: &'a str,
+    org_id: &'a str,
+    adapter_type: &'a str,
+    run_id: &'a str,
+    iat: u64,
+    exp: u64,
+    iss: &'a str,
+    aud: &'a str,
+}
+
 fn decode_json_object(value: &str) -> Option<serde_json::Map<String, Value>> {
     let bytes = URL_SAFE_NO_PAD.decode(value).ok()?;
     let parsed = serde_json::from_slice::<Value>(&bytes).ok()?;
@@ -185,6 +258,36 @@ mod tests {
                 .as_deref(),
             Some("token-1")
         );
+    }
+
+    #[test]
+    fn signs_runtime_agent_jwt_accepted_by_the_native_verifier() {
+        let config = config();
+        let token =
+            sign_local_agent_jwt("agent-1", "org-1", "claude_local", "run-1", &config).unwrap();
+        let identity = verify(&token, &config, 0.0).unwrap();
+        assert_eq!(identity.agent_id, "agent-1");
+        assert_eq!(identity.org_id, "org-1");
+        assert_eq!(identity.adapter_type, "claude_local");
+        assert_eq!(identity.run_id, "run-1");
+        assert_eq!(identity.expires_at - identity.expires_at.floor(), 0.0);
+    }
+
+    #[test]
+    fn refuses_to_sign_when_agent_jwt_secret_is_empty() {
+        let mut config = config();
+        config.secret.clear();
+        assert!(
+            sign_local_agent_jwt("agent-1", "org-1", "claude_local", "run-1", &config).is_none()
+        );
+    }
+
+    #[test]
+    fn parses_the_legacy_agent_jwt_ttl_setting_and_default() {
+        assert_eq!(parse_ttl_seconds(None), 172_800);
+        assert_eq!(parse_ttl_seconds(Some("900.8")), 900);
+        assert_eq!(parse_ttl_seconds(Some("0")), 172_800);
+        assert_eq!(parse_ttl_seconds(Some("NaN")), 172_800);
     }
 
     #[test]

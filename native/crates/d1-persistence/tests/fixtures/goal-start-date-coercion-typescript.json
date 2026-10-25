@@ -1,0 +1,134 @@
+{
+  "dateOnly": {
+    "valid": true,
+    "packetHash": "1d0e69254c7a5d6b30c529ef109bb7299ba283ac84dd645a8f10ca7f0a59b390",
+    "packet": {
+      "version": 1,
+      "title": "把已验证的发布结果交付给客户",
+      "description": "面向中国用户，记录可验证证据。",
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "activation": {
+        "confirmed": true,
+        "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+        "outcomeStatement": "把已验证的发布结果交付给客户",
+        "objectiveMode": "target",
+        "criteria": [
+          {
+            "id": "primary-outcome",
+            "label": "We will know it worked when 把已验证的发布结果交付给客户 and this context is satisfied: 面向中国用户，记录可验证证据。",
+            "evaluator": "artifact"
+          }
+        ],
+        "autonomyEnvelope": {
+          "allowed": [
+            "bounded_reversible_work"
+          ],
+          "requiresHumanApproval": [
+            "external_or_irreversible_action",
+            "authority_expansion"
+          ]
+        },
+        "humanAuthorities": {
+          "acceptance": "board_human",
+          "consequentialChanges": "board_human"
+        },
+        "evaluationPolicy": {
+          "terminalEvidenceRequired": true,
+          "humanAcceptanceRequired": true
+        },
+        "actionDeadline": null,
+        "evaluationDeadline": "2026-10-25T00:00:00.000Z",
+        "initialContinuation": {
+          "kind": "commitment",
+          "summary": "Inspect the available context and produce the first bounded, reviewable artifact."
+        },
+        "initialPlan": {
+          "summary": "Inspect the available context and produce the first bounded, reviewable artifact.",
+          "hypotheses": [],
+          "selectedPaths": [],
+          "rejectedPaths": [],
+          "sequencing": [],
+          "budgetAllocations": {},
+          "invalidationConditions": []
+        }
+      }
+    },
+    "review": {
+      "outcome": "把已验证的发布结果交付给客户",
+      "success": "We will know it worked when 把已验证的发布结果交付给客户 and this context is satisfied: 面向中国用户，记录可验证证据。",
+      "boundary": "The Owner may perform bounded, reversible work; consequential or irreversible actions require human approval.",
+      "firstAction": "Inspect the available context and produce the first bounded, reviewable artifact.",
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "targetTime": "2026-10-25T00:00:00.000Z"
+    },
+    "blockers": [],
+    "alignmentQuestion": null,
+    "warning": null
+  },
+  "epochMillis": {
+    "valid": true,
+    "packetHash": "1d0e69254c7a5d6b30c529ef109bb7299ba283ac84dd645a8f10ca7f0a59b390",
+    "packet": {
+      "version": 1,
+      "title": "把已验证的发布结果交付给客户",
+      "description": "面向中国用户，记录可验证证据。",
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "activation": {
+        "confirmed": true,
+        "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+        "outcomeStatement": "把已验证的发布结果交付给客户",
+        "objectiveMode": "target",
+        "criteria": [
+          {
+            "id": "primary-outcome",
+            "label": "We will know it worked when 把已验证的发布结果交付给客户 and this context is satisfied: 面向中国用户，记录可验证证据。",
+            "evaluator": "artifact"
+          }
+        ],
+        "autonomyEnvelope": {
+          "allowed": [
+            "bounded_reversible_work"
+          ],
+          "requiresHumanApproval": [
+            "external_or_irreversible_action",
+            "authority_expansion"
+          ]
+        },
+        "humanAuthorities": {
+          "acceptance": "board_human",
+          "consequentialChanges": "board_human"
+        },
+        "evaluationPolicy": {
+          "terminalEvidenceRequired": true,
+          "humanAcceptanceRequired": true
+        },
+        "actionDeadline": null,
+        "evaluationDeadline": "2026-10-25T00:00:00.000Z",
+        "initialContinuation": {
+          "kind": "commitment",
+          "summary": "Inspect the available context and produce the first bounded, reviewable artifact."
+        },
+        "initialPlan": {
+          "summary": "Inspect the available context and produce the first bounded, reviewable artifact.",
+          "hypotheses": [],
+          "selectedPaths": [],
+          "rejectedPaths": [],
+          "sequencing": [],
+          "budgetAllocations": {},
+          "invalidationConditions": []
+        }
+      }
+    },
+    "review": {
+      "outcome": "把已验证的发布结果交付给客户",
+      "success": "We will know it worked when 把已验证的发布结果交付给客户 and this context is satisfied: 面向中国用户，记录可验证证据。",
+      "boundary": "The Owner may perform bounded, reversible work; consequential or irreversible actions require human approval.",
+      "firstAction": "Inspect the available context and produce the first bounded, reviewable artifact.",
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "targetTime": "2026-10-25T00:00:00.000Z"
+    },
+    "blockers": [],
+    "alignmentQuestion": null,
+    "warning": null
+  }
+}

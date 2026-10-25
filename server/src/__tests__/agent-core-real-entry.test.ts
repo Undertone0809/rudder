@@ -1703,16 +1703,25 @@ console.log(JSON.stringify({type:"turn.completed"}));
         }
         finally{bridge!.agentCore=original;}
         expect(nodeNativeIngressPathHits).toBe(0);
+        const patchSnapshot = async () => ({
+            agent: await db.execute(sql`SELECT to_jsonb(a)::text AS row FROM agents a WHERE id=${subject.id}::uuid`),
+            revisions: await db.execute(sql`SELECT to_jsonb(r)::text AS row FROM agent_config_revisions r WHERE agent_id=${subject.id}::uuid ORDER BY created_at,id`),
+            activity: await db.execute(sql`SELECT to_jsonb(a)::text AS row FROM activity_log a WHERE entity_id=${subject.id} ORDER BY created_at,id`),
+        });
+        const profileBefore = await patchSnapshot();
         const activityBefore = await scalar(sql`SELECT count(*) AS value FROM activity_log`);
         const outboxBefore = await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`);
         await pg!.stop();
         try {
             const unavailable = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
             expect(unavailable.status, unavailable.text).toBe(503);
+            const unavailablePatch = await call(publicUrl, "patch", `/api/agents/${subject.id}`, ownerToken, { title: "must not persist while the database is unavailable" });
+            expect(unavailablePatch.status, unavailablePatch.text).toBe(503);
             expect(nodeNativeIngressPathHits).toBe(0);
         } finally { await pg!.start(); }
         const retry = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
         expect(retry.status, retry.text).toBe(200);
+        expect(await patchSnapshot()).toEqual(profileBefore);
         expect(await scalar(sql`SELECT count(*) AS value FROM activity_log`)).toBe(activityBefore);
         expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`)).toBe(outboxBefore);
     });

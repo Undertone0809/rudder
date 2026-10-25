@@ -2129,6 +2129,7 @@ dependencies = [
  "rudder-cursor-acp-adapter",
  "rudder-hermes-acp",
  "rudder-native-process-transport",
+ "rudder-native-protocol",
  "rudder-opencode-native",
  "rudder-organization-mutation-core",
  "rudder-pi-rpc",
@@ -2260,6 +2261,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]

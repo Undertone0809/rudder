@@ -8,6 +8,7 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRuns,
   issues,
   organizations,
@@ -1136,6 +1137,281 @@ describe("heartbeat run concurrency", () => {
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(new Set(["issue:a", "issue:b"]));
   });
+
+  it("rechecks native Goal ownership after a legacy run's stale capacity snapshot", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const legacyRunId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy:after-native-goal",
+      reason: "test_queue",
+      createdAt: new Date("2026-04-27T00:05:00.000Z"),
+    });
+    const goalId = randomUUID();
+    const nativeWakeupRequestId = randomUUID();
+    const nativeRunId = randomUUID();
+    await db.insert(goals).values({
+      id: goalId,
+      orgId,
+      title: "Native owner race",
+      outcomeStatement: "Keep the Goal Owner exclusive during legacy queue claims",
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: agentId,
+      planRevision: 1,
+      criteria: [{ id: "owner", label: "Native owner runs", evaluator: "artifact" }],
+      continuationKind: "action",
+      continuationSummary: "Run under the native Goal owner",
+    });
+    await db.insert(agentWakeupRequests).values({
+      id: nativeWakeupRequestId,
+      orgId,
+      agentId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_started",
+      payload: { event: "goal_started", goalId },
+      status: "queued",
+      executionAuthority: "native_rust",
+      requestedByActorType: "user",
+      requestedByActorId: "native-goal-claim-race-test",
+    });
+
+    let reachBeforeRunClaim!: () => void;
+    let resumeBeforeRunClaim!: () => void;
+    const beforeRunClaimReached = new Promise<void>((resolve) => { reachBeforeRunClaim = resolve; });
+    const beforeRunClaimGate = new Promise<void>((resolve) => { resumeBeforeRunClaim = resolve; });
+    let pauseFirstClaim = true;
+    const heartbeat = heartbeatService(db, {
+      beforeRunClaim: async (candidate) => {
+        if (candidate.id !== legacyRunId || !pauseFirstClaim) return;
+        pauseFirstClaim = false;
+        reachBeforeRunClaim();
+        await beforeRunClaimGate;
+      },
+    });
+
+    let nativeAgentLockAcquired!: () => void;
+    let rejectNativeAgentLock!: (error: unknown) => void;
+    const nativeAgentLockPromise = new Promise<void>((resolve, reject) => {
+      nativeAgentLockAcquired = resolve;
+      rejectNativeAgentLock = reject;
+    });
+    let commitNativeClaim!: () => void;
+    const nativeClaimGate = new Promise<void>((resolve) => { commitNativeClaim = resolve; });
+    let resume: Promise<unknown> | null = null;
+    let nativeClaim: Promise<void> | null = null;
+    try {
+      // startNextQueuedRunForAgent has already computed one free slot before
+      // this hook, so this capacity snapshot predates the native Goal claim.
+      resume = heartbeat.startNextQueuedRunForAgent(agentId);
+      await beforeRunClaimReached;
+      const baselineWaiters = await countPostgresLockWaiters();
+      nativeClaim = db.transaction(async (tx) => {
+        await tx.execute(sql`select id from agents where id = ${agentId} for update`);
+        nativeAgentLockAcquired();
+        await nativeClaimGate;
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:goal_owner_claim_test', true)`);
+        await tx.insert(heartbeatRuns).values({
+          id: nativeRunId,
+          orgId,
+          agentId,
+          invocationSource: "on_demand",
+          triggerDetail: "system",
+          status: "running",
+          startedAt: new Date(),
+          wakeupRequestId: nativeWakeupRequestId,
+          goalId,
+          contextSnapshot: { goalId, wakeReason: "goal_started" },
+          executionAuthority: "native_rust",
+          nativeAdmissionHold: false,
+          scene: "heartbeat",
+          targetType: "wakeup_request",
+          targetId: nativeWakeupRequestId,
+          idempotencyKey: `goal-wakeup:${nativeWakeupRequestId}`,
+          sessionReuseScope: "none",
+          sessionIntentJson: {
+            kind: "fresh",
+            reuseScope: "none",
+            sourceRunId: null,
+            sessionId: null,
+            sessionParams: null,
+          },
+        });
+        await tx.update(agentWakeupRequests).set({
+          status: "claimed",
+          runId: nativeRunId,
+          claimedAt: new Date(),
+        }).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
+      });
+      void nativeClaim.catch(rejectNativeAgentLock);
+      await nativeAgentLockPromise;
+
+      // Let the Node claimant enter its transaction while Rust owns the same
+      // Agent lock, then commit the Goal run before Node acquires that lock.
+      resumeBeforeRunClaim();
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+      commitNativeClaim();
+      await nativeClaim;
+      await resume;
+
+      const [legacyAfterNativeClaim] = await db
+        .select({ status: heartbeatRuns.status })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, legacyRunId));
+      expect(legacyAfterNativeClaim?.status).toBe("queued");
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+
+      // Once the native Goal owner is gone, the unchanged legacy queue path
+      // can claim and execute the same queued run normally.
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:goal_owner_claim_test', true)`);
+        await tx.update(agentWakeupRequests).set({
+          status: "cancelled",
+          runId: null,
+          finishedAt: new Date(),
+        }).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
+        await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.id, nativeRunId));
+      });
+      const legacyClaims = await heartbeat.startNextQueuedRunForAgent(agentId);
+      expect(legacyClaims.map((run: { id: string }) => run.id)).toContain(legacyRunId);
+      await waitForCondition(async () =>
+        mockRuntimeAdapter.calls.some((call) => call.runId === legacyRunId)
+        && (await heartbeat.getRun(legacyRunId))?.status === "running",
+      );
+    } finally {
+      resumeBeforeRunClaim();
+      commitNativeClaim();
+      await Promise.allSettled([
+        ...(resume ? [resume] : []),
+        ...(nativeClaim ? [nativeClaim] : []),
+      ]);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('rudder.native_chat_write', 'native_chat:goal_owner_claim_test_cleanup', true)`);
+        await tx.update(agentWakeupRequests).set({
+          status: "cancelled",
+          runId: null,
+          finishedAt: new Date(),
+        }).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
+        await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.id, nativeRunId));
+        await tx.delete(agentWakeupRequests).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
+        await tx.delete(goals).where(eq(goals.id, goalId));
+      });
+    }
+  }, 30_000);
+
+  it("cancels a queued legacy run when a persisted budget stop lands after its capacity snapshot", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy:budget-stop-race",
+      reason: "test_queue",
+      createdAt: new Date(Date.now() - 1_000),
+    });
+    let reachBeforeRunClaim!: () => void;
+    let resumeBeforeRunClaim!: () => void;
+    const beforeRunClaimReached = new Promise<void>((resolve) => { reachBeforeRunClaim = resolve; });
+    const beforeRunClaimGate = new Promise<void>((resolve) => { resumeBeforeRunClaim = resolve; });
+    const heartbeat = heartbeatService(db, {
+      beforeRunClaim: async (candidate) => {
+        if (candidate.id !== runId) return;
+        reachBeforeRunClaim();
+        await beforeRunClaimGate;
+      },
+    });
+    let claim: Promise<unknown> | null = null;
+    try {
+      claim = heartbeat.startNextQueuedRunForAgent(agentId);
+      await beforeRunClaimReached;
+      await db.update(heartbeatRuns).set({
+        error: "Cancelled due to budget pause",
+        errorCode: "cancel_requested",
+      }).where(eq(heartbeatRuns.id, runId));
+      resumeBeforeRunClaim();
+      await claim;
+
+      const run = await heartbeat.getRun(runId);
+      expect(run).toMatchObject({ status: "cancelled", errorCode: "cancelled" });
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      expect(mockBudgetService.getInvocationBlock).not.toHaveBeenCalled();
+      const [wakeup] = await db.select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+        .where(eq(heartbeatRuns.id, runId));
+      expect(wakeup?.status).toBe("cancelled");
+    } finally {
+      resumeBeforeRunClaim();
+      if (claim) await Promise.allSettled([claim]);
+    }
+  }, 30_000);
+
+  it("honors a persisted budget stop after setup but before adapter invocation", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy:budget-stop-during-setup",
+      reason: "test_queue",
+      createdAt: new Date(Date.now() - 1_000),
+    });
+
+    let releaseRuntimeStateSetup!: () => void;
+    let runtimeStateSetupReached!: () => void;
+    const runtimeStateSetupGate = new Promise<void>((resolve) => { releaseRuntimeStateSetup = resolve; });
+    const runtimeStateSetupLockReached = new Promise<void>((resolve) => { runtimeStateSetupReached = resolve; });
+    const runtimeStateSetupLock = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table agent_runtime_state in access exclusive mode`);
+      runtimeStateSetupReached();
+      await runtimeStateSetupGate;
+    });
+
+    let claim: Promise<unknown> | null = null;
+    try {
+      await runtimeStateSetupLockReached;
+      const baselineWaiters = await countPostgresLockWaiters();
+      const heartbeat = heartbeatService(db);
+      claim = heartbeat.startNextQueuedRunForAgent(agentId);
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+
+      const [setupGatedRun] = await db
+        .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      expect(setupGatedRun).toMatchObject({ status: "running", errorCode: null });
+      await db.update(heartbeatRuns).set({
+        error: "Cancelled due to budget pause",
+        errorCode: "cancel_requested",
+      }).where(eq(heartbeatRuns.id, runId));
+      const [markedRun] = await db
+        .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      expect(markedRun).toMatchObject({ status: "running", errorCode: "cancel_requested" });
+
+      releaseRuntimeStateSetup();
+      await claim;
+      await waitForCondition(async () => {
+        const run = await heartbeat.getRun(runId);
+        return run?.status === "cancelled" && run.errorCode === "cancelled" && !run.terminalEffectsPending;
+      });
+
+      const run = await heartbeat.getRun(runId);
+      expect(run).toMatchObject({ status: "cancelled", errorCode: "cancelled" });
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      const [wakeup] = await db.select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+        .where(eq(heartbeatRuns.id, runId));
+      expect(wakeup?.status).toBe("cancelled");
+    } finally {
+      releaseRuntimeStateSetup();
+      await Promise.allSettled([
+        runtimeStateSetupLock,
+        ...(claim ? [claim] : []),
+      ]);
+    }
+  }, 30_000);
 
   it("does not claim an issue run after cancellation wins the issue lock", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);

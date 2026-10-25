@@ -190,6 +190,32 @@ ORDER BY e.created_at ASC, e.id ASC, s.ordinal ASC"#).bind(org).bind(run_ids).fe
     Ok(result)
 }
 
+/// Reuse the canonical Agent Run detail projection for direct native mutation
+/// responses. The public cancel route historically returns the updated
+/// `toAgentRun` object, so it must not invent a smaller response shape.
+pub(super) async fn agent_run_cancel_response(
+    pool: &PgPool,
+    org: &str,
+    run_id: &str,
+    owner: Option<&str>,
+) -> Result<Option<String>, sqlx::Error> {
+    let mut rows = runs(
+        pool,
+        org,
+        "WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
+        RunProjection {
+            surface: Surface::Agent,
+            list: false,
+            skills: false,
+        },
+        &[Some(run_id.to_owned())],
+        None,
+        owner,
+    )
+    .await?;
+    Ok(rows.pop())
+}
+
 /// Read configuration without the Node settings service's get-or-create side
 /// effect. Mirror its strict schema and legacy gitIdentity omission; select
 /// only scalar settings metadata, never decode a legacy configuration object.

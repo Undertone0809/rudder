@@ -296,24 +296,30 @@ const TRUSTED_GOAL_LEGACY_OWNER_BRIDGE = Object.freeze({
     "server/src/services/runtime-kernel/heartbeat.execute.ts": Object.freeze({
       record_id: "goal-budget-cross-owner-stop-v1.heartbeat-execute",
       base_sha256: "18157d02b952fe862640e2baff40cb402c9d6e319bf3ea63b3644d40410fd53b",
-      head_sha256: "4ead95d590da855fb28ee50f81d81fea8d616cf712c8dde3d7760e2fd05cd84e",
+      head_sha256: "dbfe5e11f0775c9c7c75e0be7d26a8296a7a0f3ea13d33966e480ab4865aba66",
       base_surfaces: Object.freeze([
         Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:7e6bf3e963e22430341e9e36ac48ee706fb73568acc5e76dd807ffcb3843cc4a]", line: 226 }),
       ]),
-      head_surfaces: Object.freeze([
-        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:d5314bf1d926737a96502855b4fc786524fc5a3454a099e44165643147ad0339]", line: 238 }),
-      ]),
+      head_surfaces: Object.freeze([]),
     }),
     "server/src/services/runtime-kernel/heartbeat.ts": Object.freeze({
       record_id: "goal-budget-cross-owner-stop-v1.heartbeat",
       base_sha256: "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
-      head_sha256: "860e65a14ef3d71328e31cc9994dfc7d675dbb68f39b6d7ce037453d1c442236",
+      head_sha256: "ebf75358f4c89952d1cb384d17124bd21eb146fe3e3640b7ae9597bc8548eeec",
+      base_surfaces: Object.freeze([]),
+      head_surfaces: Object.freeze([]),
+      transaction_mapping_id: GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID,
+    }),
+    "server/src/services/runtime-kernel/heartbeat.misc.ts": Object.freeze({
+      record_id: "goal-budget-cross-owner-stop-v1.heartbeat-misc",
+      base_sha256: "d2d33c05861495d21249071b1125040c71efc89c960d7c7bdaadb36bbe1f777d",
+      head_sha256: "8f0de3fd0249040ce0c6813c1030fb4faf027352b7798b8d04a2dd40ecb88d82",
       base_surfaces: Object.freeze([]),
       head_surfaces: Object.freeze([
-        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error, }", line: 1174 }),
-        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|tx|select|{ id: heartbeatRuns.id }", line: 1260 }),
+        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.misc.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }", line: 88 }),
+        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.misc.ts|db-call|tx|select|{ id: heartbeatRuns.id }", line: 104 }),
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/runtime-kernel/heartbeat.misc.ts|worker-schedule-candidate|setInterval|() => { void renewLease(runId, ownerToken) .then(async (result) => { … [sha256:18f4305db37bdd0b5c0742c5d3acdb65c7c3c183deeb5b926d88756b6d15cd42]", line: 71 }),
       ]),
-      transaction_mapping_id: GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID,
     }),
     "server/src/services/runtime-kernel/heartbeat.wakeup.ts": Object.freeze({
       record_id: "goal-budget-cross-owner-stop-v1.heartbeat-wakeup",
@@ -329,9 +335,9 @@ const TRUSTED_GOAL_LEGACY_OWNER_BRIDGE = Object.freeze({
     id: GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID,
     path: "server/src/services/runtime-kernel/heartbeat.ts",
     base_surface: Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5f9c3c5febbb625c83dc10992e6e6f9e00e56d7ce5babb1f1b318de853946b47]", line: 1209 }),
-    head_surface: Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5591854ce77e200e0d05f3e3f7a78b03057b416bdb63a540497d9321b0d5670c]", line: 1232 }),
+    head_surface: Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:3cb8d11518f9840c1c9dd10741e9d573df8d0316cb306bf685a9c69903d7bf9f]", line: 1194 }),
     base_protected_surface: Object.freeze({ type: "database_write_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns", line: 1285 }),
-    head_protected_surface: Object.freeze({ type: "database_write_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns", line: 1330 }),
+    head_protected_surface: Object.freeze({ type: "database_write_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns", line: 1272 }),
   }),
 });
 

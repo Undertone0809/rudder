@@ -85,6 +85,101 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledOnce();
   });
 
+  it("cancels a native Goal through its Rust Agent Run route before draining the owned runtime", async () => {
+    dialogShowMessageBoxMock.mockResolvedValue({ response: 0 });
+    const lifecycle: string[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathname.endsWith("/live-runs")) return jsonResponse([{
+        id: "run-native-goal", status: "running", agentName: "Claude",
+        executionAuthority: "native_rust", goalId: "40000000-0000-4000-8000-000000000001",
+        chatConversationId: null, chatGenerationId: null,
+      }]);
+      if (pathname === "/api/agent-runs/run-native-goal/cancel") {
+        expect(init?.method).toBe("POST");
+        expect(init?.credentials).toBe("include");
+        expect(new Headers(init?.headers).get("Origin")).toBe("http://127.0.0.1:3100");
+        lifecycle.push("cancel-intent");
+        return jsonResponse({ status: "running" });
+      }
+      throw new Error(`Unexpected API: ${pathname}`);
+    });
+    const flow = createDesktopQuitFlow({
+      appName: "Rudder", getMainWindow: () => null, setMainWindow: vi.fn(),
+      getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+      fetchApi: fetchMock, stopLocalRudder: async () => { lifecycle.push("runtime-drain"); },
+      destroyResidentTray: vi.fn(),
+    });
+    await flow.beginQuitFlow();
+    expect(lifecycle).toEqual(["cancel-intent", "runtime-drain"]);
+    expect(appQuitMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.some(([url]) => /heartbeat-runs|\/chats\//.test(url))).toBe(false);
+  });
+
+  it("reports native Goal cancellation failure without retrying through Chat or the legacy writer", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async () => new Response(null, { status: 503 }));
+    const flow = createDesktopQuitFlow({
+      appName: "Rudder", getMainWindow: () => null, setMainWindow: vi.fn(),
+      getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+      fetchApi: fetchMock, stopLocalRudder: vi.fn(), destroyResidentTray: vi.fn(),
+    });
+    try {
+      await expect(flow.cancelActiveRunsBeforeQuit({ totalRuns: 1, organizations: [{
+        id: "org-1", name: "Z Studio", runs: [{
+          id: "run-native-goal", status: "running", agentName: "Claude",
+          executionAuthority: "native_rust", goalId: "40000000-0000-4000-8000-000000000001",
+        }],
+      }] })).rejects.toThrow("Could not cancel 1/1 active run");
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:3100/api/agent-runs/run-native-goal/cancel");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it.each(["running", "cancelled"] as const)("keeps native Goal update settlement separate from cancel acknowledgement (%s)", async (settledStatus) => {
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "rudder-goal-quit-"));
+    const responsePath = path.join(tempRoot, "response.json");
+    let cancelled = false;
+    let inspections = 0;
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async (url: string) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathname.endsWith("/live-runs")) {
+        inspections += 1;
+        return jsonResponse([{
+          id: "run-native-goal", status: cancelled ? settledStatus : "running", agentName: "Claude",
+          executionAuthority: "native_rust", goalId: "40000000-0000-4000-8000-000000000001",
+        }]);
+      }
+      if (pathname === "/api/agent-runs/run-native-goal/cancel") {
+        cancelled = true;
+        return jsonResponse({ status: "running" });
+      }
+      throw new Error(`Unexpected API: ${pathname}`);
+    });
+    const flow = createDesktopQuitFlow({
+      appName: "Rudder", getMainWindow: () => null, setMainWindow: vi.fn(),
+      getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+      fetchApi: fetchMock, stopLocalRudder, destroyResidentTray: vi.fn(),
+      quitRunSettleTimeoutMs: 20, quitRunSettlePollIntervalMs: 1,
+    });
+    try {
+      await flow.handleUpdateQuitRequest(responsePath, { force: true });
+      expect(inspections).toBeGreaterThan(1);
+      expect(await readQuitResponse(responsePath)).toMatchObject(settledStatus === "running"
+        ? { ok: false, status: "active_runs", totalRuns: 1 }
+        : { ok: true });
+      expect(stopLocalRudder).toHaveBeenCalledTimes(settledStatus === "running" ? 0 : 1);
+      expect(fetchMock.mock.calls.some(([url]) => /heartbeat-runs|\/chats\//.test(url))).toBe(false);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each(["orgs", "live-runs"] as const)("bounds a hung %s inspection and aborts it before normal quit", async (hungRequest) => {
     vi.useFakeTimers();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);

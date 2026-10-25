@@ -6,7 +6,7 @@
  * @see doc/product/domains/execution/transcripts-and-results.md - transcript and result persistence
  * @see doc/product/domains/execution/run-admission-and-recovery.md - retry and process-loss recovery
  */
-import type { HeartbeatRunExecutionPhase, NativeChatExecutionAuthority } from "@rudderhq/shared";
+import type { HeartbeatRunExecutionPhase, RuntimeExecutionAuthority } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import { type AnyPgColumn, bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
@@ -61,7 +61,7 @@ export const heartbeatRuns = pgTable(
     }),
     /** Non-null only for rows admitted by the Rust native Chat authority. */
     chatGenerationId: uuid("chat_generation_id"),
-    executionAuthority: text("execution_authority").$type<NativeChatExecutionAuthority>().notNull().default("legacy_ts"),
+    executionAuthority: text("execution_authority").$type<RuntimeExecutionAuthority>().notNull().default("legacy_ts"),
     nativeAdmissionHold: boolean("native_admission_hold").notNull().default(false),
     /** Explicit Goal ownership for Goal Detail timelines; contextSnapshot remains compatibility data. */
     goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
@@ -193,6 +193,13 @@ export const heartbeatRuns = pgTable(
           and ${table.chatConversationId} is not null and ${table.scene} = 'chat'
           and ${table.targetType} = 'chat_conversation'
           and ${table.targetId} = ${table.chatConversationId}::text)
+        or
+        (${table.executionAuthority} = 'native_rust' and ${table.chatGenerationId} is null
+          and ${table.chatConversationId} is null and ${table.nativeAdmissionHold} = false
+          and ${table.scene} = 'heartbeat' and ${table.targetType} = 'wakeup_request'
+          and ${table.wakeupRequestId} is not null
+          and ${table.targetId} = ${table.wakeupRequestId}::text
+          and ${table.goalId} is not null)
       )`,
     ),
     executionAuthorityCheck: check(
