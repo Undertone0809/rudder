@@ -379,8 +379,8 @@ pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Valu
             .as_ref()
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let files =
-            super::instructions::default_create_bundle_files(role_for_bundle(&public["role"]));
+        let bundle_role = public.get("role").map(role_for_bundle).unwrap_or("default");
+        let files = super::instructions::default_create_bundle_files(bundle_role);
         let mut files = files;
         if !js_trim(prompt).is_empty() {
             files.insert("SOUL.md".to_owned(), prompt.to_owned());
