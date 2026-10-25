@@ -59085,12 +59085,12 @@
       "head_sha256": "9c400d44ca60e48e577612d8a32a67600a9424e7cc4bc4b1a44e7516b881eae4",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{goal_writes,approval_reads}.rs with existing D1 Rust owners",
-      "compatibility_boundary": "Startup-only gates omit seven Goal write and five Approval/Label read registrations when Rust public ingress is enabled; unchanged legacy operations and explicit ingress-off compatibility remain debt. No Rust failure falls back to Node.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/goal_writes.rs and native/crates/d1-persistence/src/goal_writes.rs",
+      "compatibility_boundary": "Omit the seven migrated Goal write registrations in nativeGoalWrites mode. Preserve only explicit ingress-off compatibility and separately unmigrated Goal operations; native failures do not invoke Node Goal writers.",
       "retirement_criterion": "Delete the corresponding legacy registrations after Rust is the sole supported backend owner in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve only explicitly scoped ingress-off compatibility and unmigrated operations."
       ],
@@ -59104,12 +59104,12 @@
       "head_sha256": "5252978da88af622bea5873b045923f18c570f4015e51647f2424920d08b38d3",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{goal_writes,approval_reads}.rs with existing D1 Rust owners",
-      "compatibility_boundary": "Startup-only gates omit seven Goal write and five Approval/Label read registrations when Rust public ingress is enabled; unchanged legacy operations and explicit ingress-off compatibility remain debt. No Rust failure falls back to Node.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/approval_reads.rs and native/crates/d1-persistence/src/approval_reads.rs",
+      "compatibility_boundary": "Omit the Approval list, detail and Approval-issue association GET registrations in nativeApprovalReads mode. Approval comments, writes and explicit ingress-off reads remain existing migration debt.",
       "retirement_criterion": "Delete the corresponding legacy registrations after Rust is the sole supported backend owner in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve only explicitly scoped ingress-off compatibility and unmigrated operations."
       ],
@@ -59123,12 +59123,12 @@
       "head_sha256": "ab90d3a9aeabe936c3165c151ea7e650e6ab383519d7701b020cbadd37bc7af3",
       "change_kind": "modified_node_compatibility",
       "node_role": "transport_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{goal_writes,approval_reads}.rs with existing D1 Rust owners",
-      "compatibility_boundary": "Startup-only gates omit seven Goal write and five Approval/Label read registrations when Rust public ingress is enabled; unchanged legacy operations and explicit ingress-off compatibility remain debt. No Rust failure falls back to Node.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/approval_reads.rs and native/crates/d1-persistence/src/approval_reads.rs",
+      "compatibility_boundary": "Omit organization Label list and Issue-Approval association GET registrations in nativeApprovalReads mode. Keep unrelated Issue/Label operations and explicit ingress-off compatibility unchanged.",
       "retirement_criterion": "Delete the corresponding legacy registrations after Rust is the sole supported backend owner in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve only explicitly scoped ingress-off compatibility and unmigrated operations."
       ],
@@ -59142,12 +59142,12 @@
       "head_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{goal_writes,approval_reads}.rs with existing D1 Rust owners",
-      "compatibility_boundary": "Startup-only gates omit seven Goal write and five Approval/Label read registrations when Rust public ingress is enabled; unchanged legacy operations and explicit ingress-off compatibility remain debt. No Rust failure falls back to Node.",
+      "rust_authority": "Rust public Goal-write and Approval-read modules; existing Agent, Project, Resource and CLI owners remain unchanged",
+      "compatibility_boundary": "Pass the immutable startup nativeGoalWrites/nativeApprovalReads selections. Rust owns the configured seven Goal writes and five Approval/Label reads; existing Agent/CLI/Project mount expressions stay unchanged and no request-time fallback is added.",
       "retirement_criterion": "Delete the corresponding legacy registrations after Rust is the sole supported backend owner in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve only explicitly scoped ingress-off compatibility and unmigrated operations."
       ],
@@ -59177,13 +59177,13 @@
     {
       "mount_receiver": "api",
       "compatibility_boundary": "The API continues mounting the unchanged Agent router for compatibility. When native identity ingress is configured, it passes the startup-selected nativeAgentCorePaths flag: Rust owns roster/detail/me/permissions and six configuration/revision public paths, while Node registers no duplicate handlers for those paths. Other legacy Agent operations remain explicit migration debt.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
       "order_after": "api_route_registration",
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/agent_core.rs",
       "retirement_criterion": "Remove this Node mount after native Rust AgentCore ingress is the sole supported owner for these paths in every deployment mode.",
-      "review_status": "pending",
+      "review_status": "reviewed",
       "mount_expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
       "id": "rust-native-agent-core-router-v1",
       "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
@@ -59193,13 +59193,13 @@
     {
       "mount_receiver": "api",
       "compatibility_boundary": "The existing access router receives only the exact immutable startup-mode option. When Rust public ingress is configured, Rust owns all six CLI-auth operations and Node registers no CLI-auth handlers or lifecycle service; when ingress is off, only unchanged legacy behavior remains explicit migration debt. This admission allows the router mount, not new Node auth/business authority.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
       "order_after": "rudder_plugin_routes",
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/cli_auth.rs",
       "retirement_criterion": "Remove this router admission after the legacy CLI-auth compatibility registrations are retired in every supported deployment and the Rust-owned CLI path remains the supported default.",
-      "review_status": "pending",
+      "review_status": "reviewed",
       "mount_expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
       "id": "rust-native-cli-auth-router-v1",
       "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
@@ -59218,9 +59218,9 @@
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/goal_writes.rs",
       "compatibility_boundary": "This exact startup-selected Goal route adapter passes opts.rustPublicIngress to the compatibility router. In native public-ingress mode the seven migrated Goal write handlers are not registered; ingress-off legacy behavior remains available, and unmigrated Goal operations continue through their existing Node handlers. There is no request-time fallback.",
       "retirement_criterion": "Remove the Goal router admission after legacy Goal compatibility handlers are retired in every supported deployment and the corresponding Rust routes remain the supported owner.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending",
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed",
       "allowed_node_duties": [
         "Preserve only the existing ingress-off compatibility handlers and unmigrated Goal operations."
       ],
@@ -59259,9 +59259,9 @@
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/project_reads.rs",
       "compatibility_boundary": "The existing compatibility-named nativeProjectReads startup flag selects Rust ownership for migrated Project reads and writes together. Node exposes no corresponding handlers in configured public Rust mode. The reviewed Node boundary explicitly records the Rust Project write owner; this mount keeps the exact existing trusted expression.",
       "retirement_criterion": "Remove the Node Project read adapter after Rust owns these endpoints in every supported deployment and default no-Node acceptance covers collection/detail reads.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending"
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed"
     },
     {
       "id": "rust-native-issue-approval-reads-router-v1",
@@ -59275,9 +59275,9 @@
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/approval_reads.rs",
       "compatibility_boundary": "Pass the immutable startup nativeApprovalReads selection. In native mode omit this slice of existing Node GETs; all five public reads, permissions, reference resolution and response projection run in Rust. Preserve unrelated legacy Issue/Approval operations as debt.",
       "retirement_criterion": "Delete the corresponding Node read compatibility when native reads are supported in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending"
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed"
     },
     {
       "id": "rust-native-approval-reads-router-v1",
@@ -59291,9 +59291,9 @@
       "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/approval_reads.rs",
       "compatibility_boundary": "Pass the immutable startup nativeApprovalReads selection. In native mode omit this slice of existing Node GETs; all five public reads, permissions, reference resolution and response projection run in Rust. Preserve unrelated legacy Issue/Approval operations as debt.",
       "retirement_criterion": "Delete the corresponding Node read compatibility when native reads are supported in every deployment.",
-      "reviewer": "pending independent stage review",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/pending-boundaries.json",
-      "review_status": "pending"
+      "reviewer": "/root/rust_delivery_review_r15",
+      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/approval-read-stage-r1/independent-stage-review-r1.json",
+      "review_status": "reviewed"
     }
   ]
 }
