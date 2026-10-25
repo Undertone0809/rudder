@@ -34,6 +34,55 @@ test("runs docs checks for docs-only pull requests without escalating", () => {
   assert.deepEqual(plan.changedAreas, ["docs"]);
 });
 
+test("keeps the exact authority inventory policy scripts in affected qualification", () => {
+  const plan = createImpactPlan({
+    event: "pull_request",
+    files: [
+      "scripts/rust-backend-authority-inventory.mjs",
+      "scripts/rust-backend-authority-inventory.test.mjs",
+    ],
+  });
+
+  assert.equal(plan.fullQualification, false);
+  assert.equal(plan.qualification, "affected");
+  assert.deepEqual(plan.changedAreas, ["authority-policy"]);
+  assert.deepEqual(plan.requiredFamilies, ["architecture", "affected"]);
+  assert.deepEqual(plan.affectedScopes, ["authority-policy"]);
+});
+
+test("keeps policy inventory docs and escalates adjacent or mixed high-risk paths", () => {
+  const policyAndInventory = createImpactPlan({
+    event: "pull_request",
+    files: [
+      "scripts/rust-backend-authority-inventory.mjs",
+      "scripts/rust-backend-authority-inventory.test.mjs",
+      "doc/plans/2026-10-16-rudder-rust-backend-authority-inventory.json",
+    ],
+  });
+  assert.equal(policyAndInventory.fullQualification, false);
+  assert.deepEqual(policyAndInventory.changedAreas, ["authority-policy", "docs"]);
+  assert.deepEqual(policyAndInventory.requiredFamilies, ["architecture", "affected", "docs"]);
+
+  for (const files of [
+    ["scripts/rust-backend-authority-inventory.mjs", "scripts/other-helper.mjs"],
+    ["scripts/rust-backend-authority-inventory.mjs", "native/crates/server-foundation/src/lib.rs"],
+    ["scripts/ci-impact-plan.mjs"],
+    ["scripts/ci-impact-plan.test.mjs"],
+  ]) {
+    const plan = createImpactPlan({ event: "pull_request", files });
+    assert.equal(plan.fullQualification, true, files.join(", "));
+    assert.deepEqual(plan.requiredFamilies, ["architecture", "docs", "verify", "native", "desktop"]);
+  }
+
+  for (const event of ["merge_group", "workflow_dispatch", "push"]) {
+    const plan = createImpactPlan({
+      event,
+      files: ["scripts/rust-backend-authority-inventory.mjs"],
+    });
+    assert.equal(plan.fullQualification, true, event);
+  }
+});
+
 test("fails closed for shared, database, lockfile, native, desktop, and workflow changes", () => {
   for (const file of [
     "packages/shared/src/api.ts",
