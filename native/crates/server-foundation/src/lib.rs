@@ -70,6 +70,7 @@ mod automation_reads;
 pub mod browser_auth;
 mod cost_reads;
 mod goal_reads;
+pub(crate) mod goal_run_context;
 mod issue_checkout;
 mod issue_metadata_reads;
 mod llm_reflection;
@@ -84,6 +85,7 @@ use native_agent_jwt::NativeAgentJwtIdentity;
 use native_session_auth::NativeSessionIdentity;
 pub use native_session_revocation::NativeSessionRevocationRegistry;
 use public_ingress_config::NativeSessionAuthKind;
+mod goal_run_worker;
 pub mod native_chat_worker;
 
 mod native_chat_startup;

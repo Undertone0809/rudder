@@ -4,6 +4,42 @@ use std::fs::Metadata;
 use std::io;
 use std::path::Path;
 
+/// Keep canonical paths internally, but pass PostgreSQL conventional Windows
+/// paths: initdb launches postgres through cmd.exe, which rejects the verbatim
+/// `\\?\` form emitted by std::fs::canonicalize.
+pub(crate) fn postgres_command_path(path: &Path) -> std::borrow::Cow<'_, Path> {
+    #[cfg(windows)]
+    {
+        use std::{
+            ffi::OsString,
+            path::{Component, PathBuf, Prefix},
+        };
+        let mut components = path.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return std::borrow::Cow::Borrowed(path);
+        };
+        let mut result = match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:", char::from(drive))),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut value = OsString::from(r"\\");
+                value.push(server);
+                value.push(r"\");
+                value.push(share);
+                PathBuf::from(value)
+            }
+            _ => return std::borrow::Cow::Borrowed(path),
+        };
+        for component in components {
+            result.push(component.as_os_str());
+        }
+        std::borrow::Cow::Owned(result)
+    }
+    #[cfg(not(windows))]
+    {
+        std::borrow::Cow::Borrowed(path)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DirectoryIdentity {
     device: u64,
@@ -334,6 +370,31 @@ pub(crate) fn current_parent_pid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn postgres_commands_use_drive_and_unc_paths_without_verbatim_prefix() {
+        for (input, expected) in [
+            (
+                r"\\?\C:\Users\Rudder 用户\Postgres 18\bin\initdb.exe",
+                r"C:\Users\Rudder 用户\Postgres 18\bin\initdb.exe",
+            ),
+            (
+                r"\\?\UNC\server\share\Postgres 18\bin",
+                r"\\server\share\Postgres 18\bin",
+            ),
+            (r"C:\Postgres 18\bin", r"C:\Postgres 18\bin"),
+        ] {
+            assert_eq!(postgres_command_path(Path::new(input)), Path::new(expected));
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn postgres_command_path_preserves_unix_paths() {
+        let path = Path::new("/private/tmp/Rudder 用户/Postgres 18/bin/initdb");
+        assert_eq!(postgres_command_path(path), path);
+    }
 
     #[cfg(unix)]
     #[test]

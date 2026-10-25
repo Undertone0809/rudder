@@ -19,7 +19,9 @@ export type HeartbeatSessionReuseSuppression =
 
 export type HeartbeatRunAttemptStatus = "started" | "waiting_for_network" | "succeeded" | "failed" | "cancelled" | "timed_out";
 export type HeartbeatRunAttemptResumeSource = "fresh" | "same_session" | "pristine_replay";
-export type NativeChatExecutionAuthority = "legacy_ts" | "native_rust";
+export type RuntimeExecutionAuthority = "legacy_ts" | "native_rust";
+/** @deprecated Use RuntimeExecutionAuthority for non-Chat run ownership. */
+export type NativeChatExecutionAuthority = RuntimeExecutionAuthority;
 export type NativeChatProtocolPhase =
   | "no_thread_request"
   | "thread_start_indeterminate"

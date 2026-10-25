@@ -58,6 +58,75 @@ describe("run-detail-events", () => {
     } as HeartbeatRun)).toBeNull();
   });
 
+  it.each(["codex_local", "hermes_local"])("resolves a finalized %s run without an old-style log", (runtimeType) => {
+    expect(resolveRunChatTranscriptTarget({
+      id: "run-1",
+      contextSnapshot: {
+        conversationId: "conversation-1",
+        messageId: "user-message-1",
+        userMessageId: "user-message-1",
+        runtimeBindingId: `${runtimeType}-binding`,
+        nativeSegmentId: "native-segment-1",
+        assistantMessageId: "stale-context-assistant",
+      },
+      resultJson: {
+        nativeChatFinalization: {
+          result: { runId: "run-1", assistantMessageId: "native-assistant-1" },
+        },
+      },
+    } as unknown as HeartbeatRun)).toEqual({
+      conversationId: "conversation-1",
+      messageId: "native-assistant-1",
+    });
+  });
+
+  it("rejects a native finalization belonging to a neighboring run", () => {
+    expect(resolveRunChatTranscriptTarget({
+      id: "run-1",
+      chatConversationId: "conversation-1",
+      contextSnapshot: { assistantMessageId: "stale-assistant" },
+      resultJson: {
+        nativeChatFinalization: {
+          result: { runId: "another-run", assistantMessageId: "other-assistant" },
+        },
+      },
+    } as unknown as HeartbeatRun)).toBeNull();
+  });
+
+  it("uses only a status event bound to the selected run", () => {
+    const run = { id: "run-1", chatConversationId: "conversation-1" } as HeartbeatRun;
+    const events = [
+      makeEvent({ eventType: "status", seq: 2, payload: { runId: "run-1", assistantMessageId: "selected-assistant" } }),
+      makeEvent({ eventType: "status", seq: 3, runId: "another-run", payload: { runId: "run-1", assistantMessageId: "wrong-event-owner" } }),
+      makeEvent({ eventType: "status", seq: 4, payload: { runId: "another-run", assistantMessageId: "wrong-payload-owner" } }),
+      makeEvent({ eventType: "transcript.entry", seq: 5, payload: { runId: "run-1", assistantMessageId: "not-a-status" } }),
+    ];
+    expect(resolveRunChatTranscriptTarget(run, events)).toEqual({
+      conversationId: "conversation-1",
+      messageId: "selected-assistant",
+    });
+    expect(resolveRunChatTranscriptTarget(run, events.slice(1))).toBeNull();
+  });
+
+  it.each([null, "", "   "])("keeps a native no-output result authoritative (%s)", (assistantMessageId) => {
+    expect(resolveRunChatTranscriptTarget({
+      id: "run-1",
+      contextSnapshot: { conversationId: "conversation-1", messageId: "user-message-1", assistantMessageId: "stale-context-assistant" },
+      resultJson: { nativeChatFinalization: { result: { runId: "run-1", assistantMessageId } } },
+    } as unknown as HeartbeatRun, [
+      makeEvent({ eventType: "status", payload: { runId: "run-1", assistantMessageId: "stale-event-assistant" } }),
+    ])).toBeNull();
+  });
+
+  it.each([null, {}, { result: null }])("does not fall back through a malformed native finalization", (nativeChatFinalization) => {
+    expect(resolveRunChatTranscriptTarget({
+      id: "run-1",
+      chatConversationId: "conversation-1",
+      contextSnapshot: { assistantMessageId: "stale-context-assistant" },
+      resultJson: { nativeChatFinalization },
+    } as unknown as HeartbeatRun)).toBeNull();
+  });
+
   it("maps persisted chat transcript entries into the redacted run transcript shape", () => {
     expect(chatTranscriptEntriesToRunTranscriptEntries([
       {

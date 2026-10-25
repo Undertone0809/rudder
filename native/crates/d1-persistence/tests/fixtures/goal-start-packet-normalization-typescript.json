@@ -1,0 +1,91 @@
+{
+  "input": {
+    "version": 1,
+    "title": "  把已验证的发布结果交付给客户  ",
+    "description": "面向中国用户，记录可验证证据。",
+    "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+    "activation": {
+      "confirmed": true,
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "outcomeStatement": "  把已验证的发布结果交付给客户  ",
+      "objectiveMode": "target",
+      "criteria": [
+        {
+          "id": " primary-outcome ",
+          "label": " We will know it worked when the verified result is delivered ",
+          "evaluator": "artifact",
+          "evidenceRequirements": [
+            " https://example.com/release "
+          ],
+          "unknownCriterionField": true
+        }
+      ],
+      "autonomyEnvelope": {
+        "allowed": [
+          "bounded_reversible_work"
+        ]
+      },
+      "humanAuthorities": {},
+      "evaluationPolicy": {},
+      "actionDeadline": null,
+      "evaluationDeadline": "2026-10-25",
+      "initialContinuation": {
+        "kind": "commitment",
+        "summary": " Inspect the available context and produce the first bounded, reviewable artifact. ",
+        "wakeCondition": "  review the delivered evidence  ",
+        "unknownContinuationField": true
+      },
+      "initialPlan": {
+        "summary": " Inspect the available context and produce the first bounded, reviewable artifact. ",
+        "unknownPlanField": true
+      },
+      "unknownActivationField": true
+    }
+  },
+  "packet": {
+    "version": 1,
+    "title": "把已验证的发布结果交付给客户",
+    "description": "面向中国用户，记录可验证证据。",
+    "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+    "activation": {
+      "confirmed": true,
+      "ownerAgentId": "55555555-5555-4555-8555-555555555555",
+      "outcomeStatement": "把已验证的发布结果交付给客户",
+      "objectiveMode": "target",
+      "criteria": [
+        {
+          "id": "primary-outcome",
+          "label": "We will know it worked when the verified result is delivered",
+          "evaluator": "artifact",
+          "evidenceRequirements": [
+            "https://example.com/release"
+          ]
+        }
+      ],
+      "autonomyEnvelope": {
+        "allowed": [
+          "bounded_reversible_work"
+        ]
+      },
+      "humanAuthorities": {},
+      "evaluationPolicy": {},
+      "actionDeadline": null,
+      "evaluationDeadline": "2026-10-25T00:00:00.000Z",
+      "initialContinuation": {
+        "kind": "commitment",
+        "summary": "Inspect the available context and produce the first bounded, reviewable artifact.",
+        "wakeCondition": "review the delivered evidence"
+      },
+      "initialPlan": {
+        "summary": "Inspect the available context and produce the first bounded, reviewable artifact.",
+        "hypotheses": [],
+        "selectedPaths": [],
+        "rejectedPaths": [],
+        "sequencing": [],
+        "budgetAllocations": {},
+        "invalidationConditions": []
+      }
+    }
+  },
+  "packetHash": "96be337ecfef2ba26b484376910de50d93b669c03a213d2c57620fb5444d68d9"
+}

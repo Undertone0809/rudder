@@ -8,7 +8,7 @@ use crate::agent_core::instructions;
 use crate::native_chat::config::resolve_agent_env;
 use rudder_claude_code::MAX_USER_INPUT_BYTES;
 use serde_json::{Value, json};
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::{
     collections::BTreeMap,
     fs,
@@ -20,6 +20,11 @@ use std::{
 /// it is never a path supplied by a request.
 pub struct ClaudeLocalConfig {
     pub home: PathBuf,
+    pub agent_home: PathBuf,
+    pub memory_dir: PathBuf,
+    /// Organization workspace root resolved from the same trusted host map
+    /// used by Agent Run context. Populated for Goal runs only.
+    pub organization_workspace_root: Option<PathBuf>,
     pub profile_id: String,
     pub executable_search_path: String,
     pub env: BTreeMap<String, String>,
@@ -28,6 +33,13 @@ pub struct ClaudeLocalConfig {
     pub grace_sec: Option<u64>,
     pub permission_mode: Option<String>,
     pub max_turns_per_run: Option<u32>,
+    /// Legacy runtime persona override used by wakeup templates. Durable Agent
+    /// instructions remain independently resolved as the Claude system prompt.
+    pub prompt_template: Option<String>,
+    /// Bounded, same-directory instruction files selected from the resolved
+    /// Agent bundle. The native Claude adapter inserts these after the entry
+    /// using the legacy SOUL/TOOLS/MEMORY order.
+    pub instruction_siblings: Vec<(String, String)>,
 }
 
 pub(crate) async fn resolve_claude_config(
@@ -68,6 +80,74 @@ pub(crate) async fn resolve_claude_config(
     })?
     .ok_or_else(|| invalid("Chat or selected Agent is unavailable"))?;
 
+    resolve_claude_config_for_row(tx, &organization_id, row, host).await
+}
+
+/// Resolve the same trusted Claude profile, workspace, environment, and
+/// instructions for a Goal owner. No synthetic Chat conversation is created.
+pub(crate) async fn resolve_goal_claude_config(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    goal_id: &str,
+    agent_id: &str,
+    host: &LocalHostContext,
+) -> std::result::Result<super::ResolvedCodexConfig, super::Error> {
+    let organization_id =
+        super::super::validation::canonical_uuid(organization_id, "organization id")?;
+    let goal_id = super::super::validation::canonical_uuid(goal_id, "Goal id")?;
+    let agent_id = super::super::validation::canonical_uuid(agent_id, "Agent id")?;
+    let row = sqlx::query(
+        "/* native_goal_config_agent_lock */
+         SELECT 'active'::text AS conversation_status, 'chat'::text AS conversation_kind,
+                a.id::text AS preferred_agent_id, a.id::text AS routed_agent_id,
+                NULL::text AS primary_issue_id, NULL::text AS model_override,
+                NULL::text AS effort_override, false AS plan_mode,
+                a.id::text AS agent_id, a.name AS agent_name, a.role AS agent_role,
+                a.status AS agent_status, a.workspace_key,
+                a.agent_runtime_type, a.agent_runtime_config::text AS agent_runtime_config
+         FROM goals g
+         JOIN agents a ON a.org_id=g.org_id AND a.id=g.owner_agent_id
+         WHERE g.org_id=$1::uuid AND g.id=$2::uuid AND g.owner_agent_id=$3::uuid
+           AND g.lifecycle='active' AND g.status='active'
+         FOR UPDATE OF g FOR SHARE OF a NOWAIT",
+    )
+    .bind(&organization_id)
+    .bind(&goal_id)
+    .bind(&agent_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::Database(ref database) if database.code().as_deref() == Some("55P03") => {
+            super::http(409, "Goal owner Agent is being changed or removed")
+        }
+        other => other.into(),
+    })?
+    .ok_or_else(|| invalid("Active Goal or assigned Agent is unavailable"))?;
+
+    let mut config = resolve_claude_config_for_row(tx, &organization_id, row, host).await?;
+    let organization_workspace_root = crate::agent_core::resolve_organization_workspace_root(
+        &host.instance_root().to_string_lossy(),
+        &host.workspace_home().to_string_lossy(),
+        &host.previous_documents_root().to_string_lossy(),
+        host.friendly_workspace_home(),
+        host.host_id(),
+        &organization_id,
+    )
+    .map_err(|_| invalid("organization workspace context is unavailable"))?;
+    let claude = config
+        .claude
+        .as_mut()
+        .ok_or_else(|| invalid("resolved Goal Agent has no Claude configuration"))?;
+    claude.organization_workspace_root = Some(organization_workspace_root);
+    Ok(config)
+}
+
+async fn resolve_claude_config_for_row(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    row: PgRow,
+    host: &LocalHostContext,
+) -> std::result::Result<super::ResolvedCodexConfig, super::Error> {
     let selected_agent_id = row
         .try_get::<Option<String>, _>("preferred_agent_id")?
         .or(row.try_get::<Option<String>, _>("routed_agent_id")?);
@@ -77,7 +157,7 @@ pub(crate) async fn resolve_claude_config(
         || row.try_get::<String, _>("agent_runtime_type")? != "claude_local"
         || matches!(
             row.try_get::<String, _>("agent_status")?.as_str(),
-            "terminated" | "pending_approval"
+            "paused" | "terminated" | "pending_approval"
         )
         || selected_agent_id.as_deref() != Some(agent_id.as_str())
     {
@@ -104,6 +184,7 @@ pub(crate) async fn resolve_claude_config(
         "permissionMode",
         "dangerouslySkipPermissions",
         "maxTurnsPerRun",
+        "promptTemplate",
         "timeoutSec",
         "graceSec",
         "instructionsBundleMode",
@@ -126,6 +207,7 @@ pub(crate) async fn resolve_claude_config(
     let timeout_sec = optional_bounded_seconds(object.get("timeoutSec"), "timeoutSec", 3600)?;
     let grace_sec = optional_bounded_nonzero_seconds(object.get("graceSec"), "graceSec", 60)?;
     let max_turns_per_run = optional_bounded_turns(object.get("maxTurnsPerRun"))?;
+    let prompt_template = optional_prompt_template(object.get("promptTemplate"))?;
     let dangerously_skip_permissions = match object.get("dangerouslySkipPermissions") {
         None | Some(Value::Bool(false)) => false,
         Some(Value::Bool(true)) => {
@@ -167,7 +249,7 @@ pub(crate) async fn resolve_claude_config(
         return Err(invalid("Claude heartbeat policy must be an object"));
     }
 
-    let env = resolve_agent_env(tx, &organization_id, object.get("env")).await?;
+    let env = resolve_agent_env(tx, organization_id, object.get("env")).await?;
     let env_facts: Vec<Value> = env
         .iter()
         .map(|(key, value)| json!({"name":key,"sha256":fingerprint::digest(value.as_bytes())}))
@@ -179,7 +261,7 @@ pub(crate) async fn resolve_claude_config(
             "SELECT project_id::text AS project_id, project_workspace_id::text AS workspace_id
              FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
         )
-        .bind(&organization_id)
+        .bind(organization_id)
         .bind(issue_id)
         .fetch_optional(&mut **tx)
         .await?
@@ -193,7 +275,7 @@ pub(crate) async fn resolve_claude_config(
     };
     let workspace = resolve_issue_workspace(
         tx,
-        &organization_id,
+        organization_id,
         issue_id.as_deref(),
         project_id.as_deref(),
         workspace_id.as_deref(),
@@ -207,31 +289,33 @@ pub(crate) async fn resolve_claude_config(
         "workspaceKey":row.try_get::<Option<String>,_>("workspace_key")?,
         "agentRuntimeConfig":config,
     });
-    let fallback_cwd = instructions::managed_agent_workspace_path(
+    let agent_home = instructions::managed_agent_workspace_path(
         host.instance_root(),
         host.workspace_home(),
         host.previous_documents_root(),
         host.friendly_workspace_home(),
-        &organization_id,
+        organization_id,
         &agent_row,
     )
     .map_err(|_| invalid("managed Agent workspace is unavailable"))?;
+    let memory_dir = agent_home.join("memory");
     let cwd = if let Some(workspace) = workspace.as_ref() {
         workspace.cwd.clone()
     } else {
-        validate_managed_cwd(&fallback_cwd, host.workspace_home())?
+        validate_managed_cwd(&agent_home, host.workspace_home())?
     };
     let instructions = instructions::resolve_readonly_for_runtime(
         host.instance_root(),
         host.workspace_home(),
         host.previous_documents_root(),
         host.friendly_workspace_home(),
-        &organization_id,
+        organization_id,
         &agent_row,
         host.operator_home(),
         &cwd,
     )
     .map_err(|_| invalid("Agent instruction bundle cannot be resolved safely"))?;
+    let instruction_siblings = instructions.sibling_content;
     if instructions
         .entry_content
         .as_ref()
@@ -301,6 +385,9 @@ pub(crate) async fn resolve_claude_config(
         opencode: None,
         claude: Some(ClaudeLocalConfig {
             home,
+            agent_home,
+            memory_dir,
+            organization_workspace_root: None,
             profile_id,
             executable_search_path: host.executable_search_path().to_owned(),
             env,
@@ -309,6 +396,8 @@ pub(crate) async fn resolve_claude_config(
             grace_sec,
             permission_mode,
             max_turns_per_run,
+            prompt_template,
+            instruction_siblings,
         }),
         cursor: None,
     })
@@ -336,6 +425,21 @@ fn bounded_string(value: Option<&Value>, label: &str) -> Result<Option<String>> 
             "effort" => "Claude effort is invalid",
             _ => "Claude runtime setting is invalid",
         })),
+    }
+}
+
+fn optional_prompt_template(value: Option<&Value>) -> Result<Option<String>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(template)) if template.len() <= MAX_USER_INPUT_BYTES => {
+            if template.contains('\0') {
+                return Err(invalid(
+                    "Claude promptTemplate contains an invalid character",
+                ));
+            }
+            Ok(Some(template.clone()))
+        }
+        _ => Err(invalid("Claude promptTemplate exceeds the supported size")),
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     constants::{POSTGRES_MAJOR, VERSION_TIMEOUT},
     error::OwnerError,
-    platform::{ParentMonitor, directory_identity},
+    platform::{ParentMonitor, directory_identity, postgres_command_path},
     process::supervised_spawn,
     protocol::{PROTOCOL_SCHEMA, StartRequest},
 };
@@ -296,7 +296,7 @@ async fn command_version(
     cancellation: &mut watch::Receiver<bool>,
 ) -> Result<String, OwnerError> {
     check_startup_control(parent, cancellation)?;
-    let mut command = Command::new(path);
+    let mut command = Command::new(postgres_command_path(path).as_ref());
     command
         .arg("--version")
         .stdin(std::process::Stdio::null())

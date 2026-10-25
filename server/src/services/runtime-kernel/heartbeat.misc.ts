@@ -13,10 +13,11 @@ import type {
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
-import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lte, or, sql } from "drizzle-orm";
 import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
+import { logger } from "../../middleware/logger.js";
 import { type BudgetEnforcementScope } from "../budgets.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
@@ -26,13 +27,116 @@ import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
+type CancellationIntent = { errorCode?: string | null; error?: string | null } | null | undefined;
+type CancelRun = (runId: string, reason: string, options: { startNext: false }) => Promise<unknown>;
+type LeaseRenewal = false | CancellationIntent;
+
+const DEFAULT_BUDGET_CANCELLATION_REASON = "Cancelled due to budget pause";
+
+export async function cancelRunForPersistedIntent(
+  runId: string,
+  intent: CancellationIntent,
+  activeRunExecutions: Set<string>,
+  cancelRunInternal: CancelRun,
+  releaseExecutionSlot = true,
+) {
+  if (intent?.errorCode !== "cancel_requested") return false;
+
+  if (releaseExecutionSlot) activeRunExecutions.delete(runId);
+  await cancelRunInternal(
+    runId,
+    intent.error ?? DEFAULT_BUDGET_CANCELLATION_REASON,
+    { startNext: false },
+  );
+  return true;
+}
+
+export async function startExecutionLeaseRenewal(
+  runId: string,
+  ownerToken: string,
+  renewLease: (runId: string, ownerToken: string) => Promise<LeaseRenewal>,
+  abortRunExecution: (runId: string) => void,
+  activeRunExecutions: Set<string>,
+  cancelRunInternal: CancelRun,
+) {
+  const renewed = await renewLease(runId, ownerToken);
+  if (!renewed) {
+    abortRunExecution(runId);
+    return { cancelled: true, timer: null };
+  }
+  if (await cancelRunForPersistedIntent(runId, renewed, activeRunExecutions, cancelRunInternal)) {
+    return { cancelled: true, timer: null };
+  }
+
+  const timer = setInterval(() => {
+    void renewLease(runId, ownerToken)
+      .then(async (result) => {
+        if (!result) abortRunExecution(runId);
+        else await cancelRunForPersistedIntent(runId, result, activeRunExecutions, cancelRunInternal, false);
+      })
+      .catch((error) => {
+        logger.warn({ err: error, runId }, "failed to honor persisted run cancellation");
+      });
+  }, 60_000);
+  timer.unref?.();
+  return { cancelled: false, timer };
+}
+
+export async function queuedLegacyRunCancellationReason(db: any, run: any) {
+  if (run.errorCode === "cancel_requested") return run.error ?? DEFAULT_BUDGET_CANCELLATION_REASON;
+  const persisted = await db
+    .select({ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.id, run.id),
+      eq(heartbeatRuns.executionAuthority, "legacy_ts"),
+      eq(heartbeatRuns.status, "queued"),
+    ))
+    .limit(1)
+    .then((rows: Array<{ errorCode: string | null; error: string | null }>) => rows[0] ?? null);
+  return persisted?.errorCode === "cancel_requested"
+    ? persisted.error ?? DEFAULT_BUDGET_CANCELLATION_REASON
+    : null;
+}
+
+export async function hasActiveNativeGoalRun(tx: any, agentId: string) {
+  const active = await tx
+    .select({ id: heartbeatRuns.id })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.agentId, agentId),
+      eq(heartbeatRuns.executionAuthority, "native_rust"),
+      isNotNull(heartbeatRuns.goalId),
+      or(
+        inArray(heartbeatRuns.status, ["queued", "running"]),
+        eq(heartbeatRuns.terminalEffectsPending, true),
+      ),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  return active !== null;
+}
+
 export function createHeartbeatMiscHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
 
   function assertLegacyRunAuthority(run: any) {
     if (run?.executionAuthority === "native_rust") {
-      throw conflict("Native Chat runs are controlled by the Rust runtime");
+      throw conflict("Native Rust runs are controlled by the Rust runtime");
     }
+  }
+
+  async function cancelQueuedRunDuringClaim(run: any, reason: string) {
+    const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
+      finishedAt: new Date(), error: reason, errorCode: "cancelled",
+    }, { expectedStatuses: ["queued"], processExitedAt: new Date() });
+    if (!cancelled) return null;
+    await setWakeupStatus(run.wakeupRequestId, "cancelled", { finishedAt: new Date(), error: reason });
+    await appendRunEvent(cancelled, {
+      eventType: "lifecycle", stream: "system", level: "warn", message: "run cancelled",
+    });
+    await completeTerminalControlEffects(cancelled, { startNext: false });
+    return null;
   }
 
   async function resumeDeferredWakeupsForAgent(agentId: string) {
@@ -49,6 +153,7 @@ export function createHeartbeatMiscHandlers(context: any) {
           and(
             eq(agentWakeupRequests.orgId, agent.orgId),
             eq(agentWakeupRequests.agentId, agentId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             eq(agentWakeupRequests.status, "deferred_agent_paused"),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -150,6 +255,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .where(
         and(
           eq(agentWakeupRequests.orgId, orgId),
+          eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
           inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
           sql`${agentWakeupRequests.runId} is null`,
           sql`${effectiveProjectId} = ${projectId}`,
@@ -170,6 +276,7 @@ export function createHeartbeatMiscHandlers(context: any) {
         .where(
           and(
             eq(agentWakeupRequests.orgId, scope.orgId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -183,6 +290,7 @@ export function createHeartbeatMiscHandlers(context: any) {
           and(
             eq(agentWakeupRequests.orgId, scope.orgId),
             eq(agentWakeupRequests.agentId, scope.scopeId),
+            eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
             inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
             sql`${agentWakeupRequests.runId} is null`,
           ),
@@ -200,7 +308,10 @@ export function createHeartbeatMiscHandlers(context: any) {
         error: "Cancelled due to budget pause",
         updatedAt: now,
       })
-      .where(inArray(agentWakeupRequests.id, wakeupIds));
+      .where(and(
+        inArray(agentWakeupRequests.id, wakeupIds),
+        eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
+      ));
 
     return wakeupIds.length;
   }
@@ -283,6 +394,7 @@ export function createHeartbeatMiscHandlers(context: any) {
             "deferred_goal_focus",
             "deferred_goal_blocked",
           ]),
+          eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
           sql`${agentWakeupRequests.requestedAt} <= (
             select ${issues.executionCancellationAt}
             from ${issues}
@@ -761,5 +873,5 @@ export function createHeartbeatMiscHandlers(context: any) {
     };
   }
 
-  return { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelIssueRunsInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics };
+  return { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelIssueRunsInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, cancelQueuedRunDuringClaim };
 }

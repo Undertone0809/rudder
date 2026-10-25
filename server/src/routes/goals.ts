@@ -320,7 +320,7 @@ export function goalRoutes(
     res.status(201).json(publicGoalView(goal));
   });
 
-  router.post("/orgs/:orgId/goals/start-preview", validate(previewGoalStartSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/orgs/:orgId/goals/start-preview", validate(previewGoalStartSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertBoard(req);
     assertCompanyAccess(req, orgId);

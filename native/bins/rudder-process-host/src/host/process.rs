@@ -162,6 +162,7 @@ pub(super) struct OperationEvidence {
     sequence: AtomicU64,
     stdout_offset: AtomicU64,
     stderr_offset: AtomicU64,
+    request_id: String,
     owner_token: String,
     child_pid: u32,
     process_group: u32,
@@ -222,6 +223,7 @@ fn listener_owned_by_process_group(port: u16, expected_pgid: u32) -> io::Result<
 impl OperationEvidence {
     fn create(
         runtime_root: &Path,
+        request_id: String,
         owner_token: String,
         child_pid: u32,
         process_group: u32,
@@ -247,6 +249,7 @@ impl OperationEvidence {
             sequence: AtomicU64::new(0),
             stdout_offset: AtomicU64::new(0),
             stderr_offset: AtomicU64::new(0),
+            request_id,
             owner_token,
             child_pid,
             process_group,
@@ -259,7 +262,7 @@ impl OperationEvidence {
     fn write_owner_descriptor(&self) -> Result<(), &'static str> {
         atomic_json(
             &self.operation_root.join("owner-descriptor.json"),
-            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"ownerKind":self.owner_kind,"opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
+            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"ownerKind":self.owner_kind,"requestId":self.request_id,"opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
         )
     }
     fn record_output(&self, stream: &str, bytes: &[u8]) -> Result<(), &'static str> {
@@ -287,7 +290,7 @@ impl OperationEvidence {
             .map_err(|_| "output_index_unavailable")?;
         atomic_json(
             &self.terminal_path,
-            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"opaqueOwnerToken":self.owner_token,"childPid":self.child_pid,"processGroup":self.process_group,"port":self.port,"terminal":terminal}),
+            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"requestId":self.request_id,"opaqueOwnerToken":self.owner_token,"childPid":self.child_pid,"processGroup":self.process_group,"port":self.port,"terminal":terminal}),
         )
     }
 }
@@ -474,7 +477,7 @@ pub(super) fn spawn_child(
     let pid = child.id();
     let pgid = pid;
     let identity = ChildIdentity {
-        request_id,
+        request_id: request_id.clone(),
         owner_token: owner_token.clone(),
     };
     let boundary = match OwnedProcessBoundary::attach(&child) {
@@ -500,6 +503,7 @@ pub(super) fn spawn_child(
     }
     let evidence = match OperationEvidence::create(
         Path::new(&runtime_root),
+        request_id,
         owner_token,
         pid,
         pgid,

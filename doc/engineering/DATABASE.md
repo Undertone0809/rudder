@@ -67,6 +67,15 @@ server startup:
   relationships, journal state, and restart persistence. A new schema epoch
   must add its historical fixture and fingerprint before release.
 
+Before a long test or packaging run after adding a migration, update the DB
+catalog assertions, Rust migration-manifest golden, and current candidate's
+release compatibility fingerprint together. Run the focused catalog and
+compatibility checks first; keep published fixture fingerprints unchanged.
+Pin `RUSTUP_TOOLCHAIN` for test subprocess builds to the same compiler used by
+the native checks. Pin `RUDDER_POSTGRES_BIN_DIR` and, when PATH contains another
+PostgreSQL version, `RUDDER_NATIVE_MIGRATIONS_PG_DUMP` to the supported runtime;
+check `pg_dump --version` before running backup/upgrade fixtures.
+
 The recovery point is a logical PostgreSQL dump produced by the existing backup
 library. For large hosted databases, use the provider's physical snapshot or
 `pg_dump`/restore workflow as the operational recovery point; do not disable the

@@ -202,8 +202,12 @@ export async function startNativeChatFixture(options: FixtureOptions) {
       env,
     ));
     const provider = path.join(root, "bin/provider");
+    // A reused synthetic executable pins its compiled provider fixture bytes.
+    // Select those same sources without changing the server/UI under test;
+    // the Rust fixture still validates their hash before starting.
+    const providerSourceRoot = path.resolve(process.env.RUDDER_NATIVE_CHAT_E2E_PROVIDER_SOURCE_ROOT?.trim() || REPO);
     const source = await readFile(path.join(
-      REPO,
+      providerSourceRoot,
       options.runtimeType === "hermes_local"
         ? "tests/e2e/fixtures/fake-hermes.py"
         : "native/crates/native-chat-executor/tests/fixtures/fake_codex.py",

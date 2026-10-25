@@ -1,6 +1,5 @@
 //! Shared transactional activity and non-null-FK outbox writer.
 use serde_json::{Value, json};
-use sqlx::Row;
 use std::env;
 use uuid::Uuid;
 
@@ -54,6 +53,29 @@ pub(crate) async fn write_activity_options(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: ActivityWrite<'_>,
 ) -> Result<String, sqlx::Error> {
+    write_activity_inner(tx, request, None)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
+}
+
+/// Write an activity and its outbox row once for an organization-scoped
+/// idempotency key. A duplicate does not emit another outbox event, matching
+/// the existing Node `logActivity` behavior.
+pub(crate) async fn write_activity_idempotent(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    request: ActivityWrite<'_>,
+    idempotency_key: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(write_activity_inner(tx, request, Some(idempotency_key))
+        .await?
+        .is_some())
+}
+
+async fn write_activity_inner(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    request: ActivityWrite<'_>,
+    idempotency_key: Option<&str>,
+) -> Result<Option<String>, sqlx::Error> {
     let ActivityWrite {
         org,
         audit,
@@ -89,11 +111,21 @@ pub(crate) async fn write_activity_options(
     } else {
         None
     };
-    let row = sqlx::query("INSERT INTO activity_log (org_id,actor_type,actor_id,action,entity_type,entity_id,agent_id,run_id,details) VALUES ($1::uuid,$2,$3,$4,$5,$6,$9::uuid,$7::uuid,$8::jsonb) RETURNING id::text")
-        .bind(org).bind(audit.actor_type).bind(&audit.actor_id).bind(action).bind(entity_type).bind(entity_id)
-        .bind(run_id.as_deref()).bind(sanitized_details.as_ref().map(Value::to_string)).bind(options.agent_id)
-        .fetch_one(&mut **tx).await?;
-    let activity_id: String = row.try_get("id")?;
+    let details = sanitized_details.as_ref().map(Value::to_string);
+    let activity_id = if let Some(idempotency_key) = idempotency_key {
+        sqlx::query_scalar::<_, String>("INSERT INTO activity_log (org_id,actor_type,actor_id,action,entity_type,entity_id,agent_id,run_id,details,idempotency_key) VALUES ($1::uuid,$2,$3,$4,$5,$6,$9::uuid,$7::uuid,$8::jsonb,$10) ON CONFLICT (org_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id::text")
+            .bind(org).bind(audit.actor_type).bind(&audit.actor_id).bind(action).bind(entity_type).bind(entity_id)
+            .bind(run_id.as_deref()).bind(details).bind(options.agent_id).bind(idempotency_key)
+            .fetch_optional(&mut **tx).await?
+    } else {
+        Some(sqlx::query_scalar::<_, String>("INSERT INTO activity_log (org_id,actor_type,actor_id,action,entity_type,entity_id,agent_id,run_id,details,idempotency_key) VALUES ($1::uuid,$2,$3,$4,$5,$6,$9::uuid,$7::uuid,$8::jsonb,$10) RETURNING id::text")
+            .bind(org).bind(audit.actor_type).bind(&audit.actor_id).bind(action).bind(entity_type).bind(entity_id)
+            .bind(run_id.as_deref()).bind(details).bind(options.agent_id).bind(Option::<&str>::None)
+            .fetch_one(&mut **tx).await?)
+    };
+    let Some(activity_id) = activity_id else {
+        return Ok(None);
+    };
     let mut payload = json!({"actorType":audit.actor_type,"actorId":audit.actor_id,"action":action,"entityType":entity_type,"entityId":entity_id,"agentId":options.agent_id,"runId":run_id,"details":sanitized_details});
     if let Some(effects) = options.effects {
         payload["agentRuntimeEffects"] = effects.clone();
@@ -101,7 +133,7 @@ pub(crate) async fn write_activity_options(
     sqlx::query("INSERT INTO organization_mutation_outbox (org_id,activity_id,event_type,payload) VALUES ($1::uuid,$2::uuid,'activity.logged',$3::jsonb)")
         .bind(org).bind(&activity_id).bind(payload.to_string())
         .execute(&mut **tx).await?;
-    Ok(activity_id)
+    Ok(Some(activity_id))
 }
 
 fn normalize_run_id(value: &str) -> Option<String> {

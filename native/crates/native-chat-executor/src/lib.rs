@@ -3,14 +3,20 @@
 //! provider terminal data and host receipts require a separate finalizer.
 mod claude;
 mod cursor;
+mod goal;
 mod hermes;
 mod native_turn;
 mod opencode;
 mod pi;
 mod profile;
+mod rudder_instructions;
 mod wire;
 pub use claude::{ClaudeExecutionError, ClaudeExecutionObservation};
 pub use cursor::{CursorExecutionError, CursorExecutionObservation};
+pub use goal::{
+    GoalRunExecutionObservation, GoalRunExecutionState, GoalRunExecutorError,
+    execute_goal_claude_run,
+};
 pub use opencode::{OpenCodeExecutionError, OpenCodeExecutionObservation};
 pub use pi::{
     PiAdapterError, PiExecution, PiExecutionObservation, PiExecutionPhase, PiStateSnapshot,
@@ -908,6 +914,10 @@ where
                     &attempt_id,
                     &owner_token,
                     existing,
+                    &BTreeMap::new(),
+                    &[],
+                    false,
+                    |_| Ok(()),
                     |transport| {
                         let effect = handle.block_on(async {
                             tokio::time::timeout(

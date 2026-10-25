@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 pub use crate::runtime_bindings::Error;
 use crate::runtime_bindings::IdentityInput;
@@ -32,6 +32,15 @@ pub use actor::{
 pub use send_authority::{SendAuthority, classify_existing_send, classify_first_send};
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// Reuse the existing Agent/organization hard-stop admission preflight for
+/// non-Chat native work that shares the heartbeat Run budget contract.
+pub(crate) async fn lock_goal_run_budget_state(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+) -> Result<()> {
+    budget::lock_policy_state(tx, organization_id).await
+}
 
 fn http(status: u16, message: impl Into<String>) -> Error {
     Error::Http(status, message.into())

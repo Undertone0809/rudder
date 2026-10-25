@@ -18,6 +18,7 @@ use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
+mod agent_runs;
 mod approval_reads;
 mod browser_session;
 mod cli_auth;
@@ -155,6 +156,7 @@ pub struct PublicIngressRuntime {
     server: actix_web::dev::Server,
     handle: actix_web::dev::ServerHandle,
     bound_addr: SocketAddr,
+    goal_run_worker: Option<crate::goal_run_worker::GoalRunWorker>,
     session_auth_kind: Option<NativeSessionAuthKind>,
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
@@ -275,6 +277,8 @@ impl PublicIngressRuntime {
         let native_identity_enabled = config.identity_auth.is_some();
         let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
         let local_account_lifecycle_enabled = config.local_account_auth.is_some();
+        let goal_run_runtime = config.native_chat_runtime.clone();
+        let goal_run_identity = config.identity_auth.clone();
         let local_implicit_enabled = config
             .identity_auth
             .as_ref()
@@ -448,10 +452,24 @@ impl PublicIngressRuntime {
         .bind(listen_addr)?;
         let bound_addr = *http.addrs().first().ok_or(ServerError::NoBoundAddress)?;
         let server = http.run();
+        let goal_run_worker = match (&foundation.database, goal_run_runtime, goal_run_identity) {
+            (DatabaseState::Configured(pool), Some(runtime), Some(identity))
+                if runtime.host.claude_runtime().is_some()
+                    && runtime.host.has_trusted_executable_search_path() =>
+            {
+                Some(crate::goal_run_worker::GoalRunWorker::start(
+                    pool.clone(),
+                    runtime,
+                    identity,
+                ))
+            }
+            _ => None,
+        };
         Ok(Self {
             handle: server.handle(),
             server,
             bound_addr,
+            goal_run_worker,
             session_auth_kind,
             native_identity_enabled,
             local_account_lifecycle_enabled,
@@ -489,7 +507,16 @@ impl PublicIngressRuntime {
         self.handle.clone()
     }
     pub async fn run(self) -> std::io::Result<()> {
-        self.server.await
+        let Self {
+            server,
+            mut goal_run_worker,
+            ..
+        } = self;
+        let result = server.await;
+        if let Some(worker) = goal_run_worker.as_mut() {
+            worker.shutdown().await;
+        }
+        result
     }
 }
 
@@ -684,6 +711,35 @@ async fn proxy_request(
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
+    if let Some(reference) = agent_runs::cancellation_reference(&request) {
+        let target = match &state.foundation.database {
+            DatabaseState::Configured(pool) => match agent_runs::resolve_native_goal_cancel_target(
+                pool, &state, &request, &reference,
+            )
+            .await
+            {
+                Ok(target) => target,
+                Err(error) => {
+                    tracing::warn!(error = %error, "native Agent Run cancellation lookup failed");
+                    return state.foundation.json_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "agent_run_cancel_unavailable",
+                    );
+                }
+            },
+            DatabaseState::Disabled => {
+                return state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "agent_run_cancel_unavailable",
+                );
+            }
+        };
+        if let Some(target) = target {
+            return agent_runs::cancel_native_goal_run(state, request, payload, target).await;
+        }
+        // The D1 preflight did not select a unique native Goal Run. Leave both
+        // request and Payload untouched for the existing legacy route.
+    }
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
@@ -697,7 +753,7 @@ async fn proxy_request(
         return project_writes::dispatch_alias(state, request, payload).await;
     }
     if goal_writes::is_reserved_path(request.uri().path(), request.method()) {
-        return goal_writes::dispatch_alias(state, request, payload).await;
+        return goal_writes::dispatch_alias(state, proxy, request, payload).await;
     }
     if agent_core::is_agent_create_path(request.uri().path(), request.method())
         || agent_core::is_detail_path(request.uri().path(), request.method())

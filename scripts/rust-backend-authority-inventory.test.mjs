@@ -167,6 +167,7 @@ const goalLegacyBridgePaths = [
   "server/src/services/chat-agent-runs.ts",
   "server/src/services/runtime-kernel/heartbeat.execute.ts",
   "server/src/services/runtime-kernel/heartbeat.ts",
+  "server/src/services/runtime-kernel/heartbeat.misc.ts",
   "server/src/services/runtime-kernel/heartbeat.wakeup.ts",
 ];
 
@@ -197,34 +198,44 @@ const goalBridgeTestSources = {
     base: `export function executeRun(run, executionOwnerToken) {
   return setInterval(() => {
     void renewRunExecutionLease(run.id, executionOwnerToken).then((renewed) => { if (!renewed) lost = true; });
-  }, 1000);
+  }, 60_000);
 }
 `,
     head: `export function executeRun(run, executionOwnerToken) {
-  return setInterval(() => {
-    void renewRunExecutionLease(run.id, executionOwnerToken).then((renewed) => { if (!renewed) lost = true; else observeGoalStopIntent(); });
-  }, 1000);
+  return startExecutionLeaseRenewal(run.id, executionOwnerToken, renewRunExecutionLease);
 }
 `,
   },
   "server/src/services/runtime-kernel/heartbeat.ts": {
     base: `export async function stopRun(db, runId) {
-  const existing = await db.select({ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }).from(heartbeatRuns);
+  const cancellation = await db.select({ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }).from(heartbeatRuns);
   return db.transaction(async (tx) => {
-    const existingRun = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns);
     await tx.update(heartbeatRuns).set({ status: "cancelled" }).where(eq(heartbeatRuns.id, runId));
-    return existingRun ?? existing;
+    return cancellation;
   });
 }
 `,
     head: `export async function stopRun(db, runId) {
-  const existing = await db.select({ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }).from(heartbeatRuns);
   return db.transaction(async (tx) => {
-    const stoppedRun = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
-    const existingRun = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns);
     await tx.update(heartbeatRuns).set({ status: "cancelled" }).where(eq(heartbeatRuns.id, runId));
-    return stoppedRun ?? existingRun ?? existing;
+    return null;
   });
+}
+`,
+  },
+  "server/src/services/runtime-kernel/heartbeat.misc.ts": {
+    base: `export const existingHelper = true;
+`,
+    head: `export async function queuedLegacyRunCancellationReason(db, run) {
+  return db.select({ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }).from(heartbeatRuns);
+}
+export async function hasActiveNativeGoalRun(tx, agentId) {
+  return tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns);
+}
+export function startExecutionLeaseRenewal(runId, ownerToken, renewLease) {
+  return setInterval(() => {
+    void renewLease(runId, ownerToken).then((result) => { if (!result) abortRunExecution(runId); });
+  }, 60_000);
 }
 `,
   },
@@ -862,7 +873,7 @@ test("trusted helper semantics come from checker-pinned digests, not record revi
   assert(result.failures.some((failure) => failure.includes("statically trusted exact-source digest")));
 });
 
-test("Goal legacy-owner bridge production pins match the exact reviewed B source contract", () => {
+test("Goal legacy-owner bridge production pins match the exact candidate source contract", () => {
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.id, "goal-budget-cross-owner-stop-v1");
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.semantic_operation, "goal_budget.request_legacy_run_cancellation");
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.rust_authority, "native::d1_persistence::goal_budget::request_legacy_run_cancellation");
@@ -877,11 +888,15 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
     ],
     "server/src/services/runtime-kernel/heartbeat.execute.ts": [
       "18157d02b952fe862640e2baff40cb402c9d6e319bf3ea63b3644d40410fd53b",
-      "4ead95d590da855fb28ee50f81d81fea8d616cf712c8dde3d7760e2fd05cd84e",
+      "dbfe5e11f0775c9c7c75e0be7d26a8296a7a0f3ea13d33966e480ab4865aba66",
     ],
     "server/src/services/runtime-kernel/heartbeat.ts": [
       "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
-      "860e65a14ef3d71328e31cc9994dfc7d675dbb68f39b6d7ce037453d1c442236",
+      "ebf75358f4c89952d1cb384d17124bd21eb146fe3e3640b7ae9597bc8548eeec",
+    ],
+    "server/src/services/runtime-kernel/heartbeat.misc.ts": [
+      "d2d33c05861495d21249071b1125040c71efc89c960d7c7bdaadb36bbe1f777d",
+      "8f0de3fd0249040ce0c6813c1030fb4faf027352b7798b8d04a2dd40ecb88d82",
     ],
     "server/src/services/runtime-kernel/heartbeat.wakeup.ts": [
       "6971e52ce92eb53a3154c868605f88446cc0925be576438fc280233d9a6cd538",
@@ -899,12 +914,12 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
   assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.execute.ts"].base_surfaces.map(({ signature, line }) => [signature, line]), [
     ["server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:7e6bf3e963e22430341e9e36ac48ee706fb73568acc5e76dd807ffcb3843cc4a]", 226],
   ]);
-  assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.execute.ts"].head_surfaces.map(({ signature, line }) => [signature, line]), [
-    ["server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:d5314bf1d926737a96502855b4fc786524fc5a3454a099e44165643147ad0339]", 238],
-  ]);
-  assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.ts"].head_surfaces.map(({ signature, line }) => [signature, line]), [
-    ["server/src/services/runtime-kernel/heartbeat.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error, }", 1174],
-    ["server/src/services/runtime-kernel/heartbeat.ts|db-call|tx|select|{ id: heartbeatRuns.id }", 1260],
+  assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.execute.ts"].head_surfaces, []);
+  assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.ts"].head_surfaces, []);
+  assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.misc.ts"].head_surfaces.map(({ signature, line }) => [signature, line]), [
+    ["server/src/services/runtime-kernel/heartbeat.misc.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error }", 88],
+    ["server/src/services/runtime-kernel/heartbeat.misc.ts|db-call|tx|select|{ id: heartbeatRuns.id }", 104],
+    ["server/src/services/runtime-kernel/heartbeat.misc.ts|worker-schedule-candidate|setInterval|() => { void renewLease(runId, ownerToken) .then(async (result) => { … [sha256:18f4305db37bdd0b5c0742c5d3acdb65c7c3c183deeb5b926d88756b6d15cd42]", 71],
   ]);
   assert.deepEqual(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files["server/src/services/runtime-kernel/heartbeat.wakeup.ts"].head_surfaces.map(({ signature, line }) => [signature, line]), [
     ["server/src/services/runtime-kernel/heartbeat.wakeup.ts|db-call|db|select|{ executionAuthority: agentWakeupRequests.executionAuthority }", 67],
@@ -919,8 +934,8 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
     },
     head_surface: {
       type: "database_call_candidate",
-      signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5591854ce77e200e0d05f3e3f7a78b03057b416bdb63a540497d9321b0d5670c]",
-      line: 1232,
+      signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:3cb8d11518f9840c1c9dd10741e9d573df8d0316cb306bf685a9c69903d7bf9f]",
+      line: 1194,
     },
     base_protected_surface: {
       type: "database_write_candidate",
@@ -930,7 +945,7 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
     head_protected_surface: {
       type: "database_write_candidate",
       signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns",
-      line: 1330,
+      line: 1272,
     },
   });
 });
@@ -938,11 +953,15 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
 test("an exact Goal legacy-owner bridge admits only its linked transaction and pinned surfaces", (t) => {
   const fixture = goalBridgeTestFixture(t);
   assert.deepEqual(fixture.result.failures, []);
-  assert.equal(fixture.result.reviewed_legacy_fence_changes.length, 5);
+  assert.equal(fixture.result.reviewed_legacy_fence_changes.length, 6);
 
   const withoutOneBridge = fixture.records.filter((record) => record.path !== "server/src/services/chat-agent-runs.ts");
   const missing = compareGoalBridgeFixture(fixture, { records: withoutOneBridge });
   assert(missing.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const withoutMiscBridge = fixture.records.filter((record) => record.path !== "server/src/services/runtime-kernel/heartbeat.misc.ts");
+  const missingMovedHelpers = compareGoalBridgeFixture(fixture, { records: withoutMiscBridge });
+  assert(missingMovedHelpers.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
 
   const wrongHash = structuredClone(fixture.records);
   wrongHash.find((record) => record.change_kind === "goal_legacy_owner_bridge").head_sha256 = "0".repeat(64);
@@ -977,6 +996,13 @@ test("Goal legacy-owner bridge rejects extra writers and timer or query contract
     (source) => source.replace("  }, 1000);", "  }, 500);"),
   );
   assert(changedInterval.result.failures.some((failure) => failure.includes("head_sha256 does not match exact candidate source")));
+
+  const changedMovedLeaseInterval = mutateGoalBridgeFixtureHead(
+    goalBridgeTestFixture(t),
+    "server/src/services/runtime-kernel/heartbeat.misc.ts",
+    (source) => source.replace("  }, 60_000);", "  }, 30_000);"),
+  );
+  assert(changedMovedLeaseInterval.result.failures.some((failure) => failure.includes("head_sha256 does not match exact candidate source")));
 
   const changedQueryScope = mutateGoalBridgeFixtureHead(
     goalBridgeTestFixture(t),
