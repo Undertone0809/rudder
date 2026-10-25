@@ -191,6 +191,22 @@ async fn seed_preview_owners(database: &fixture::Database) {
     .unwrap();
 }
 
+async fn preview_side_effect_snapshot(database: &fixture::Database) -> Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object(
+           'goals',(SELECT count(*) FROM goals),
+           'goalStartRequests',(SELECT count(*) FROM goal_start_requests),
+           'agentWakeupRequests',(SELECT count(*) FROM agent_wakeup_requests),
+           'heartbeatRuns',(SELECT count(*) FROM heartbeat_runs),
+           'activityLog',(SELECT count(*) FROM activity_log),
+           'agentStatuses',(SELECT COALESCE(jsonb_object_agg(id::text,status ORDER BY id),'{}'::jsonb) FROM agents)
+         )",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .unwrap()
+}
+
 #[actix_web::test]
 async fn public_goal_start_preview_is_board_scoped_strict_and_never_falls_back_to_node() {
     let database = fixture::Database::start().await;
@@ -201,6 +217,7 @@ async fn public_goal_start_preview_is_board_scoped_strict_and_never_falls_back_t
     let agent = agent_key(&database).await;
     let (node_url, node_hits, node_task) = start_node_sentinel().await;
     let ingress = start_ingress(&database, &node_url, true).await;
+    let side_effects_before = preview_side_effect_snapshot(&database).await;
     let path = format!("/API/ORGS/{}/GOALS/START-PREVIEW/", fixture::ORG);
     let input = preview_body(
         json!(SAMPLE_OWNER),
@@ -268,6 +285,11 @@ async fn public_goal_start_preview_is_board_scoped_strict_and_never_falls_back_t
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(response["error"], "Board access required");
     assert_eq!(node_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        preview_side_effect_snapshot(&database).await,
+        side_effects_before,
+        "preview requests must not create Goals, start requests, wakeups, runs, activity, or activate Agents"
+    );
 
     ingress.task.abort();
     node_task.abort();
