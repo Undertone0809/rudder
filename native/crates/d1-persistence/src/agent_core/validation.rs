@@ -40,6 +40,9 @@ pub(super) fn validate(operation: &str, value: Option<&Value>) -> Result<Value> 
         return serde_json::to_value(request)
             .map_err(|_| AgentCoreError::Http(500, "Internal server error".into(), None));
     }
+    if operation == "update" {
+        return validate_update(value);
+    }
     if matches!(
         operation,
         "instructions-path-get"
@@ -223,6 +226,317 @@ pub(super) fn validate(operation: &str, value: Option<&Value>) -> Result<Value> 
         value => return Err(fail(vec![wrong("string", value, json!([key]))])),
     }
     Ok(output)
+}
+
+/// Validate the public PATCH /api/agents/:id schema. This intentionally strips
+/// unknown top-level keys like the shared Zod object, and keeps `replaceAgentRuntimeConfig`
+/// as a route control rather than a persisted Agent field.
+fn validate_update(value: Option<&Value>) -> Result<Value> {
+    let Some(Value::Object(object)) = value else {
+        return Err(validation_error(vec![wrong("object", value, json!([]))]));
+    };
+
+    let mut output = serde_json::Map::new();
+    let mut issues = Vec::new();
+
+    if let Some(value) = object.get("name") {
+        match value {
+            Value::String(name) => {
+                let name = js_trim(name);
+                if !name.is_empty() {
+                    output.insert("name".into(), json!(name));
+                }
+            }
+            value => issues.push(wrong("string", Some(value), json!(["name"]))),
+        }
+    }
+    if let Some(value) = object.get("role") {
+        if value.as_str().is_some_and(|role| {
+            matches!(
+                role,
+                "ceo"
+                    | "cto"
+                    | "cmo"
+                    | "cfo"
+                    | "engineer"
+                    | "designer"
+                    | "pm"
+                    | "qa"
+                    | "devops"
+                    | "researcher"
+                    | "general"
+            )
+        }) {
+            output.insert("role".into(), value.clone());
+        } else {
+            issues.push(json!({
+                "code":"invalid_enum_value",
+                "options":["ceo","cto","cmo","cfo","engineer","designer","pm","qa","devops","researcher","general"],
+                "path":["role"],
+                "message":"Invalid enum value"
+            }));
+        }
+    }
+    for key in ["title", "capabilities"] {
+        if let Some(value) = object.get(key) {
+            if value.is_null() || value.is_string() {
+                output.insert(key.into(), value.clone());
+            } else {
+                issues.push(wrong("string", Some(value), json!([key])));
+            }
+        }
+    }
+    if let Some(value) = object.get("icon") {
+        let normalized = match value {
+            Value::Null => Some(Value::Null),
+            Value::String(icon) if js_trim(icon).is_empty() => Some(Value::Null),
+            Value::String(icon) if super::writes::supported_avatar_icon(js_trim(icon)) => {
+                Some(json!(js_trim(icon)))
+            }
+            _ => None,
+        };
+        if let Some(icon) = normalized {
+            output.insert("icon".into(), icon);
+        } else {
+            issues.push(json!({"code":"custom","path":["icon"],"message":"Invalid input"}));
+        }
+    }
+    if let Some(value) = object.get("desiredSkills") {
+        match value.as_array() {
+            Some(skills) => {
+                for (index, skill) in skills.iter().enumerate() {
+                    match skill.as_str() {
+                        Some(value) if !value.is_empty() => (),
+                        Some(_) => issues.push(json!({
+                            "code":"too_small","minimum":1,"type":"string","inclusive":true,
+                            "exact":false,"path":["desiredSkills",index],
+                            "message":"String must contain at least 1 character(s)"
+                        })),
+                        None => issues.push(wrong(
+                            "string",
+                            Some(skill),
+                            json!(["desiredSkills", index]),
+                        )),
+                    }
+                }
+                output.insert("desiredSkills".into(), value.clone());
+            }
+            None => issues.push(wrong("array", Some(value), json!(["desiredSkills"]))),
+        }
+    }
+    if let Some(value) = object.get("agentRuntimeType") {
+        if value.as_str().is_some_and(public_runtime_type) {
+            output.insert("agentRuntimeType".into(), value.clone());
+        } else {
+            issues.push(json!({
+                "code":"invalid_enum_value",
+                "options":["process","http","claude_local","codex_local","opencode_local","pi_local","cursor","openclaw_gateway","hermes_gateway","hermes_local"],
+                "path":["agentRuntimeType"],
+                "message":"Invalid enum value"
+            }));
+        }
+    }
+    if let Some(value) = object.get("agentRuntimeConfig") {
+        if let Some(config) = value.as_object() {
+            validate_public_adapter_config_schema(config, &mut issues);
+            output.insert("agentRuntimeConfig".into(), value.clone());
+        } else {
+            issues.push(wrong("record", Some(value), json!(["agentRuntimeConfig"])));
+        }
+    }
+    if let Some(value) = object.get("runtimeConfig") {
+        if value.is_object() {
+            output.insert("runtimeConfig".into(), value.clone());
+        } else {
+            issues.push(wrong("record", Some(value), json!(["runtimeConfig"])));
+        }
+    }
+    if let Some(value) = object.get("budgetMonthlyCents") {
+        if valid_nonnegative_integer(value) {
+            output.insert("budgetMonthlyCents".into(), value.clone());
+        } else {
+            issues.push(number_issue(value, "budgetMonthlyCents"));
+        }
+    }
+    if let Some(value) = object.get("permissions") {
+        issues.push(wrong("never", Some(value), json!(["permissions"])));
+    }
+    if let Some(value) = object.get("metadata") {
+        if value.is_null() || value.is_object() {
+            output.insert("metadata".into(), value.clone());
+        } else {
+            issues.push(wrong("record", Some(value), json!(["metadata"])));
+        }
+    }
+    if let Some(value) = object.get("replaceAgentRuntimeConfig") {
+        if value.is_boolean() {
+            output.insert("replaceAgentRuntimeConfig".into(), value.clone());
+        } else {
+            issues.push(wrong(
+                "boolean",
+                Some(value),
+                json!(["replaceAgentRuntimeConfig"]),
+            ));
+        }
+    }
+    if let Some(value) = object.get("status") {
+        if value.as_str().is_some_and(|status| {
+            matches!(
+                status,
+                "active"
+                    | "paused"
+                    | "idle"
+                    | "running"
+                    | "error"
+                    | "pending_approval"
+                    | "terminated"
+            )
+        }) {
+            output.insert("status".into(), value.clone());
+        } else {
+            issues.push(json!({
+                "code":"invalid_enum_value",
+                "options":["active","paused","idle","running","error","pending_approval","terminated"],
+                "path":["status"],
+                "message":"Invalid enum value"
+            }));
+        }
+    }
+    if let Some(value) = object.get("spentMonthlyCents") {
+        if valid_nonnegative_integer(value) {
+            output.insert("spentMonthlyCents".into(), value.clone());
+        } else {
+            issues.push(number_issue(value, "spentMonthlyCents"));
+        }
+    }
+
+    if issues.is_empty() {
+        Ok(Value::Object(output))
+    } else {
+        Err(validation_error(issues))
+    }
+}
+
+fn valid_nonnegative_integer(value: &Value) -> bool {
+    value
+        .as_f64()
+        .is_some_and(|number| number.is_finite() && number.fract() == 0.0 && number >= 0.0)
+}
+
+fn number_issue(value: &Value, key: &str) -> Value {
+    if value.as_f64().is_none() {
+        wrong("number", Some(value), json!([key]))
+    } else if value.as_f64().is_some_and(|number| number.fract() != 0.0) {
+        wrong("integer", Some(value), json!([key]))
+    } else {
+        json!({
+            "code":"too_small","minimum":0,"type":"number","inclusive":true,
+            "exact":false,"path":[key],
+            "message":"Number must be greater than or equal to 0"
+        })
+    }
+}
+
+fn public_runtime_type(value: &str) -> bool {
+    matches!(
+        value,
+        "process"
+            | "http"
+            | "claude_local"
+            | "codex_local"
+            | "opencode_local"
+            | "pi_local"
+            | "cursor"
+            | "openclaw_gateway"
+            | "hermes_gateway"
+            | "hermes_local"
+    )
+}
+
+fn valid_public_env(value: &Value) -> bool {
+    value.as_object().is_some_and(|values| {
+        values.values().all(|binding| match binding {
+            Value::String(_) => true,
+            Value::Object(binding) => match binding.get("type").and_then(Value::as_str) {
+                Some("plain") => binding.get("value").is_some_and(Value::is_string),
+                Some("secret_ref") => {
+                    binding
+                        .get("secretId")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| id == js_trim(id) && uuid_like(id))
+                        && binding.get("version").is_none_or(|version| {
+                            version.as_str() == Some("latest")
+                                || version.as_f64().is_some_and(|number| {
+                                    number.is_finite() && number.fract() == 0.0 && number > 0.0
+                                })
+                        })
+                }
+                _ => false,
+            },
+            _ => false,
+        })
+    })
+}
+
+fn validate_public_adapter_config_schema(
+    config: &serde_json::Map<String, Value>,
+    issues: &mut Vec<Value>,
+) {
+    if config.get("env").is_some_and(|env| !valid_public_env(env)) {
+        issues.push(json!({
+            "code":"custom","path":["agentRuntimeConfig","env"],
+            "message":"agentRuntimeConfig.env must be a map of valid env bindings"
+        }));
+    }
+    let Some(fallbacks) = config.get("modelFallbacks") else {
+        return;
+    };
+    let Some(fallbacks) = fallbacks.as_array() else {
+        issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks"],"message":"modelFallbacks must be an array"}));
+        return;
+    };
+    for (index, fallback) in fallbacks.iter().enumerate() {
+        let path = json!(["agentRuntimeConfig", "modelFallbacks", index]);
+        if let Some(model) = fallback.as_str() {
+            if model.trim().is_empty() {
+                issues.push(json!({"code":"custom","path":path,"message":"modelFallbacks string entries must be non-empty"}));
+            }
+            continue;
+        }
+        let Some(record) = fallback.as_object() else {
+            issues.push(json!({"code":"custom","path":path,"message":"modelFallbacks entries must be strings or runtime/model objects"}));
+            continue;
+        };
+        if record
+            .get("agentRuntimeType")
+            .and_then(Value::as_str)
+            .is_none_or(|runtime| runtime.trim().is_empty())
+        {
+            issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks",index,"agentRuntimeType"],"message":"modelFallbacks entries must include agentRuntimeType"}));
+        } else if record
+            .get("agentRuntimeType")
+            .and_then(Value::as_str)
+            .is_some_and(|runtime| !public_runtime_type(runtime))
+        {
+            issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks",index,"agentRuntimeType"],"message":"modelFallbacks entries must include a valid agentRuntimeType"}));
+        }
+        if record
+            .get("model")
+            .and_then(Value::as_str)
+            .is_none_or(|model| model.trim().is_empty())
+        {
+            issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks",index,"model"],"message":"modelFallbacks entries must include model"}));
+        }
+        if let Some(nested) = record.get("config") {
+            if let Some(nested) = nested.as_object() {
+                if nested.get("env").is_some_and(|env| !valid_public_env(env)) {
+                    issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks",index,"config","env"],"message":"modelFallbacks entry config.env must be a map of valid env bindings"}));
+                }
+            } else {
+                issues.push(json!({"code":"custom","path":["agentRuntimeConfig","modelFallbacks",index,"config"],"message":"modelFallbacks entry config must be an object"}));
+            }
+        }
+    }
 }
 
 /// Validate the public Agent-create contract and translate it to the private
@@ -1610,6 +1924,171 @@ pub(super) async fn normalize_runtime_config(
             next.push(Value::Object(next_record));
         }
         normalized.insert("modelFallbacks".into(), Value::Array(next));
+    }
+    Ok(Value::Object(normalized))
+}
+
+/// Match the Node PATCH secret-normalization path. Unlike the create command,
+/// PATCH accepts arbitrary runtime config keys and validates only the shared
+/// public env/model-fallback schema before normalizing env bindings.
+pub(super) async fn normalize_update_runtime_config(
+    tx: &mut Tx<'_>,
+    org: &str,
+    config: &Value,
+) -> Result<Value> {
+    let Some(object) = config.as_object() else {
+        return Err(AgentCoreError::Http(
+            422,
+            "agentRuntimeConfig must be an object".into(),
+            None,
+        ));
+    };
+    let mut normalized = object.clone();
+    if let Some(env) = object.get("env") {
+        normalized.insert("env".into(), normalize_update_env(tx, org, env).await?);
+    }
+    if let Some(Value::Array(fallbacks)) = object.get("modelFallbacks") {
+        let mut normalized_fallbacks = Vec::with_capacity(fallbacks.len());
+        for fallback in fallbacks {
+            let Some(record) = fallback.as_object() else {
+                normalized_fallbacks.push(fallback.clone());
+                continue;
+            };
+            let Some(config) = record.get("config") else {
+                normalized_fallbacks.push(fallback.clone());
+                continue;
+            };
+            let mut normalized_record = record.clone();
+            normalized_record.insert(
+                "config".into(),
+                Box::pin(normalize_update_runtime_config(tx, org, config)).await?,
+            );
+            normalized_fallbacks.push(Value::Object(normalized_record));
+        }
+        normalized.insert("modelFallbacks".into(), Value::Array(normalized_fallbacks));
+    }
+    Ok(Value::Object(normalized))
+}
+
+async fn normalize_update_env(tx: &mut Tx<'_>, org: &str, value: &Value) -> Result<Value> {
+    let Some(bindings) = value.as_object() else {
+        return Err(AgentCoreError::Http(
+            422,
+            "agentRuntimeConfig.env must be an object".into(),
+            None,
+        ));
+    };
+    let strict = env::var("RUDDER_SECRETS_STRICT_MODE")
+        .ok()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let mut normalized = serde_json::Map::new();
+    for (key, binding) in bindings {
+        if !env_key(key) {
+            return Err(AgentCoreError::Http(
+                422,
+                format!("Invalid environment variable name: {key}"),
+                None,
+            ));
+        }
+        let (kind, value, secret_id, version) = match binding {
+            Value::String(value) => ("plain", Some(value.as_str()), None, None),
+            Value::Object(binding)
+                if binding.get("type").and_then(Value::as_str) == Some("plain") =>
+            {
+                let Some(value) = binding.get("value").and_then(Value::as_str) else {
+                    return Err(AgentCoreError::Http(
+                        422,
+                        format!("Invalid environment binding for key: {key}"),
+                        None,
+                    ));
+                };
+                ("plain", Some(value), None, None)
+            }
+            Value::Object(binding)
+                if binding.get("type").and_then(Value::as_str) == Some("secret_ref") =>
+            {
+                let Some(secret_id) = binding
+                    .get("secretId")
+                    .and_then(Value::as_str)
+                    .filter(|value| uuid_like(value))
+                else {
+                    return Err(AgentCoreError::Http(
+                        422,
+                        format!("Invalid environment binding for key: {key}"),
+                        None,
+                    ));
+                };
+                let version = match binding.get("version") {
+                    None => json!("latest"),
+                    Some(Value::String(value)) if value == "latest" => json!("latest"),
+                    Some(Value::Number(value))
+                        if value
+                            .as_f64()
+                            .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n > 0.0) =>
+                    {
+                        value.clone().into()
+                    }
+                    _ => {
+                        return Err(AgentCoreError::Http(
+                            422,
+                            format!("Invalid environment binding for key: {key}"),
+                            None,
+                        ));
+                    }
+                };
+                ("secret_ref", None, Some(secret_id), Some(version))
+            }
+            _ => {
+                return Err(AgentCoreError::Http(
+                    422,
+                    format!("Invalid environment binding for key: {key}"),
+                    None,
+                ));
+            }
+        };
+        if kind == "plain" {
+            let value = value.unwrap_or_default();
+            if strict && sensitive_env_key(key) && !value.trim().is_empty() {
+                return Err(AgentCoreError::Http(
+                    422,
+                    format!(
+                        "Strict secret mode requires secret references for sensitive key: {key}"
+                    ),
+                    None,
+                ));
+            }
+            if value == "***REDACTED***" {
+                return Err(AgentCoreError::Http(
+                    422,
+                    format!("Refusing to persist redacted placeholder for key: {key}"),
+                    None,
+                ));
+            }
+            normalized.insert(key.clone(), json!({"type":"plain","value":value}));
+            continue;
+        }
+        let secret_id = secret_id.expect("secret reference has an id");
+        let secret = sqlx::query_as::<_, (String, String)>(
+            "SELECT org_id::text,purpose FROM organization_secrets WHERE id=$1::uuid",
+        )
+        .bind(secret_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some((secret_org, _purpose)) = secret.filter(|(_, purpose)| purpose == "user_managed")
+        else {
+            return Err(AgentCoreError::Http(404, "Secret not found".into(), None));
+        };
+        if secret_org != org {
+            return Err(AgentCoreError::Http(
+                422,
+                "Secret must belong to same organization".into(),
+                None,
+            ));
+        }
+        normalized.insert(
+            key.clone(),
+            json!({"type":"secret_ref","secretId":secret_id,"version":version.expect("secret reference version")}),
+        );
     }
     Ok(Value::Object(normalized))
 }

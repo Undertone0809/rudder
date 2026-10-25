@@ -346,10 +346,16 @@ pub(super) async fn require_update(tx: &mut Tx<'_>, ctx: &Context<'_>, id: &str)
     )
     .await?
     .ok_or_else(|| http(403, "Agent key cannot access another organization"))?;
-    if can_create(&row)
-        && (text(&row, "role") == "ceo"
-            || has_grant(tx, ctx, "agents:create").await?
-            || can_create(&row))
+    if text(&row, "orgId") != ctx.org {
+        return Err(http(403, "Agent key cannot access another organization"));
+    }
+    if row["permissions"]["canCreateAgents"].as_bool() == Some(false) {
+        return Err(http(
+            403,
+            "Only CEO or agent creators can modify other agents",
+        ));
+    }
+    if text(&row, "role") == "ceo" || has_grant(tx, ctx, "agents:create").await? || can_create(&row)
     {
         return Ok(());
     }

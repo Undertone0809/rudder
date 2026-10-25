@@ -77,7 +77,8 @@ pub(super) async fn permissions(
 pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     endpoint_for_path(path).is_some_and(|endpoint| match endpoint {
         Endpoint::Roster(_) => matches!(*method, Method::GET | Method::HEAD | Method::POST),
-        Endpoint::Detail(_) | Endpoint::Me => matches!(*method, Method::GET | Method::HEAD),
+        Endpoint::Detail(_) => matches!(*method, Method::GET | Method::HEAD | Method::PATCH),
+        Endpoint::Me => matches!(*method, Method::GET | Method::HEAD),
         Endpoint::Permissions(_) => *method == Method::PATCH,
         Endpoint::Configurations(_) | Endpoint::NameSuggestion(_) => {
             matches!(*method, Method::GET | Method::HEAD)
@@ -404,9 +405,11 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
         Endpoint::Roster(_) => {
             matches!(*request.method(), Method::GET | Method::HEAD | Method::POST)
         }
-        Endpoint::Detail(_) | Endpoint::Me => {
-            matches!(*request.method(), Method::GET | Method::HEAD)
-        }
+        Endpoint::Detail(_) => matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::PATCH
+        ),
+        Endpoint::Me => matches!(*request.method(), Method::GET | Method::HEAD),
         Endpoint::Permissions(_) => *request.method() == Method::PATCH,
         Endpoint::Configurations(_) | Endpoint::NameSuggestion(_) => {
             matches!(*request.method(), Method::GET | Method::HEAD)
@@ -478,6 +481,8 @@ async fn execute(
             .json_error(StatusCode::BAD_REQUEST, "invalid_forwarding_identity");
     }
     let public_agent_create = is_agent_create_endpoint(&endpoint, &request);
+    let public_agent_update =
+        matches!(&endpoint, Endpoint::Detail(_)) && *request.method() == Method::PATCH;
     if state.config.identity_auth.is_none() {
         return state.foundation.json_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -488,6 +493,18 @@ async fn execute(
         parsed_body = match normalize_public_agent_create_input(parsed_body.take()) {
             Ok(input) => Some(input),
             Err(error) => return response_error(error),
+        };
+    }
+    if public_agent_update {
+        parsed_body = match parsed_body.take() {
+            Some(input) => match normalize_public_input("update", input) {
+                Ok(input) => Some(input),
+                Err(error) => return response_error(error),
+            },
+            None => match normalize_public_input("update", Value::Null) {
+                Ok(input) => Some(input),
+                Err(error) => return response_error(error),
+            },
         };
     }
     if matches!(&endpoint, Endpoint::Keys(_))
@@ -502,7 +519,7 @@ async fn execute(
     // These Express routes validate their bodies before checking board access.
     // Reuse AgentCore's validator so invalid UUID-addressed requests keep that
     // observable error precedence without duplicating their schemas here.
-    if (public_agent_create)
+    if (public_agent_create || public_agent_update)
         || (matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST)
         || matches!(&endpoint, Endpoint::ResetSession(_))
     {
@@ -549,6 +566,7 @@ async fn execute(
     if matches!(
         &endpoint,
         Endpoint::Permissions(_)
+            | Endpoint::Detail(_)
             | Endpoint::Roster(_)
             | Endpoint::Rollback { .. }
             | Endpoint::Keys(_)
@@ -688,7 +706,7 @@ async fn execute(
     }
     if matches!(
         command["operation"].as_str(),
-        Some("detail" | "me" | "permissions")
+        Some("detail" | "me" | "permissions" | "update")
     ) || command["operation"].as_str().is_some_and(|op| {
         op.starts_with("instructions-")
             || matches!(op, "configuration" | "revisions" | "revision" | "rollback")
@@ -871,7 +889,14 @@ fn request_command(
             };
             (operation, Some(org_id), None, None)
         }
-        Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id), None),
+        Endpoint::Detail(agent_id) => {
+            let operation = if *request.method() == Method::PATCH {
+                "update"
+            } else {
+                "detail"
+            };
+            (operation, None, Some(agent_id), None)
+        }
         Endpoint::Me => ("me", None, None, None),
         Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id), None),
         Endpoint::Configurations(org_id) => ("configurations", Some(org_id), None, None),
@@ -947,6 +972,7 @@ fn request_command(
     if matches!(
         operation,
         "permissions"
+            | "update"
             | "rollback"
             | "key-create"
             | "reset-session"
@@ -1159,18 +1185,28 @@ mod tests {
     }
 
     #[test]
-    fn detail_routes_are_native_for_aliases_and_head_without_capturing_mutations() {
+    fn detail_and_profile_update_routes_are_native_for_aliases_and_head() {
         for path in ["/api/agents/agent-1", "/API/AGENTS/agent-1/"] {
             assert_eq!(
                 endpoint_for_path(path),
                 Some(Endpoint::Detail("agent-1".into()))
             );
-            for method in [Method::GET, Method::HEAD] {
-                assert!(is_detail_path(path, &method));
+            for method in [Method::GET, Method::HEAD, Method::PATCH] {
                 assert!(is_reserved_path(path, &method));
+                assert!(method_matches(
+                    &request(method.clone()),
+                    &Endpoint::Detail("agent-1".into())
+                ));
+                if matches!(method, Method::GET | Method::HEAD) {
+                    assert!(is_detail_path(path, &method));
+                }
             }
-            for method in [Method::POST, Method::PATCH, Method::DELETE] {
+            for method in [Method::POST, Method::DELETE] {
                 assert!(!is_reserved_path(path, &method));
+                assert!(!method_matches(
+                    &request(method.clone()),
+                    &Endpoint::Detail("agent-1".into())
+                ));
             }
         }
         assert_eq!(endpoint_for_path("/API/AGENTS/ME/"), Some(Endpoint::Me));

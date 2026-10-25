@@ -61,6 +61,7 @@ pub(super) async fn execute(
     let row = current.ok_or_else(|| http(404, "Agent not found"))?;
     let id = text(row, "id");
     match op {
+        "update" => super::updates::execute(tx, ctx, row, input).await,
         "instructions-path-patch"
         | "instructions-bundle-patch"
         | "instructions-file-put"
@@ -423,7 +424,11 @@ fn normalize_avatar_icon(icon: Option<&str>) -> Result<String> {
     Err(http(422, "Invalid avatar reference"))
 }
 
-async fn assert_avatar_asset_belongs_to_org(tx: &mut Tx<'_>, org: &str, icon: &str) -> Result<()> {
+pub(super) async fn assert_avatar_asset_belongs_to_org(
+    tx: &mut Tx<'_>,
+    org: &str,
+    icon: &str,
+) -> Result<()> {
     let Some(asset_id) = extract_avatar_asset_id(icon) else {
         return Ok(());
     };

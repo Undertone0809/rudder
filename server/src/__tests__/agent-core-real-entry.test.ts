@@ -1,6 +1,6 @@
 /** Synthetic PostgreSQL and the source-built foundation, through production routers/auth. */
 import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudderhq/db";
-import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema } from "@rudderhq/shared";
+import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema, updateAgentSchema } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import express from "express";
 import { createHash, createHmac, randomUUID } from "node:crypto";
@@ -232,6 +232,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
                 || (req.method === "POST" && /^\/api\/orgs\/[^/]+\/agents\/?$/i.test(req.path))
                 || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/?$/i.test(req.path))
                 || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/permissions\/?$/i.test(req.path))
+                || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/?$/i.test(req.path))
                 || (["GET", "HEAD"].includes(req.method) && (/^\/api\/orgs\/[^/]+\/agent-configurations\/?$/i.test(req.path)
                     || /^\/api\/orgs\/[^/]+\/agents\/name-suggestion\/?$/i.test(req.path)
                     || /^\/api\/agents\/[^/]+\/(?:configuration|config-revisions(?:\/[^/]+)?)\/?$/i.test(req.path)))
@@ -534,6 +535,217 @@ describe("Agent core twenty-route real HTTP authority", () => {
             expect(nodeNativeIngressPathHits).toBe(0);
         }
     });
+    it("owns organization-scoped profile and adapter PATCH through Rust with atomic auth, validation, revisions, and audit", async () => {
+        const subject = randomUUID();
+        const duplicate = randomUUID();
+        const pending = randomUUID();
+        const deniedActor = randomUUID();
+        const deniedToken = `synthetic-agent-profile-deny-${randomUUID()}`;
+        const ownedAsset = randomUUID();
+        const foreignAsset = randomUUID();
+        const ownedSecret = randomUUID();
+        const foreignSecret = randomUUID();
+        const workspaceKey = `patch-profile-${subject.slice(0, 8)}`;
+        const baseConfig = { retained: "existing", env: { OLD_VALUE: "old" } };
+
+        await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,permissions,agent_runtime_type,agent_runtime_config,runtime_config,workspace_key)
+            VALUES(${subject}::uuid,${org}::uuid,${`Profile subject ${subject.slice(0, 8)}`},'engineer','idle','{}','process',${JSON.stringify(baseConfig)}::jsonb,'{}',${workspaceKey}),
+                  (${duplicate}::uuid,${org}::uuid,${`Reserved ${subject.slice(0, 8)}`},'engineer','idle','{}','process','{}','{}',${`patch-duplicate-${subject.slice(0, 8)}`}),
+                  (${pending}::uuid,${org}::uuid,${`Pending ${subject.slice(0, 8)}`},'engineer','pending_approval','{}','process','{}','{}',${`patch-pending-${subject.slice(0, 8)}`}),
+                  (${deniedActor}::uuid,${org}::uuid,${`Denied actor ${subject.slice(0, 8)}`},'engineer','idle','{"canCreateAgents":false}','process','{}','{}',${`patch-denied-${subject.slice(0, 8)}`})`);
+        await db.execute(sql`INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role)
+            VALUES(${org}::uuid,'agent',${deniedActor},'active','member')`);
+        await db.execute(sql`INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key,scope)
+            VALUES(${org}::uuid,'agent',${deniedActor},'agents:create',NULL)`);
+        await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash)
+            VALUES(${org}::uuid,${deniedActor}::uuid,'profile deny regression',${hash(deniedToken)})`);
+        await db.execute(sql`INSERT INTO assets(id,org_id,provider,object_key,content_type,byte_size,sha256)
+            VALUES(${ownedAsset}::uuid,${org}::uuid,'local','profile/' || ${ownedAsset}::text,'image/png',12,${hash(ownedAsset)}),
+                  (${foreignAsset}::uuid,${otherOrg}::uuid,'local','profile/' || ${foreignAsset}::text,'image/png',12,${hash(foreignAsset)})`);
+        await db.execute(sql`INSERT INTO organization_secrets(id,org_id,name,purpose)
+            VALUES(${ownedSecret}::uuid,${org}::uuid,${`profile-${ownedSecret}`},'user_managed'),
+                  (${foreignSecret}::uuid,${otherOrg}::uuid,${`profile-${foreignSecret}`},'user_managed')`);
+
+        const state = async (id: string) => {
+            const [row] = await db.execute(sql`SELECT to_jsonb(a)::text AS row FROM agents a WHERE id=${id}::uuid`);
+            return {
+                row: row?.row,
+                revisions: await scalar(sql`SELECT count(*) AS value FROM agent_config_revisions WHERE agent_id=${id}::uuid`),
+                updates: await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${id} AND action='agent.updated'`),
+            };
+        };
+
+        try {
+            nodeNativeIngressPathHits = 0;
+            const initial = await state(subject);
+            const profilePatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                name: "  Profile Updated  ",
+                title: "  Integration lead  ",
+                capabilities: "Coordinate implementation work",
+                icon: `asset:${ownedAsset}`,
+                agentRuntimeConfig: {
+                    env: { NEXT_VALUE: "ordinary" },
+                    profileExtension: { enabled: true },
+                },
+                runtimeConfig: { heartbeat: { enabled: false, intervalSec: 30 }, password: "never-return-this" },
+                budgetMonthlyCents: 7200,
+                metadata: { profileSource: "board-editor" },
+                desiredSkills: ["profile-patch-does-not-enable-skills"],
+                status: "paused",
+                workspaceKey: "client-cannot-replace-workspace-key",
+            });
+            expect(profilePatch.status, profilePatch.text).toBe(200);
+            expect(profilePatch.body).toMatchObject({
+                id: subject,
+                name: "Profile Updated",
+                title: "  Integration lead  ",
+                capabilities: "Coordinate implementation work",
+                icon: `asset:${ownedAsset}`,
+                status: "paused",
+                budgetMonthlyCents: 7200,
+            });
+            expect(profilePatch.body).not.toHaveProperty("workspaceKey");
+            expect(profilePatch.body).not.toHaveProperty("desiredSkills");
+            expect(profilePatch.body.agentRuntimeConfig).toMatchObject({
+                retained: "existing",
+                profileExtension: { enabled: true },
+                env: { NEXT_VALUE: { type: "plain", value: "ordinary" } },
+            });
+            expect(profilePatch.body.agentRuntimeConfig.env).not.toHaveProperty("OLD_VALUE");
+            expect(profilePatch.body.runtimeConfig).not.toHaveProperty("password");
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE id=${subject}::uuid AND workspace_key=${workspaceKey}`)).toBe(1);
+
+            const profileRevisions = await db.execute(sql`SELECT changed_keys,after_config FROM agent_config_revisions WHERE agent_id=${subject}::uuid ORDER BY created_at`);
+            expect(profileRevisions).toHaveLength(1);
+            expect(profileRevisions[0]?.changed_keys).toEqual([
+                "name", "title", "capabilities", "agentRuntimeConfig", "runtimeConfig", "budgetMonthlyCents", "metadata",
+            ]);
+            expect(JSON.stringify(profileRevisions[0]?.after_config)).not.toContain("never-return-this");
+            expect(JSON.stringify(profileRevisions[0]?.after_config)).toContain("***REDACTED***");
+            const [profileActivity] = await db.execute(sql`SELECT details FROM activity_log WHERE entity_id=${subject} AND action='agent.updated' ORDER BY created_at DESC LIMIT 1`);
+            expect(profileActivity?.details).toMatchObject({
+                changedTopLevelKeys: ["agentRuntimeConfig", "budgetMonthlyCents", "capabilities", "desiredSkills", "icon", "metadata", "name", "runtimeConfig", "status", "title"],
+                changedAdapterConfigKeys: ["env", "profileExtension", "retained"],
+                changedRuntimeConfigKeys: ["heartbeat", "password"],
+            });
+
+            const withProfile = await state(subject);
+            const deniedPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, deniedToken, { title: "must not change" });
+            expect(deniedPatch.status, deniedPatch.text).toBe(403);
+            expect(deniedPatch.body).toEqual({ error: "Only CEO or agent creators can modify other agents" });
+            expect(await state(subject)).toEqual(withProfile);
+
+            const foreignTargetBefore = await state(foreignAgent);
+            const foreignTargetPatch = await call(publicUrl, "patch", `/api/agents/${foreignAgent}`, otherToken, { title: "cross-org" });
+            expect(foreignTargetPatch.status, foreignTargetPatch.text).toBe(403);
+            expect(await state(foreignAgent)).toEqual(foreignTargetBefore);
+
+            const secretPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeConfig: { env: { USER_TOKEN: { type: "secret_ref", secretId: ownedSecret } } },
+            });
+            expect(secretPatch.status, secretPatch.text).toBe(200);
+            expect(secretPatch.body.agentRuntimeConfig.env.USER_TOKEN).toMatchObject({ type: "secret_ref", secretId: ownedSecret, version: "latest" });
+
+            const beforeForeignSecret = await state(subject);
+            const foreignSecretPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeConfig: { env: { USER_TOKEN: { type: "secret_ref", secretId: foreignSecret } } },
+            });
+            expect(foreignSecretPatch.status, foreignSecretPatch.text).toBe(422);
+            expect(foreignSecretPatch.body.error).toBe("Secret must belong to same organization");
+            expect(await state(subject)).toEqual(beforeForeignSecret);
+
+            const badOpenCode = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeType: "opencode_local",
+                agentRuntimeConfig: { model: "not-a-provider-model" },
+            });
+            expect(badOpenCode.status, badOpenCode.text).toBe(422);
+            expect(badOpenCode.body.error).toContain("provider/model format");
+            expect(await state(subject)).toEqual(beforeForeignSecret);
+            const validOpenCode = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeType: "opencode_local",
+                agentRuntimeConfig: { model: "provider/model" },
+            });
+            expect(validOpenCode.status, validOpenCode.text).toBe(200);
+            expect(validOpenCode.body.agentRuntimeType).toBe("opencode_local");
+            expect(validOpenCode.body.agentRuntimeConfig.model).toBe("provider/model");
+
+            const replaceConfig = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeType: "process",
+                agentRuntimeConfig: { replacementOnly: "yes" },
+                replaceAgentRuntimeConfig: true,
+            });
+            expect(replaceConfig.status, replaceConfig.text).toBe(200);
+            expect(replaceConfig.body.agentRuntimeType).toBe("process");
+            expect(replaceConfig.body.agentRuntimeConfig).toEqual({ replacementOnly: "yes" });
+
+            const managedInstructionsPath = path.join(nativeOrganizationAgents, workspaceKey, "instructions", "AGENTS.md");
+            expect(fs.existsSync(managedInstructionsPath)).toBe(false);
+            const instructionPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                agentRuntimeConfig: { instructionsFilePath: managedInstructionsPath },
+            });
+            expect(instructionPatch.status, instructionPatch.text).toBe(200);
+            expect(instructionPatch.body.agentRuntimeConfig).toMatchObject({
+                instructionsBundleMode: "managed",
+                instructionsRootPath: path.dirname(managedInstructionsPath),
+                instructionsEntryFile: "AGENTS.md",
+            });
+            expect(fs.existsSync(managedInstructionsPath)).toBe(false);
+
+            const beforeValidationErrors = await state(subject);
+            const badPermissionBody = { permissions: { canCreateAgents: true } };
+            const schemaResult = updateAgentSchema.safeParse(badPermissionBody);
+            expect(schemaResult.success).toBe(false);
+            const permissionPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, badPermissionBody);
+            expect(permissionPatch.status, permissionPatch.text).toBe(400);
+            if (!schemaResult.success) expect(permissionPatch.body.details).toEqual(schemaResult.error.issues);
+
+            const invalidFallbackBody = { agentRuntimeConfig: { modelFallbacks: [{}] } };
+            const fallbackSchema = updateAgentSchema.safeParse(invalidFallbackBody);
+            expect(fallbackSchema.success).toBe(false);
+            const invalidFallbackPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, invalidFallbackBody);
+            expect(invalidFallbackPatch.status, invalidFallbackPatch.text).toBe(400);
+            if (!fallbackSchema.success) expect(invalidFallbackPatch.body.details).toEqual(fallbackSchema.error.issues);
+            expect(await state(subject)).toEqual(beforeValidationErrors);
+
+            const duplicateBefore = await state(subject);
+            const duplicatePatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, {
+                name: `Reserved ${subject.slice(0, 8)}`,
+            });
+            expect(duplicatePatch.status, duplicatePatch.text).toBe(409);
+            expect(duplicatePatch.body.error).toContain("Agent shortname");
+            expect(await state(subject)).toEqual(duplicateBefore);
+
+            const pendingBefore = await state(pending);
+            const activatePending = await call(publicUrl, "patch", `/api/agents/${pending}`, ownerToken, { status: "active" });
+            expect(activatePending.status, activatePending.text).toBe(409);
+            expect(activatePending.body.error).toBe("Pending approval agents cannot be activated directly");
+            expect(await state(pending)).toEqual(pendingBefore);
+
+            const foreignAssetBefore = await state(subject);
+            const wrongAssetPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, { icon: `asset:${foreignAsset}` });
+            expect(wrongAssetPatch.status, wrongAssetPatch.text).toBe(403);
+            expect(wrongAssetPatch.body.error).toBe("Avatar asset belongs to another organization");
+            expect(await state(subject)).toEqual(foreignAssetBefore);
+            const missingAssetPatch = await call(publicUrl, "patch", `/api/agents/${subject}`, ownerToken, { icon: `asset:${randomUUID()}` });
+            expect(missingAssetPatch.status, missingAssetPatch.text).toBe(422);
+            expect(missingAssetPatch.body.error).toBe("Avatar asset not found");
+            expect(await state(subject)).toEqual(foreignAssetBefore);
+            expect(nodeNativeIngressPathHits).toBe(0);
+            expect(initial.revisions).toBe(0);
+            expect(initial.updates).toBe(0);
+        } finally {
+            await db.execute(sql`DELETE FROM organization_mutation_outbox WHERE activity_id IN (SELECT id FROM activity_log WHERE entity_id IN (${subject},${duplicate},${pending},${deniedActor}))`);
+            await db.execute(sql`DELETE FROM activity_log WHERE entity_id IN (${subject},${duplicate},${pending},${deniedActor})`);
+            await db.execute(sql`DELETE FROM agent_config_revisions WHERE agent_id IN (${subject}::uuid,${duplicate}::uuid,${pending}::uuid,${deniedActor}::uuid)`);
+            await db.execute(sql`DELETE FROM principal_permission_grants WHERE principal_type='agent' AND principal_id=${deniedActor}`);
+            await db.execute(sql`DELETE FROM organization_memberships WHERE principal_type='agent' AND principal_id=${deniedActor}`);
+            await db.execute(sql`DELETE FROM agent_api_keys WHERE agent_id=${deniedActor}::uuid`);
+            await db.execute(sql`DELETE FROM agents WHERE id IN (${subject}::uuid,${duplicate}::uuid,${pending}::uuid,${deniedActor}::uuid)`);
+            await db.execute(sql`DELETE FROM assets WHERE id IN (${ownedAsset}::uuid,${foreignAsset}::uuid)`);
+            await db.execute(sql`DELETE FROM organization_secrets WHERE id IN (${ownedSecret}::uuid,${foreignSecret}::uuid)`);
+        }
+    });
+
     it("preserves API-key schema precedence before board authorization", async () => {
         for (const input of [{}, { name: null }, { name: "" }, { name: [] }, { name: false }, { name: 1 }, { name: {} }, { name: " \uFEFF " }]) {
             const expected = createAgentKeySchema.safeParse(input);
@@ -1357,16 +1569,25 @@ describe("Agent core twenty-route real HTTP authority", () => {
         }
         finally{bridge!.agentCore=original;}
         expect(nodeNativeIngressPathHits).toBe(0);
+        const patchSnapshot = async () => ({
+            agent: await db.execute(sql`SELECT to_jsonb(a)::text AS row FROM agents a WHERE id=${subject.id}::uuid`),
+            revisions: await db.execute(sql`SELECT to_jsonb(r)::text AS row FROM agent_config_revisions r WHERE agent_id=${subject.id}::uuid ORDER BY created_at,id`),
+            activity: await db.execute(sql`SELECT to_jsonb(a)::text AS row FROM activity_log a WHERE entity_id=${subject.id} ORDER BY created_at,id`),
+        });
+        const profileBefore = await patchSnapshot();
         const activityBefore = await scalar(sql`SELECT count(*) AS value FROM activity_log`);
         const outboxBefore = await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`);
         await pg!.stop();
         try {
             const unavailable = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
             expect(unavailable.status, unavailable.text).toBe(503);
+            const unavailablePatch = await call(publicUrl, "patch", `/api/agents/${subject.id}`, ownerToken, { title: "must not persist while the database is unavailable" });
+            expect(unavailablePatch.status, unavailablePatch.text).toBe(503);
             expect(nodeNativeIngressPathHits).toBe(0);
         } finally { await pg!.start(); }
         const retry = await call(publicUrl, "get", `/api/agents/${subject.id}`, ownerToken);
         expect(retry.status, retry.text).toBe(200);
+        expect(await patchSnapshot()).toEqual(profileBefore);
         expect(await scalar(sql`SELECT count(*) AS value FROM activity_log`)).toBe(activityBefore);
         expect(await scalar(sql`SELECT count(*) AS value FROM organization_mutation_outbox`)).toBe(outboxBefore);
     });
