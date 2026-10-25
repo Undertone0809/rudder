@@ -75,6 +75,7 @@ import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
 import * as heartbeatCore from "./heartbeat.core.js";
+import { cancelRunForPersistedIntent, startExecutionLeaseRenewal } from "./heartbeat.misc.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
@@ -219,39 +220,16 @@ export function createHeartbeatExecuteHandlers(context: any) {
     executionOwnerToken = run.executionOwnerToken;
     if (executionOwnerToken) {
       const renewed = await renewRunExecutionLease(run.id, executionOwnerToken);
-      if (!renewed) {
-        abortRunExecution(run.id);
-        return;
-      }
-      if (renewed.errorCode === "cancel_requested") {
-        // The Rust budget transaction owns the decision. The legacy run
-        // owner only honors its durable intent through the existing cleanup
-        // path; it does not re-evaluate budget policy here.
-        activeRunExecutions.delete(run.id);
-        await cancelRunInternal(
-          run.id,
-          renewed.error ?? "Cancelled due to budget pause",
-          { startNext: false },
-        );
-        return;
-      }
-      executionLeaseTimer = setInterval(() => {
-        void renewRunExecutionLease(run.id, executionOwnerToken)
-          .then(async (renewed) => {
-            if (!renewed) abortRunExecution(run.id);
-            else if (renewed.errorCode === "cancel_requested") {
-              await cancelRunInternal(
-                run.id,
-                renewed.error ?? "Cancelled due to budget pause",
-                { startNext: false },
-              );
-            }
-          })
-          .catch((error) => {
-            logger.warn({ err: error, runId: run.id }, "failed to honor persisted run cancellation");
-          });
-      }, 60_000);
-      executionLeaseTimer.unref?.();
+      const lease = await startExecutionLeaseRenewal(
+        run.id,
+        executionOwnerToken,
+        renewRunExecutionLease,
+        abortRunExecution,
+        activeRunExecutions,
+        cancelRunInternal,
+      );
+      if (lease.cancelled) return;
+      executionLeaseTimer = lease.timer;
     }
 
     const agent = await getAgent(run.agentId);
@@ -991,18 +969,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         );
       }
       const runBeforeAdapter = await getRun(run.id);
-      if (runBeforeAdapter?.errorCode === "cancel_requested") {
-        // A Rust budget stop may land while workspace/runtime setup is in
-        // progress. Honor the durable intent before starting a billable
-        // adapter, using the same cleanup path as the initial lease check.
-        activeRunExecutions.delete(run.id);
-        await cancelRunInternal(
-          run.id,
-          runBeforeAdapter.error ?? "Cancelled due to budget pause",
-          { startNext: false },
-        );
-        return;
-      }
+      if (await cancelRunForPersistedIntent(run.id, runBeforeAdapter, activeRunExecutions, cancelRunInternal)) return;
       if (runBeforeAdapter?.status !== "running") {
         throw new Error("Run was finalized before adapter invocation");
       }

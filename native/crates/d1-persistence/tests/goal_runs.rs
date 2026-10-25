@@ -1,15 +1,19 @@
 mod support;
 
-use rudder_d1_persistence::{
-    goal_costs,
-    goal_runs::{self, GoalRunClaim},
-};
+#[cfg(unix)]
+use rudder_d1_persistence::goal_costs;
+use rudder_d1_persistence::goal_runs::{self, GoalRunClaim};
+#[cfg(unix)]
 use rudder_native_process_transport::{
     HostConnection, HostEvent, OwnedHost, read_durable_cleanup_receipt,
 };
+#[cfg(unix)]
 use rudder_native_protocol::{Command, ProtocolVersion};
-use serde_json::{Value, json};
+#[cfg(unix)]
+use serde_json::Value;
+use serde_json::json;
 use sqlx::Row;
+#[cfg(unix)]
 use std::{collections::BTreeMap, path::Path, time::Duration};
 use support::{CEO, Database, GOAL, GOAL_TWO, ORG};
 

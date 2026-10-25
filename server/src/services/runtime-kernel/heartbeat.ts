@@ -19,7 +19,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -63,7 +63,11 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
 import { createHeartbeatIssueCancellationHandlers } from "./heartbeat.issue-cancellation.js";
-import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
+import {
+  createHeartbeatMiscHandlers,
+  hasActiveNativeGoalRun,
+  queuedLegacyRunCancellationReason,
+} from "./heartbeat.misc.js";
 import { claimAvailableQueuedRuns } from "./heartbeat.queue.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
@@ -1143,51 +1147,9 @@ export function heartbeatService(
       && ["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"].includes(initialWakeReason),
     );
 
-    async function cancelQueuedRunDuringClaim(reason: string) {
-      const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
-        finishedAt: new Date(),
-        error: reason,
-        errorCode: "cancelled",
-      }, { expectedStatuses: ["queued"], processExitedAt: new Date() });
-      if (!cancelled) return null;
-      await setWakeupStatus(run.wakeupRequestId, "cancelled", {
-        finishedAt: new Date(),
-        error: reason,
-      });
-      if (cancelled) {
-        await appendRunEvent(cancelled, {
-          eventType: "lifecycle",
-          stream: "system",
-          level: "warn",
-          message: "run cancelled",
-        });
-        await completeTerminalControlEffects(cancelled, { startNext: false });
-      }
-      return null;
-    }
-
-    if (run.errorCode === "cancel_requested") {
-      return await cancelQueuedRunDuringClaim(run.error ?? "Cancelled due to budget pause");
-    }
-
-    const persistedRun = await db
-      .select({
-        errorCode: heartbeatRuns.errorCode,
-        error: heartbeatRuns.error,
-      })
-      .from(heartbeatRuns)
-      .where(and(
-        eq(heartbeatRuns.id, run.id),
-        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
-        eq(heartbeatRuns.status, "queued"),
-      ))
-      .limit(1)
-      .then((rows: Array<{ errorCode: string | null; error: string | null }>) => rows[0] ?? null);
-    if (persistedRun?.errorCode === "cancel_requested") {
-      return await cancelQueuedRunDuringClaim(
-        persistedRun.error ?? "Cancelled due to budget pause",
-      );
-    }
+    const cancelQueuedRunDuringClaim = (reason: string) => miscHandlers.cancelQueuedRunDuringClaim(run, reason);
+    const cancellationReason = await queuedLegacyRunCancellationReason(db, run);
+    if (cancellationReason) return await cancelQueuedRunDuringClaim(cancellationReason);
 
     const agent = await getAgent(run.agentId);
     if (!agent) {
@@ -1266,21 +1228,7 @@ export function heartbeatService(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (pendingTerminalEffects) return null;
-      const activeNativeGoalRun = await tx
-        .select({ id: heartbeatRuns.id })
-        .from(heartbeatRuns)
-        .where(and(
-          eq(heartbeatRuns.agentId, run.agentId),
-          eq(heartbeatRuns.executionAuthority, "native_rust"),
-          isNotNull(heartbeatRuns.goalId),
-          or(
-            inArray(heartbeatRuns.status, ["queued", "running"]),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (activeNativeGoalRun) return null;
+      if (await hasActiveNativeGoalRun(tx, run.agentId)) return null;
       if (initialIsGoalWake) {
         await tx.execute(sql`select id from goals where id = ${initialGoalId} and org_id = ${run.orgId} for update`);
       }
@@ -1291,13 +1239,7 @@ export function heartbeatService(
         .where(eq(heartbeatRuns.id, run.id))
         .then((rows) => rows[0] ?? null);
       if (!currentRun || currentRun.status !== "queued") return null;
-      if (currentRun.errorCode === "cancel_requested") {
-        return issueCancellationHandlers.cancelQueuedRunWithinClaimTransaction(
-          tx,
-          currentRun,
-          currentRun.error ?? "Cancelled due to budget pause",
-        );
-      }
+      if (currentRun.errorCode === "cancel_requested") return issueCancellationHandlers.cancelQueuedRunWithinClaimTransaction(tx, currentRun, currentRun.error ?? "Cancelled due to budget pause");
 
       const currentContext = parseObject(currentRun.contextSnapshot);
       const issueCancellationReason = await issueCancellationHandlers.getQueuedIssueCancellationReason({
@@ -2254,20 +2196,13 @@ export function heartbeatService(
     ...wakeupHandlers,
     afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
   });
-  let cancelRunInternalForExecution: ((...args: any[]) => Promise<any>) | null = null;
+  let cancelRunInternalForExecution!: (...args: any[]) => Promise<any>;
   const executeHandlers = createHeartbeatExecuteHandlers({
     ...baseContext,
     ...recoveryHandlers,
     ...releaseHandlers,
     ...wakeupHandlers,
-    // Execution needs to honor budget cancellation through the same misc
-    // cleanup path, but that handler is assembled after executeHandlers.
-    cancelRunInternal: (...args: any[]) => {
-      if (!cancelRunInternalForExecution) {
-        throw new Error("Heartbeat run cancellation handler is not initialized");
-      }
-      return cancelRunInternalForExecution(...args);
-    },
+    cancelRunInternal: (...args: any[]) => cancelRunInternalForExecution(...args),
     beforeAssignmentRecoveryEnqueue: testHooks?.beforeAssignmentRecoveryEnqueue,
   });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
