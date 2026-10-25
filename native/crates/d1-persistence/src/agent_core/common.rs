@@ -302,17 +302,38 @@ pub(super) async fn require_configs(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Resul
     }
 }
 
-/// Agent creation has a distinct board permission in the public service. Keep
-/// the check after the organization and mutation locks so a concurrent revoke
-/// cannot race a new row into existence.
-pub(super) async fn require_create(_tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result<()> {
-    if ctx.user().is_some() {
-        // Direct Agent creation is a board operation. Organization
-        // membership is already checked by authorize_org; the
-        // agents:create grant is reserved for agent-hire/configuration lanes.
+/// Agent creation is available to board users with the `agents:create`
+/// organization grant (plus local-implicit and instance-admin operators), or
+/// to same-organization Agents that retain the legacy effective-create rule.
+/// Keep this check after organization and mutation locks so a concurrent
+/// permission change cannot race a new row into existence.
+pub(super) async fn require_create(tx: &mut Tx<'_>, ctx: &Context<'_>) -> Result<()> {
+    if let Some(user_id) = ctx.user() {
+        if can_user_read_configs(tx, ctx.org, user_id, ctx.local(), ctx.admin).await? {
+            return Ok(());
+        }
+        return Err(http(403, "Missing permission: agents:create"));
+    }
+
+    let Some(agent_id) = ctx.agent() else {
+        return Err(http(403, "Board access required"));
+    };
+    let row = stored(tx, agent_id)
+        .await?
+        .ok_or_else(|| http(403, "Agent key cannot access another organization"))?;
+    if row["orgId"].as_str() != Some(ctx.org) {
+        return Err(http(403, "Agent key cannot access another organization"));
+    }
+    // Node's hasEffectiveAgentCreationGrant treats an explicit false as a
+    // deny even when the Agent has a separate `agents:create` grant. Missing
+    // or non-boolean values keep the legacy default-allow behavior.
+    if row["permissions"]["canCreateAgents"].as_bool() == Some(false) {
+        return Err(http(403, "Missing permission: can create agents"));
+    }
+    if has_grant(tx, ctx, "agents:create").await? || can_create(&row) {
         return Ok(());
     }
-    Err(http(403, "Board access required"))
+    Err(http(403, "Missing permission: can create agents"))
 }
 pub(super) async fn require_update(tx: &mut Tx<'_>, ctx: &Context<'_>, id: &str) -> Result<()> {
     if ctx.user().is_some() || ctx.agent() == Some(id) {
