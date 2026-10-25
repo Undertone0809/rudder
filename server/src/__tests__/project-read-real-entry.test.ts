@@ -224,7 +224,6 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     });
     app.use("/api", projectRoutes(db!, selectedBridge, {
       nativeProjectReads: ingressMode === "required",
-      nativeProjectWrites: ingressMode === "required",
     }));
     app.use(errorHandler);
     const result = app.listen(listenPort, "127.0.0.1");

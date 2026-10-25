@@ -97,7 +97,6 @@ async function createApp(
   rustFoundationBridge?: RustFoundationBridge,
   db: Record<string, unknown> = {},
   nativeProjectReads = false,
-  nativeProjectWrites = false,
 ) {
   const app = express();
   app.use(express.json());
@@ -105,7 +104,7 @@ async function createApp(
     (req as typeof req & { actor: Record<string, unknown> }).actor = actor;
     next();
   });
-  app.use("/api", projectRoutes(db as any, rustFoundationBridge, { nativeProjectReads, nativeProjectWrites }));
+  app.use("/api", projectRoutes(db as any, rustFoundationBridge, { nativeProjectReads }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -175,7 +174,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("does not register Node Project write handlers when native writes are required", async () => {
+  it("does not register Node Project write handlers when the public Rust Project mode is required", async () => {
     const bridge = {
       projectGoalSetMode: "required",
       projectGoalSet: vi.fn(),
@@ -184,7 +183,6 @@ describe("POST /api/orgs/:orgId/projects", () => {
       { type: "board", userId: "user-1", source: "local_implicit" },
       bridge,
       {},
-      false,
       true,
     );
 

@@ -67,10 +67,8 @@ async function readProjectDeleteReceiptOrganizationScope(
 }
 
 export interface ProjectRouteOptions {
-  /** The public Rust listener owns Project list/detail in required mode. */
+  /** Compatibility-named startup flag: Rust owns migrated Project reads and writes. */
   nativeProjectReads?: boolean;
-  /** The public Rust listener owns Project mutations in required mode. */
-  nativeProjectWrites?: boolean;
 }
 
 export function projectRoutes(
@@ -291,7 +289,7 @@ export function projectRoutes(
     });
   }
 
-  if (!options.nativeProjectWrites) {
+  if (!options.nativeProjectReads) {
     router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);

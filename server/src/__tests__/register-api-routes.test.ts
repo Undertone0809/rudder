@@ -30,14 +30,12 @@ describe("registerApiRoutes", () => {
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: true });
     expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
       nativeProjectReads: true,
-      nativeProjectWrites: true,
     });
 
     registerApiRoutes({} as never, baseOptions as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: false });
     expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
       nativeProjectReads: false,
-      nativeProjectWrites: false,
     });
   });
 

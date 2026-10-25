@@ -116,7 +116,7 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     validation_kind: "compatibility_mount",
     source_path: "server/src/bootstrap/register-api-routes.ts",
     receiver: "api",
-    mount_expression: "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), nativeProjectWrites: Boolean(opts.rustPublicIngress), })",
+    mount_expression: "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })",
     mount_guard: "Boolean(opts.rustPublicIngress)",
     order_after: "asset_routes",
     order_before: "app_builder_routes",
@@ -124,7 +124,7 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     order_before_expression: "appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })",
     order_after_call: true,
     order_before_call: true,
-    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/project_reads.rs and project_writes.rs",
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/project_reads.rs",
   }),
   "rust-native-cli-auth-router-v1": Object.freeze({
     id: "rust-native-cli-auth-router-v1",
