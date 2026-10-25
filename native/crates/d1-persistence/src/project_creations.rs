@@ -617,6 +617,17 @@ mod tests {
         }
         assert!(Input::parse(&json!({"name":"Plan","orgId":command.organization_id})).is_err());
         assert!(Input::parse(&json!({"name":"Plan","resourceAttachmentOperation":{}})).is_err());
+        for data in [
+            json!({"name":"Plan","color":"unsupported"}),
+            json!({"name":"Plan","icon":"custom-upload"}),
+            json!({"name":"Plan","executionWorkspacePolicy":{"enabled":true,"extra":1}}),
+            json!({"name":"Plan","archivedAt":"2026-10-25T12:30:00+00:00"}),
+        ] {
+            assert!(
+                Input::parse(&data).is_err(),
+                "accepted invalid create data: {data}"
+            );
+        }
     }
 
     #[test]

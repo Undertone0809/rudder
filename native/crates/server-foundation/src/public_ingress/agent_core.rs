@@ -1,4 +1,4 @@
-//! Native public ingress for Agent roster, detail, permissions and instructions.
+//! Native public ingress for AgentCore routes.
 //! Parsing, authentication and host context are adapted here; the
 //! existing D1 AgentCore remains the only business and persistence authority.
 mod host_paths;
@@ -9,6 +9,7 @@ use actix_web::http::header::CONTENT_TYPE;
 use futures_util::StreamExt;
 use rudder_d1_persistence::agent_core::{
     AgentCoreError, AgentCoreRequest, admit_agent, execute_agent_with_native_auth,
+    normalize_public_input, parse_public_json_value,
 };
 use serde_json::{Map, Value, json};
 
@@ -18,7 +19,32 @@ enum Endpoint {
     Detail(String),
     Me,
     Permissions(String),
-    InstructionsPath { org_id: String, agent_id: String },
+    Configurations(String),
+    NameSuggestion(String),
+    Configuration(String),
+    Revisions(String),
+    Revision {
+        agent_id: String,
+        revision_id: String,
+    },
+    Rollback {
+        agent_id: String,
+        revision_id: String,
+    },
+    InstructionsPath {
+        org_id: String,
+        agent_id: String,
+    },
+    Keys(String),
+    KeyRevoke {
+        agent_id: String,
+        key_id: String,
+    },
+    Inbox,
+    RuntimeState(String),
+    ResetSession(String),
+    TaskSessions(String),
+    SchedulerHeartbeats,
     InstructionsBundle(String),
     InstructionsFile(String),
 }
@@ -53,6 +79,15 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
             matches!(*method, Method::GET | Method::HEAD)
         }
         Endpoint::Permissions(_) => *method == Method::PATCH,
+        Endpoint::Configurations(_) | Endpoint::NameSuggestion(_) => {
+            matches!(*method, Method::GET | Method::HEAD)
+        }
+        Endpoint::Configuration(_) | Endpoint::Revisions(_) | Endpoint::Revision { .. } => {
+            matches!(*method, Method::GET | Method::HEAD)
+        }
+        Endpoint::Rollback { .. } => *method == Method::POST,
+        Endpoint::Keys(_) => matches!(*method, Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *method == Method::DELETE,
         Endpoint::InstructionsPath { .. } => {
             matches!(*method, Method::GET | Method::HEAD | Method::PATCH)
         }
@@ -65,6 +100,11 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
                 Method::GET | Method::HEAD | Method::PUT | Method::DELETE
             )
         }
+        Endpoint::Inbox
+        | Endpoint::RuntimeState(_)
+        | Endpoint::TaskSessions(_)
+        | Endpoint::SchedulerHeartbeats => matches!(*method, Method::GET | Method::HEAD),
+        Endpoint::ResetSession(_) => *method == Method::POST,
     })
 }
 
@@ -112,6 +152,43 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments.len() == 3
         && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("instance")
+        && segments[2].eq_ignore_ascii_case("scheduler-heartbeats")
+    {
+        return Some(Endpoint::SchedulerHeartbeats);
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("runtime-state")
+        && segments[4].eq_ignore_ascii_case("reset-session")
+    {
+        return decode_capture(segments[2]).map(Endpoint::ResetSession);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[2].eq_ignore_ascii_case("me")
+        && segments[3].eq_ignore_ascii_case("inbox-lite")
+    {
+        return Some(Endpoint::Inbox);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("runtime-state")
+    {
+        return decode_capture(segments[2]).map(Endpoint::RuntimeState);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("task-sessions")
+    {
+        return decode_capture(segments[2]).map(Endpoint::TaskSessions);
+    }
+    if segments.len() == 3
+        && segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("agents")
     {
         // Express matches the literal route before the parameter route. An
@@ -131,6 +208,52 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
         return Some(Endpoint::InstructionsPath {
             org_id: decode_capture(segments[2])?,
             agent_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return Some(Endpoint::KeyRevoke {
+            agent_id: decode_capture(segments[2])?,
+            key_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("orgs")
+        && segments[3].eq_ignore_ascii_case("agents")
+        && segments[4].eq_ignore_ascii_case("name-suggestion")
+    {
+        return decode_capture(segments[2]).map(Endpoint::NameSuggestion);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("orgs")
+        && segments[3].eq_ignore_ascii_case("agent-configurations")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Configurations);
+    }
+    if segments.len() == 6
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("config-revisions")
+        && segments[5].eq_ignore_ascii_case("rollback")
+    {
+        return Some(Endpoint::Rollback {
+            agent_id: decode_capture(segments[2])?,
+            revision_id: decode_capture(segments[4])?,
+        });
+    }
+    if segments.len() == 5
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("config-revisions")
+    {
+        return Some(Endpoint::Revision {
+            agent_id: decode_capture(segments[2])?,
+            revision_id: decode_capture(segments[4])?,
         });
     }
     if segments.len() == 5
@@ -159,9 +282,29 @@ fn endpoint_for_path(path: &str) -> Option<Endpoint> {
     }
     if segments[0].eq_ignore_ascii_case("api")
         && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("keys")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Keys);
+    }
+    if segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
         && segments[3].eq_ignore_ascii_case("permissions")
     {
         return decode_capture(segments[2]).map(Endpoint::Permissions);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("configuration")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Configuration);
+    }
+    if segments.len() == 4
+        && segments[0].eq_ignore_ascii_case("api")
+        && segments[1].eq_ignore_ascii_case("agents")
+        && segments[3].eq_ignore_ascii_case("config-revisions")
+    {
+        return decode_capture(segments[2]).map(Endpoint::Revisions);
     }
     None
 }
@@ -179,6 +322,15 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
             matches!(*request.method(), Method::GET | Method::HEAD)
         }
         Endpoint::Permissions(_) => *request.method() == Method::PATCH,
+        Endpoint::Configurations(_) | Endpoint::NameSuggestion(_) => {
+            matches!(*request.method(), Method::GET | Method::HEAD)
+        }
+        Endpoint::Configuration(_) | Endpoint::Revisions(_) | Endpoint::Revision { .. } => {
+            matches!(*request.method(), Method::GET | Method::HEAD)
+        }
+        Endpoint::Rollback { .. } => *request.method() == Method::POST,
+        Endpoint::Keys(_) => matches!(*request.method(), Method::GET | Method::HEAD | Method::POST),
+        Endpoint::KeyRevoke { .. } => *request.method() == Method::DELETE,
         Endpoint::InstructionsPath { .. } => matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::PATCH
@@ -191,6 +343,11 @@ fn method_matches(request: &HttpRequest, endpoint: &Endpoint) -> bool {
             *request.method(),
             Method::GET | Method::HEAD | Method::PUT | Method::DELETE
         ),
+        Endpoint::Inbox
+        | Endpoint::RuntimeState(_)
+        | Endpoint::TaskSessions(_)
+        | Endpoint::SchedulerHeartbeats => matches!(*request.method(), Method::GET | Method::HEAD),
+        Endpoint::ResetSession(_) => *request.method() == Method::POST,
     }
 }
 
@@ -205,12 +362,14 @@ async fn execute(
     endpoint: Endpoint,
 ) -> HttpResponse {
     let requested_org = match &endpoint {
-        Endpoint::InstructionsPath { org_id, .. } => Some(org_id.clone()),
+        Endpoint::InstructionsPath { org_id, .. }
+        | Endpoint::Configurations(org_id)
+        | Endpoint::NameSuggestion(org_id) => Some(org_id.clone()),
         _ => None,
     };
     // Express JSON parsing runs before auth and route middleware. Preserve its
     // parse-error precedence and leave non-JSON bodies absent on the command.
-    let parsed_body = match parse_public_json_body(&request, &public_body) {
+    let mut parsed_body = match parse_public_json_body(&request, &public_body, &endpoint) {
         Ok(body) => body,
         // The current Express error handler does not special-case body-parser
         // SyntaxErrors, so malformed JSON and strict-parser scalar values are
@@ -237,6 +396,40 @@ async fn execute(
             "native_identity_unavailable",
         );
     }
+    if matches!(&endpoint, Endpoint::Keys(_))
+        && *request.method() == Method::POST
+        && let Some(input) = parsed_body.take()
+    {
+        parsed_body = match normalize_public_input("key-create", input) {
+            Ok(input) => Some(input),
+            Err(error) => return response_error(error),
+        };
+    }
+    // These Express routes validate their bodies before checking board access.
+    // Reuse AgentCore's validator so invalid UUID-addressed requests keep that
+    // observable error precedence without duplicating their schemas here.
+    if (matches!(&endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST)
+        || matches!(&endpoint, Endpoint::ResetSession(_))
+    {
+        let command = request_command(&state, &request, endpoint.clone(), parsed_body.clone());
+        let body = match serde_json::to_vec(&command) {
+            Ok(body) => body,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        let command = match AgentCoreRequest::parse(&body) {
+            Ok(command) => command,
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error":"Internal server error"}));
+            }
+        };
+        if let Err(error) = command.validate_static_input() {
+            return response_error(error);
+        }
+    }
     let identity = match resolve_public_http_identity(&state, &request).await {
         Ok(identity) => identity,
         Err((status, code)) => return state.foundation.json_error(status, code),
@@ -244,12 +437,26 @@ async fn execute(
     if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
         return response;
     }
+    if let Some(response) = agent_cli_context_mismatch_response(&request, &identity) {
+        return response;
+    }
+    if matches!(&identity, NativeIngressIdentity::None)
+        && matches!(
+            &endpoint,
+            Endpoint::Keys(_) | Endpoint::KeyRevoke { .. } | Endpoint::ResetSession(_)
+        )
+    {
+        return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
+    }
     // This is the Rust equivalent of boardMutationGuard(): cookie-backed
     // board actors need a same-host browser origin; local-implicit and bearer
     // actors are exempt exactly as the legacy middleware specifies.
     if matches!(
         &endpoint,
         Endpoint::Permissions(_)
+            | Endpoint::Rollback { .. }
+            | Endpoint::Keys(_)
+            | Endpoint::KeyRevoke { .. }
             | Endpoint::InstructionsPath { .. }
             | Endpoint::InstructionsBundle(_)
             | Endpoint::InstructionsFile(_)
@@ -363,10 +570,10 @@ async fn execute(
     if matches!(
         command["operation"].as_str(),
         Some("detail" | "me" | "permissions")
-    ) || command["operation"]
-        .as_str()
-        .is_some_and(|op| op.starts_with("instructions-"))
-    {
+    ) || command["operation"].as_str().is_some_and(|op| {
+        op.starts_with("instructions-")
+            || matches!(op, "configuration" | "revisions" | "revision" | "rollback")
+    }) {
         command["resolveOnly"] = json!(true);
         let resolve_bytes = match serde_json::to_vec(&command) {
             Ok(bytes) => bytes,
@@ -464,23 +671,110 @@ async fn execute(
     }
 }
 
+/// Match the legacy Agent CLI context guard before native AgentCore mutations.
+/// The header is an execution-context assertion, not an authority source: a
+/// bearer key still identifies its own Agent and cannot act as another one.
+fn agent_cli_context_mismatch_response(
+    request: &HttpRequest,
+    identity: &NativeIngressIdentity,
+) -> Option<HttpResponse> {
+    if matches!(
+        *request.method(),
+        actix_web::http::Method::GET
+            | actix_web::http::Method::HEAD
+            | actix_web::http::Method::OPTIONS
+    ) {
+        return None;
+    }
+    let expected_agent_id = request
+        .headers()
+        .get("x-rudder-agent-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let (actor_type, actor_source, authenticated_agent_id) = match identity {
+        NativeIngressIdentity::AgentKey { agent_id, .. } => {
+            ("agent", "agent_key", Some(agent_id.as_str()))
+        }
+        NativeIngressIdentity::AgentJwt(identity) => {
+            ("agent", "agent_jwt", Some(identity.agent_id.as_str()))
+        }
+        NativeIngressIdentity::BoardKey { .. } => ("board", "board_key", None),
+        NativeIngressIdentity::Session(_) => ("board", "session", None),
+        NativeIngressIdentity::LocalImplicit => ("board", "local_implicit", None),
+        NativeIngressIdentity::None => ("none", "none", None),
+    };
+    match authenticated_agent_id {
+        Some(authenticated_agent_id) if authenticated_agent_id != expected_agent_id => {
+            Some(HttpResponse::Forbidden().json(json!({
+                "error": "Agent authentication does not match the CLI agent context",
+                "code": "agent_context_mismatch",
+                "details": {
+                    "expectedAgentId": expected_agent_id,
+                    "authenticatedAgentId": authenticated_agent_id,
+                },
+            })))
+        }
+        Some(_) => None,
+        None => Some(HttpResponse::Unauthorized().json(json!({
+            "error": "Agent authentication required for agent-scoped CLI request",
+            "code": "agent_auth_required",
+            "details": {
+                "expectedAgentId": expected_agent_id,
+                "actorType": actor_type,
+                "actorSource": actor_source,
+            },
+        }))),
+    }
+}
+
 fn request_command(
     state: &IngressState,
     request: &HttpRequest,
     endpoint: Endpoint,
     parsed_body: Option<Value>,
 ) -> Value {
-    let (operation, org_id, id) = match endpoint {
-        Endpoint::Roster(org_id) => ("list", Some(org_id), None),
-        Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id)),
-        Endpoint::Me => ("me", None, None),
-        Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id)),
+    let key_id = match &endpoint {
+        Endpoint::KeyRevoke { key_id, .. } => Some(key_id.clone()),
+        _ => None,
+    };
+    let (operation, org_id, id, revision_id) = match endpoint {
+        Endpoint::Roster(org_id) => ("list", Some(org_id), None, None),
+        Endpoint::Detail(agent_id) => ("detail", None, Some(agent_id), None),
+        Endpoint::Me => ("me", None, None, None),
+        Endpoint::Permissions(agent_id) => ("permissions", None, Some(agent_id), None),
+        Endpoint::Configurations(org_id) => ("configurations", Some(org_id), None, None),
+        Endpoint::NameSuggestion(org_id) => ("name-suggestion", Some(org_id), None, None),
+        Endpoint::Configuration(agent_id) => ("configuration", None, Some(agent_id), None),
+        Endpoint::Revisions(agent_id) => ("revisions", None, Some(agent_id), None),
+        Endpoint::Revision {
+            agent_id,
+            revision_id,
+        } => ("revision", None, Some(agent_id), Some(revision_id)),
+        Endpoint::Rollback {
+            agent_id,
+            revision_id,
+        } => ("rollback", None, Some(agent_id), Some(revision_id)),
+        Endpoint::Keys(agent_id) => {
+            let operation = if *request.method() == Method::POST {
+                "key-create"
+            } else {
+                "keys"
+            };
+            (operation, None, Some(agent_id), None)
+        }
+        Endpoint::KeyRevoke { agent_id, .. } => ("key-revoke", None, Some(agent_id), None),
+        Endpoint::Inbox => ("inbox", None, None, None),
+        Endpoint::RuntimeState(agent_id) => ("runtime-state", None, Some(agent_id), None),
+        Endpoint::ResetSession(agent_id) => ("reset-session", None, Some(agent_id), None),
+        Endpoint::TaskSessions(agent_id) => ("task-sessions", None, Some(agent_id), None),
+        Endpoint::SchedulerHeartbeats => ("scheduler-heartbeats", None, None, None),
         Endpoint::InstructionsPath { org_id, agent_id } => {
             let op = match *request.method() {
                 Method::GET | Method::HEAD => "instructions-path-get",
                 _ => "instructions-path-patch",
             };
-            (op, Some(org_id), Some(agent_id))
+            (op, Some(org_id), Some(agent_id), None)
         }
         Endpoint::InstructionsBundle(agent_id) => {
             let op = if matches!(*request.method(), Method::GET | Method::HEAD) {
@@ -488,7 +782,7 @@ fn request_command(
             } else {
                 "instructions-bundle-patch"
             };
-            (op, None, Some(agent_id))
+            (op, None, Some(agent_id), None)
         }
         Endpoint::InstructionsFile(agent_id) => {
             let op = match *request.method() {
@@ -496,13 +790,15 @@ fn request_command(
                 Method::PUT => "instructions-file-put",
                 _ => "instructions-file-delete",
             };
-            (op, None, Some(agent_id))
+            (op, None, Some(agent_id), None)
         }
     };
     let mut command = json!({
         "operation": operation,
         "orgId": org_id,
         "id": id,
+        "revisionId": revision_id,
+        "keyId": key_id,
         "query": query_value(request.uri().query().unwrap_or_default()),
         "localImplicit": false,
         "actorRunId": request
@@ -520,6 +816,9 @@ fn request_command(
     if matches!(
         operation,
         "permissions"
+            | "rollback"
+            | "key-create"
+            | "reset-session"
             | "instructions-path-patch"
             | "instructions-bundle-patch"
             | "instructions-file-put"
@@ -530,7 +829,11 @@ fn request_command(
     command
 }
 
-fn parse_public_json_body(request: &HttpRequest, public_body: &[u8]) -> Result<Option<Value>, ()> {
+fn parse_public_json_body(
+    request: &HttpRequest,
+    public_body: &[u8],
+    endpoint: &Endpoint,
+) -> Result<Option<Value>, ()> {
     let content_type = request
         .headers()
         .get(CONTENT_TYPE)
@@ -539,7 +842,12 @@ fn parse_public_json_body(request: &HttpRequest, public_body: &[u8]) -> Result<O
     if !is_json_content_type(content_type) || public_body.is_empty() {
         return Ok(None);
     }
-    let body = serde_json::from_slice::<Value>(public_body).map_err(|_| ())?;
+    let body = if matches!(endpoint, Endpoint::Keys(_)) && *request.method() == Method::POST {
+        let raw = std::str::from_utf8(public_body).map_err(|_| ())?;
+        parse_public_json_value(raw).map_err(|_| ())?
+    } else {
+        serde_json::from_slice::<Value>(public_body).map_err(|_| ())?
+    };
     // Express's default express.json() parser is strict: JSON values must be
     // objects or arrays. Explicit null therefore stays a parser error, while
     // a missing body remains omitted from AgentCoreRequest.input.
@@ -588,7 +896,9 @@ fn query_value(query: &str) -> Value {
     Value::Object(object)
 }
 
-fn actor_and_session(identity: &NativeIngressIdentity) -> Option<(ActorIdentity, String)> {
+pub(super) fn actor_and_session(
+    identity: &NativeIngressIdentity,
+) -> Option<(ActorIdentity, String)> {
     match identity {
         NativeIngressIdentity::None => None,
         NativeIngressIdentity::LocalImplicit => Some((
@@ -618,7 +928,7 @@ fn actor_and_session(identity: &NativeIngressIdentity) -> Option<(ActorIdentity,
     }
 }
 
-fn native_authorizer<'a>(
+pub(super) fn native_authorizer<'a>(
     identity: &'a NativeIngressIdentity,
     actor: &'a ActorIdentity,
     session_id: &'a str,
@@ -647,6 +957,45 @@ fn native_authorizer<'a>(
             Some(MemberDirectoryNativeAuth::AgentJwt { identity })
         }
     }
+}
+
+pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = &facts.instructions_host;
+    rudder_d1_persistence::agent_core::resolve_organization_workspace_root(
+        &host.instance_root,
+        &host.workspace_home,
+        &host.previous_documents_root,
+        host.friendly_workspace_home,
+        &host.hostname,
+        org_id,
+    )
+    .map(|path| path.to_string_lossy().into_owned())
+    .map_err(|_| ())
+}
+
+pub(super) fn ensure_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = &facts.instructions_host;
+    rudder_d1_persistence::agent_core::ensure_organization_workspace_layout(
+        &host.instance_root,
+        &host.workspace_home,
+        &host.previous_documents_root,
+        host.friendly_workspace_home,
+        &host.hostname,
+        std::path::Path::new(&facts.process_working_directory),
+        org_id,
+    )
+    .map(|path| path.to_string_lossy().into_owned())
+    .map_err(|_| ())
+}
+
+pub(super) fn project_create_state_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let root = PathBuf::from(facts.instructions_host.instance_root).join("data");
+    root.is_absolute()
+        .then(|| root.to_string_lossy().into_owned())
+        .ok_or(())
 }
 
 fn response_error(error: AgentCoreError) -> HttpResponse {
@@ -700,6 +1049,67 @@ mod tests {
         assert!(!is_detail_path("/api/agents/me/inbox-lite", &Method::GET));
         assert!(!is_detail_path("/api/agents/a//", &Method::GET));
         assert_eq!(endpoint_for_path("/api/agents/%FF"), None);
+    }
+
+    #[test]
+    fn remaining_agent_core_routes_are_native_with_exact_methods_and_captures() {
+        let cases = [
+            (
+                "/API/AGENTS/ME/INBOX-LITE/",
+                Endpoint::Inbox,
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/API/AGENTS/agent%2Done/runtime-state/",
+                Endpoint::RuntimeState("agent-one".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/runtime-state/reset-session",
+                Endpoint::ResetSession("agent-1".to_owned()),
+                &[Method::POST][..],
+            ),
+            (
+                "/api/agents/agent-1/task-sessions",
+                Endpoint::TaskSessions("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/API/INSTANCE/SCHEDULER-HEARTBEATS/",
+                Endpoint::SchedulerHeartbeats,
+                &[Method::GET, Method::HEAD][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/me/inbox-lite/extra",
+            "/api/agents/agent-1/runtime-state/reset-session/extra",
+            "/api/agents/agent-1/task-sessions/extra",
+            "/api/instance/scheduler-heartbeats/extra",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
     }
 
     #[test]
@@ -761,5 +1171,129 @@ mod tests {
             endpoint_for_path("/api/orgs/org-1/agents/agent-1/instructions-path//"),
             None
         );
+    }
+
+    #[test]
+    fn configuration_routes_are_reserved_with_exact_methods_and_captures() {
+        let cases = [
+            (
+                "/api/orgs/org-1/agent-configurations",
+                Endpoint::Configurations("org-1".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/API/ORGS/org%2Done/agents/name-suggestion/",
+                Endpoint::NameSuggestion("org-one".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/configuration",
+                Endpoint::Configuration("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/config-revisions",
+                Endpoint::Revisions("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/config-revisions/revision-1",
+                Endpoint::Revision {
+                    agent_id: "agent-1".to_owned(),
+                    revision_id: "revision-1".to_owned(),
+                },
+                &[Method::GET, Method::HEAD][..],
+            ),
+            (
+                "/api/agents/agent-1/config-revisions/revision-1/rollback",
+                Endpoint::Rollback {
+                    agent_id: "agent-1".to_owned(),
+                    revision_id: "revision-1".to_owned(),
+                },
+                &[Method::POST][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/agent-1/config-revisions/revision-1/extra",
+            "/api/agents/agent-1/config-revisions//rollback",
+            "/api/agents/agent-1/configuration/extra",
+            "/api/orgs/org-1/agents/name-suggestion/extra",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn api_key_routes_are_reserved_with_exact_method_contracts() {
+        let cases = [
+            (
+                "/api/agents/agent-1/keys",
+                Endpoint::Keys("agent-1".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/API/AGENTS/agent%2Done/KEYS/",
+                Endpoint::Keys("agent-one".to_owned()),
+                &[Method::GET, Method::HEAD, Method::POST][..],
+            ),
+            (
+                "/api/agents/agent-1/keys/key%2Done",
+                Endpoint::KeyRevoke {
+                    agent_id: "agent-1".to_owned(),
+                    key_id: "key-one".to_owned(),
+                },
+                &[Method::DELETE][..],
+            ),
+        ];
+        for (path, expected, allowed_methods) in cases {
+            assert_eq!(endpoint_for_path(path), Some(expected.clone()), "{path}");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PATCH,
+                Method::DELETE,
+            ] {
+                let should_match = allowed_methods.contains(&method);
+                assert_eq!(
+                    method_matches(&request(method.clone()), &expected),
+                    should_match,
+                    "{path} {method}"
+                );
+                assert_eq!(
+                    is_reserved_path(path, &method),
+                    should_match,
+                    "{path} {method}"
+                );
+            }
+        }
+        for path in [
+            "/api/agents/agent-1/keys/extra/segment",
+            "/api/agents/agent-1//keys",
+        ] {
+            assert_eq!(endpoint_for_path(path), None, "{path}");
+        }
     }
 }

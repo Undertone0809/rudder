@@ -1,6 +1,47 @@
 use super::*;
 use std::collections::BTreeMap;
 const ORG: &str = "10000000-0000-4000-8000-000000000001";
+
+#[test]
+fn project_layout_preparation_creates_fresh_root() {
+    let f = Fixture::new();
+    assert!(!f.workspace().exists());
+
+    let prepared = ensure_workspace_layout(&f.host, ORG, f.root.path()).unwrap();
+
+    assert_eq!(prepared, f.workspace());
+    assert_eq!(
+        json(&prepared.join(".rudder-workspace.json")).unwrap()["orgId"],
+        ORG
+    );
+    for directory in ["agents", "skills", "projects"] {
+        assert!(prepared.join(directory).is_dir());
+    }
+}
+
+#[test]
+fn project_layout_preparation_migrates_legacy_root_without_losing_files() {
+    let f = Fixture::new();
+    let legacy = Path::new(&f.host.previous_documents_root);
+    disk::create_dir_all(legacy).unwrap();
+    disk::write(legacy.join("existing.txt"), "preserve me").unwrap();
+
+    let prepared = ensure_workspace_layout(&f.host, ORG, f.root.path()).unwrap();
+
+    assert_eq!(prepared, f.workspace());
+    assert_eq!(
+        disk::read_to_string(prepared.join("existing.txt")).unwrap(),
+        "preserve me"
+    );
+    assert_eq!(
+        json(&prepared.join(".rudder-workspace.json")).unwrap()["orgId"],
+        ORG
+    );
+    for directory in ["agents", "skills", "projects"] {
+        assert!(prepared.join(directory).is_dir());
+    }
+}
+
 #[test]
 fn canonical_workspace_tolerates_corrupt_optional_alias_probe() {
     let f = Fixture::new();

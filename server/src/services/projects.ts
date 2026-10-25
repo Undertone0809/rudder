@@ -719,17 +719,6 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
           .returning()
           .then((rows) => rows[0]);
 
-        // The insert trigger provisions the component row. Acquire it only
-        // when this create actually writes the Project-Goal component; plain
-        // Project creation remains independent of the migrated writer.
-        if (ids !== undefined) {
-          await lockNodeProjectGoalMutationAuthority(tx, orgId, created.id);
-        }
-
-        if (ids && ids.length > 0) {
-          await syncGoalLinks(tx, created.id, orgId, ids);
-        }
-
         if ((resourceAttachments?.length ?? 0) > 0 || (newResources?.length ?? 0) > 0) {
           await replaceProjectResourceAttachments(tx, {
             orgId,
@@ -737,6 +726,19 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
             attachments: resourceAttachments ?? [],
             newResources,
           });
+        }
+
+        // The insert trigger provisions the component row. Acquire it only
+        // when this create actually writes the Project-Goal component; plain
+        // Project creation remains independent of the migrated writer. The
+        // attachment helper takes Resource locks before the Project fence,
+        // matching the public Resource claim path.
+        if (ids !== undefined) {
+          await lockNodeProjectGoalMutationAuthority(tx, orgId, created.id);
+        }
+
+        if (ids && ids.length > 0) {
+          await syncGoalLinks(tx, created.id, orgId, ids);
         }
 
         return created;
@@ -797,13 +799,21 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         updates.goalId = ids.length > 0 ? ids[0] : null;
       }
 
-      const existingAttachments = resourceAttachments !== undefined || newResources !== undefined
-        ? await listProjectResourceAttachmentsByProjectIds(db, existingProject.orgId, [id]).then((byProjectId) =>
-          byProjectId.get(id) ?? [],
-        )
-        : [];
       const row = await db.transaction(async (tx) => {
-        await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
+        const replacesAttachments = resourceAttachments !== undefined || newResources !== undefined;
+        if (replacesAttachments) {
+          // This takes the shared organization fence, then Resource fences,
+          // then the Project fence. Loading the previous attachments inside
+          // that same transaction avoids replacing a newer concurrent set.
+          await replaceProjectResourceAttachments(tx, {
+            orgId: existingProject.orgId,
+            projectId: id,
+            attachments: resourceAttachments,
+            newResources,
+          });
+        } else {
+          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
+        }
         const updatedRow = await tx
           .update(projects)
           .set(updates)
@@ -814,21 +824,6 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
 
         if (ids !== undefined) {
           await syncGoalLinks(tx, id, updatedRow.orgId, ids);
-        }
-
-        if (resourceAttachments !== undefined || newResources !== undefined) {
-          await replaceProjectResourceAttachments(tx, {
-            orgId: updatedRow.orgId,
-            projectId: id,
-            attachments: resourceAttachments ?? existingAttachments.map((attachment) => ({
-              resourceId: attachment.resourceId,
-              role: attachment.role,
-              note: attachment.note,
-              sortOrder: attachment.sortOrder,
-              isPrimary: attachment.isPrimary,
-            })),
-            newResources,
-          });
         }
 
         return updatedRow;

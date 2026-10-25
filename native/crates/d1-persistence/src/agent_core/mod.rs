@@ -19,6 +19,48 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
+/// Resolve the configured organization workspace display root without
+/// provisioning or migrating any filesystem state.
+pub fn resolve_organization_workspace_root(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    organization_id: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    instructions::resolve_workspace_root(
+        instance_root,
+        workspace_home,
+        previous_documents_root,
+        friendly_workspace_home,
+        hostname,
+        organization_id,
+    )
+}
+
+/// Ensure the organization workspace layout from signed native host facts.
+/// Agent instruction storage owns the map lock, identity checks, and legacy
+/// migration semantics shared with existing workspace recovery.
+pub fn ensure_organization_workspace_layout(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    cwd: &std::path::Path,
+    organization_id: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    let host = instructions::Host {
+        instance_root: instance_root.to_owned(),
+        workspace_home: workspace_home.to_owned(),
+        previous_documents_root: previous_documents_root.to_owned(),
+        friendly_workspace_home,
+        hostname: hostname.to_owned(),
+    };
+    instructions::ensure_workspace_layout(&host, organization_id, cwd)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentCoreError {
     #[error("{1}")]
@@ -46,6 +88,24 @@ pub trait NativeAgentAuthorizer: Send + Sync {
         Box<dyn Future<Output = std::result::Result<NativeAgentAccess, sqlx::Error>> + Send + 'a>,
     >;
 }
+
+/// Parse public JSON through the same bounded, JavaScript-compatible parser
+/// used by AgentCore commands. Public schemas that strip unknown fields can
+/// then normalize the body before it is forwarded into a command envelope.
+pub fn parse_public_json_value(raw: &str) -> std::result::Result<Value, serde_json::Error> {
+    json_boundary::stack(|| json_boundary::parse(raw))
+}
+
+/// Apply an existing AgentCore input schema at the public transport boundary.
+/// Taking ownership keeps deeply nested, schema-stripped values on the grown
+/// stack while they are validated and dropped.
+pub fn normalize_public_input(
+    operation: &str,
+    input: Value,
+) -> std::result::Result<Value, AgentCoreError> {
+    json_boundary::stack(|| validation::validate(operation, Some(&input)))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCoreRequest {
@@ -187,6 +247,19 @@ impl AgentCoreRequest {
             Ok(request)
         })
     }
+
+    /// Run the existing static request validation before authorization when
+    /// the legacy route did so. Short-name references defer this until route
+    /// resolution, matching the normal AgentCore admission path.
+    pub fn validate_static_input(&self) -> std::result::Result<(), AgentCoreError> {
+        if self.id.as_deref().is_none_or(uuid_like) {
+            validation::validate(
+                &self.operation,
+                (!self.input_missing).then_some(&self.input),
+            )?;
+        }
+        Ok(())
+    }
 }
 impl Drop for AgentCoreRequest {
     fn drop(&mut self) {
@@ -264,7 +337,7 @@ fn admit_inner(actor: &VerifiedActor, r: &AgentCoreRequest) -> Result<()> {
         return Err(http(400, "Invalid Agent command"));
     }
     if r.id.as_deref().is_none_or(uuid_like) {
-        validation::validate(&r.operation, (!r.input_missing).then_some(&r.input))?;
+        r.validate_static_input()?;
         early_authorization(actor, r)?;
     }
     Ok(())

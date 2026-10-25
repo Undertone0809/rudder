@@ -618,7 +618,11 @@ jobs:
           "$pg_dump_binary" --version | tee "$RUNNER_TEMP/migration-pg-dump-version.txt"
           grep -Eq 'PostgreSQL\)?[[:space:]]+18\.4([[:space:]]|$)' "$RUNNER_TEMP/migration-pg-dump-version.txt"
           backup_dir="$RUNNER_TEMP/desktop-candidate-migration-backups"
-          install -d -m 700 "$backup_dir"
+          if [ "$MATRIX_PLATFORM" = "windows" ]; then
+            mkdir -p "$backup_dir"
+          else
+            install -d -m 700 "$backup_dir"
+          fi
           backup_probe="$(mktemp "$backup_dir/.preflight.XXXXXX")"
           rm -- "$backup_probe"
           printf 'RUDDER_POSTGRES_BIN_DIR=%s\nRUDDER_NATIVE_MIGRATIONS_PG_DUMP=%s\nRUDDER_DB_BACKUP_DIR=%s\n' "$bin_dir" "$pg_dump_binary" "$backup_dir" >> "$GITHUB_ENV"

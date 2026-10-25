@@ -14,8 +14,12 @@ const MAX_BODY_BYTES: usize = 256 * 1024;
 const MAX_PAYLOAD_BYTES: i32 = 512 * 1024;
 const SNAPSHOT_INTERVAL: u64 = 64;
 // Bound durable event/audit growth even for empty or single-byte deltas.
-// Exhaustion retains the execution hold; unpersisted output is never published.
-const MAX_VISIBLE_OUTPUTS_PER_TURN: u64 = 4096;
+// Unpersisted output is never published. The executor uses this same limit to
+// distinguish a known pre-transaction rejection from an ambiguous DB failure.
+pub const MAX_VISIBLE_OUTPUTS_PER_TURN: u64 = 4096;
+
+mod failure;
+pub(super) use failure::fail_existing_projection;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -391,6 +395,25 @@ pub(super) async fn validate_final_projection(
     message_id: &str,
     body: &str,
 ) -> Result<()> {
+    validate_projection(
+        tx,
+        fence,
+        cleanup,
+        message_id,
+        body,
+        NativeChatProtocolPhase::ProviderTerminalObserved,
+    )
+    .await
+}
+
+async fn validate_projection(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    fence: &ExecutionFence,
+    cleanup: &rudder_codex_app_server::CleanupReceipt,
+    message_id: &str,
+    body: &str,
+    expected_phase: NativeChatProtocolPhase,
+) -> Result<()> {
     let id = fence.identity();
     if body.len() > MAX_BODY_BYTES {
         return Err(http(
@@ -424,8 +447,8 @@ pub(super) async fn validate_final_projection(
     checkpoint
         .validate()
         .map_err(|_| http(409, "Native Chat terminal checkpoint is invalid"))?;
-    if checkpoint_phase != NativeChatProtocolPhase::ProviderTerminalObserved.as_str()
-        || checkpoint.phase() != NativeChatProtocolPhase::ProviderTerminalObserved
+    if checkpoint_phase != expected_phase.as_str()
+        || checkpoint.phase() != expected_phase
         || run_attempt_epoch != id.run_attempt_epoch
         || generation_attempt_epoch != id.generation_attempt_epoch
         || connection_epoch != id.connection_epoch
@@ -688,6 +711,50 @@ mod tests {
             item_id: "answer".into(),
             kind: "delta".into(),
             fingerprint: String::new(),
+        }
+    }
+
+    #[test]
+    fn output_provenance_accepts_the_last_ordinal_and_rejects_the_next() {
+        let id = super::super::ExecutionIdentity {
+            organization_id: "org",
+            conversation_id: "chat",
+            generation_id: "generation",
+            run_id: "run",
+            attempt_id: "attempt",
+            agent_id: "agent",
+            generation_attempt_epoch: 1,
+            run_attempt_epoch: 1,
+            connection_epoch: 1,
+        };
+        let mut receipt = source(MAX_VISIBLE_OUTPUTS_PER_TURN, "prefix");
+        receipt.claim_digest = hash("claim");
+        assert!(
+            validate_source(
+                &receipt,
+                id,
+                "connection",
+                "claim",
+                "thread",
+                "turn",
+                "assistant-message",
+            )
+            .is_ok()
+        );
+        for ordinal in [0, MAX_VISIBLE_OUTPUTS_PER_TURN + 1, u64::MAX] {
+            receipt.ordinal = ordinal;
+            assert!(
+                validate_source(
+                    &receipt,
+                    id,
+                    "connection",
+                    "claim",
+                    "thread",
+                    "turn",
+                    "assistant-message",
+                )
+                .is_err()
+            );
         }
     }
 

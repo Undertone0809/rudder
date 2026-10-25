@@ -31,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { signNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
@@ -140,6 +141,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
   let baselineDatabase: unknown;
   let baselineFilesystem: Record<string, string>;
   let rustProjectId = "";
+  let projectWriteNodeRouteHits = 0;
   const originalHome = process.env.RUDDER_HOME;
   const originalInstance = process.env.RUDDER_INSTANCE_ID;
   const originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
@@ -150,6 +152,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
   const volumeOrgId = randomUUID();
   const volumeProjectIds = Array.from({ length: 80 }, () => randomUUID());
   const agentId = randomUUID();
+  let agentKeyId = "";
   const oldProjectId = "11111111-1111-4111-8111-111111111111";
   const bareProjectId = "22222222-2222-4222-8222-222222222222";
   const foreignProjectId = "33333333-3333-4333-8333-333333333333";
@@ -212,7 +215,16 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db!, { deploymentMode: "authenticated", authRequirement: "required" }));
-    app.use("/api", projectRoutes(db!, selectedBridge));
+    app.use((req, _res, next) => {
+      if (ingressMode === "required"
+        && /^(?:POST \/api\/orgs\/[^/]+\/projects|PATCH \/api\/projects\/[^/]+|DELETE \/api\/projects\/[^/]+|(?:GET|POST) \/api\/projects\/[^/]+\/resources|(?:PATCH|DELETE) \/api\/projects\/[^/]+\/resources\/[^/]+)$/.test(`${req.method} ${req.path}`)) {
+        projectWriteNodeRouteHits += 1;
+      }
+      next();
+    });
+    app.use("/api", projectRoutes(db!, selectedBridge, {
+      nativeProjectReads: ingressMode === "required",
+    }));
     app.use(errorHandler);
     const result = app.listen(listenPort, "127.0.0.1");
     await once(result, "listening");
@@ -304,7 +316,10 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     ]);
     await db.insert(organizationMutationState).values([{ orgId }, { orgId: foreignOrgId }, { orgId: emptyOrgId }, { orgId: volumeOrgId }]).onConflictDoNothing();
     await db.insert(agents).values({ id: agentId, orgId, name: "Reader", role: "general", status: "idle" });
-    await db.insert(agentApiKeys).values({ orgId, agentId, name: "Read test", keyHash: createHash("sha256").update(agentToken).digest("hex") });
+    const [agentKey] = await db.insert(agentApiKeys).values({
+      orgId, agentId, name: "Read test", keyHash: createHash("sha256").update(agentToken).digest("hex"),
+    }).returning({ id: agentApiKeys.id });
+    agentKeyId = agentKey!.id;
     await db.insert(authUsers).values({ id: boardUserId, name: "Read operator", email: "read-test@example.test", createdAt: early, updatedAt: later });
     await db.insert(organizationMemberships).values([orgId, emptyOrgId, volumeOrgId].map((id) => ({ orgId: id, principalType: "user", principalId: boardUserId, status: "active", membershipRole: "member" })));
     await db.insert(boardApiKeys).values({ userId: boardUserId, name: "Read test", keyHash: createHash("sha256").update(boardToken).digest("hex") });
@@ -461,7 +476,7 @@ describe.each(["off", "required"] as const)("Project reads through real public H
 
   it("returns complete Node-contract parity for old Node-owned and new Rust-created projects without writes", async () => {
     const list = await get(`/api/orgs/${orgId}/projects`);
-    expect(list.status).toBe(200);
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
     expect(canonicalList(list.body as ProjectRead[])).toEqual(canonicalList(expected));
     expect((list.body as ProjectRead[]).map((project) => project.id)).not.toContain(foreignProjectId);
     for (const project of expected) {
@@ -627,10 +642,28 @@ describe.each(["off", "required"] as const)("Project reads through real public H
     }
     const failingServer = await startApp(unavailable, nodeListenPort);
     try {
-      for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`, `/api/projects/${oldProjectId}/resources`]) {
-        const response = await get(url, agentToken, ingressMode === "required" ? publicTarget : failingServer);
-        expect(response.status).toBe(503);
-        expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+      if (ingressMode === "required") {
+        // Public Project reads are served by Rust, independently of the
+        // private Node target.
+        const list = await get(`/api/orgs/${orgId}/projects`, agentToken, publicTarget);
+        expect(list.status, JSON.stringify(list.body)).toBe(200);
+        expect(canonicalList(list.body as ProjectRead[])).toEqual(canonicalList(expected));
+
+        const detail = await get(`/api/projects/${oldProjectId}`, agentToken, publicTarget);
+        expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+        expect(canonicalProject(detail.body as ProjectRead)).toEqual(
+          canonicalProject(expected.find((project) => project.id === oldProjectId)!),
+        );
+
+        const resources = await get(`/api/projects/${oldProjectId}/resources`, agentToken, publicTarget);
+        expect(resources.status, JSON.stringify(resources.body)).toBe(200);
+        expect(resources.body).toEqual(expected.find((project) => project.id === oldProjectId)!.resources);
+      } else {
+        for (const url of [`/api/orgs/${orgId}/projects`, `/api/projects/${oldProjectId}`, `/api/projects/${oldProjectId}/resources`]) {
+          const response = await get(url, agentToken, failingServer);
+          expect(response.status).toBe(503);
+          expect(response.body.code).toBe("rust_foundation_project_read_request_failed");
+        }
       }
       await expectReadOnly();
     } finally {
@@ -642,6 +675,174 @@ describe.each(["off", "required"] as const)("Project reads through real public H
       }
     }
   });
+
+  it.skipIf(ingressMode !== "required")("routes public Project create, patch, resources and delete through Rust with adoption, receipts and outbox effects", async () => {
+    const initialNodeHits = projectWriteNodeRouteHits;
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    expect(fs.existsSync(workspaceRoot)).toBe(false);
+
+    const createKey = `public-project-create-${randomUUID()}`;
+    const create = await request(publicTarget)
+      .post(`/api/orgs/${orgId}/projects`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", createKey)
+      .send({ name: "Public Rust Project", status: "planned", description: "Created on the native ingress" });
+    expect(create.status, JSON.stringify(create.body)).toBe(201);
+    const projectId = String(create.body.id);
+    expect(create.body).toMatchObject({ orgId, name: "Public Rust Project", status: "planned" });
+    expect(fs.existsSync(workspaceRoot)).toBe(true);
+
+    const invalidCreate = await request(publicTarget)
+      .post(`/api/orgs/${orgId}/projects`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", `public-project-invalid-create-${randomUUID()}`)
+      .send({ name: "Invalid Project", color: "not-a-project-color" });
+    expect(invalidCreate.status).toBe(400);
+
+    const patchKey = `public-project-patch-${randomUUID()}`;
+    const invalidPatch = await request(publicTarget)
+      .patch(`/api/projects/${projectId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", `public-project-invalid-patch-${randomUUID()}`)
+      .send({ color: "not-a-project-color" });
+    expect(invalidPatch.status).toBe(400);
+
+    const patch = await request(publicTarget)
+      .patch(`/api/projects/${projectId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", patchKey)
+      .send({ name: "Patched Rust Project", description: "Updated on the native ingress" });
+    expect(patch.status, JSON.stringify(patch.body)).toBe(200);
+    expect(patch.body).toMatchObject({ id: projectId, name: "Patched Rust Project" });
+
+    const emptyResources = await request(publicTarget)
+      .get(`/api/projects/${projectId}/resources`)
+      .set("authorization", `Bearer ${boardToken}`);
+    expect(emptyResources.status, JSON.stringify(emptyResources.body)).toBe(200);
+    expect(emptyResources.body).toEqual([]);
+
+    const attachKey = `public-project-attach-${randomUUID()}`;
+    const attach = await request(publicTarget)
+      .post(`/api/projects/${projectId}/resources`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", attachKey)
+      .send({ resourceId: resourceIds[0], role: "reference", note: "attached through Rust", sortOrder: 3 });
+    expect(attach.status, JSON.stringify(attach.body)).toBe(201);
+    const attachmentId = String(attach.body.id);
+    expect(attach.body).toMatchObject({ projectId, resourceId: resourceIds[0], role: "reference", note: "attached through Rust" });
+
+    const updateAttachmentKey = `public-project-attachment-patch-${randomUUID()}`;
+    const updateAttachment = await request(publicTarget)
+      .patch(`/api/projects/${projectId}/resources/${attachmentId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", updateAttachmentKey)
+      .send({ note: "updated through Rust", role: "working_set", isPrimary: true });
+    expect(updateAttachment.status, JSON.stringify(updateAttachment.body)).toBe(200);
+    expect(updateAttachment.body).toMatchObject({ id: attachmentId, note: "updated through Rust", role: "working_set", isPrimary: true });
+
+    const attachedResources = await request(publicTarget)
+      .get(`/api/projects/${projectId}/resources`)
+      .set("authorization", `Bearer ${boardToken}`);
+    expect(attachedResources.status).toBe(200);
+    expect(attachedResources.body).toMatchObject([{ id: attachmentId, resourceId: resourceIds[0], role: "working_set", note: "updated through Rust", isPrimary: true }]);
+
+    const removeAttachmentKey = `public-project-attachment-delete-${randomUUID()}`;
+    const removeAttachment = await request(publicTarget)
+      .delete(`/api/projects/${projectId}/resources/${attachmentId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", removeAttachmentKey);
+    expect(removeAttachment.status, JSON.stringify(removeAttachment.body)).toBe(200);
+    expect(removeAttachment.body).toMatchObject({ id: attachmentId, resourceId: resourceIds[0] });
+
+    const afterRemove = await request(publicTarget)
+      .get(`/api/projects/${projectId}/resources`)
+      .set("authorization", `Bearer ${boardToken}`);
+    expect(afterRemove.status).toBe(200);
+    expect(afterRemove.body).toEqual([]);
+
+    const adoptionKey = `public-project-adoption-${randomUUID()}`;
+    const beforeAdoption = await db!.execute(sql`
+      SELECT owner FROM project_goal_mutation_state
+      WHERE org_id = ${orgId}::uuid AND project_id = ${oldProjectId}::uuid
+    `);
+    expect(beforeAdoption[0]?.owner).toBe("node");
+    const adoption = await request(publicTarget)
+      .patch(`/api/projects/${oldProjectId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", adoptionKey)
+      .send({ description: "Adopted by the public Rust Project writer" });
+    expect(adoption.status, JSON.stringify(adoption.body)).toBe(200);
+    expect(adoption.body).toMatchObject({ id: oldProjectId, description: "Adopted by the public Rust Project writer" });
+    const afterAdoption = await db!.execute(sql`
+      SELECT owner FROM project_goal_mutation_state
+      WHERE org_id = ${orgId}::uuid AND project_id = ${oldProjectId}::uuid
+    `);
+    expect(afterAdoption[0]?.owner).toBe("rust");
+
+    const crossOrganization = await request(publicTarget)
+      .patch(`/api/projects/${foreignProjectId}`)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", `public-project-cross-org-${randomUUID()}`)
+      .send({ description: "must not cross organizations" });
+    expect(crossOrganization.status).toBe(403);
+
+    const deleteKey = `public-project-delete-${randomUUID()}`;
+    const deletePath = `/api/projects/${projectId}`;
+    const deleted = await request(publicTarget)
+      .delete(deletePath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", deleteKey);
+    expect(deleted.status, JSON.stringify(deleted.body)).toBe(200);
+    expect(deleted.body).toMatchObject({ id: projectId });
+    const replay = await request(publicTarget)
+      .delete(deletePath)
+      .set("authorization", `Bearer ${boardToken}`)
+      .set("x-rudder-idempotency-key", deleteKey);
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+    expect(replay.body).toEqual(deleted.body);
+
+    const mutationKeys = [createKey, patchKey, attachKey, updateAttachmentKey, removeAttachmentKey, adoptionKey, deleteKey];
+    const receipts = await db!.execute(sql`
+      SELECT idempotency_key, command_kind, outcome
+      FROM organization_mutation_receipts
+      WHERE org_id = ${orgId}::uuid
+        AND idempotency_key IN (${sql.join(mutationKeys.map((key) => sql`${key}`), sql`, `)})
+      ORDER BY idempotency_key
+    `);
+    expect(receipts).toHaveLength(mutationKeys.length);
+    expect(receipts.map((row) => row.idempotency_key)).toEqual(expect.arrayContaining(mutationKeys));
+    expect(receipts.filter((row) => row.outcome === "applied")).toHaveLength(mutationKeys.length);
+    expect(receipts.find((row) => row.idempotency_key === createKey)?.command_kind).toBe("project_create");
+    expect(receipts.find((row) => row.idempotency_key === deleteKey)?.command_kind).toBe("project_delete");
+
+    const activityRows = await db!.execute(sql`
+      SELECT action, entity_type, entity_id::text AS entity_id
+      FROM activity_log
+      WHERE org_id = ${orgId}::uuid
+        AND entity_id IN (${sql`${projectId}::text`}, ${sql`${attachmentId}::text`}, ${sql`${oldProjectId}::text`})
+    `);
+    const actions = activityRows.map((row) => row.action);
+    expect(actions).toEqual(expect.arrayContaining([
+      "project.created", "project.updated", "project.deleted",
+      "project.resource.attached", "project.resource.updated", "project.resource.detached",
+    ]));
+    expect(activityRows.filter((row) => row.entity_id === oldProjectId).map((row) => row.action)).toContain("project.updated");
+
+    const deliveredActivities = await db!.execute(sql`
+      SELECT count(*)::int AS count
+      FROM organization_mutation_outbox AS outbox
+      JOIN activity_log AS activity ON activity.org_id = outbox.org_id AND activity.id = outbox.activity_id
+      WHERE activity.org_id = ${orgId}::uuid
+        AND activity.entity_id IN (${sql`${projectId}::text`}, ${sql`${attachmentId}::text`}, ${sql`${oldProjectId}::text`})
+    `);
+    expect(Number(deliveredActivities[0]?.count)).toBe(activityRows.length);
+
+    const deletedProject = await db!.execute(sql`
+      SELECT id FROM projects WHERE org_id = ${orgId}::uuid AND id = ${projectId}::uuid
+    `);
+    expect(deletedProject).toHaveLength(0);
+    expect(projectWriteNodeRouteHits).toBe(initialNodeHits);
+  }, 30_000);
 
   it("matches Node Agent permissions and attribution for Rust goal-only and mixed Project PATCHes", async () => {
     const goalOnlyKey = "agent-project-goals-only";
@@ -694,5 +895,54 @@ describe.each(["off", "required"] as const)("Project reads through real public H
       .send({ goalIds: [] });
     expect(crossOrg.status).toBe(403);
     expect(await databaseSnapshot()).toEqual(beforeCrossOrgRequest);
+
+    if (ingressMode === "required") {
+      // Stop the public Rust ingress, then keep the private Node target alive
+      // with an unavailable bridge. The two migrated reads must be absent from
+      // Node while the remaining legacy resources path reports the outage.
+      const beforeRustUnavailable = await databaseSnapshot();
+      const filesystemBeforeRustUnavailable = filesystemSnapshot(home);
+      await bridge!.close();
+      for (const url of [
+        `/api/orgs/${orgId}/projects`,
+        `/api/projects/${oldProjectId}`,
+        `/api/projects/${oldProjectId}/resources`,
+      ]) {
+        await expect(get(url, agentToken, publicTarget)).rejects.toThrow(/ECONNREFUSED/);
+      }
+
+      await closeServer(server);
+      const unavailable = createRustFoundationBridge({
+        databaseUrl: connectionString,
+        binaryPath: path.join(home, "foundation-does-not-exist"),
+        mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off",
+      });
+      server = await startApp(unavailable, nodeListenPort);
+      const privateNodeGet = (url: string) => request(server!)
+        .get(url)
+        .set("x-rudder-native-session-proof", signNativeSessionAssertion({
+          key: nativeIdentity.identityAuth.assertionKey,
+          method: "GET",
+          target: url,
+          identity: {
+            kind: "agent_key",
+            agent_id: agentId,
+            key_id: agentKeyId,
+            org_id: orgId,
+            session_id: `agent-key:${agentKeyId}`,
+          },
+        }));
+
+      for (const url of [
+        `/api/orgs/${orgId}/projects`,
+        `/api/projects/${oldProjectId}`,
+        `/api/projects/${oldProjectId}/resources`,
+      ]) {
+        expect((await privateNodeGet(url)).status).toBe(404);
+      }
+      await unavailable.close();
+      expect(await databaseSnapshot()).toEqual(beforeRustUnavailable);
+      expect(filesystemSnapshot(home)).toEqual(filesystemBeforeRustUnavailable);
+    }
   });
 });

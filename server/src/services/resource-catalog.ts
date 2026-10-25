@@ -244,7 +244,7 @@ export async function replaceProjectResourceAttachments(
   input: {
     orgId: string;
     projectId: string;
-    attachments: ProjectResourceAttachmentInput[];
+    attachments?: ProjectResourceAttachmentInput[];
     newResources?: CreateProjectInlineResourceInput[];
   },
 ): Promise<ProjectResourceAttachment[]> {
@@ -259,10 +259,12 @@ export async function replaceProjectResourceAttachments(
   if (project.orgId !== input.orgId) {
     throw unprocessable("Project must belong to same organization");
   }
-  if ((input.newResources?.length ?? 0) > 0) {
-    await lockNodeMutationAuthority(dbOrTx, input.orgId);
-  }
-  await lockNodeProjectGoalMutationAuthority(dbOrTx, input.orgId, input.projectId);
+  await lockNodeMutationAuthority(dbOrTx, input.orgId);
+  const previousAttachments = (await listProjectResourceAttachmentsByProjectIds(
+    dbOrTx,
+    input.orgId,
+    [input.projectId],
+  )).get(input.projectId) ?? [];
 
   const createdResourceIds: string[] = [];
 
@@ -272,7 +274,13 @@ export async function replaceProjectResourceAttachments(
   }
 
   const combinedAttachments = [
-    ...input.attachments,
+    ...(input.attachments ?? previousAttachments.map((attachment) => ({
+      resourceId: attachment.resourceId,
+      role: attachment.role,
+      note: attachment.note,
+      sortOrder: attachment.sortOrder,
+      isPrimary: attachment.isPrimary,
+    }))),
     ...(input.newResources ?? []).map((resource, index) => ({
       resourceId: createdResourceIds[index]!,
       role: resource.role,
@@ -295,6 +303,11 @@ export async function replaceProjectResourceAttachments(
       throw unprocessable("Project resources must belong to same organization");
     }
   }
+
+  // The Project owns these relationship rows. The organization fence above
+  // serializes edge changes with Resource claim/delete transactions, while
+  // the Project fence below keeps relation writes under Project ownership.
+  await lockNodeProjectGoalMutationAuthority(dbOrTx, input.orgId, input.projectId);
 
   if (dedupedAttachments.filter((attachment) => attachment.isPrimary).length > 1) {
     throw badRequest("A project can have at most one primary source.");
@@ -463,7 +476,7 @@ export function resourceCatalogService(db: Db) {
     replaceProjectResourceAttachments: async (input: {
       orgId: string;
       projectId: string;
-      attachments: ProjectResourceAttachmentInput[];
+      attachments?: ProjectResourceAttachmentInput[];
       newResources?: CreateProjectInlineResourceInput[];
     }) => db.transaction((tx) => replaceProjectResourceAttachments(tx, input)),
 
@@ -479,13 +492,15 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!project) return null;
 
-        await lockNodeProjectGoalMutationAuthority(tx, project.orgId, projectId);
+        await lockNodeMutationAuthority(tx, project.orgId);
         const resource = await tx
           .select()
           .from(organizationResources)
           .where(and(eq(organizationResources.orgId, project.orgId), eq(organizationResources.id, input.resourceId)))
           .then((rows) => rows[0] ?? null);
         if (!resource) return null;
+
+        await lockNodeProjectGoalMutationAuthority(tx, project.orgId, projectId);
 
         const existing = await tx
           .select()
@@ -574,6 +589,7 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
+        await lockNodeMutationAuthority(tx, existing.orgId);
         await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, projectId);
         const resource = await tx
           .select()
@@ -622,6 +638,7 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
+        await lockNodeMutationAuthority(tx, existing.orgId);
         await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, projectId);
         const resource = await tx
           .select()

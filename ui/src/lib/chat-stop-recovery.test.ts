@@ -4,6 +4,8 @@ import {
   clearPendingChatStopRecovery,
   createChatStopRecoveryRetrier,
   createPendingChatStopRecovery,
+  hasCompleteNativeStopFence,
+  hydrateIncompleteNativeChatStopRecovery,
   readPendingChatStopRecovery,
   savePendingChatStopRecovery,
 } from "./chat-stop-recovery";
@@ -77,6 +79,126 @@ describe("chat Stop recovery", () => {
       "chat-1",
       new Date("2026-07-16T01:00:03.000Z"),
     )).toEqual(recovery);
+  });
+
+  it("hydrates an incomplete old action only from its original Native target", () => {
+    const recovery = createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-1",
+      request: {
+        controlActionId: "old-stop-action",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: null,
+    });
+    const hydrated = hydrateIncompleteNativeChatStopRecovery(recovery, {
+      executionAuthority: "native_rust",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      generationId: "generation-1",
+      attemptEpoch: 2,
+      controlVersion: 8,
+      lastClientCheckpointSeq: 4,
+      lastClientCheckpointHash: "b".repeat(64),
+      lastSequence: 5,
+      runtimeTerminal: false,
+    }, "e".repeat(64));
+
+    expect(hydrated?.request).toEqual({
+      controlActionId: "old-stop-action",
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 8,
+      lastCommittedRenderSeq: 4,
+      renderedBodyHash: "b".repeat(64),
+    });
+    expect(hydrated?.executionAuthority).toBe("native_rust");
+  });
+
+  it.each([
+    {
+      label: "a newer generation",
+      recovery: createPendingChatStopRecovery({
+        orgId: "org-1", chatId: "chat-1",
+        request: { controlActionId: "old-action", expectedGenerationId: "generation-1", expectedAttemptEpoch: 2 },
+        frozenDraft: null,
+      }),
+      controlGenerationId: "generation-2",
+      controlAttemptEpoch: 2,
+    },
+    {
+      label: "a newer attempt",
+      recovery: createPendingChatStopRecovery({
+        orgId: "org-1", chatId: "chat-1",
+        request: { controlActionId: "old-action", expectedGenerationId: "generation-1", expectedAttemptEpoch: 2 },
+        frozenDraft: null,
+      }),
+      controlGenerationId: "generation-1",
+      controlAttemptEpoch: 3,
+    },
+    {
+      label: "the current run when the old target was not stored",
+      recovery: createPendingChatStopRecovery({
+        orgId: "org-1", chatId: "chat-1",
+        request: { controlActionId: "old-action" },
+        frozenDraft: null,
+      }),
+      controlGenerationId: "generation-2",
+      controlAttemptEpoch: 1,
+    },
+  ])("does not retarget an incomplete action to $label", ({ recovery, controlGenerationId, controlAttemptEpoch }) => {
+    expect(hydrateIncompleteNativeChatStopRecovery(recovery, {
+      executionAuthority: "native_rust",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      generationId: controlGenerationId,
+      attemptEpoch: controlAttemptEpoch,
+      controlVersion: 9,
+      lastClientCheckpointSeq: null,
+      lastClientCheckpointHash: null,
+      lastSequence: 0,
+      runtimeTerminal: false,
+    }, "e".repeat(64))).toBeNull();
+  });
+
+  it("refuses to synthesize an empty cutoff over a visible saved response", () => {
+    const draft = streamDraft();
+    delete draft.lastCommittedRenderSeq;
+    delete draft.renderedBodyHash;
+    const recovery = createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-1",
+      request: {
+        controlActionId: "old-stop-action",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: draft,
+    });
+    expect(hydrateIncompleteNativeChatStopRecovery(recovery, {
+      executionAuthority: "native_rust",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      generationId: "generation-1",
+      attemptEpoch: 2,
+      controlVersion: 8,
+      lastClientCheckpointSeq: null,
+      lastClientCheckpointHash: null,
+      lastSequence: 9,
+      runtimeTerminal: false,
+    }, "e".repeat(64))).toBeNull();
+  });
+
+  it("recognizes a complete saved fence for exact replay", () => {
+    expect(hasCompleteNativeStopFence({
+      controlActionId: "saved-action",
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 8,
+      lastCommittedRenderSeq: 4,
+      renderedBodyHash: "b".repeat(64),
+    })).toBe(true);
   });
 
   it("keeps organizations and chats isolated when clearing", () => {

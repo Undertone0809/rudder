@@ -16,6 +16,8 @@ mod fixture;
 mod g6_lease_and_cancel;
 #[path = "workflow/happy_path.rs"]
 mod happy_path;
+#[path = "workflow/output_failure.rs"]
+mod output_failure;
 #[path = "workflow/resume.rs"]
 mod resume;
 #[path = "workflow/resume_fixture.rs"]

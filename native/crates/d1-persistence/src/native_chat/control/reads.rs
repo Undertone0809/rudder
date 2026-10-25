@@ -179,6 +179,19 @@ fn public_payload(
             "bodyHash": projection.body_hash,
         }));
     }
+    if kind == "control_lost" {
+        if raw["generationStatus"] != "interrupted_unverified"
+            || raw["controlState"] != "control_lost"
+            || raw["cleanupState"] != "unknown"
+        {
+            return Err(http(409, "Native Chat owner-loss projection is invalid"));
+        }
+        return Ok(json!({
+            "generationStatus": "interrupted_unverified",
+            "controlState": "control_lost",
+            "cleanupState": "unknown",
+        }));
+    }
     let keys: &[&str] = match kind {
         "generation_started" => &[],
         "client_checkpoint" => &["generationSeq", "renderedBodyHash"],
@@ -238,4 +251,73 @@ fn public_payload(
         payload["inputDisposition"] = disposition.clone();
     }
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::public_payload;
+    use serde_json::json;
+
+    #[test]
+    fn control_lost_public_projection_is_bounded_and_truthful() {
+        let payload = public_payload(
+            "control_lost",
+            &json!({
+                "generationStatus": "interrupted_unverified",
+                "controlState": "control_lost",
+                "cleanupState": "unknown",
+                "ownerToken": "never expose",
+                "processExited": false,
+            }),
+            "org",
+            "generation",
+            "run",
+            1,
+            None,
+        )
+        .expect("known owner-loss state is safe to project");
+
+        assert_eq!(
+            payload,
+            json!({
+                "generationStatus": "interrupted_unverified",
+                "controlState": "control_lost",
+                "cleanupState": "unknown",
+            })
+        );
+    }
+
+    #[test]
+    fn control_lost_public_projection_rejects_inconsistent_state() {
+        for payload in [
+            json!({
+                "generationStatus": "stopped",
+                "controlState": "control_lost",
+                "cleanupState": "unknown",
+            }),
+            json!({
+                "generationStatus": "interrupted_unverified",
+                "controlState": "terminal",
+                "cleanupState": "unknown",
+            }),
+            json!({
+                "generationStatus": "interrupted_unverified",
+                "controlState": "control_lost",
+                "cleanupState": "verified",
+            }),
+        ] {
+            assert!(
+                public_payload(
+                    "control_lost",
+                    &payload,
+                    "org",
+                    "generation",
+                    "run",
+                    1,
+                    None
+                )
+                .is_err()
+            );
+        }
+    }
 }

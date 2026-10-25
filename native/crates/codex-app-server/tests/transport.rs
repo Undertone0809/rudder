@@ -206,20 +206,22 @@ while IFS= read -r line; do :; done"#;
         .unwrap();
 
     let outputs = transport.take_visible_output_receipts();
-    assert_eq!(outputs.len(), 4);
+    // Adjacent tiny deltas are coalesced before the completed-item snapshot.
+    // Preserve their full text and the snapshot's distinct ordered receipt.
+    assert_eq!(outputs.len(), 2);
     assert_eq!(
         outputs
             .iter()
             .map(|output| output.ordinal())
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4]
+        [1, 2]
     );
     assert_eq!(
         outputs
             .iter()
             .map(|output| output.text())
             .collect::<Vec<_>>(),
-        ["ha", "ha", "ha", "hahaha"]
+        ["hahaha", "hahaha"]
     );
     assert_eq!(
         outputs[0].kind(),
@@ -227,14 +229,6 @@ while IFS= read -r line; do :; done"#;
     );
     assert_eq!(
         outputs[1].kind(),
-        rudder_codex_app_server::VisibleOutputKind::Delta
-    );
-    assert_eq!(
-        outputs[2].kind(),
-        rudder_codex_app_server::VisibleOutputKind::Delta
-    );
-    assert_eq!(
-        outputs[3].kind(),
         rudder_codex_app_server::VisibleOutputKind::Snapshot
     );
     assert!(outputs.iter().all(|output| {

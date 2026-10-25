@@ -597,7 +597,10 @@ describe("Native Chat first-send negotiation", () => {
       headers: { "Content-Type": "application/json" },
     }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(chatsApi.getNativeChatCapabilities()).resolves.toEqual(capabilities);
+    await expect(chatsApi.getNativeChatCapabilities()).resolves.toEqual({
+      ...capabilities,
+      recoveryRead: false,
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/native-chat/capabilities",
       expect.objectContaining({ credentials: "include" }),
@@ -614,6 +617,21 @@ describe("Native Chat first-send negotiation", () => {
       { status: 404, headers: { "Content-Type": "application/json" } },
     )));
     await expect(chatsApi.getNativeChatCapabilities()).rejects.toMatchObject({ status: 404 });
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      ...capabilities,
+      recoveryRead: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    await expect(chatsApi.getNativeChatCapabilities()).resolves.toEqual({
+      ...capabilities,
+      recoveryRead: true,
+    });
+
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      ...capabilities,
+      recoveryRead: "yes",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    await expect(chatsApi.getNativeChatCapabilities()).rejects.toThrow("capability response was invalid");
 
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       ...capabilities,

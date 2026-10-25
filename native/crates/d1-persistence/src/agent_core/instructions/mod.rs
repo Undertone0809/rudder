@@ -29,6 +29,50 @@ pub struct Host {
     pub friendly_workspace_home: bool,
     pub hostname: String,
 }
+
+/// Resolve the same organization workspace display root used by Agent
+/// instructions without creating or repairing any workspace directories.
+pub fn resolve_workspace_root(
+    instance_root: &str,
+    workspace_home: &str,
+    previous_documents_root: &str,
+    friendly_workspace_home: bool,
+    hostname: &str,
+    org_id: &str,
+) -> io::Result<PathBuf> {
+    let host = Host {
+        instance_root: instance_root.to_owned(),
+        workspace_home: workspace_home.to_owned(),
+        previous_documents_root: previous_documents_root.to_owned(),
+        friendly_workspace_home,
+        hostname: hostname.to_owned(),
+    };
+    storage::root(&host, org_id).map(|(root, _)| root)
+}
+
+/// Ensure the trusted organization workspace layout before publishing a
+/// Project Library entry. This reuses Agent workspace ownership and legacy
+/// migration behavior; it does not accept paths from public request data.
+pub fn ensure_workspace_layout(host: &Host, org: &str, cwd: &Path) -> io::Result<PathBuf> {
+    if host.hostname.trim().is_empty()
+        || !cwd.is_absolute()
+        || [
+            &host.instance_root,
+            &host.workspace_home,
+            &host.previous_documents_root,
+        ]
+        .iter()
+        .any(|path| !Path::new(path).is_absolute())
+    {
+        return Err(invalid("Invalid organization workspace host facts"));
+    }
+
+    let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)?;
+    let (root, _) = storage::root(host, org)?;
+    storage::validate_readonly(host, org, &root)?;
+    storage::ensure(host, org, cwd)
+}
+
 fn validate_host(host: &Host, ctx: &Context<'_>) -> Result<()> {
     if host.hostname.is_empty()
         || [

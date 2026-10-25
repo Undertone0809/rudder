@@ -30,14 +30,14 @@ pub use finalization::{
     NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, finalize, finalize_failed,
     finalize_hermes, finalize_hermes_failed, finalize_hermes_prompt_error_stopped,
     finalize_hermes_stopped, finalize_hermes_stopped_before_submission, finalize_native,
-    finalize_native_stopped, finalize_native_stopped_before_submission, finalize_pi,
-    finalize_pi_stopped, finalize_pi_stopped_before_submission, finalize_stopped,
-    finalize_stopped_before_submission,
+    finalize_native_stopped, finalize_native_stopped_before_submission,
+    finalize_output_limit_failure, finalize_pi, finalize_pi_stopped,
+    finalize_pi_stopped_before_submission, finalize_stopped, finalize_stopped_before_submission,
 };
 pub use hermes_progress::{HermesProgressCommit, record_hermes_progress};
 pub use lease::{LeaseReceipt, renew_lease};
 pub use native_stopping::{NativeInterruptPermit, NativeInterruptTarget, reserve_native_interrupt};
-pub use output::{OutputCommit, record_visible_output};
+pub use output::{MAX_VISIBLE_OUTPUTS_PER_TURN, OutputCommit, record_visible_output};
 pub use stopping::{
     InterruptPermit, StopIntent, advance_stopping_checkpoint, advance_stopping_hermes_session,
     advance_stopping_hermes_turn, bind_stopping_connection, observe_stop, renew_stopping_lease,

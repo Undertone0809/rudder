@@ -199,6 +199,22 @@ export type ChatGenerationControlState =
   | "terminal"
   | "control_lost";
 
+export interface NativeChatRecoveryPointer {
+  generationId: string;
+  runId: string;
+  attemptEpoch: number;
+  generationStatus: "interrupted_unverified";
+  controlState: "control_lost";
+  cleanupState: "unknown";
+}
+
+export interface NativeChatRecoveryRead {
+  executionAuthority: "native_rust";
+  orgId: string;
+  conversationId: string;
+  recovery: NativeChatRecoveryPointer | null;
+}
+
 export type ChatQueueDeliveryIntent = "queue" | "steer";
 
 export interface ChatQueueRequestActor {
@@ -258,6 +274,7 @@ export type ChatGenerationEventKind =
   | "stop_requested"
   | "output_cutoff"
   | "runtime_terminal"
+  | "control_lost"
   | "late_output_dropped"
   | "terminal_projection_requested"
   | "terminal_projected";

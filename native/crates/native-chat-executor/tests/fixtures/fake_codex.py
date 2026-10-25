@@ -63,8 +63,14 @@ def final_answer_item():
     if mode in ("empty-answer", "partial-empty-answer"):
         return None
     if mode == "output-flood":
-        text = "x" * 4089 + "TAIL"
+        text = "m" * (7 * 1024) + "".join(
+            "x" * min(64, 5001 - batch * 64) + "z" * 1024
+            for batch in range((5001 + 63) // 64)
+        ) + "TAIL"
         item_id = "flood-answer"
+    elif mode == "many-observations":
+        text = "m" * (7 * 1024) + "synthetic answer"
+        item_id = "answer-1"
     elif mode in ("stream-output", "live-stop-output-after-stop"):
         text = "same same answer"
         item_id = "streamed-answer"
@@ -130,9 +136,9 @@ def streamed_output_events(include_item_snapshot=True):
     return events
 
 
-def wait_for_output_release():
-    home.joinpath("output-pending").write_text("pending", encoding="utf-8")
-    release = home.joinpath("release-output")
+def wait_for_output_release(pending_name="output-pending", release_name="release-output"):
+    home.joinpath(pending_name).write_text("pending", encoding="utf-8")
+    release = home.joinpath(release_name)
     deadline = time.monotonic() + 30
     while not release.exists():
         if time.monotonic() >= deadline:
@@ -336,6 +342,41 @@ for raw in sys.stdin:
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
         else:
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
+            if mode == "approval-after-prefix":
+                answer = {
+                    "id": "answer-1",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                }
+                emit({
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": answer,
+                    },
+                })
+                emit({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": answer["id"],
+                        "delta": "x" * 1024,
+                    },
+                })
+                wait_for_output_release(
+                    "approval-after-prefix-pending",
+                    "release-after-prefix-approval",
+                )
+                approval = {
+                    "id": "approval-request-after-prefix",
+                    "method": "item/commandExecution/requestApproval",
+                    "params": {},
+                }
+                record({"sent": approval})
+                emit(approval)
+                continue
             if mode == "visible_checkpoint":
                 # The browser can disconnect and reload after a durable prefix
                 # without converting disconnect into Stop or another prompt.
@@ -377,24 +418,23 @@ for raw in sys.stdin:
                 prelude = output_flood_prelude_events()
                 # Keep the first notifications below the bounded early-turn
                 # buffer while the turn/start response is being correlated.
-                # The durable empty-delta marker lets the workflow release the
-                # remaining large batches only after exact-turn capture begins.
+                # The durable 1KiB visible prefix lets the workflow release
+                # each remaining batch only after exact-turn capture begins.
                 prelude_batch_sizes = (15, 64, 64, 64, 64, 64, 55)
                 offset = 0
                 for batch, batch_size in enumerate(prelude_batch_sizes):
                     for event in prelude[offset : offset + batch_size]:
                         emit(event)
                     offset += batch_size
-                    # One empty final-answer delta gives the workflow test a
-                    # durable receipt proving the preceding mixed notifications
-                    # have drained before it releases another bounded batch.
+                    # This real 1KiB prefix chunk gives the workflow a visible
+                    # receipt proving the preceding mixed notifications drained.
                     emit({
                         "method": "item/agentMessage/delta",
                         "params": {
                             "threadId": thread_id,
                             "turnId": turn_id,
                             "itemId": answer["id"],
-                            "delta": "",
+                            "delta": "m" * 1024,
                         },
                     })
                     wait_for_flood_release("many" if mode == "many-observations" else "prelude", batch)
@@ -412,7 +452,7 @@ for raw in sys.stdin:
                         json.dumps({"usage": 130, "toolStarted": 130, "toolCompleted": 130}),
                         encoding="utf-8",
                     )
-                    output_count = 4089
+                    output_count = 5001
                     for index in range(output_count):
                         emit({
                             "method": "item/agentMessage/delta",
@@ -424,10 +464,32 @@ for raw in sys.stdin:
                             },
                         })
                         if (index + 1) % 64 == 0 or index + 1 == output_count:
+                            emit({
+                                "method": "item/agentMessage/delta",
+                                "params": {
+                                    "threadId": thread_id,
+                                    "turnId": turn_id,
+                                    "itemId": answer["id"],
+                                    "delta": "z" * 1024,
+                                },
+                            })
                             wait_for_flood_release("output", index // 64)
-                    # The 4097th receipt and subsequent terminal snapshot are a
-                    # deliberate uncommitted tail. The workflow test never
-                    # releases this gate; D1 must reject the tail before publish.
+                    # Let the workflow wait for the last sub-threshold prefix
+                    # bytes to cross the periodic partial-flush boundary before
+                    # sending TAIL. That keeps the tail assertion independent
+                    # of the timer cadence.
+                    home.joinpath("output-flood-prefix-pending").write_text(
+                        "pending", encoding="utf-8"
+                    )
+                    release_prefix = home.joinpath("output-flood-prefix-release")
+                    deadline = time.monotonic() + 90
+                    while not release_prefix.exists():
+                        if time.monotonic() >= deadline:
+                            os._exit(24)
+                        time.sleep(0.005)
+                    # TAIL remains pending until the authoritative item
+                    # snapshot reconciles it; the workflow checks that it is not
+                    # written early and releases the terminal normally.
                     home.joinpath("output-flood-terminal-pending").write_text(
                         "pending", encoding="utf-8"
                     )

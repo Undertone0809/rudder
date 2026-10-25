@@ -11,6 +11,10 @@ mod output_projection;
 
 #[path = "preclaim.rs"]
 mod preclaim;
+#[path = "control/recovery.rs"]
+mod recovery;
+#[path = "control/recovery_read.rs"]
+mod recovery_read;
 
 fn hash(body: &str) -> String {
     format!("{:x}", Sha256::digest(body.as_bytes()))

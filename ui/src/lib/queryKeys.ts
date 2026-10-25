@@ -116,6 +116,7 @@ export const queryKeys = {
     workManifests: (orgId: string) => ["chats", orgId, "work-manifest"] as const,
     workManifest: (orgId: string, chatId: string) => ["chats", orgId, "work-manifest", chatId] as const,
     queue: (orgId: string, chatId: string) => ["chats", orgId, "queue", chatId] as const,
+    nativeRecovery: (orgId: string, chatId: string) => ["chats", orgId, "native-recovery", chatId] as const,
   },
   messenger: {
     threads: (orgId: string) => ["messenger", orgId, "threads"] as const,
