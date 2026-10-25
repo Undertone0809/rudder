@@ -493,6 +493,133 @@
       ],
       "global_completion": false,
       "deployment": "not performed"
+    },
+    "latest_source_delivery_checkpoint_20261025": {
+      "observed_at_utc": "2026-10-25T16:34:16.312402+00:00",
+      "observed_main": "36d218b2aeea8f88be51c6c063039b8035f684df",
+      "scope": "Source delivery only; supersedes earlier pending states for the PRs listed here. Historical evidence remains preserved.",
+      "merged_prs": [
+        {
+          "headRefOid": "d610015157b2941cbca4efef0268f76f35607f14",
+          "mergeCommit": {
+            "oid": "39924275fc27ffcd98b726f63f8462b48364f9ec"
+          },
+          "mergedAt": "2026-10-25T15:03:36Z",
+          "number": 373,
+          "state": "MERGED",
+          "title": "fix: supervise Windows PostgreSQL startup before execution [skip release]",
+          "url": "https://github.com/Undertone0809/rudder/pull/373"
+        },
+        {
+          "headRefOid": "8477b91b653f075874d534cb9cdb722aa5412fc4",
+          "mergeCommit": {
+            "oid": "031403aee21d09f5af5a3e712197b9c66798b517"
+          },
+          "mergedAt": "2026-10-25T13:14:59Z",
+          "number": 374,
+          "state": "MERGED",
+          "title": "fix: restore referenced native Run transcripts",
+          "url": "https://github.com/Undertone0809/rudder/pull/374"
+        },
+        {
+          "headRefOid": "f3a4e551100ac51ed1cb2e75f91cc4e97ecd2288",
+          "mergeCommit": {
+            "oid": "8cbf50aaddfc32b5ce5a2867877c49d80241a154"
+          },
+          "mergedAt": "2026-10-25T10:23:01Z",
+          "number": 377,
+          "state": "MERGED",
+          "title": "fix: keep native Desktop Quit bounded when backend is unavailable [skip release]",
+          "url": "https://github.com/Undertone0809/rudder/pull/377"
+        },
+        {
+          "headRefOid": "a20ba343ed8f3ebbbee02b6b6efcc9a9e053619c",
+          "mergeCommit": {
+            "oid": "9e32ea00ab462d8774fae84d1fb2ffe8f1310103"
+          },
+          "mergedAt": "2026-10-25T12:29:26Z",
+          "number": 378,
+          "state": "MERGED",
+          "title": "feat: serve singular Goal reads directly from Rust [skip release]",
+          "url": "https://github.com/Undertone0809/rudder/pull/378"
+        },
+        {
+          "headRefOid": "4bbb9c6889b870739781347d42e1183bf6860ef6",
+          "mergeCommit": {
+            "oid": "3aa8af4e0a33e23fd38c38aa428f09f5703feed2"
+          },
+          "mergedAt": "2026-10-25T14:45:48Z",
+          "number": 379,
+          "state": "MERGED",
+          "title": "feat: make supported Agent creation Rust-authoritative [skip release]",
+          "url": "https://github.com/Undertone0809/rudder/pull/379"
+        },
+        {
+          "headRefOid": "4bef97aac0b0e24d6ba09e82db89a8f096d84a70",
+          "mergeCommit": {
+            "oid": "3006d163a71d29591a6dbbb4926012d80fb5f9b5"
+          },
+          "mergedAt": "2026-10-25T13:38:09Z",
+          "number": 381,
+          "state": "MERGED",
+          "title": "chore: pin reviewed Goal helper bridge policy",
+          "url": "https://github.com/Undertone0809/rudder/pull/381"
+        },
+        {
+          "headRefOid": "c39d3cd95f70ed5fced204833f801a73feae5f6f",
+          "mergeCommit": {
+            "oid": "36d218b2aeea8f88be51c6c063039b8035f684df"
+          },
+          "mergedAt": "2026-10-25T16:23:31Z",
+          "number": 380,
+          "state": "MERGED",
+          "title": "feat: execute supported Goal runs entirely in Rust [skip release]",
+          "url": "https://github.com/Undertone0809/rudder/pull/380"
+        }
+      ],
+      "pending": {
+        "agent_profile_update": {
+          "tested_composed_head": "fb7826d0efb6ac96adb456f1fdce77201c81d396",
+          "tested_tree": "8ba27bf0221a40043b2521efdd8c7ccdefe7be5a",
+          "state": "Goal+Agent composition built and passed strict Clippy, current db/shared build, two public PATCH/DB-outage cases, and independent exact-artifact acceptance. Metadata cleanup/final publication review and protected PR CI remain.",
+          "frozen_foundation_sha256": "58a392aeb822da0223071aa6def0e42da750130e9f517fa6082bf04b764b6cd7",
+          "author_receipt": "/private/tmp/rudder-agent-profile-update-20261025/composed-r1/author-composition-r1.json",
+          "author_receipt_sha256": "5236f7f31142b3e604157da78b69671e08b6000e954dd2ca719ce57b7071a123",
+          "independent_acceptance": "/private/tmp/rudder-agent-profile-update-20261025/composed-r1/independent-pav-r1/terminal-receipt-r1.json",
+          "independent_acceptance_sha256": "ca95ca122cebd7b9c849c8f139a65de9aa06b1691f485a14765b11dd106c7014"
+        }
+      },
+      "remaining_agent_create_cohorts": [
+        "OpenCode/Pi discovery",
+        "intelligence defaults seeding",
+        "secret-derived skill roots"
+      ],
+      "production_release": "not performed by this controller for these deliveries",
+      "installed_app_replaced": false,
+      "global_completion": false,
+      "global_percentage": "not asserted; route count and partial cohorts do not establish retirement of all backend responsibilities",
+      "development_corrections": [
+        "Use a FoundationCore-only local debuginfo=0 override to fit the actual validation binary without changing features, assertions or repository profile sources. Default builds remain CI gates.",
+        "Pin only two byte-sensitive Goal instruction inputs to LF after exact Windows checkout evidence; retain full-content assertions.",
+        "A full local baseline used pg_dump17 against PostgreSQL18; preserve its failures, use explicit matching18.x backup tools and discriminate with affected-case reruns before attributing a source regression."
+      ],
+      "baseline_reconciliation": {
+        "standalone_agent_source": "be5738adbe7f062e3aef89b9a0b67475f56080da",
+        "typecheck": "PASS",
+        "build": "PASS; seven native release binaries staged; no installer",
+        "lint": "FAIL:20 reported files are byte-identical to main39924275; no task-changed files listed",
+        "test_run": "Original aggregate failed with four preserved failure groups; it is not reported as a clean full-suite pass.",
+        "focused_controls": [
+          "Database21 files/147 tests passed with unchanged migration binary and pg_dump18.4",
+          "Session workflow10/10 passed with matching backup tool",
+          "Offline staging1/1 passed using existing populated B store",
+          "Synthetic Node migration-child cancellation1/1 passed; original PID-liveness cause remains unproven"
+        ],
+        "baseline_receipt": "/private/tmp/rudder-agent-profile-update-20261025/author-validation-r4.json",
+        "baseline_receipt_sha256": "a27806db02ecb0fe2dd1105996cc107037d86bea4e6853b5f2d61743e34e8ad5",
+        "combined_source_scope": "Composed build/Clippy and public PATCH acceptance passed; exact composed PR CI remains required. Prior standalone full build/control evidence is retained as bounded component evidence."
+      },
+      "remaining_debt_note": "Public PATCH ownership does not retire all private legacy Agent handlers or first-party CLI/MCP paths. Native Create still has three explicit legacy cohorts on current main. Their follow-up implementation is local and not counted as delivered."
     }
   }
 }
