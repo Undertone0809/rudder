@@ -1129,6 +1129,47 @@ describe("Agent core twenty-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
         return { id, token, workspace };
     }
+    it("defaults omitted roles in managed Agent bundles at the public Rust ingress", async () => {
+        const previous = agentCreateGates.map(key => process.env[key]);
+        try {
+            for (const key of agentCreateGates) delete process.env[key];
+            await bridge!.close();
+            await bridge!.start();
+            publicUrl = bridge!.publicIngressBaseUrl!;
+            nodeNativeIngressPathHits = 0;
+            for (const agentRuntimeType of ["codex_local", "claude_local"]) {
+                const contents: Record<string, string>[] = [];
+                for (const role of [undefined, "general"]) {
+                    const input = {
+                        name: `Default bundle role ${randomUUID()}`,
+                        agentRuntimeType,
+                        agentRuntimeConfig: {},
+                        ...(role === undefined ? {} : { role }),
+                    };
+                    const created = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, input);
+                    expect(created.status, JSON.stringify(created.body)).toBe(201);
+                    expect(created.body.role).toBe("general");
+                    expect(nodeNativeIngressPathHits).toBe(0);
+                    const saved = (await db.execute(sql`SELECT a.role,b.entry_file,b.files FROM agents a JOIN agent_instruction_bundles b ON b.agent_id=a.id WHERE a.id=${created.body.id}::uuid`))[0]!;
+                    expect(saved.role).toBe("general");
+                    expect(saved.entry_file).toBe("SOUL.md");
+                    const files = saved.files as Record<string, string>;
+                    expect(Object.keys(files)).toContain("SOUL.md");
+                    const file = await call(publicUrl, "get", `/api/agents/${created.body.id}/instructions-bundle/file?path=SOUL.md`, ownerToken);
+                    expect(file.status, file.text).toBe(200);
+                    expect(file.body.content).toBe(files["SOUL.md"]);
+                    contents.push(files);
+                    expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${created.body.id} AND action='agent.created'`)).toBe(1);
+                }
+                expect(contents[0]).toEqual(contents[1]);
+            }
+        } finally {
+            for (const [index, key] of agentCreateGates.entries()) {
+                if (previous[index] === undefined) delete process.env[key];
+                else process.env[key] = previous[index];
+            }
+        }
+    });
     it("creates Agents through the default public Rust path with Node-compatible permissions", async () => {
         const gates = agentCreateGates;
         const previous = gates.map(key => process.env[key]);
