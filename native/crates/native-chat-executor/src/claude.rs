@@ -380,7 +380,7 @@ fn write_combined_instruction_context(
         config.instruction_content.as_deref(),
         config.instruction_source_path.as_deref(),
         &config.instruction_entry_file,
-        &local.agent_home,
+        &local.instruction_siblings,
         instruction_context_sections,
         include_goal_runtime_prefix,
     )?;
@@ -408,53 +408,86 @@ fn compose_instruction_context(
     instruction_content: Option<&str>,
     instruction_source_path: Option<&Path>,
     instruction_entry_file: &str,
-    agent_home: &Path,
+    instruction_siblings: &[(String, String)],
     instruction_context_sections: &[String],
     include_goal_runtime_prefix: bool,
 ) -> Result<String, ClaudeExecutionError> {
     let mut sections = Vec::new();
     if include_goal_runtime_prefix {
+        // The legacy TypeScript contract keeps one trailing space on this
+        // internal line; mirror its exact Goal prefix bytes.
+        let operating_contract = RUDDER_AGENT_OPERATING_CONTRACT.trim().replace(
+            "for structured long-term memory.\n\nInvoke it whenever",
+            "for structured long-term memory. \n\nInvoke it whenever",
+        );
         sections.push(wrap_system_prompt_section(
             "rudder_agent_operating_contract",
             &format!(
-                "{}\n\nThe above Rudder agent operating contract was injected by Rudder at runtime.",
-                RUDDER_AGENT_OPERATING_CONTRACT.trim()
+                "{operating_contract}\n\nThe above Rudder agent operating contract was injected by Rudder at runtime."
             ),
         ));
     }
+    let entry_path = instruction_source_path.map(|root| root.join(instruction_entry_file));
+    let mut loaded_file_names = Vec::new();
     if let Some(instructions) = instruction_content
-        .map(str::trim)
-        .filter(|instructions| !instructions.is_empty())
+        .map(str::trim_end)
+        .filter(|instructions| !instructions.trim().is_empty())
     {
-        let file_path = instruction_source_path.map(|root| root.join(instruction_entry_file));
-        let file_name = file_path
+        let file_name = entry_path
             .as_deref()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             .unwrap_or(instruction_entry_file);
-        let instruction_section = if matches!(
+        sections.push(instruction_file_section(
+            instructions,
             file_name,
-            "AGENTS.md" | "SOUL.md" | "TOOLS.md" | "MEMORY.md"
-        ) {
-            format!("<{file_name}>\n{instructions}\n</{file_name}>")
-        } else if let Some(file_path) = file_path.as_deref() {
-            let display_path = display_instruction_path(file_path, agent_home);
-            format!(
-                "<agent_instruction_file path=\"{}\">\n{instructions}\n</agent_instruction_file>",
-                escape_prompt_attribute(&display_path),
-            )
-        } else {
-            format!("<agent_instruction_file>\n{instructions}\n</agent_instruction_file>")
-        };
-        sections.push(instruction_section);
+            entry_path.as_deref(),
+            entry_path.as_deref(),
+        ));
+        loaded_file_names.push(file_name.to_owned());
+    }
 
-        if let Some(file_path) = file_path.as_deref()
-            && let Some(instructions_dir) = file_path.parent()
+    if let Some(entry_path) = entry_path.as_deref() {
+        let entry_relative_path = Path::new(instruction_entry_file);
+        for (relative_path, contents) in instruction_siblings {
+            let relative_path = Path::new(relative_path);
+            if relative_path == entry_relative_path {
+                continue;
+            }
+            let contents = contents.trim_end();
+            if contents.trim().is_empty() {
+                continue;
+            }
+            let Some(file_name) = relative_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let Some(source_root) = instruction_source_path else {
+                continue;
+            };
+            let file_path = source_root.join(relative_path);
+            sections.push(instruction_file_section(
+                contents,
+                file_name,
+                Some(&file_path),
+                Some(entry_path),
+            ));
+            loaded_file_names.push(file_name.to_owned());
+        }
+
+        if !loaded_file_names.is_empty()
+            && let Some(instructions_dir) = entry_path.parent()
         {
-            let display_dir = display_instruction_path(instructions_dir, agent_home);
-            let display_dir = display_dir.trim_end_matches('/');
+            let display_dir = display_instruction_path(instructions_dir, entry_path);
+            let display_dir_without_slash = display_dir.trim_end_matches('/');
+            let display_dir_with_slash = format!("{display_dir_without_slash}/");
+            let names = loaded_file_names.join(", ");
+            let file_label = if loaded_file_names.len() == 1 {
+                "file was"
+            } else {
+                "files were"
+            };
             sections.push(format!(
-                "The above {file_name} instruction file was loaded from {display_dir}.\nResolve any relative file references from {display_dir}."
+                "The above {names} instruction {file_label} loaded from {display_dir_without_slash}.\nResolve any relative file references from {display_dir_with_slash}."
             ));
         }
     }
@@ -489,12 +522,39 @@ fn wrap_system_prompt_section(tag: &str, content: &str) -> String {
     format!("<{tag}>\n{}\n</{tag}>", content.trim())
 }
 
-fn display_instruction_path(path: &Path, agent_home: &Path) -> String {
-    let display = path
-        .strip_prefix(agent_home)
-        .map(|relative| format!("$AGENT_HOME/{}", relative.to_string_lossy()))
-        .unwrap_or_else(|_| path.to_string_lossy().into_owned());
-    display.replace('\\', "/")
+fn instruction_file_section(
+    contents: &str,
+    file_name: &str,
+    file_path: Option<&Path>,
+    instructions_file_path: Option<&Path>,
+) -> String {
+    if matches!(
+        file_name,
+        "AGENTS.md" | "SOUL.md" | "TOOLS.md" | "MEMORY.md"
+    ) {
+        format!("<{file_name}>\n{contents}\n</{file_name}>")
+    } else if let (Some(file_path), Some(instructions_file_path)) =
+        (file_path, instructions_file_path)
+    {
+        let display_path = display_instruction_path(file_path, instructions_file_path);
+        format!(
+            "<agent_instruction_file path=\"{}\">\n{contents}\n</agent_instruction_file>",
+            escape_prompt_attribute(&display_path),
+        )
+    } else {
+        format!("<agent_instruction_file>\n{contents}\n</agent_instruction_file>")
+    }
+}
+
+fn display_instruction_path(path: &Path, instructions_file_path: &Path) -> String {
+    if let Some(instructions_dir) = instructions_file_path.parent()
+        && instructions_dir.file_name().and_then(|name| name.to_str()) == Some("instructions")
+        && let Some(agent_home) = instructions_dir.parent()
+        && let Ok(relative) = path.strip_prefix(agent_home)
+    {
+        return format!("$AGENT_HOME/{}", relative.to_string_lossy()).replace('\\', "/");
+    }
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn escape_prompt_attribute(value: &str) -> String {
@@ -605,7 +665,7 @@ mod tests {
             Some("Agent-specific instructions"),
             Some(Path::new("/agents/alpha/instructions")),
             "AGENTS.md",
-            Path::new("/agents/alpha"),
+            &[],
             &[resources],
             true,
         )
@@ -618,7 +678,7 @@ mod tests {
             .find("<AGENTS.md>")
             .expect("Agent instructions are included");
         let instruction_footer = contents
-            .find("Resolve any relative file references from $AGENT_HOME/instructions.")
+            .find("Resolve any relative file references from $AGENT_HOME/instructions/.")
             .expect("relative instruction path is preserved");
         let resources = contents
             .find("<recent_rudder_context>")
@@ -633,5 +693,68 @@ mod tests {
         assert!(resources < heartbeat);
         assert!(contents.starts_with("<rudder_agent_instruction>\n"));
         assert!(contents.ends_with("\n</rudder_agent_instruction>"));
+    }
+
+    #[test]
+    fn goal_instruction_prefix_loads_custom_entry_and_available_siblings() {
+        let root = tempfile::tempdir().expect("create fresh Agent home");
+        let instructions = root.path().join("instructions");
+        std::fs::create_dir_all(&instructions).expect("create instructions directory");
+        std::fs::write(instructions.join("custom role.md"), "Keep this entry.\n")
+            .expect("write custom entry");
+        std::fs::write(instructions.join("SOUL.md"), "Use a warm voice.\n")
+            .expect("write optional SOUL file");
+        let entry_contents =
+            std::fs::read_to_string(instructions.join("custom role.md")).expect("read entry");
+        let siblings = vec![(
+            "SOUL.md".to_owned(),
+            std::fs::read_to_string(instructions.join("SOUL.md")).expect("read SOUL file"),
+        )];
+        let contents = compose_instruction_context(
+            Some(&entry_contents),
+            Some(instructions.as_path()),
+            "custom role.md",
+            &siblings,
+            &["Recent resource context".to_owned()],
+            true,
+        )
+        .expect("compose prompt using only the available optional sibling");
+
+        let entry_index = contents
+            .find("<agent_instruction_file path=\"$AGENT_HOME/instructions/custom role.md\">")
+            .expect("custom entry is wrapped with its Agent-relative path");
+        let soul_index = contents
+            .find("<SOUL.md>\nUse a warm voice.\n</SOUL.md>")
+            .expect("available SOUL file is included");
+        let footer_index = contents
+            .find("The above custom role.md, SOUL.md instruction files were loaded from $AGENT_HOME/instructions.")
+            .expect("footer lists the available entry and sibling");
+        let resource_index = contents
+            .find("Recent resource context")
+            .expect("resource context follows the file footer");
+        let heartbeat_index = contents
+            .find("<rudder_heartbeat_instruction>")
+            .expect("Goal heartbeat prefix is included");
+        assert!(entry_index < soul_index);
+        assert!(soul_index < footer_index);
+        assert!(footer_index < resource_index);
+        assert!(resource_index < heartbeat_index);
+        assert!(!contents.contains("<TOOLS.md>"));
+        assert!(!contents.contains("<MEMORY.md>"));
+        assert!(
+            contents
+                .contains("Resolve any relative file references from $AGENT_HOME/instructions/.")
+        );
+        // The captured Node prefix encodes its one legacy trailing space as
+        // `\\u0020`, avoiding trailing-whitespace churn in the fixture file.
+        let node_prefix = include_str!("../tests/fixtures/goal-instruction-prefix-node.txt")
+            .replace(
+                "for structured long-term memory.\\u0020\n",
+                "for structured long-term memory. \n",
+            );
+        assert_eq!(
+            contents, node_prefix,
+            "the full Goal Claude prefix must match the frozen Node loader output",
+        );
     }
 }

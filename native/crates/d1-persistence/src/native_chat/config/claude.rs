@@ -36,6 +36,10 @@ pub struct ClaudeLocalConfig {
     /// Legacy runtime persona override used by wakeup templates. Durable Agent
     /// instructions remain independently resolved as the Claude system prompt.
     pub prompt_template: Option<String>,
+    /// Bounded, same-directory instruction files selected from the resolved
+    /// Agent bundle. The native Claude adapter inserts these after the entry
+    /// using the legacy SOUL/TOOLS/MEMORY order.
+    pub instruction_siblings: Vec<(String, String)>,
 }
 
 pub(crate) async fn resolve_claude_config(
@@ -311,6 +315,7 @@ async fn resolve_claude_config_for_row(
         &cwd,
     )
     .map_err(|_| invalid("Agent instruction bundle cannot be resolved safely"))?;
+    let instruction_siblings = instructions.sibling_content;
     if instructions
         .entry_content
         .as_ref()
@@ -392,6 +397,7 @@ async fn resolve_claude_config_for_row(
             permission_mode,
             max_turns_per_run,
             prompt_template,
+            instruction_siblings,
         }),
         cursor: None,
     })

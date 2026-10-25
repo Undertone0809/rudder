@@ -998,6 +998,9 @@ pub(crate) struct RuntimeInstructionRevision {
     /// Bounded UTF-8 content the native supervisor may pass as instruction
     /// text. This intentionally has no `Debug` or serialization implementation.
     pub entry_content: Option<String>,
+    /// Same-directory Agent instruction files that the legacy runtime loads
+    /// beside the selected entry, in its fixed SOUL/TOOLS/MEMORY order.
+    pub sibling_content: Vec<(String, String)>,
 }
 
 pub(crate) fn managed_agent_workspace_path(
@@ -1033,8 +1036,9 @@ pub(crate) fn managed_agent_workspace_path(
 /// Resolve effective instruction files without creating, migrating, or
 /// rewriting the Agent workspace. The selected entry content is returned only
 /// to the Rust supervisor; it has no `Debug` or serialization implementation.
-/// All discovered bundle files contribute to the identity digest, but only the
-/// configured entry is returned as content.
+/// All discovered bundle files contribute to the identity digest; the
+/// configured entry and the three runtime-loaded sibling files are returned
+/// as prompt content.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_readonly_for_runtime(
     instance_root: &Path,
@@ -1163,6 +1167,8 @@ pub(crate) fn resolve_readonly_for_runtime(
         None
     };
 
+    let sibling_content = runtime_sibling_content(&location.entry, &contents);
+
     let mut hasher = Sha256::new();
     hasher.update(b"rudder-agent-instructions-v1\0");
     hasher.update(mode.unwrap_or("none").as_bytes());
@@ -1188,7 +1194,72 @@ pub(crate) fn resolve_readonly_for_runtime(
         source_path,
         entry_file: location.entry,
         entry_content,
+        sibling_content,
     })
+}
+
+fn runtime_sibling_content(
+    entry_file: &str,
+    contents: &BTreeMap<String, Vec<u8>>,
+) -> Vec<(String, String)> {
+    let entry_path = Path::new(entry_file);
+    let entry_parent = entry_path.parent().unwrap_or_else(|| Path::new(""));
+    ["SOUL.md", "TOOLS.md", "MEMORY.md"]
+        .into_iter()
+        .filter_map(|file_name| {
+            let relative_path = entry_parent.join(file_name);
+            if relative_path == entry_path {
+                return None;
+            }
+            let key = relative_path.to_string_lossy().replace('\\', "/");
+            contents
+                .get(&key)
+                .map(|bytes| (key, String::from_utf8_lossy(bytes).into_owned()))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod runtime_sibling_tests {
+    use super::runtime_sibling_content;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn runtime_instruction_siblings_use_node_order_and_omit_missing_files() {
+        let contents = BTreeMap::from([
+            ("nested/custom.md".to_owned(), b"entry".to_vec()),
+            ("nested/MEMORY.md".to_owned(), b"memory".to_vec()),
+            ("nested/SOUL.md".to_owned(), b"soul".to_vec()),
+            ("nested/TOOLS.md".to_owned(), b"tools".to_vec()),
+            ("SOUL.md".to_owned(), b"wrong directory".to_vec()),
+        ]);
+
+        assert_eq!(
+            runtime_sibling_content("nested/custom.md", &contents),
+            vec![
+                ("nested/SOUL.md".to_owned(), "soul".to_owned()),
+                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
+                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
+            ],
+        );
+        assert_eq!(
+            runtime_sibling_content("nested/SOUL.md", &contents),
+            vec![
+                ("nested/TOOLS.md".to_owned(), "tools".to_owned()),
+                ("nested/MEMORY.md".to_owned(), "memory".to_owned()),
+            ],
+            "the selected entry must not be loaded a second time as its own sibling",
+        );
+        let optional_only = BTreeMap::from([
+            ("custom.md".to_owned(), b"entry".to_vec()),
+            ("SOUL.md".to_owned(), b"soul".to_vec()),
+        ]);
+        assert_eq!(
+            runtime_sibling_content("custom.md", &optional_only),
+            vec![("SOUL.md".to_owned(), "soul".to_owned())],
+            "absent optional sibling files stay absent",
+        );
+    }
 }
 
 fn default_path_key(runtime: &str) -> Option<&'static str> {
