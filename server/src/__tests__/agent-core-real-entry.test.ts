@@ -1176,7 +1176,7 @@ console.log(JSON.stringify({type:"turn.completed"}));
         });
         expect(created.status, created.text).toBe(201);
         const [profile] = await db.execute(sql`SELECT status,last_error,last_verified_at FROM organization_intelligence_profiles WHERE org_id=${seedOrg}::uuid AND purpose='default'`);
-        expect(profile).toMatchObject({ status: "enabled", last_error: null });
+        expect(profile).toMatchObject({ status: "configured", last_error: null });
         expect(profile!.last_verified_at).not.toBeNull();
         const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
         expect(evidence).toMatchObject({ toolCount: 83, childStatus: 0, serverInfo: { name: "rudder-tools" } });

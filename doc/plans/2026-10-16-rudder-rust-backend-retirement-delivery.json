@@ -640,11 +640,18 @@
       },
       "create_scope": {
         "implemented": "OpenCode/Pi model contract; seeded intelligence defaults and runtime probes; encrypted local skill roots; public Rust ingress removes the three Node cohort selections",
-        "acceptance": "PENDING on current composed server and installed sibling Rust MCP",
+        "acceptance": "Author public HTTP/PostgreSQL selected cases PASS across r1/r2/r4 on unchanged frozen server/MCP; independent exact-candidate acceptance pending",
         "provider_scope": "External AWS/GCP/Vault provider names remain pre-existing unconfigured stubs; no new integrations",
         "frozen_server_sha256": "46c40c3614af7a0e45e5719a2d35ff6e36417d57a27fa170525658ec9901ce5e",
         "frozen_native_mcp_sha256": "a748ed6e083eda4f8a7873bdaa5aeba74fe79689aec825744ea520eec10e64b0",
-        "runtime_unit_tests": "9/9 PASS; public HTTP/PostgreSQL still pending"
+        "runtime_unit_tests": "9/9 PASS; public HTTP/PostgreSQL still pending",
+        "public_author_proof": {
+          "configured_codex_first_seed": "r4 PASS: actual Rust MCP child 83 tools, configured profile with last_verified_at, source CODEX_HOME unchanged",
+          "formerly_legacy_cohorts": "r2 PASS: OpenCode/Pi, seed suppression for non-first Agent, encrypted local skill root, cross-org denial, wrong-key generic503/no writes, zero Node fallback",
+          "database_outage": "r1 PASS: public create503 and no additional Agents or Node route hits",
+          "logs": "/private/tmp/rudder-rust-mcp-r15/root-preflight-r1/public-author-r{1,2,4}.log",
+          "earlier_failures": "Preserved: duplicate fixture owner row, attempted fixture fence regression, and incorrect test expectation enabled instead of existing configured status. Production implementation was not changed to satisfy these fixture errors."
+        }
       },
       "standalone_packaging": {
         "implemented": "Build, target-validate, stage and restore execute mode of sibling rudder-native; CI produces it for six server targets",
@@ -655,12 +662,15 @@
         "workspace_typecheck": "PASS",
         "generated_mcp_contract_check": "PASS",
         "lint": "FAIL on 20 files byte-identical to composed main; no candidate-changed file reported",
-        "full_tests_and_build": "pending"
+        "full_tests_and_build": "pending",
+        "rustfmt": "PASS whole workspace",
+        "strict_affected_clippy": "PASS D1/FoundationCore all targets and MCP CLI/planner scoped targets; failed wrong-toolchain first attempt retained"
       },
       "bounded_limits": [
         "The existing 1 MB HTTP cap rejects complete oversized non-2xx bodies before budget failure classification; Node reads the entire body.",
         "Synthetic provider acceptance is not a real Codex account/model qualification.",
-        "Public route authority does not remove private legacy handlers, all domain APIs, browser/computer tools, other CLI commands, or all default Node processes."
+        "Public route authority does not remove private legacy handlers, all domain APIs, browser/computer tools, other CLI commands, or all default Node processes.",
+        "Unreadable local secret material returns the generic native 503 contract, rather than reproducing an unhandled Node cryptography exception; public regression verifies no plaintext, no Agent write, and no Node fallback."
       ],
       "remaining_gates": [
         "Independent stage acceptance on current candidate",
