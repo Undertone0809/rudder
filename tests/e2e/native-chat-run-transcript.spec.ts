@@ -1,30 +1,18 @@
-import { expect, test } from "@playwright/test";
-import { access } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { expect as baseExpect, test } from "@playwright/test";
 import { createDb } from "../../packages/db/src/index.js";
 import { startNativeChatFixture } from "./support/native-chat-fixture";
+import { nativeSmokeFixtureOptions } from "./support/native-smoke";
 
-const REPO = fileURLToPath(new URL("../../", import.meta.url));
+const expect = baseExpect.configure({ timeout: 30_000 });
 const DECOY = "LATER RUN TRANSCRIPT MUST NOT REPLACE THE SELECTED RUN";
 test.use({ actionTimeout: 30_000, navigationTimeout: 45_000 });
-
-async function binary(env: string, relative: string) {
-  const value = path.resolve(process.env[env]?.trim() || path.join(REPO, relative));
-  await access(value);
-  return value;
-}
+test.describe.configure({ timeout: 240_000 });
 
 for (const runtimeType of ["codex_local", "hermes_local"] as const) {
-  test(`reads the selected referenced ${runtimeType} Run transcript in Nice and Raw`, async ({ page }, testInfo) => {
-    const postgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
-    if (!postgresBinDir) throw new Error("Set RUDDER_POSTGRES_BIN_DIR to disposable PostgreSQL binaries");
+  test(`@smoke reads the selected referenced ${runtimeType} Run transcript in Nice and Raw`, async ({ page }, testInfo) => {
     const f = await startNativeChatFixture({
+      ...(await nativeSmokeFixtureOptions()),
       runtimeType,
-      postgresBinDir,
-      exampleBinary: await binary("RUDDER_NATIVE_CHAT_E2E_EXAMPLE", "native/target/debug/examples/native_chat_browser_fixture"),
-      processHost: await binary("RUDDER_TEST_PROCESS_HOST", "native/target/debug/rudder-process-host"),
-      foundationBinary: await binary("RUDDER_SERVER_FOUNDATION_PATH", "native/target/debug/rudder-server-foundation"),
     });
     let passed = false;
     try {
@@ -62,6 +50,11 @@ for (const runtimeType of ["codex_local", "hermes_local"] as const) {
         expect(assistantId).toBeTruthy();
 
       } finally { await db.$client.end({ timeout: 5 }); }
+
+      // A durable terminal Run can precede the browser consuming the final SSE
+      // frame. Wait for the empty composer's idle control before a new turn.
+      await expect.poll(async () => (await composer.innerText()).trim()).toBe("");
+      await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
 
       // A second real native turn catches resolvers that guess the latest reply.
       await send(DECOY, runtimeType === "hermes_local" ? `Native Hermes answer: ${DECOY}` : answer, runtimeType === "codex_local" ? 2 : 1);
