@@ -43,8 +43,8 @@ import {
   type IssueSortField,
 } from "../services/index.js";
 import { issueMetadataReadIdentity, sendIssueMetadataRead } from "../services/issue-metadata-read-bridge.js";
-import { sendMessengerState } from "../services/messenger-state-bridge.js";
 import { resolveIssueReference } from "../services/issue-references.js";
+import { sendMessengerState } from "../services/messenger-state-bridge.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
@@ -82,7 +82,17 @@ function issueSortDirQuery(value: unknown): IssueSortDir | undefined {
   return value === "asc" || value === "desc" ? value : undefined;
 }
 
-export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridge?: RustFoundationBridge) {
+export interface IssueRouteOptions {
+  /** Rust's public listener owns the migrated organization Labels read. */
+  nativeApprovalReads?: boolean;
+}
+
+export function issueRoutes(
+  db: Db,
+  storage: StorageService,
+  rustFoundationBridge?: RustFoundationBridge,
+  options: IssueRouteOptions = {},
+) {
   const router = Router();
   const svc = issueService(db, storage);
   const messengerSvc = messengerService(db);
@@ -590,11 +600,13 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
     }, db);
   });
 
-  router.get("/orgs/:orgId/labels", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "labels" }, db);
-  });
+  if (!options.nativeApprovalReads) {
+    router.get("/orgs/:orgId/labels", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "labels" }, db);
+    });
+  }
 
   router.post("/orgs/:orgId/labels", validate(createIssueLabelSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -976,16 +988,18 @@ export function issueRoutes(db: Db, storage: StorageService, rustFoundationBridg
     });
   });
 
-  router.get("/issues/:id/approvals", async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await approvalReadIdentity(db, "issue", id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    await sendApprovalRead(res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue-approvals", targetId: issue.id }, db);
-  });
+  if (!options.nativeApprovalReads) {
+    router.get("/issues/:id/approvals", async (req, res) => {
+      const id = req.params.id as string;
+      const issue = await approvalReadIdentity(db, "issue", id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.orgId);
+      await sendApprovalRead(res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue-approvals", targetId: issue.id }, db);
+    });
+  }
 
   router.post("/issues/:id/approvals", validate(linkIssueApprovalSchema), async (req, res) => {
     const id = req.params.id as string;

@@ -1,4 +1,4 @@
-import { agentApiKeys, agents, applyPendingMigrations, approvals, authUsers, boardApiKeys, createDb, createLocalPostgresInstance, ensurePostgresDatabase, issueApprovals, issueLabels, issues, labels, organizationMemberships, organizations, type LocalPostgresInstance } from "@rudderhq/db";
+import { agentApiKeys, agents, applyPendingMigrations, approvals, authUsers, boardApiKeys, createDb, createLocalPostgresInstance, ensurePostgresDatabase, issueApprovals, issueLabels, issues, labels, organizationIssuePrefixAliases, organizationMemberships, organizations, type LocalPostgresInstance } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
 import express from "express";
 import { createHash, randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { signNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { redactApprovalPayload } from "../redaction.js";
@@ -20,6 +21,8 @@ import { requestApprovalRead } from "../services/approval-read-bridge.js";
 import { approvalService } from "../services/approvals.js";
 import { issueApprovalService } from "../services/issue-approvals.js";
 import { issueService } from "../services/issues.js";
+import { getAuthorizedOrgScope } from "../routes/authz.js";
+import { resolveIssueReference } from "../services/issue-references.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
@@ -44,7 +47,7 @@ function legacyRoutes(db: ReturnType<typeof createDb>) {
         res.status(404).json({ error: "Approval not found" });
         return;
     } assertCompanyAccess(req, row.orgId); res.json(await associations.listIssuesForApproval(row.id, row.orgId)); });
-    router.get("/issues/:id/approvals", async (req, res) => { const row = await issues.getById(req.params.id as string); if (!row) {
+    router.get("/issues/:id/approvals", async (req, res) => { const rawId = req.params.id as string; let issueId = rawId; if (/^[A-Z][A-Z0-9]*-\d+$/i.test(rawId)) { const match = await issues.getByIdentifier(rawId); if (match) issueId = match.id; } if (/^[a-z]{3}_/i.test(rawId)) issueId = await resolveIssueReference(db, rawId, { orgIds: getAuthorizedOrgScope(req) }); const row = await issues.getById(issueId); if (!row) {
         res.status(404).json({ error: "Issue not found" });
         return;
     } assertCompanyAccess(req, row.orgId); res.json(await associations.listApprovalsForIssue(row.id, row.orgId)); });
@@ -60,12 +63,13 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
     const userId = randomUUID(), boardToken = `approval-board-${randomUUID()}`;
     const org = randomUUID(), other = randomUUID(), agent = randomUUID(), token = `oracle-${randomUUID()}`;
     const ownIssue = randomUUID(), foreignIssue = randomUUID(), goodIssue = randomUUID();
+    const shortRefCollisionA = "a0000000-0000-4000-8000-000000000001", shortRefCollisionB = "a0000000-0000-4000-8000-000000000002";
     const nativeIdentity = nativeIdentityIngressFixture();
     const ownApproval = randomUUID(), foreignApproval = randomUUID(), goodApproval = randomUUID();
     const ownLabel = randomUUID(), foreignLabel = randomUUID(), badLinkLabel = randomUUID();
     const get = (path: string) => request(target).get(`/api${path}`).set("authorization", `Bearer ${token}`);
     beforeAll(async () => {
-        directory = fs.mkdtempSync("/tmp/rudder-approval-read-oracle-postgres-");
+        directory = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "rudder-approval-read-oracle-postgres-"));
         const socket = net.createServer();
         socket.listen(0, "127.0.0.1");
         await once(socket, "listening");
@@ -85,7 +89,8 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         await db.insert(organizations).values([{ id: org, name: "Own", issuePrefix: "ORC", urlKey: "oracle-own" }, { id: other, name: "Foreign", issuePrefix: "FOR", urlKey: "oracle-foreign" }]);
         await db.insert(agents).values([{ id: agent, orgId: org, name: "Reader", role: "general", status: "idle" }, { id: foreignAgent, orgId: other, name: "Foreign reader", role: "general", status: "idle" }]);
         await db.insert(agentApiKeys).values([{ agentId: agent, orgId: org, name: "Read", keyHash: createHash("sha256").update(token).digest("hex") }, { agentId: foreignAgent, orgId: other, name: "Foreign", keyHash: createHash("sha256").update(foreignToken).digest("hex") }]);
-        await db.insert(issues).values([{ id: ownIssue, orgId: org, title: "Own dirty links" }, { id: foreignIssue, orgId: other, title: "Foreign issue" }, { id: goodIssue, orgId: org, title: "Own valid link" }]);
+        await db.insert(issues).values([{ id: ownIssue, orgId: org, title: "Own dirty links", issueNumber: 1, identifier: "ORC-1" }, { id: foreignIssue, orgId: other, title: "Foreign issue", issueNumber: 1, identifier: "FOR-1" }, { id: goodIssue, orgId: org, title: "Own valid link", issueNumber: 3, identifier: "ORC-3" }, { id: shortRefCollisionA, orgId: org, title: "Short ref collision A" }, { id: shortRefCollisionB, orgId: org, title: "Short ref collision B" }]);
+        await db.insert(organizationIssuePrefixAliases).values({ orgId: org, prefix: "OLD" });
         await db.insert(approvals).values([{ id: ownApproval, orgId: org, type: "hire_agent", payload: { safe: "a.b.c", password: "hidden" } }, { id: foreignApproval, orgId: other, type: "hire_agent", payload: { password: "foreign hidden" } }, { id: goodApproval, orgId: org, type: "hire_agent", payload: { ok: "visible" } }]);
         await db.insert(issueApprovals).values([
             { orgId: other, issueId: ownIssue, approvalId: ownApproval, createdAt: new Date("2026-01-01") },
@@ -99,7 +104,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         await db.insert(authUsers).values({ id: userId, name: "Approval reader", email: "approval-reader@example.test", createdAt: new Date(), updatedAt: new Date() });
         await db.insert(organizationMemberships).values({ orgId: org, principalType: "user", principalId: userId, status: "active", membershipRole: "member" });
         await db.insert(boardApiKeys).values({ userId, name: "Approval reader", keyHash: createHash("sha256").update(boardToken).digest("hex") });
-        function app(oracle: boolean, selected = bridge) { const app = express(); if (!oracle && mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" })); app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" })); app.use("/api", oracle ? legacyRoutes(db) : [approvalRoutes(db, selected), issueRoutes(db, {} as StorageService, selected)]); app.use(errorHandler); return app; }
+        function app(oracle: boolean, selected = bridge) { const app = express(); if (!oracle && mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" })); app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" })); const nativeApprovalReads = mode === "required"; app.use("/api", oracle ? legacyRoutes(db) : [approvalRoutes(db, selected, { nativeApprovalReads }), issueRoutes(db, {} as StorageService, selected, { nativeApprovalReads })]); app.use(errorHandler); return app; }
         oracleServer = app(true).listen(0, "127.0.0.1");
         await once(oracleServer, "listening");
         if (mode === "node") {
@@ -240,7 +245,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
             expect((await request(target).get(`/api${url}`).set("authorization", `Bearer ${foreignToken}`)).status).toBe(403);
         }
     });
-    it.runIf(mode !== "node")("rejects both association targets moved after public authorization", async () => {
+    it.runIf(mode === "off")("rejects association targets moved across the private read-adapter boundary", async () => {
         for (const operation of ["issues", "issue-approvals"] as const) {
             const id = operation === "issues" ? goodApproval : goodIssue;
             const table = operation === "issues" ? approvals : issues;
@@ -289,7 +294,7 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         await pair(`/orgs/${org}/labels`);
         expect(await snapshot()).toEqual(before);
     });
-    it.runIf(mode !== "node")("returns503 on native outage for all five routes without Node fallback", async () => {
+    it.runIf(mode === "off")("returns503 when the private Rust read adapter is unavailable", async () => {
         const port = await freePort();
         const unavailable = { approvalRead: (actor, orgId, input) => requestApprovalRead(`http://127.0.0.1:${port}`, "synthetic-unavailable-key", 1000, actor, orgId, input) } as RustFoundationBridge;
         const upstreamPort = (server.address() as net.AddressInfo).port;
@@ -304,10 +309,72 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
             app.use(errorHandler);
             server = app.listen(upstreamPort, "127.0.0.1");
             await once(server, "listening");
-            // Required mode continues through the real Rust public listener.
-            const outageTarget = mode === "required" ? target : server;
+            const outageTarget = server;
             for (const url of [`/orgs/${org}/approvals`, `/approvals/${ownApproval}`, `/approvals/${ownApproval}/issues`, `/issues/${ownIssue}/approvals`, `/orgs/${org}/labels`])
                 expect((await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${token}`)).status).toBe(503);
+        }
+    });
+    it.runIf(mode === "required")("serves all five reads on Rust and omits their Node handlers", async () => {
+        const forwarded = vi.spyOn(bridge!, "approvalRead");
+        const paths = [
+            `/orgs/${org}/approvals`,
+            `/approvals/${ownApproval}`,
+            `/approvals/${ownApproval}/issues`,
+            `/issues/${ownIssue}/approvals`,
+            `/orgs/${org}/labels`,
+        ];
+        for (const url of paths) {
+            const response = await pair(url);
+            expect(response.status).toBe(200);
+        }
+        expect(forwarded).not.toHaveBeenCalled();
+        for (const url of paths) {
+            const path = `/api${url}`;
+            const proof = signNativeSessionAssertion({
+                key: nativeIdentity.identityAuth.assertionKey,
+                method: "GET",
+                target: path,
+                identity: { kind: "agent_key", agent_id: agent, key_id: randomUUID(), org_id: org, session_id: "approval-read-gate" },
+            });
+            expect((await request(server).get(path).set("x-rudder-native-session-proof", proof)).status).toBe(404);
+        }
+        expect(forwarded).not.toHaveBeenCalled();
+        forwarded.mockRestore();
+    });
+    it.runIf(mode === "required")("preserves UUID, issue identifier and typed short-reference paths", async () => {
+        const aliases = [
+            goodIssue,
+            "ORC-3",
+            "OLD-3",
+            `iss_${goodIssue.replace(/-/g, "").slice(0, 8)}`,
+        ];
+        for (const reference of aliases) {
+            const response = await pair(`/issues/${reference}/approvals`);
+            expect(response.status).toBe(200);
+            expect(response.body.map((row: { id: string }) => row.id)).toContain(ownApproval);
+        }
+        expect((await pair(`/issues/iss_${goodIssue.replace(/-/g, "").slice(0, 8)}/approvals`, boardToken)).status).toBe(200);
+        expect((await pair(`/issues/iss_${foreignIssue.replace(/-/g, "").slice(0, 8)}/approvals`, boardToken)).status).toBe(404);
+        const ambiguous = await pair("/issues/iss_a0000000/approvals");
+        expect(ambiguous.status).toBe(409);
+        expect(ambiguous.body.details).toEqual({ reference: "iss_a0000000" });
+        expect((await get("/issues/FOR-1/approvals")).status).toBe(403);
+        expect((await get(`/issues/iss_${foreignIssue.replace(/-/g, "").slice(0, 8)}/approvals`)).status).toBe(404);
+        expect((await get(`/issues/agt_${goodIssue.replace(/-/g, "").slice(0, 8)}/approvals`)).status).toBe(422);
+    });
+    it.runIf(mode === "required")("returns a public Rust database failure without invoking the Node read bridge", async () => {
+        const forwarded = vi.spyOn(bridge!, "approvalRead");
+        await db.execute(sql.raw("ALTER TABLE labels RENAME TO labels_unavailable"));
+        try {
+            const response = await request(target)
+                .get(`/api/orgs/${org}/labels`)
+                .set("authorization", `Bearer ${token}`);
+            expect(response.status).toBe(500);
+            expect(forwarded).not.toHaveBeenCalled();
+        }
+        finally {
+            await db.execute(sql.raw("ALTER TABLE labels_unavailable RENAME TO labels"));
+            forwarded.mockRestore();
         }
     });
 });
