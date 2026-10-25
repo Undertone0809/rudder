@@ -5,12 +5,12 @@ import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudde
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
+import { interruptActiveChatGeneration } from "./chat-generation-locks.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
 import { buildHeartbeatAdapterInvokePayload, networkWaitBackoffMs } from "./runtime-kernel/heartbeat.core.js";
-import { interruptActiveChatGeneration } from "./chat-generation-locks.js";
 import {
   claimExpiredHeartbeatRunExecution,
   reconcileHeartbeatRunEvidence,
