@@ -5,7 +5,7 @@ use crate::{
     constants::{INITDB_TIMEOUT, POLL_INTERVAL, STARTUP_TIMEOUT, STOP_TIMEOUT},
     database::{ConnectionConfig, VerifiedConnection, connect_verified},
     error::OwnerError,
-    platform::ParentMonitor,
+    platform::{ParentMonitor, postgres_command_path},
 };
 #[cfg(unix)]
 use std::fs;
@@ -416,16 +416,22 @@ pub(crate) async fn run_initdb(
     }
     let args = [
         "-D".to_owned(),
-        staging.path().to_string_lossy().into_owned(),
+        postgres_command_path(staging.path())
+            .to_string_lossy()
+            .into_owned(),
         "-U".to_owned(),
         user.to_owned(),
         "--auth=scram-sha-256".to_owned(),
         "--pwfile".to_owned(),
-        password_file.path().to_string_lossy().into_owned(),
+        postgres_command_path(password_file.path())
+            .to_string_lossy()
+            .into_owned(),
         "--encoding=UTF8".to_owned(),
         "--locale=C".to_owned(),
         "-L".to_owned(),
-        template_dir.to_string_lossy().into_owned(),
+        postgres_command_path(template_dir)
+            .to_string_lossy()
+            .into_owned(),
     ];
     let mut diagnostic_file = tempfile::tempfile().map_err(|error| {
         OwnerError::io(
@@ -441,7 +447,7 @@ pub(crate) async fn run_initdb(
             error,
         )
     })?;
-    let mut command = Command::new(initdb);
+    let mut command = Command::new(postgres_command_path(initdb).as_ref());
     command
         .args(args)
         .stdin(Stdio::null())
@@ -564,10 +570,10 @@ pub(crate) fn spawn_postgres(
             error,
         )
     })?;
-    let mut command = Command::new(postgres);
+    let mut command = Command::new(postgres_command_path(postgres).as_ref());
     command
         .arg("-D")
-        .arg(data_dir)
+        .arg(postgres_command_path(data_dir).as_ref())
         .arg("-h")
         .arg("127.0.0.1")
         .arg("-p")
@@ -775,10 +781,10 @@ pub(crate) async fn cleanup_failed_start(
 }
 
 async fn run_pg_ctl_stop(pg_ctl: &Path, data_dir: &Path, mode: &str) -> Result<(), OwnerError> {
-    let mut command = Command::new(pg_ctl);
+    let mut command = Command::new(postgres_command_path(pg_ctl).as_ref());
     command
         .arg("-D")
-        .arg(data_dir)
+        .arg(postgres_command_path(data_dir).as_ref())
         .arg("-m")
         .arg(mode)
         .arg("-w")
