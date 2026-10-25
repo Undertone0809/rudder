@@ -120,21 +120,7 @@ pub async fn compile_goal_start_preview(
     input: &GoalStartPreviewInput,
 ) -> Result<Value, GoalStartError> {
     let org = canonical_uuid(organization_id)?;
-    let target_time = input
-        .target_time
-        .as_ref()
-        .map(normalize_target_time)
-        .transpose()?;
-    let normalized = GoalStartPreviewInput {
-        title: input.title.trim().to_owned(),
-        context: input.context.as_deref().map(str::trim).map(str::to_owned),
-        owner_agent_id: input
-            .owner_agent_id
-            .as_deref()
-            .map(canonical_uuid)
-            .transpose()?,
-        target_time: target_time.map(Value::String),
-    };
+    let normalized = normalize_preview_input(input)?;
     if !has_concrete_goal_outcome(&normalized) {
         return Ok(outcome_blocker());
     }
@@ -145,6 +131,73 @@ pub async fn compile_goal_start_preview(
         None
     };
     compile_preview(&normalized, owner.as_ref())
+}
+
+/// Compile a public preview after revalidating the Board identity and reading
+/// the selected owner from the same organization in the transaction.
+pub async fn compile_goal_start_preview_for_actor(
+    pool: &PgPool,
+    authorizer: &dyn NativeAgentAuthorizer,
+    context: GoalWriteContext<'_>,
+    input: &GoalStartPreviewInput,
+) -> Result<Value, GoalStartError> {
+    let org = canonical_uuid(context.organization_id)?;
+    require_board(&context)?;
+    let normalized = normalize_preview_input(input)?;
+    let mut tx = pool.begin().await?;
+    let result = async {
+        match authorizer.revalidate(&mut tx, &org).await? {
+            NativeAgentAccess::Authorized => {}
+            NativeAgentAccess::Unauthorized => {
+                return Err(StoreError::PublicIdentityUnauthorized.into());
+            }
+            NativeAgentAccess::Forbidden => {
+                return Err(StoreError::PublicIdentityForbidden.into());
+            }
+        }
+        require_board(&context)?;
+        let owner = if has_concrete_goal_outcome(&normalized) {
+            if let Some(owner_id) = normalized.owner_agent_id.as_deref() {
+                read_start_owner_tx(&mut tx, &org, owner_id).await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        compile_preview(&normalized, owner.as_ref())
+    }
+    .await;
+    match result {
+        Ok(value) => {
+            tx.commit().await?;
+            Ok(value)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+fn normalize_preview_input(
+    input: &GoalStartPreviewInput,
+) -> Result<GoalStartPreviewInput, StoreError> {
+    let target_time = input
+        .target_time
+        .as_ref()
+        .map(normalize_target_time)
+        .transpose()?;
+    Ok(GoalStartPreviewInput {
+        title: input.title.trim().to_owned(),
+        context: input.context.as_deref().map(str::trim).map(str::to_owned),
+        owner_agent_id: input
+            .owner_agent_id
+            .as_deref()
+            .map(canonical_uuid)
+            .transpose()?,
+        target_time: target_time.map(Value::String),
+    })
 }
 
 /// Apply a board-authored Goal Start with the request record, activation,

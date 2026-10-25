@@ -7,7 +7,7 @@ import { goalRoutes } from "../routes/goals.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const { svc } = vi.hoisted(() => ({ svc: {
-  getById: vi.fn(), resolveByReference: vi.fn(), list: vi.fn(), detail: vi.fn(),
+  getById: vi.fn(), resolveByReference: vi.fn(), list: vi.fn(), detail: vi.fn(), previewStart: vi.fn(),
   listActivities: vi.fn(), history: vi.fn(), dependencies: vi.fn(),
 } }));
 vi.mock("../services/index.js", () => ({ goalService: () => svc, heartbeatService: () => ({}), logActivity: vi.fn() }));
@@ -15,10 +15,11 @@ const ORG = "10000000-0000-4000-8000-000000000001";
 const GOAL = "30000000-0000-4000-8000-000000000001";
 const OTHER = "10000000-0000-4000-8000-000000000002";
 const BOARD = { type: "board", source: "local_implicit" } as const;
-function app(actor: Request["actor"] = BOARD, bridge?: RustFoundationBridge) {
+function app(actor: Request["actor"] = BOARD, bridge?: RustFoundationBridge, nativeGoalWrites = false) {
   const result = express();
+  result.use(express.json());
   result.use((req, _res, next) => { req.actor = actor; next(); });
-  result.use("/api", goalRoutes({} as Db, bridge));
+  result.use("/api", goalRoutes({} as Db, bridge, { nativeGoalWrites }));
   result.use(errorHandler);
   return result;
 }
@@ -40,9 +41,10 @@ const selections = [
   { path: `/goals/${GOAL}/dependencies`, view: "dependencies", goalId: GOAL },
 ];
 describe("Rust Goal GET authority", () => {
-  it("unmounts the seven Rust-owned Node writers only in native mode", () => {
+  it("unmounts Rust-owned Goal writes and preview only in native mode", () => {
     const writers = [
       ["post", "/orgs/:orgId/goals"],
+      ["post", "/orgs/:orgId/goals/start-preview"],
       ["patch", "/goals/:id"],
       ["post", "/goals/:id/activate"],
       ["post", "/goals/:id/plan"],
@@ -59,13 +61,24 @@ describe("Rust Goal GET authority", () => {
     }
     for (const [method, path] of [
       ["post", "/orgs/:orgId/goals/start"],
-      ["post", "/orgs/:orgId/goals/start-preview"],
       ["post", "/goals/:id/checkpoint"],
       ["post", "/goals/:id/focus"],
       ["post", "/goals/:id/feedback"],
     ] as const) {
       expect(nativeRoutes.some((route) => route.path === path && route.methods[method])).toBe(true);
     }
+  });
+  it("keeps the legacy preview service only when the native Goal writer is disabled", async () => {
+    const preview = { valid: false, blockers: [{ code: "outcome_required" }] };
+    svc.previewStart.mockResolvedValue(preview);
+    const body = { title: "A clear result", context: null, ownerAgentId: null, targetTime: null };
+    const response = await request(app()).post(`/api/orgs/${ORG}/goals/start-preview`).send(body);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(preview);
+    expect(svc.previewStart).toHaveBeenCalledWith(ORG, body);
+    const native = await request(app(BOARD, undefined, true)).post(`/api/orgs/${ORG}/goals/start-preview`).send(body);
+    expect(native.status).toBe(404);
+    expect(svc.previewStart).toHaveBeenCalledTimes(1);
   });
 
   it.each(selections)("forwards exact native response for $view with mutation pilots off", async ({ path, view, goalId }) => {
