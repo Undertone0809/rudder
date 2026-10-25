@@ -38,6 +38,31 @@ dispatch contract are agreed. It must not call or fall back to Node heartbeat.
 Public `/goals/start-preview` and `/goals/start` routing, Node handler removal,
 and public acceptance are a later cutover owned with the Rust GoalRun runtime.
 
+## Current Delivery Boundary
+
+The composed candidate adds the native `goal_started` owner, Claude execution
+context, durable cleanup-receipt recovery, and idempotent cost/budget settlement.
+Migration `0184` extends the existing wakeup/run ownership fields and journal;
+it does not create a separate migration history. Public Goal Start still uses
+the legacy dispatcher and does not enqueue native-owned work yet.
+
+`POST /api/agent-runs/:id/cancel` handles positively identified native Goal Runs
+through Rust identity, organization/visibility checks, cancellation intent and
+audit. Cancellation leaves ownership and running state intact until the matching
+process owner proves cleanup. Legacy or ambiguous references keep their existing
+route, and `/api/heartbeat-runs/:id/cancel` remains migration debt. A passing
+cancellation-intent test is not evidence of provider cleanup or public Start.
+
+Budget hard stops and manual Agent/organization pause are observed by the
+native owner. During migration, Rust budget settlement requests cancellation
+from legacy owners through their existing marker and cleanup paths; already
+running legacy work may wait for its existing 60-second renewal poll. Those
+legacy lifecycle responsibilities are not counted as retired.
+
+Before enabling public native Start, qualify the complete Start/run/stop flow,
+full-server crash/restart recovery, and Desktop Quit dispatch for native Goal
+Runs. The present Desktop native-Chat stop path is not a Goal Run stop path.
+
 ## Boundaries
 
 - Keep the legacy TypeScript compiler and tests as read-only parity oracles; do
