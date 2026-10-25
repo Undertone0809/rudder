@@ -258,11 +258,11 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-23T09:25:24.267066+00:00",
-    "observed_main": "e6eb1d033aa3a7ffa6a4c889c47a7e5d1353d4f6",
-    "branch": "codex/rust-migration-integrated-20261022",
-    "status": "migration_runtime_qualified_final_baseline_review_and_publication_pending",
-    "scope": "Rust migration writer, historical reconciliation, managed PostgreSQL owner, startup transport and packaging qualification. Native authentication, remaining APIs/workers and final no-Node workflows remain incomplete.",
+    "updated_at": "2026-10-25T23:38:48+00:00",
+    "observed_main": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
+    "branch": "codex/rust-organization-core-writes-20261026",
+    "status": "organization_core_writes_author_validation_pass_local_checkpointed_independent_stage_review_and_PAV_pending",
+    "scope": "Current G author slice implements the five organization write routes in Rust when native public ingress is selected. Ingress-off/default development and standalone mode keep the existing Node compatibility handlers. The overall Rust-backend migration remains incomplete.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -297,6 +297,18 @@
         "merge_sha": "809938477767670d4c1d247b0c5c69bd69721362",
         "scope": "Rust issue checkout transaction, audit/outbox and real-entry regressions; remaining Express ingress responsibilities are explicit debt",
         "evidence": "/private/tmp/rudder-issue-checkout-qualification-20261022/merge-delivered-r25.json"
+      },
+      {
+        "pr": 384,
+        "state": "merged_protected_pr",
+        "head_sha": "923e412c4edc475cee0eb9e792f73b4e018266b0",
+        "merge_sha": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
+        "merged_at": "2026-10-25T23:35:29Z",
+        "scope": "Windows PostgreSQL owned-process port-closure timeout correction; source-only delivery, not a Rust organization-write or global-backend completion claim",
+        "ci": "21 required checks succeeded; 1 expected skip",
+        "final_review": "/private/tmp/c384-final-review-20261026/final-handoff-review.md",
+        "packaged_verification": "/private/tmp/c384v-7ty1t579/desktop-qualification-resumed-r2.json; resumed stages passed on unchanged artifact; original command exit 1 retained",
+        "production_or_installed_release": false
       }
     ],
     "pr_reuse_queue": [
@@ -620,6 +632,28 @@
         "combined_source_scope": "Composed build/Clippy and public PATCH acceptance passed; exact composed PR CI remains required. Prior standalone full build/control evidence is retained as bounded component evidence."
       },
       "remaining_debt_note": "Public PATCH ownership does not retire all private legacy Agent handlers or first-party CLI/MCP paths. Native Create still has three explicit legacy cohorts on current main. Their follow-up implementation is local and not counted as delivered."
+    },
+    "current_slice_author_validation": {
+      "name": "Organization core writes",
+      "state": "author_validation_pass; local source checkpoint created; independent overall stage review, PAV, protected PR/CI and production delivery pending",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
+      "branch": "codex/rust-organization-core-writes-20261026",
+      "base_commit": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
+      "dirty_source_fingerprint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r6.json",
+      "rust_ingress_selected": "Rust owns POST /api/orgs, PATCH /api/orgs/:orgId, PATCH /api/orgs/:orgId/branding, POST /api/orgs/:orgId/archive, and DELETE /api/orgs/:orgId; selected Rust errors do not fall back to Node.",
+      "ingress_off": "The five existing Node handlers remain registered for the default development/standalone compatibility mode; removing this mode and handlers remains migration debt.",
+      "checks": "See author-validation-r6.json for exact receipts and log hashes. Focused real HTTP/PostgreSQL workflow, Rust compile/strict Clippy/filesystem tests, Node route-gate tests, recursive workspace typecheck, inventory and trusted-base checks passed.",
+      "not_claimed": [
+        "full organization API retirement",
+        "global Rust-backend completion",
+        "independent PAV",
+        "protected CI",
+        "production release or installed-artifact acceptance"
+      ],
+      "source_parent_commit": "77f6879c4e8d7d4abb74bd1847928f934f9fe97d",
+      "source_parent_tree": "753c47405e4651fee5fc6b492543bae53fce7af1",
+      "local_checkpoint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
+      "checkpoint_commit_identity": "Recorded in the linked external author-validation receipt to avoid a self-referential commit SHA in this ledger."
     }
   }
 }

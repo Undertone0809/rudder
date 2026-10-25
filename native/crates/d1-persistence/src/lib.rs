@@ -30,6 +30,7 @@ pub mod legacy_read_json;
 mod links;
 pub mod native_chat;
 pub mod organization_catalog_reads;
+pub mod organization_mutations;
 pub mod organization_reads;
 mod organization_resources;
 pub mod overview_reads;
@@ -288,6 +289,12 @@ pub enum StoreError {
     InvalidResource,
     #[error("a conflicting Library resource already exists")]
     ResourceConflict,
+    #[error("organization mutation conflicts with existing state: {0}")]
+    OrganizationConflict(String),
+    #[error("organization input is invalid: {0}")]
+    OrganizationInvalid(String),
+    #[error("organization response projection failed: {0}")]
+    OrganizationRead(#[from] organization_reads::OrganizationReadError),
     #[error("project Library provisioning failed: {0}")]
     Provisioning(String),
     #[error("project Library create intent conflicts with its original binding")]

@@ -1223,6 +1223,10 @@ impl AppState {
             StoreError::NotOwned => (StatusCode::CONFLICT, "mutation_not_owned"),
             StoreError::GoalConflict => (StatusCode::CONFLICT, "goal_conflict"),
             StoreError::GoalForbidden => (StatusCode::FORBIDDEN, "goal_forbidden"),
+            StoreError::OrganizationConflict(_) => (StatusCode::CONFLICT, "organization_conflict"),
+            StoreError::OrganizationInvalid(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "organization_invalid")
+            }
             StoreError::Unauthorized => (StatusCode::FORBIDDEN, "mutation_unauthorized"),
             StoreError::PublicIdentityUnauthorized => {
                 (StatusCode::UNAUTHORIZED, "mutation_identity_unauthorized")
@@ -1261,6 +1265,9 @@ impl AppState {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "project_library_provisioning_failed",
             ),
+            StoreError::OrganizationRead(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "mutation_failed")
+            }
             StoreError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "mutation_failed"),
         };
         self.json_error(status, reason)

@@ -4368,7 +4368,7 @@
     },
     {
       "path": "server/src/bootstrap/register-api-routes.ts",
-      "sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -5110,7 +5110,7 @@
     },
     {
       "path": "server/src/routes/organization-rust-foundation-routes.ts",
-      "sha256": "5f05ec5f846544a34d35d8cc552072fb270dff2e35ec2ad5bd5efdfee398c7a5",
+      "sha256": "3ffd9e2fcbfe1e39849bf02eccf861822c2454599a28cb4cedce3c334cf697a6",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5130,7 +5130,7 @@
     },
     {
       "path": "server/src/routes/orgs.ts",
-      "sha256": "8df5172c84c419736726b83ac5e58f21b689d7c2245047d5d03219cad3f77400",
+      "sha256": "63663cc8d5e59093a3fe96f8e74f9382581384100c6d6f85776aefeeb8c85590",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -14949,7 +14949,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 93,
+      "line": 94,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|/orgs",
       "receiver": "api",
       "mount_path": "/orgs"
@@ -14958,7 +14958,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 156,
+      "line": 157,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentE… [sha256:733551c6ad991af3c47edbc576539c4f728ca874088ce47e20d6cc86cb0c5136]",
       "receiver": "api",
       "expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
@@ -14968,7 +14968,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 147,
+      "line": 148,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:activityRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "activityRoutes(db, rustFoundationBridge)"
@@ -14977,7 +14977,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 95,
+      "line": 96,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )>",
       "receiver": "api",
       "expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
@@ -14987,7 +14987,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 106,
+      "line": 107,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })>",
       "receiver": "api",
       "expression": "appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), })"
@@ -14996,7 +14996,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 141,
+      "line": 142,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:approvalRoutes(db, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
       "expression": "approvalRoutes(db, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })",
@@ -15006,7 +15006,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 102,
+      "line": 103,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:assetRoutes(db, opts.storageService)>",
       "receiver": "api",
       "expression": "assetRoutes(db, opts.storageService)"
@@ -15015,7 +15015,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 122,
+      "line": 123,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:automationRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "automationRoutes(db, rustFoundationBridge)"
@@ -15033,7 +15033,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 153,
+      "line": 154,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:browserRoutes(db, { deploymentMode: opts.deploymentMode })>",
       "receiver": "api",
       "expression": "browserRoutes(db, { deploymentMode: opts.deploymentMode })"
@@ -15042,7 +15042,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 123,
+      "line": 124,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:calendarRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "calendarRoutes(db, rustFoundationBridge)"
@@ -15051,7 +15051,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 115,
+      "line": 116,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:chatRoutes( db, opts.storageService, chatBackgroundRuntime, opts.registerNetworkWaitingRunHandler, rustFoundationBridge, )>",
       "receiver": "api",
       "expression": "chatRoutes( db, opts.storageService, chatBackgroundRuntime, opts.registerNetworkWaitingRunHandler, rustFoundationBridge, )"
@@ -15060,7 +15060,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 154,
+      "line": 155,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:computerRoutes(db, { deploymentMode: opts.deploymentMode })>",
       "receiver": "api",
       "expression": "computerRoutes(db, { deploymentMode: opts.deploymentMode })"
@@ -15069,7 +15069,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 146,
+      "line": 147,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:costRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "costRoutes(db, rustFoundationBridge)"
@@ -15078,7 +15078,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 149,
+      "line": 150,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:dashboardRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "dashboardRoutes(db, rustFoundationBridge)"
@@ -15087,7 +15087,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 138,
+      "line": 139,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
       "expression": "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })",
@@ -15097,7 +15097,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 152,
+      "line": 153,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId })>",
       "receiver": "api",
       "expression": "instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId })"
@@ -15106,7 +15106,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 125,
+      "line": 126,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:integrationRoutes(db)>",
       "receiver": "api",
       "expression": "integrationRoutes(db)"
@@ -15115,7 +15115,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 111,
+      "line": 112,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:issueRoutes(db, opts.storageService, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
       "expression": "issueRoutes(db, opts.storageService, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })",
@@ -15134,7 +15134,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 101,
+      "line": 102,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:managedMcpAgentBindingRoutes(db)>",
       "receiver": "api",
       "expression": "managedMcpAgentBindingRoutes(db)"
@@ -15143,7 +15143,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 126,
+      "line": 127,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serve… [sha256:8c96bfb4ab1b081f9eb86e7f1a98897e7f40eafeac5ddd19eb2bbf2b2b5885e2]",
       "receiver": "api",
       "expression": "managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.m… [sha256:3b096e9232a68ff1bb0cf7590e6df846222282a419d41edd48dafe575348ce49]"
@@ -15152,7 +15152,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 114,
+      "line": 115,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:messengerRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "messengerRoutes(db, rustFoundationBridge)"
@@ -15161,7 +15161,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 109,
+      "line": 110,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:onboardingRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "onboardingRoutes(db, rustFoundationBridge)"
@@ -15170,7 +15170,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 94,
+      "line": 95,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:organizationSkillRoutes(db)>",
       "receiver": "api",
       "expression": "organizationSkillRoutes(db)"
@@ -15179,7 +15179,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 110,
+      "line": 111,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:productAnalyticsRoutes(db)>",
       "receiver": "api",
       "expression": "productAnalyticsRoutes(db)"
@@ -15188,7 +15188,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 103,
+      "line": 104,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
       "expression": "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })",
@@ -15198,7 +15198,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 144,
+      "line": 145,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:requestRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "requestRoutes(db, rustFoundationBridge)"
@@ -15207,7 +15207,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 155,
+      "line": 156,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:rudderPluginRoutes(db, pluginMcpOptions)>",
       "receiver": "api",
       "expression": "rudderPluginRoutes(db, pluginMcpOptions)"
@@ -15216,7 +15216,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 148,
+      "line": 149,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:runIntelligenceRoutes(db)>",
       "receiver": "api",
       "expression": "runIntelligenceRoutes(db)"
@@ -15225,7 +15225,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 124,
+      "line": 125,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:runWorkspaceRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "runWorkspaceRoutes(db, rustFoundationBridge)"
@@ -15234,7 +15234,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 145,
+      "line": 146,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:secretRoutes(db, rustFoundationBridge)>",
       "receiver": "api",
       "expression": "secretRoutes(db, rustFoundationBridge)"
@@ -15243,7 +15243,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 150,
+      "line": 151,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:sidebarBadgeRoutes(db)>",
       "receiver": "api",
       "expression": "sidebarBadgeRoutes(db)"
@@ -15252,7 +15252,7 @@
       "type": "middleware_mount",
       "family": "http_middleware_and_auth",
       "source": "server/src/bootstrap/register-api-routes.ts",
-      "line": 151,
+      "line": 152,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:websiteMetadataRoutes()>",
       "receiver": "api",
       "expression": "websiteMetadataRoutes()"
@@ -20590,7 +20590,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/organization-rust-foundation-routes.ts",
-      "line": 236,
+      "line": 238,
       "signature": "server/src/routes/organization-rust-foundation-routes.ts|http-route|router|GET|/:orgId/members/directory",
       "receiver": "router",
       "method": "GET",
@@ -20600,7 +20600,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/organization-rust-foundation-routes.ts",
-      "line": 353,
+      "line": 356,
       "signature": "server/src/routes/organization-rust-foundation-routes.ts|http-route|router|PATCH|/:orgId",
       "receiver": "router",
       "method": "PATCH",
@@ -20610,7 +20610,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/organization-rust-foundation-routes.ts",
-      "line": 447,
+      "line": 450,
       "signature": "server/src/routes/organization-rust-foundation-routes.ts|http-route|router|PATCH|/:orgId/branding",
       "receiver": "router",
       "method": "PATCH",
@@ -59111,7 +59111,47 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "server/src/bootstrap/register-api-routes.ts",
+      "base_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "head_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/organization_mutations.rs; native/crates/d1-persistence/src/organization_mutations.rs",
+      "reviewer": "/root/rust_delivery_review_r15/org_write_stage_review",
+      "review_reference": "/private/tmp/rudder-org-write-20261026/stage-node-boundary-accept-r1.json",
+      "review_status": "reviewed",
+      "compatibility_boundary": "Pass nativeOrganizationWrites=Boolean(opts.rustPublicIngress). With Rust ingress selected, Node registers no handlers for POST /api/orgs, POST /api/orgs/:orgId/archive, DELETE /api/orgs/:orgId, PATCH /api/orgs/:orgId, or PATCH /api/orgs/:orgId/branding; remaining organization reads and compatibility routes stay mounted. With Rust ingress off, the existing five Node handlers remain available. No request-time fallback is provided for Rust-selected writes.",
+      "retirement_criterion": "Remove the nativeOrganizationWrites selection and the five Node writer registrations after Rust is the sole supported owner of these routes in every deployment mode and the no-Node public workflow passes; retain the shared organization router for routes that remain unmigrated."
+    },
+    {
+      "path": "server/src/routes/organization-rust-foundation-routes.ts",
+      "base_sha256": "5f05ec5f846544a34d35d8cc552072fb270dff2e35ec2ad5bd5efdfee398c7a5",
+      "head_sha256": "3ffd9e2fcbfe1e39849bf02eccf861822c2454599a28cb4cedce3c334cf697a6",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/organization_mutations.rs; native/crates/d1-persistence/src/organization_mutations.rs",
+      "reviewer": "/root/rust_delivery_review_r15/org_write_stage_review",
+      "review_reference": "/private/tmp/rudder-org-write-20261026/stage-node-boundary-accept-r1.json",
+      "review_status": "reviewed",
+      "compatibility_boundary": "The Node PATCH /:orgId and PATCH /:orgId/branding handlers are registered only when nativeOrganizationWrites is false. When true, those two writes are owned by Rust; the existing organization reads and other routes in this router remain unchanged.",
+      "retirement_criterion": "Delete these two Node PATCH compatibility handlers after Rust is the sole supported owner in every deployment mode and the legacy off-mode compatibility path is retired; retain unrelated routes until separately migrated."
+    },
+    {
+      "path": "server/src/routes/orgs.ts",
+      "base_sha256": "8df5172c84c419736726b83ac5e58f21b689d7c2245047d5d03219cad3f77400",
+      "head_sha256": "63663cc8d5e59093a3fe96f8e74f9382581384100c6d6f85776aefeeb8c85590",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/organization_mutations.rs; native/crates/d1-persistence/src/organization_mutations.rs",
+      "reviewer": "/root/rust_delivery_review_r15/org_write_stage_review",
+      "review_reference": "/private/tmp/rudder-org-write-20261026/stage-node-boundary-accept-r1.json",
+      "review_status": "reviewed",
+      "compatibility_boundary": "The Node POST /, POST /:orgId/archive, and DELETE /:orgId handlers are registered only when nativeOrganizationWrites is false. When true, Rust owns those writes; other organization routes remain unchanged.",
+      "retirement_criterion": "Delete these three Node compatibility handlers after Rust is the sole supported owner in every deployment mode and the legacy off-mode compatibility path is retired; retain unrelated routes until separately migrated."
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
@@ -59142,7 +59182,7 @@
       "review_status": "reviewed",
       "mount_expression": "agentRoutes( db, opts.storageService, rustFoundationBridge, Boolean(opts.rustPublicIngress?.identityAuth), )",
       "id": "rust-native-agent-core-router-v1",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_guard": "Boolean(opts.rustPublicIngress?.identityAuth)",
       "order_before": "agent_core_compatibility_handlers"
     },
@@ -59158,14 +59198,14 @@
       "review_status": "reviewed",
       "mount_expression": "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, nativeCliAuthOwner: Boolean(opts.rustPublicIngress), })",
       "id": "rust-native-cli-auth-router-v1",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_guard": "Boolean(opts.rustPublicIngress)",
       "order_before": "api_return"
     },
     {
       "id": "rust-native-goal-writes-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_receiver": "api",
       "mount_expression": "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })",
       "mount_guard": "Boolean(opts.rustPublicIngress)",
@@ -59206,7 +59246,7 @@
     {
       "id": "rust-native-project-reads-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_receiver": "api",
       "mount_expression": "projectRoutes(db, rustFoundationBridge, { nativeProjectReads: Boolean(opts.rustPublicIngress), })",
       "mount_guard": "Boolean(opts.rustPublicIngress)",
@@ -59222,7 +59262,7 @@
     {
       "id": "rust-native-issue-approval-reads-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_receiver": "api",
       "mount_expression": "issueRoutes(db, opts.storageService, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })",
       "mount_guard": "Boolean(opts.rustPublicIngress)",
@@ -59238,7 +59278,7 @@
     {
       "id": "rust-native-approval-reads-router-v1",
       "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
-      "mount_source_sha256": "6fc308d239f4e0136546cebceb1d650312318e8f69f9804ba1e129a95462c8b5",
+      "mount_source_sha256": "3c6e8b20b607bc9af456bede2fcaf060ca8c99b6e333d45cc7650d525e4729d0",
       "mount_receiver": "api",
       "mount_expression": "approvalRoutes(db, rustFoundationBridge, { nativeApprovalReads: Boolean(opts.rustPublicIngress), })",
       "mount_guard": "Boolean(opts.rustPublicIngress)",

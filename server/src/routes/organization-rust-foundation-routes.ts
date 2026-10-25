@@ -37,6 +37,8 @@ export type RustFoundationProbeReceipt = {
 
 export type OrganizationRouteOptions = {
   onRustFoundationProbe?: (receipt: RustFoundationProbeReceipt) => void;
+  /** The public Rust ingress directly owns all organization mutation routes. */
+  nativeOrganizationWrites?: boolean;
 };
 
 export function assertOrganizationBrandingCreateAllowed(
@@ -350,6 +352,7 @@ export function registerOrganizationRustFoundationRoutes(
     res.json(page);
   });
 
+  if (!options.nativeOrganizationWrites) {
   router.patch("/:orgId", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
@@ -508,4 +511,5 @@ export function registerOrganizationRustFoundationRoutes(
     }
     res.json(organization);
   });
+  }
 }

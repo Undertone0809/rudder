@@ -78,7 +78,10 @@ describe("registerApiRoutes", () => {
       ...baseOptions,
       rustPublicIngress: {},
     } as never);
-    expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: true });
+    expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({
+      nativeResourceRoutes: true,
+      nativeOrganizationWrites: true,
+    });
     expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
       nativeProjectReads: true,
     });
@@ -87,7 +90,10 @@ describe("registerApiRoutes", () => {
     expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({ nativeApprovalReads: true });
 
     registerApiRoutes({} as never, baseOptions as never);
-    expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({ nativeResourceRoutes: false });
+    expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({
+      nativeResourceRoutes: false,
+      nativeOrganizationWrites: false,
+    });
     expect(mocks.projectRoutes.mock.calls.at(-1)?.[2]).toEqual({
       nativeProjectReads: false,
     });

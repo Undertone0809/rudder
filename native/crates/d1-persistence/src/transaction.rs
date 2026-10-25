@@ -2110,7 +2110,7 @@ pub(crate) fn unsigned(value: i64) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::InvalidReceipt)
 }
 
-fn bounded_text(value: &str, allow_empty: bool) -> Result<String, StoreError> {
+pub(crate) fn bounded_text(value: &str, allow_empty: bool) -> Result<String, StoreError> {
     if (!allow_empty && value.is_empty())
         || value.len() > MAX_TEXT_BYTES
         || value
