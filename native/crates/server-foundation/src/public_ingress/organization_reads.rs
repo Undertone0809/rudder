@@ -329,10 +329,9 @@ async fn organization_list_scope(
             StatusCode::FORBIDDEN,
             json!({"error":"Board access required"}),
         )),
-        NativeIngressIdentity::None => Err((
-            StatusCode::FORBIDDEN,
-            json!({"error":"Board access required"}),
-        )),
+        NativeIngressIdentity::None => {
+            Err((StatusCode::UNAUTHORIZED, json!({"error":"Unauthorized"})))
+        }
     }
 }
 
