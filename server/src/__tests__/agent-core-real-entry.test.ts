@@ -3,6 +3,7 @@ import { applyPendingMigrations, createDb, ensurePostgresDatabase } from "@rudde
 import { createAgentKeySchema, resetAgentSessionSchema, RUDDER_BROWSER_MCP_TOOL_NAMES, RUDDER_CORE_MCP_TOOL_NAMES, updateAgentPermissionsSchema, updateAgentSchema } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import express from "express";
+import { spawnSync } from "node:child_process";
 import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1180,6 +1181,20 @@ console.log(JSON.stringify({type:"turn.completed"}));
         expect(profile!.last_verified_at).not.toBeNull();
         const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
         expect(evidence).toMatchObject({ toolCount: 83, childStatus: 0, serverInfo: { name: "rudder-tools" } });
+        const key = await call(publicUrl, "post", `/api/agents/${created.body.id}/keys`, ownerToken, {});
+        expect(key.status, key.text).toBe(201);
+        const mcpRequests = [
+            { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "public-create-acceptance", version: "1" } } },
+            { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "rudder_agent_me", arguments: {} } },
+        ];
+        const mcp = spawnSync(evidence.command, evidence.args, {
+            input: `${mcpRequests.map(value => JSON.stringify(value)).join("\n")}\n`, encoding: "utf8", timeout: 10000, maxBuffer: 2000000,
+            env: { ...process.env, RUDDER_API_URL: publicUrl, RUDDER_API_KEY: key.body.token, RUDDER_ORG_ID: seedOrg, RUDDER_AGENT_ID: created.body.id },
+        });
+        expect(mcp.status, mcp.stderr).toBe(0);
+        const identity = JSON.parse(mcp.stdout.trim().split(/\r?\n/)[1]!);
+        expect(identity.result.isError).toBe(false);
+        expect(identity.result.structuredContent).toMatchObject({ name: "Native first Codex seed", agentRuntimeType: "codex_local" });
         expect(fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8")).toBe(sourceConfig);
         expect(nodeNativeIngressPathHits, nodeNativeIngressPaths.join(", ")).toBe(0);
         expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE entity_id=${created.body.id} AND action='agent.created'`)).toBe(1);
