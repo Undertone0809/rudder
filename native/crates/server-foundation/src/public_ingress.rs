@@ -749,7 +749,7 @@ async fn proxy_request(
         return project_writes::dispatch_alias(state, request, payload).await;
     }
     if goal_writes::is_reserved_path(request.uri().path(), request.method()) {
-        return goal_writes::dispatch_alias(state, request, payload).await;
+        return goal_writes::dispatch_alias(state, proxy, request, payload).await;
     }
     if agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()

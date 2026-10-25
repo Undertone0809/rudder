@@ -61,7 +61,7 @@ fn start_input(
 
 async fn set_owner_capabilities(database: &Database, owner_id: &str, capabilities: &str) {
     sqlx::query(
-        "UPDATE agents SET role='engineer',capabilities=$3 WHERE org_id=$1::uuid AND id=$2::uuid",
+        "UPDATE agents SET role='engineer',capabilities=$3,agent_runtime_type='claude_local' WHERE org_id=$1::uuid AND id=$2::uuid",
     )
     .bind(ORG)
     .bind(owner_id)
@@ -294,6 +294,15 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     .await
     .unwrap();
     assert_eq!(wakeup_count, 1);
+    let wakeup_authority: String = sqlx::query_scalar(
+        "SELECT execution_authority FROM agent_wakeup_requests WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(format!("goal-start:{request_id}"))
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(wakeup_authority, "native_rust");
 
     let reusable_draft_start = start_input("goal-start-reused-draft", &preview, Some(GOAL), false);
     let reused_draft = apply_goal_start(
@@ -438,4 +447,28 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     .await
     .unwrap();
     assert_eq!(concurrent_wakeup_count, 1);
+
+    // A replay whose existing durable wakeup belongs to Node is forwarded by
+    // the public adapter; the transaction must not retag or duplicate it.
+    sqlx::query(
+        "UPDATE agent_wakeup_requests SET execution_authority='legacy_ts' WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(format!("goal-start:{request_id}"))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    assert!(matches!(
+        apply_goal_start(&database.pool, &Authorized, actor(ORG), &start).await,
+        Err(GoalStartError::LegacyOwned)
+    ));
+    let legacy_replay_state: (i64, String) = sqlx::query_as(
+        "SELECT count(*),min(execution_authority) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(format!("goal-start:{request_id}"))
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(legacy_replay_state, (1, "legacy_ts".to_owned()));
 }

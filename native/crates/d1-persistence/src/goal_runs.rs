@@ -112,7 +112,6 @@ pub async fn list_due_native_goal_wakeups(
         "SELECT w.org_id::text AS org_id, w.id::text AS wakeup_id
          FROM agent_wakeup_requests w
          JOIN agents a ON a.org_id=w.org_id AND a.id=w.agent_id
-         JOIN organizations o ON o.id=w.org_id
          JOIN goals g ON g.org_id=w.org_id AND g.owner_agent_id=w.agent_id
            AND g.id::text=COALESCE(w.payload->>'goalId',
              w.payload#>>'{_paperclipWakeContext,goalId}',
@@ -125,25 +124,11 @@ pub async fn list_due_native_goal_wakeups(
            AND w.status IN ('queued','deferred_goal_focus','deferred_goal_blocked','deferred_agent_paused')
            AND w.requested_at <= statement_timestamp()
            AND a.agent_runtime_type='claude_local'
-           AND a.status NOT IN ('paused','terminated','pending_approval')
-           AND o.status <> 'paused'
            AND g.status='active' AND g.lifecycle='active'
-           AND NOT EXISTS (
-             SELECT 1 FROM goals focused
-             WHERE focused.org_id=w.org_id AND focused.status='active'
-               AND focused.lifecycle='active' AND focused.focus=true AND focused.id<>g.id
-           )
            AND NOT EXISTS (
              SELECT 1 FROM heartbeat_runs active
              WHERE active.org_id=w.org_id AND active.agent_id=w.agent_id
                AND (active.status IN ('queued','running') OR active.terminal_effects_pending=true)
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM budget_policies p
-             WHERE p.org_id=w.org_id AND p.is_active=true AND p.metric='billed_cents'
-               AND p.hard_stop_enabled=true AND p.amount>0
-               AND ((p.scope_type='organization' AND p.scope_id=w.org_id)
-                 OR (p.scope_type='agent' AND p.scope_id=w.agent_id))
            )
          ORDER BY w.requested_at,w.id
          LIMIT $1",
@@ -644,7 +629,7 @@ pub async fn claim_wakeup(
     // an overlapping native Goal run while a legacy or native execution is
     // still active.
     let agent = sqlx::query(
-        "SELECT a.name, a.status, a.agent_runtime_type,
+        "SELECT a.name, a.status, a.pause_reason, a.runtime_config, a.agent_runtime_type,
                 jsonb_build_object(
                     'id', a.id::text,
                     'orgId', a.org_id::text,
@@ -679,30 +664,18 @@ pub async fn claim_wakeup(
     .await?
     .ok_or(GoalRunError::Ineligible)?;
     let agent_status: String = agent.try_get("status")?;
+    let agent_pause_reason: Option<String> = agent.try_get("pause_reason")?;
+    let runtime_config: Value = agent.try_get("runtime_config")?;
     let runtime_type: String = agent.try_get("agent_runtime_type")?;
     let agent_name: String = agent.try_get("name")?;
     let agent_context: Value = agent.try_get("agent_context")?;
-    if matches!(
-        agent_status.as_str(),
-        "paused" | "terminated" | "pending_approval"
-    ) {
-        tx.rollback().await?;
-        return Err(GoalRunError::Ineligible);
-    }
     if runtime_type != "claude_local" {
         tx.rollback().await?;
         return Err(GoalRunError::UnsupportedRuntime);
     }
-    if crate::native_chat::ensure_goal_run_not_blocked(&mut tx, &organization_id, &agent_id)
-        .await
-        .is_err()
-    {
-        tx.rollback().await?;
-        return Err(GoalRunError::Ineligible);
-    }
     // Goal Runs now write and settle their own durable cost event. Keep the
-    // shared hard-stop preflight above, but do not apply Native Chat's
-    // unknown-cost fail-closed gate to this billed Goal execution path.
+    // same invocation hard-stop preflight as the existing heartbeat owner,
+    // without applying Native Chat's unknown-cost gate to Goal execution.
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(
            SELECT 1 FROM heartbeat_runs
@@ -750,7 +723,71 @@ pub async fn claim_wakeup(
     .fetch_one(&mut *tx)
     .await?;
     if another_goal_focused {
-        tx.rollback().await?;
+        defer_unclaimed_wakeup(
+            &mut tx,
+            &organization_id,
+            &wakeup_request_id,
+            "deferred_goal_focus",
+            Some("goal.focused_elsewhere"),
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(None);
+    }
+    if matches!(agent_status.as_str(), "terminated" | "pending_approval") {
+        defer_unclaimed_wakeup(
+            &mut tx,
+            &organization_id,
+            &wakeup_request_id,
+            "deferred_goal_blocked",
+            Some("agent.unavailable"),
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(None);
+    }
+    if goal_invocation_budget_blocked(
+        &mut tx,
+        &organization_id,
+        &agent_id,
+        &agent_status,
+        agent_pause_reason.as_deref(),
+    )
+    .await?
+    {
+        defer_unclaimed_wakeup(
+            &mut tx,
+            &organization_id,
+            &wakeup_request_id,
+            "deferred_goal_blocked",
+            Some("budget.blocked"),
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(None);
+    }
+    if agent_status == "paused" {
+        defer_unclaimed_wakeup(
+            &mut tx,
+            &organization_id,
+            &wakeup_request_id,
+            "deferred_agent_paused",
+            None,
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(None);
+    }
+    if !wake_on_demand_enabled(&runtime_config) {
+        defer_unclaimed_wakeup(
+            &mut tx,
+            &organization_id,
+            &wakeup_request_id,
+            "deferred_goal_blocked",
+            Some("heartbeat.wakeOnDemand.disabled"),
+        )
+        .await?;
+        tx.commit().await?;
         return Ok(None);
     }
 
@@ -886,6 +923,85 @@ pub async fn claim_wakeup(
         connection_claim_id,
         connection_launch_permit: Some(connection_launch_permit),
     }))
+}
+
+async fn defer_unclaimed_wakeup(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    wakeup_request_id: &str,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), GoalRunError> {
+    mark_native_goal_write(tx).await?;
+    sqlx::query(
+        "UPDATE agent_wakeup_requests
+         SET status=$3,error=$4,run_id=NULL,claimed_at=NULL,finished_at=NULL,
+             updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
+           AND run_id IS NULL
+           AND status IN ('queued','deferred_goal_focus','deferred_goal_blocked','deferred_agent_paused')
+           AND (status IS DISTINCT FROM $3 OR error IS DISTINCT FROM $4)",
+    )
+    .bind(organization_id)
+    .bind(wakeup_request_id)
+    .bind(status)
+    .bind(error)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn goal_invocation_budget_blocked(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    agent_id: &str,
+    agent_status: &str,
+    pause_reason: Option<&str>,
+) -> Result<bool, GoalRunError> {
+    let blocked: bool = sqlx::query_scalar(
+        "SELECT (
+           o.status='paused'
+           OR ($3='paused' AND $4='budget')
+           OR EXISTS (
+             SELECT 1 FROM budget_policies p
+             WHERE p.org_id=o.id AND p.is_active=true AND p.metric='billed_cents'
+               AND p.hard_stop_enabled=true AND p.amount>0
+               AND ((p.scope_type='organization' AND p.scope_id=o.id)
+                 OR (p.scope_type='agent' AND p.scope_id=$2::uuid))
+               AND COALESCE((
+                 SELECT sum(c.cost_cents)::bigint FROM cost_events c
+                 WHERE c.org_id=o.id
+                   AND (p.scope_type<>'agent' OR c.agent_id=$2::uuid)
+                   AND (p.window_kind<>'calendar_month_utc'
+                     OR (c.occurred_at >= date_trunc('month',statement_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                       AND c.occurred_at < (date_trunc('month',statement_timestamp() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'))
+               ),0) >= p.amount
+           )
+         )
+         FROM organizations o WHERE o.id=$1::uuid",
+    )
+    .bind(organization_id)
+    .bind(agent_id)
+    .bind(agent_status)
+    .bind(pause_reason)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(blocked)
+}
+
+fn wake_on_demand_enabled(runtime_config: &Value) -> bool {
+    let Some(heartbeat) = runtime_config.get("heartbeat").and_then(Value::as_object) else {
+        return true;
+    };
+    let configured = [
+        "wakeOnDemand",
+        "wakeOnAssignment",
+        "wakeOnOnDemand",
+        "wakeOnAutomation",
+    ]
+    .into_iter()
+    .find_map(|key| heartbeat.get(key).filter(|value| !value.is_null()));
+    configured.and_then(Value::as_bool).unwrap_or(true)
 }
 
 /// Resolve the trusted Claude Agent profile and managed Goal workspace after
@@ -1094,18 +1210,24 @@ pub async fn finalize(
     {
         return Ok(false);
     }
-    let summary = summarize_result_json(result, usage).map(|value| value.to_string());
+    let session_id_after = result.get("sessionId").and_then(Value::as_str);
+    let session_params_after = result.get("sessionParamsAfter").map(Value::to_string);
+    let mut persisted_result = result.clone();
+    if let Some(fields) = persisted_result.as_object_mut() {
+        fields.remove("sessionId");
+        fields.remove("sessionParamsAfter");
+    }
+    let summary = summarize_result_json(&persisted_result, usage).map(|value| value.to_string());
     let mut tx = pool.begin().await?;
     mark_native_goal_write(&mut tx).await?;
     let run = sqlx::query(
         "UPDATE heartbeat_runs
          SET error_code=CASE WHEN error_code='cancel_requested' OR $4='cancelled' THEN 'cancelled' WHEN $4='timed_out' THEN 'timeout' ELSE NULL END,
              exit_code=$6, signal=$7, usage_json=$8::jsonb, result_json=$9::jsonb,
-             session_id_after=$12, session_params_after_json=$13::jsonb,
-             result_summary_json=$14::jsonb,
+             result_summary_json=$12::jsonb,
              process_exited_at=statement_timestamp(), execution_owner_token=NULL,
              execution_lease_expires_at=NULL, terminal_effects_pending=true,
-             terminal_effects_json=$15::jsonb, terminal_effects_completed_json=NULL,
+             terminal_effects_json=$13::jsonb, terminal_effects_completed_json=NULL,
              terminal_effects_dead_lettered_json=NULL, terminal_effects_attempts_json=NULL,
              terminal_effects_next_attempt_at=NULL, terminal_effects_dead_lettered_at=NULL,
              terminal_effects_claim_token=NULL, terminal_effects_claimed_at=NULL,
@@ -1131,11 +1253,9 @@ pub async fn finalize(
     .bind(exit_code)
     .bind(signal)
     .bind(usage.to_string())
-    .bind(result.to_string())
+    .bind(persisted_result.to_string())
     .bind(&claim.attempt_id)
     .bind(claim.attempt_epoch)
-    .bind(result.get("sessionId").and_then(Value::as_str))
-    .bind(result.get("sessionParamsAfter").map(Value::to_string))
     .bind(summary)
     .bind(json!({"version":1,"goalRunCostSettlement":true}).to_string())
     .fetch_optional(&mut *tx)
@@ -1148,6 +1268,7 @@ pub async fn finalize(
     sqlx::query(
         "UPDATE heartbeat_run_attempts
          SET status=$4, usage_delta_json=$5::jsonb, error=$6,
+             session_display_id=$9, session_params_json=$10::jsonb,
              error_code=CASE WHEN $4='cancelled' THEN 'cancelled' WHEN $4='timed_out' THEN 'timeout' ELSE NULL END,
              finished_at=statement_timestamp()
          WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid
@@ -1161,6 +1282,8 @@ pub async fn finalize(
     .bind(error)
     .bind(&claim.owner_token)
     .bind(claim.attempt_epoch)
+    .bind(session_id_after)
+    .bind(session_params_after)
     .execute(&mut *tx)
     .await?;
     append_terminal_event(&mut tx, claim, &final_status).await?;

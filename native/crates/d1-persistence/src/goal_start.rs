@@ -74,6 +74,9 @@ pub struct GoalStartResult {
 pub enum GoalStartError {
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// No native write has committed; the existing legacy path still owns it.
+    #[error("Goal Start is owned by the legacy runtime")]
+    LegacyOwned,
     #[error("{0}")]
     Conflict(&'static str),
     #[error("{message}")]
@@ -97,6 +100,7 @@ impl GoalStartError {
 #[derive(Clone, Debug)]
 struct GoalStartOwner {
     id: String,
+    runtime_type: String,
     status: String,
     role: Option<String>,
     title: Option<String>,
@@ -241,6 +245,9 @@ pub async fn apply_goal_start(
         require_board(&context)?;
 
         if let Some(replay) = read_start_request(&mut tx, &org, request_key).await? {
+            if !replay_has_native_wakeup(&mut tx, &org, &replay).await? {
+                return Err(GoalStartError::LegacyOwned);
+            }
             return replay_start(
                 &mut tx,
                 &org,
@@ -258,6 +265,9 @@ pub async fn apply_goal_start(
                 "Goal owner must belong to the same organization",
             ));
         };
+        if owner.runtime_type != "claude_local" {
+            return Err(GoalStartError::LegacyOwned);
+        }
         if matches!(owner.status.as_str(), "terminated" | "pending_approval") {
             return Err(GoalStartError::Unprocessable {
                 message: "Goal owner must be invokable",
@@ -704,6 +714,36 @@ async fn replay_start(
     })
 }
 
+async fn replay_has_native_wakeup(
+    tx: &mut Transaction<'_, sqlx::Postgres>,
+    org: &str,
+    replay: &StoredStartRequest,
+) -> Result<bool, sqlx::Error> {
+    let Some(goal_id) = replay.goal_id.as_deref() else {
+        return Ok(false);
+    };
+    let owner_agent_id: Option<String> = sqlx::query_scalar(
+        "SELECT owner_agent_id::text FROM goals WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(org)
+    .bind(goal_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(owner_agent_id) = owner_agent_id else {
+        return Ok(false);
+    };
+    let authority: Option<String> = sqlx::query_scalar(
+        "SELECT execution_authority FROM agent_wakeup_requests
+         WHERE org_id=$1::uuid AND agent_id=$2::uuid AND idempotency_key=$3",
+    )
+    .bind(org)
+    .bind(owner_agent_id)
+    .bind(format!("goal-start:{}", replay.id))
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(authority.as_deref() == Some("native_rust"))
+}
+
 async fn ensure_goal_wakeup_intent(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,
@@ -793,14 +833,17 @@ async fn ensure_goal_wakeup_intent(
     } else {
         return Err(StoreError::Unauthorized.into());
     };
-    let inserted = sqlx::query_scalar::<_, String>("INSERT INTO agent_wakeup_requests (org_id,agent_id,source,trigger_detail,reason,payload,status,requested_by_actor_type,requested_by_actor_id,idempotency_key) VALUES ($1::uuid,$2::uuid,'on_demand','system','goal_started',$3::jsonb,'queued',$4,$5,$6) ON CONFLICT (org_id,agent_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id::text")
+    let inserted = sqlx::query_scalar::<_, String>("INSERT INTO agent_wakeup_requests (org_id,agent_id,source,trigger_detail,reason,payload,status,requested_by_actor_type,requested_by_actor_id,idempotency_key,execution_authority) VALUES ($1::uuid,$2::uuid,'on_demand','system','goal_started',$3::jsonb,'queued',$4,$5,$6,'native_rust') ON CONFLICT (org_id,agent_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id::text")
         .bind(org).bind(owner_agent_id).bind(stored_payload.to_string()).bind(actor_type).bind(context.actor_id).bind(&idempotency_key)
         .fetch_optional(&mut **tx).await?;
     let (wakeup_id, requested_by_actor_type, requested_by_actor_id) = if let Some(id) = inserted {
         (id, actor_type.to_owned(), Some(context.actor_id.to_owned()))
     } else {
-        let existing = sqlx::query("SELECT id::text,payload,requested_by_actor_type,requested_by_actor_id FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid AND idempotency_key=$3")
+        let existing = sqlx::query("SELECT id::text,payload,requested_by_actor_type,requested_by_actor_id,execution_authority FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid AND idempotency_key=$3")
             .bind(org).bind(owner_agent_id).bind(&idempotency_key).fetch_optional(&mut **tx).await?.ok_or(GoalStartError::Conflict("Goal Owner wakeup could not be queued"))?;
+        if existing.try_get::<String, _>("execution_authority")? != "native_rust" {
+            return Err(GoalStartError::LegacyOwned);
+        }
         let persisted_payload: Value = existing.try_get("payload")?;
         let mut raw_payload = persisted_payload.as_object().cloned().unwrap_or_default();
         raw_payload.remove(DEFERRED_WAKE_CONTEXT_KEY);
@@ -880,7 +923,7 @@ async fn read_start_owner(
     org: &str,
     owner_id: &str,
 ) -> Result<Option<GoalStartOwner>, sqlx::Error> {
-    let row = sqlx::query("SELECT id::text,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
+    let row = sqlx::query("SELECT id::text,agent_runtime_type,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(org).bind(owner_id).fetch_optional(pool).await?;
     row.map(owner_from_row).transpose()
 }
@@ -890,7 +933,7 @@ async fn read_start_owner_tx(
     org: &str,
     owner_id: &str,
 ) -> Result<Option<GoalStartOwner>, sqlx::Error> {
-    let row = sqlx::query("SELECT id::text,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid FOR KEY SHARE")
+    let row = sqlx::query("SELECT id::text,agent_runtime_type,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid FOR KEY SHARE")
         .bind(org).bind(owner_id).fetch_optional(&mut **tx).await?;
     row.map(owner_from_row).transpose()
 }
@@ -898,6 +941,7 @@ async fn read_start_owner_tx(
 fn owner_from_row(row: sqlx::postgres::PgRow) -> Result<GoalStartOwner, sqlx::Error> {
     Ok(GoalStartOwner {
         id: row.try_get("id")?,
+        runtime_type: row.try_get("agent_runtime_type")?,
         status: row.try_get("status")?,
         role: row.try_get("role")?,
         title: row.try_get("title")?,
@@ -1509,6 +1553,7 @@ mod tests {
     fn capable_owner() -> GoalStartOwner {
         GoalStartOwner {
             id: "55555555-5555-4555-8555-555555555555".to_owned(),
+            runtime_type: "claude_local".to_owned(),
             status: "idle".to_owned(),
             role: Some("engineer".to_owned()),
             title: None,

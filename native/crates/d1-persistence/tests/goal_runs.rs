@@ -11,7 +11,7 @@ use rudder_native_protocol::{Command, ProtocolVersion};
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::{collections::BTreeMap, path::Path, time::Duration};
-use support::{CEO, Database, GOAL, ORG};
+use support::{CEO, Database, GOAL, GOAL_TWO, ORG};
 
 const SECOND_AGENT: &str = "50000000-0000-4000-8000-000000000002";
 const SECOND_GOAL: &str = "30000000-0000-4000-8000-000000000002";
@@ -128,6 +128,21 @@ async fn claim_wakeup(database: &Database, wakeup_id: &str) -> Option<GoalRunCla
     goal_runs::claim_wakeup(&database.pool, ORG, wakeup_id)
         .await
         .expect("claim one native Goal wakeup")
+}
+
+async fn wakeup_snapshot(
+    database: &Database,
+    wakeup_id: &str,
+) -> (String, Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT status,error,run_id::text FROM agent_wakeup_requests
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(wakeup_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read deferred Goal wakeup")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -341,8 +356,15 @@ async fn only_the_currently_focused_goal_is_claimed_across_agents() {
     let due = goal_runs::list_due_native_goal_wakeups(&database.pool)
         .await
         .expect("scan eligible native Goal wakeups");
-    assert_eq!(due.len(), 1);
-    assert_eq!(due[0].wakeup_request_id, focused_wakeup);
+    assert_eq!(due.len(), 2);
+    assert!(
+        due.iter()
+            .any(|wake| wake.wakeup_request_id == focused_wakeup)
+    );
+    assert!(
+        due.iter()
+            .any(|wake| wake.wakeup_request_id == other_wakeup)
+    );
 
     let focused_claim = claim_wakeup(&database, &focused_wakeup).await;
     assert!(
@@ -353,6 +375,15 @@ async fn only_the_currently_focused_goal_is_claimed_across_agents() {
         claim_wakeup(&database, &other_wakeup).await.is_none(),
         "a different Agent cannot start work for a Goal while another Goal is focused"
     );
+    assert_eq!(
+        wakeup_snapshot(&database, &other_wakeup).await,
+        (
+            "deferred_goal_focus".into(),
+            Some("goal.focused_elsewhere".into()),
+            None,
+        ),
+        "focus is preserved as a resumable deferral on the existing wake row"
+    );
     let other_run_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND goal_id=$2::uuid",
     )
@@ -362,6 +393,168 @@ async fn only_the_currently_focused_goal_is_claimed_across_agents() {
     .await
     .expect("verify the unfocused Goal did not create a Run");
     assert_eq!(other_run_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_goal_preflight_deferrals_resume_the_same_wakeup_when_unblocked() {
+    let database = Database::start().await;
+    let wakeup_id = goal_wakeup(&database, "native_rust").await;
+
+    sqlx::query(
+        "UPDATE agents SET runtime_config=$3::jsonb
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .bind(
+        json!({
+            "heartbeat": {
+                "wakeOnDemand": null,
+                "wakeOnAssignment": false,
+                "wakeOnOnDemand": true,
+                "wakeOnAutomation": true
+            }
+        })
+        .to_string(),
+    )
+    .execute(&database.pool)
+    .await
+    .expect("configure Node-compatible heartbeat aliases");
+    assert!(claim_wakeup(&database, &wakeup_id).await.is_none());
+    assert_eq!(
+        wakeup_snapshot(&database, &wakeup_id).await,
+        (
+            "deferred_goal_blocked".into(),
+            Some("heartbeat.wakeOnDemand.disabled".into()),
+            None,
+        ),
+        "the first non-null legacy wake-on-demand alias controls admission"
+    );
+
+    sqlx::query(
+        "UPDATE agents SET runtime_config=$3::jsonb
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .bind(json!({"heartbeat":{"wakeOnDemand":true}}).to_string())
+    .execute(&database.pool)
+    .await
+    .expect("re-enable on-demand Goal wakes");
+
+    sqlx::query(
+        "UPDATE goals SET lifecycle='active',status='active',focus=true
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(GOAL_TWO)
+    .execute(&database.pool)
+    .await
+    .expect("focus a different Goal");
+    assert!(claim_wakeup(&database, &wakeup_id).await.is_none());
+    assert_eq!(
+        wakeup_snapshot(&database, &wakeup_id).await,
+        (
+            "deferred_goal_focus".into(),
+            Some("goal.focused_elsewhere".into()),
+            None,
+        )
+    );
+    sqlx::query("UPDATE goals SET focus=false WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG)
+        .bind(GOAL_TWO)
+        .execute(&database.pool)
+        .await
+        .expect("clear the focused Goal");
+
+    for blocked_status in ["terminated", "pending_approval"] {
+        sqlx::query("UPDATE agents SET status=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+            .bind(ORG)
+            .bind(CEO)
+            .bind(blocked_status)
+            .execute(&database.pool)
+            .await
+            .expect("set a non-invokable Agent status");
+        assert!(claim_wakeup(&database, &wakeup_id).await.is_none());
+        assert_eq!(
+            wakeup_snapshot(&database, &wakeup_id).await,
+            (
+                "deferred_goal_blocked".into(),
+                Some("agent.unavailable".into()),
+                None,
+            ),
+            "{blocked_status} remains a resumable Agent-unavailable deferral"
+        );
+    }
+
+    sqlx::query("UPDATE agents SET status='paused',pause_reason='manual' WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(ORG)
+        .bind(CEO)
+        .execute(&database.pool)
+        .await
+        .expect("pause the Agent manually");
+    assert!(claim_wakeup(&database, &wakeup_id).await.is_none());
+    assert_eq!(
+        wakeup_snapshot(&database, &wakeup_id).await,
+        ("deferred_agent_paused".into(), None, None)
+    );
+
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin organization pause fixture");
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+        .execute(&mut *tx)
+        .await
+        .expect("authorize the test-only organization state update");
+    sqlx::query("UPDATE organizations SET status='paused' WHERE id=$1::uuid")
+        .bind(ORG)
+        .execute(&mut *tx)
+        .await
+        .expect("pause the organization");
+    tx.commit().await.expect("commit organization pause");
+    sqlx::query(
+        "UPDATE agents SET status='idle',pause_reason=NULL WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("make the Agent otherwise eligible");
+    assert!(claim_wakeup(&database, &wakeup_id).await.is_none());
+    assert_eq!(
+        wakeup_snapshot(&database, &wakeup_id).await,
+        (
+            "deferred_goal_blocked".into(),
+            Some("budget.blocked".into()),
+            None,
+        ),
+        "organization pause is surfaced through the legacy budget block reason"
+    );
+    let mut tx = database
+        .pool
+        .begin()
+        .await
+        .expect("begin organization resume fixture");
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+        .execute(&mut *tx)
+        .await
+        .expect("authorize the test-only organization state update");
+    sqlx::query("UPDATE organizations SET status='active' WHERE id=$1::uuid")
+        .bind(ORG)
+        .execute(&mut *tx)
+        .await
+        .expect("resume the organization");
+    tx.commit().await.expect("commit organization resume");
+
+    assert!(
+        claim_wakeup(&database, &wakeup_id).await.is_some(),
+        "the original wake row becomes claimable after all preflight blockers clear"
+    );
+    let (status, _, run_id) = wakeup_snapshot(&database, &wakeup_id).await;
+    assert_eq!(status, "claimed");
+    assert!(run_id.is_some());
 }
 
 #[cfg(unix)]

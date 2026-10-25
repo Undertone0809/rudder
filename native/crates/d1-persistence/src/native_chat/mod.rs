@@ -42,14 +42,6 @@ pub(crate) async fn lock_goal_run_budget_state(
     budget::lock_policy_state(tx, organization_id).await
 }
 
-pub(crate) async fn ensure_goal_run_not_blocked(
-    tx: &mut Transaction<'_, Postgres>,
-    organization_id: &str,
-    agent_id: &str,
-) -> Result<()> {
-    budget::ensure_not_blocked(tx, organization_id, agent_id).await
-}
-
 fn http(status: u16, message: impl Into<String>) -> Error {
     Error::Http(status, message.into())
 }
