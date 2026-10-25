@@ -7,8 +7,11 @@ use rudder_auth_core::{
 };
 use rudder_d1_persistence::agent_core::{
     AgentCoreError, AgentCoreRequest, NativeAgentAccess, NativeAgentAuthorizer,
-    execute_agent_with_native_auth, execute_public_agent_create_with_native_auth,
-    normalize_public_agent_create_input,
+    execute_agent_with_native_auth,
+};
+#[cfg(unix)]
+use rudder_d1_persistence::agent_core::{
+    execute_public_agent_create_with_native_auth, normalize_public_agent_create_input,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
