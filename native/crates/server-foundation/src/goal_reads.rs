@@ -1,12 +1,27 @@
 //! Signed, fail-closed transport for Rust-owned Goal GET projections.
-use crate::{ActorEnvelopeVerificationError, AppState, DatabaseState};
+use crate::member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth};
+use crate::native_agent_jwt::NativeAgentJwtIdentity;
+use crate::native_session_auth::NativeSessionIdentity;
+use crate::public_ingress_config::NativeSessionAuthKind;
+use crate::{ActorEnvelopeVerificationError, ActorIdentity, AppState, DatabaseState};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
 use rudder_d1_persistence::{
     StoreError,
-    goal_reads::{GoalReadError, GoalReadRequest, GoalReadView, read_goals_for_actor},
+    goal_reads::{
+        GoalReadError, GoalReadRequest, GoalReadView, read_goals_for_actor,
+        read_goals_for_actor_in_transaction,
+    },
 };
 
 pub const GOAL_READ_ACTION: &str = "goal.read";
+
+pub(crate) enum NativeGoalReadTarget<'a> {
+    Organization(&'a str),
+    Reference {
+        reference: &'a str,
+        agent_organization_id: Option<&'a str>,
+    },
+}
 fn goal_read_error(status: StatusCode, code: &str) -> HttpResponse {
     let error = match status {
         StatusCode::UNAUTHORIZED => "Unauthorized",
@@ -78,6 +93,194 @@ impl AppState {
             }
             Err(_) => goal_read_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed"),
         }
+    }
+}
+
+impl AppState {
+    pub(crate) async fn goal_read_with_native_auth(
+        &self,
+        target: NativeGoalReadTarget<'_>,
+        input: &GoalReadRequest,
+        native_auth: MemberDirectoryNativeAuth<'_>,
+        owner: Option<&str>,
+    ) -> HttpResponse {
+        let DatabaseState::Configured(pool) = &self.database else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+        let mut transaction = match pool.begin().await {
+            Ok(transaction) => transaction,
+            Err(_) => {
+                return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+            }
+        };
+        if sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *transaction)
+            .await
+            .is_err()
+        {
+            return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+        }
+        let singular = matches!(&target, NativeGoalReadTarget::Reference { .. });
+        let mut input = input.clone();
+        let mut goal_owner = None;
+        let org_id = match target {
+            NativeGoalReadTarget::Organization(org_id) => org_id.to_owned(),
+            NativeGoalReadTarget::Reference {
+                reference,
+                agent_organization_id,
+            } => {
+                use rudder_d1_persistence::goal_reads::reference::{
+                    GoalReferenceResolution, resolve_goal_reference_in_transaction,
+                };
+                match resolve_goal_reference_in_transaction(
+                    &mut transaction,
+                    reference,
+                    agent_organization_id,
+                )
+                .await
+                {
+                    Ok(GoalReferenceResolution::Resolved(goal)) => {
+                        input.goal_id = Some(goal.goal_id);
+                        goal_owner = goal.owner_agent_id;
+                        goal.organization_id
+                    }
+                    Ok(GoalReferenceResolution::Missing) => {
+                        return HttpResponse::NotFound()
+                            .json(serde_json::json!({"error":"Goal not found"}));
+                    }
+                    Ok(GoalReferenceResolution::Ambiguous) => {
+                        return HttpResponse::Conflict().json(serde_json::json!({"error":"Goal short reference is ambiguous. Use a longer typed ref."}));
+                    }
+                    Err(_) => {
+                        return self
+                            .json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+                    }
+                }
+            }
+        };
+        let access = match native_auth.revalidate(&mut transaction, &org_id).await {
+            Ok(access) => access,
+            Err(_) => {
+                return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+            }
+        };
+        match access {
+            MemberDirectoryNativeAccess::Authorized => {}
+            MemberDirectoryNativeAccess::Unauthorized => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+            }
+            MemberDirectoryNativeAccess::Forbidden => {
+                return self.json_error(StatusCode::FORBIDDEN, "forbidden");
+            }
+        }
+        if singular && input.view == GoalReadView::AgentContext {
+            let Some(agent_id) = input.agent_id.as_deref() else {
+                return HttpResponse::Forbidden().json(serde_json::json!({"error":"Agent authentication required for Goal runtime context"}));
+            };
+            if goal_owner.as_deref() != Some(agent_id) {
+                return HttpResponse::Forbidden().json(serde_json::json!({"error":"Agents can only read runtime context for Goals they own"}));
+            }
+        }
+        let response = match read_goals_for_actor_in_transaction(
+            &mut transaction,
+            &org_id,
+            &input,
+            owner,
+        )
+        .await
+        {
+            Ok(response) => HttpResponse::Ok()
+                .content_type("application/json")
+                .body(response),
+            Err(GoalReadError::Store(StoreError::NotFound)) => {
+                HttpResponse::NotFound().json(serde_json::json!({"error":"Goal not found"}))
+            }
+            Err(GoalReadError::Store(StoreError::InvalidInput)) => self
+                .json_error(StatusCode::UNPROCESSABLE_ENTITY, "goal_read_invalid"),
+            Err(GoalReadError::Cursor) => {
+                HttpResponse::BadRequest().json(serde_json::json!({"error":"Invalid Goal history cursor"}))
+            }
+            Err(GoalReadError::Limit) => HttpResponse::BadRequest()
+                .json(serde_json::json!({"error":"Goal history limit must be between 1 and 100"})),
+            Err(GoalReadError::TimelineLimit) => HttpResponse::BadRequest().json(
+                serde_json::json!({"error":"Goal activity timeline limit must be between 1 and 100"}),
+            ),
+            Err(_) => self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed"),
+        };
+        if !response.status().is_success() {
+            return response;
+        }
+        if transaction.commit().await.is_err() {
+            return self.json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_read_failed");
+        }
+        response
+    }
+
+    pub(crate) async fn goal_read_with_native_bearer(
+        &self,
+        org_id: &str,
+        input: &GoalReadRequest,
+        actor: &ActorIdentity,
+        session_id: &str,
+        token_hash: &str,
+    ) -> HttpResponse {
+        let owner = (actor.kind == "user").then_some(actor.id.as_str());
+        self.goal_read_with_native_auth(
+            NativeGoalReadTarget::Organization(org_id),
+            input,
+            MemberDirectoryNativeAuth::Bearer {
+                actor,
+                session_id,
+                token_hash,
+            },
+            owner,
+        )
+        .await
+    }
+
+    pub(crate) async fn goal_read_with_native_session(
+        &self,
+        org_id: &str,
+        input: &GoalReadRequest,
+        identity: &NativeSessionIdentity,
+        kind: NativeSessionAuthKind,
+    ) -> HttpResponse {
+        self.goal_read_with_native_auth(
+            NativeGoalReadTarget::Organization(org_id),
+            input,
+            MemberDirectoryNativeAuth::Session { identity, kind },
+            Some(identity.user_id.as_str()),
+        )
+        .await
+    }
+
+    pub(crate) async fn goal_read_with_native_agent_jwt(
+        &self,
+        org_id: &str,
+        input: &GoalReadRequest,
+        identity: &NativeAgentJwtIdentity,
+    ) -> HttpResponse {
+        self.goal_read_with_native_auth(
+            NativeGoalReadTarget::Organization(org_id),
+            input,
+            MemberDirectoryNativeAuth::AgentJwt { identity },
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn goal_read_with_native_implicit_board(
+        &self,
+        org_id: &str,
+        input: &GoalReadRequest,
+    ) -> HttpResponse {
+        self.goal_read_with_native_auth(
+            NativeGoalReadTarget::Organization(org_id),
+            input,
+            MemberDirectoryNativeAuth::LocalImplicit,
+            Some("local-board"),
+        )
+        .await
     }
 }
 

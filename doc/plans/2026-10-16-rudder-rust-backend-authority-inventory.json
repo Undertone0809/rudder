@@ -1187,7 +1187,7 @@
     },
     {
       "path": "desktop/src/computer-broker-registration.ts",
-      "sha256": "8c979b09c52100ed681bdb5df1ad42c2161cecd2a583b0f4d3ccdc3e83c47a88",
+      "sha256": "2e752ae4d90aea77a1de8d4fa02d2d1fb4b4b11d3dd85845cec367e4bb49ad8a",
       "families": [
         "electron_process_graph"
       ]
@@ -1271,7 +1271,7 @@
     },
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
+      "sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
       "families": [
         "electron_process_graph"
       ]
