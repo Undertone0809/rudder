@@ -17,6 +17,7 @@ export type DesktopComputerReadiness = {
 };
 
 const ownerId = randomUUID();
+const DESKTOP_COMPUTER_API_TIMEOUT_MS = 5_000;
 let generation = 0;
 
 function endpoint(apiUrl: string, path: string) {
@@ -27,6 +28,7 @@ async function request(apiUrl: string, path: string, init: RequestInit, fetchImp
   const requestUrl = endpoint(apiUrl, path);
   const response = await fetchImpl(requestUrl, {
     ...init,
+    signal: AbortSignal.timeout(DESKTOP_COMPUTER_API_TIMEOUT_MS),
     headers: {
       "content-type": "application/json",
       ...(init.method && init.method !== "GET" ? { origin: new URL(requestUrl).origin } : {}),

@@ -1,7 +1,9 @@
+import { createServer } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDesktopComputerApiClient } from "./computer-broker-registration.js";
 import { createDesktopComputerRuntimeLifecycle } from "./computer-runtime-lifecycle.js";
 
-function createHarness() {
+function createHarness(readSettings?: (apiUrl: string) => Promise<{ experimentalComputerUseEnabled: boolean }>) {
   let enabled = false;
   let ready = false;
   let execute: ((command: never) => Promise<unknown>) | null = null;
@@ -28,7 +30,7 @@ function createHarness() {
   const onWarning = vi.fn();
   const lifecycle = createDesktopComputerRuntimeLifecycle({
     runtime,
-    readSettings: vi.fn(async () => ({ experimentalComputerUseEnabled: enabled })),
+    readSettings: readSettings ?? vi.fn(async () => ({ experimentalComputerUseEnabled: enabled })),
     readReadiness,
     isRunActive: vi.fn(async () => true),
     startBroker: vi.fn(async (input) => {
@@ -65,6 +67,41 @@ describe("Desktop Computer runtime lifecycle", () => {
     expect(harness.readReadiness).not.toHaveBeenCalled();
     expect(harness.registerBroker).not.toHaveBeenCalled();
   });
+
+  it("finishes disconnect when an in-flight Computer settings request cannot reach the backend", async () => {
+    vi.useRealTimers();
+    let received!: () => void;
+    const requestReceived = new Promise<void>((resolve) => { received = resolve; });
+    const server = createServer(() => { received(); });
+    await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing fixture listener");
+    const client = createDesktopComputerApiClient(globalThis.fetch);
+    const harness = createHarness(client.readSettings);
+    const connecting = harness.lifecycle.connect(`http://127.0.0.1:${address.port}/api`)
+      .then(() => null, (error: unknown) => error);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let disconnecting: Promise<void> | undefined;
+    try {
+      await requestReceived;
+      harness.runtime.shutdown.mockClear();
+      disconnecting = harness.lifecycle.disconnect();
+      const result = await Promise.race([
+        connecting,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => reject(new Error("Computer settings blocked Desktop disconnect")), 6_500);
+        }),
+      ]);
+      expect(result).toMatchObject({ name: "TimeoutError" });
+      await disconnecting;
+      expect(harness.runtime.shutdown).toHaveBeenCalledOnce();
+    } finally {
+      clearTimeout(deadline);
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => { server.close(() => resolve()); });
+      await disconnecting;
+    }
+  }, 10_000);
 
   it("starts only when enabled and permission-ready, then revokes on disable", async () => {
     const harness = createHarness();
