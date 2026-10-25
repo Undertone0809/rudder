@@ -257,8 +257,83 @@ const LEGACY_FENCE_CHANGE_KINDS = new Set([
   "native_chat_run_attempt_admission",
   "native_chat_side_chat_retention",
   "existing_operation_mapping",
+  "goal_legacy_owner_bridge",
 ]);
 const TARGET_LOCK_RECEIVERS = new Set(["tx"]);
+
+// Goal budget stop markers are written by Rust. These exact legacy readers and
+// renewal callbacks remain only to let work already owned by the Node runtime
+// observe that marker and finish its existing cleanup. The hashes and callsite
+// references are reviewed policy literals; inventory records cannot widen the
+// set of admitted files, reads, timers, writers, or operations.
+const GOAL_LEGACY_OWNER_BRIDGE_ID = "goal-budget-cross-owner-stop-v1";
+const GOAL_LEGACY_OWNER_SEMANTIC_OPERATION = "goal_budget.request_legacy_run_cancellation";
+const GOAL_LEGACY_OWNER_RUST_AUTHORITY = "native::d1_persistence::goal_budget::request_legacy_run_cancellation";
+const GOAL_LEGACY_OWNER_COMPATIBILITY_BOUNDARY = "Rust owns Goal budget stop decisions and writes cancel_requested; these exact Node paths only observe that marker and let the existing legacy owner finish cleanup for work still owned by the legacy heartbeat runtime.";
+const GOAL_LEGACY_OWNER_RETIREMENT_CRITERION = "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.";
+const GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID = "goal-budget-cross-owner-stop-v1.heartbeat-transaction";
+
+const TRUSTED_GOAL_LEGACY_OWNER_BRIDGE = Object.freeze({
+  id: GOAL_LEGACY_OWNER_BRIDGE_ID,
+  semantic_operation: GOAL_LEGACY_OWNER_SEMANTIC_OPERATION,
+  rust_authority: GOAL_LEGACY_OWNER_RUST_AUTHORITY,
+  compatibility_boundary: GOAL_LEGACY_OWNER_COMPATIBILITY_BOUNDARY,
+  retirement_criterion: GOAL_LEGACY_OWNER_RETIREMENT_CRITERION,
+  files: Object.freeze({
+    "server/src/services/chat-agent-runs.ts": Object.freeze({
+      record_id: "goal-budget-cross-owner-stop-v1.chat-agent-runs",
+      base_sha256: "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
+      head_sha256: "d97223451600d68aa5caf7b06f10afa2c5ced6ca62c1e53626e624a85a8a68d4",
+      base_surfaces: Object.freeze([
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then(… [sha256:db9d44c3fc3e87cdc4d35d59e619c61046997d2aa931833b4999761448d3d780]", line: 264 }),
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) … [sha256:1b20f031737c5c3a6e0d83b5a10f4ff5edbb3ced489e5103c1a727efe2ad48bf]", line: 316 }),
+      ]),
+      head_surfaces: Object.freeze([
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then(… [sha256:eccf2270d7ca46882e23cbe4fe4b1cc84d08100fa7f9b373f5886a30328de729]", line: 277 }),
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) … [sha256:21f19118252deb0322ff42fd531f225091d313e1bcc6b59a5234ced9a0c9b48c]", line: 330 }),
+      ]),
+    }),
+    "server/src/services/runtime-kernel/heartbeat.execute.ts": Object.freeze({
+      record_id: "goal-budget-cross-owner-stop-v1.heartbeat-execute",
+      base_sha256: "18157d02b952fe862640e2baff40cb402c9d6e319bf3ea63b3644d40410fd53b",
+      head_sha256: "4ead95d590da855fb28ee50f81d81fea8d616cf712c8dde3d7760e2fd05cd84e",
+      base_surfaces: Object.freeze([
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:7e6bf3e963e22430341e9e36ac48ee706fb73568acc5e76dd807ffcb3843cc4a]", line: 226 }),
+      ]),
+      head_surfaces: Object.freeze([
+        Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/runtime-kernel/heartbeat.execute.ts|worker-schedule-candidate|setInterval|() => { void renewRunExecutionLease(run.id, executionOwnerToken) .… [sha256:d5314bf1d926737a96502855b4fc786524fc5a3454a099e44165643147ad0339]", line: 238 }),
+      ]),
+    }),
+    "server/src/services/runtime-kernel/heartbeat.ts": Object.freeze({
+      record_id: "goal-budget-cross-owner-stop-v1.heartbeat",
+      base_sha256: "45eb1897e51fa6701e0d79cdd3336a33a821dfc19b9d1e2d6130ee3863cc5831",
+      head_sha256: "860e65a14ef3d71328e31cc9994dfc7d675dbb68f39b6d7ce037453d1c442236",
+      base_surfaces: Object.freeze([]),
+      head_surfaces: Object.freeze([
+        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|select|{ errorCode: heartbeatRuns.errorCode, error: heartbeatRuns.error, }", line: 1174 }),
+        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|tx|select|{ id: heartbeatRuns.id }", line: 1260 }),
+      ]),
+      transaction_mapping_id: GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID,
+    }),
+    "server/src/services/runtime-kernel/heartbeat.wakeup.ts": Object.freeze({
+      record_id: "goal-budget-cross-owner-stop-v1.heartbeat-wakeup",
+      base_sha256: "6971e52ce92eb53a3154c868605f88446cc0925be576438fc280233d9a6cd538",
+      head_sha256: "48ab0ab158549c3eae9df4be993d2cc22e234ecea6e1124fae57e7c4f567ef82",
+      base_surfaces: Object.freeze([]),
+      head_surfaces: Object.freeze([
+        Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.wakeup.ts|db-call|db|select|{ executionAuthority: agentWakeupRequests.executionAuthority }", line: 67 }),
+      ]),
+    }),
+  }),
+  operation_mapping: Object.freeze({
+    id: GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID,
+    path: "server/src/services/runtime-kernel/heartbeat.ts",
+    base_surface: Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5f9c3c5febbb625c83dc10992e6e6f9e00e56d7ce5babb1f1b318de853946b47]", line: 1209 }),
+    head_surface: Object.freeze({ type: "database_call_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-call|db|transaction|async (tx) => { // Wakeup/release transactions lock the Issue before the run advisory // … [sha256:5591854ce77e200e0d05f3e3f7a78b03057b416bdb63a540497d9321b0d5670c]", line: 1232 }),
+    base_protected_surface: Object.freeze({ type: "database_write_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns", line: 1285 }),
+    head_protected_surface: Object.freeze({ type: "database_write_candidate", signature: "server/src/services/runtime-kernel/heartbeat.ts|db-write-candidate|tx|update|heartbeatRuns", line: 1330 }),
+  }),
+});
 
 // These body digests are the only code allowed to implement the temporary
 // Native Chat negative fence. They are trusted policy literals, not values
@@ -1420,8 +1495,9 @@ function validateRetainedClientRecord(record, sourcePath, baseHash, headHash) {
 
 const LEGACY_FENCE_RECORD_FIELDS = new Set([
   "id", "path", "base_sha256", "head_sha256", "change_kind", "semantic_operation", "transaction_mapping_id",
-  "base_surface", "head_surface", "head_surfaces", "base_protected_surface", "head_protected_surface", "head_guard_callsite", "guard_helper_id",
+  "base_surface", "head_surface", "base_surfaces", "head_surfaces", "base_protected_surface", "head_protected_surface", "head_guard_callsite", "guard_helper_id",
   "helper_name", "queue_helper_id", "conversation_helper_id",
+  "goal_owner_bridge_id",
   "rust_authority", "compatibility_boundary", "retirement_criterion", "reviewer", "review_reference", "review_status",
 ]);
 
@@ -1438,6 +1514,23 @@ function exactSurfaceRef(surface) {
 function sameSurfaceRef(left, right) {
   return Boolean(left && right && left.type === right.type
     && left.signature === right.signature && left.line === right.line);
+}
+
+function exactSurfaceListProblems(actual, expected, inventory, sourcePath, label) {
+  const problems = [];
+  if (!Array.isArray(actual) || actual.length !== expected.length) {
+    return [`${label} must contain exactly ${expected.length} pinned surfaces`];
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    const reference = exactSurfaceRef(actual[index]);
+    if (!reference) {
+      problems.push(`${label}[${index}] must pin type, exact signature, and line`);
+      continue;
+    }
+    if (!sameSurfaceRef(reference, expected[index])) problems.push(`${label}[${index}] does not match the statically reviewed surface`);
+    if (!hasSurface(inventory, sourcePath, reference)) problems.push(`${label}[${index}] does not identify an exact source callsite`);
+  }
+  return problems;
 }
 
 function hasSurface(inventory, sourcePath, reference) {
@@ -1952,7 +2045,7 @@ function validateQueueGuardCallsite(record, before, after, baseInventory, headIn
   return problems;
 }
 
-function validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers) {
+function validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers, goalOwnerBridgePolicy) {
   const problems = [];
   if (!record || typeof record !== "object" || Array.isArray(record)) return ["record must be an object"];
   for (const key of Object.keys(record)) if (!LEGACY_FENCE_RECORD_FIELDS.has(key)) problems.push(`unsupported record field ${key}`);
@@ -1963,7 +2056,13 @@ function validateLegacyFenceRecord(record, baseInventory, headInventory, baseCon
   if (!/^[a-z][a-z0-9_.:-]{2,95}$/.test(record.semantic_operation ?? "")) problems.push("semantic_operation must identify one existing operation");
   if (!LEGACY_FENCE_CHANGE_KINDS.has(record.change_kind)) problems.push("change_kind is not a supported legacy fence change");
   if (typeof record.path !== "string" || !record.path.startsWith("server/src/services/") || isTestOrGeneratedPath(record.path)) {
-    problems.push("legacy Native Chat fences are limited to existing server/src/services production sources");
+    problems.push("legacy owner fences are limited to existing server/src/services production sources");
+  }
+  if (record.change_kind !== "goal_legacy_owner_bridge" && Object.hasOwn(record, "base_surfaces")) {
+    problems.push("base_surfaces are only supported by goal_legacy_owner_bridge records");
+  }
+  if (record.change_kind !== "goal_legacy_owner_bridge" && Object.hasOwn(record, "goal_owner_bridge_id")) {
+    problems.push("goal_owner_bridge_id is only supported by goal_legacy_owner_bridge records");
   }
 
   const before = baseContents.get(record.path);
@@ -2029,6 +2128,26 @@ function validateLegacyFenceRecord(record, baseInventory, headInventory, baseCon
         if (!newRange || !newWriterSpan || newWriterSpan.start < newRange.start || newWriterSpan.end > newRange.end) {
           problems.push("candidate semantic-operation writer must be in the exact mapped callback body");
         }
+      }
+    }
+    const goalMapping = goalOwnerBridgePolicy.operation_mapping;
+    if (record.path === goalMapping.path) {
+      const expectedFile = goalOwnerBridgePolicy.files[goalMapping.path];
+      if (record.id !== goalMapping.id) problems.push("Goal heartbeat transaction mapping must use the exact reviewed mapping id");
+      if (record.semantic_operation !== goalOwnerBridgePolicy.semantic_operation) problems.push("Goal heartbeat transaction mapping must identify the reviewed Goal budget stop operation");
+      if (record.rust_authority !== goalOwnerBridgePolicy.rust_authority) problems.push("Goal heartbeat transaction mapping has an untrusted Rust owner");
+      if (record.compatibility_boundary !== goalOwnerBridgePolicy.compatibility_boundary) problems.push("Goal heartbeat transaction mapping has an untrusted compatibility boundary");
+      if (record.retirement_criterion !== goalOwnerBridgePolicy.retirement_criterion) problems.push("Goal heartbeat transaction mapping has an untrusted retirement criterion");
+      if (record.base_sha256 !== expectedFile.base_sha256 || record.head_sha256 !== expectedFile.head_sha256) problems.push("Goal heartbeat transaction mapping must pin the exact reviewed source hashes");
+      if (!sameSurfaceRef(baseSurface, goalMapping.base_surface) || !sameSurfaceRef(headSurface, goalMapping.head_surface)
+        || !sameSurfaceRef(baseProtectedSurface, goalMapping.base_protected_surface)
+        || !sameSurfaceRef(headProtectedSurface, goalMapping.head_protected_surface)) {
+        problems.push("Goal heartbeat transaction mapping must pin the exact transaction and existing protected writer");
+      }
+      if (typeof record.reviewer !== "string" || !record.reviewer.trim()
+        || typeof record.review_reference !== "string" || !record.review_reference.trim()
+        || record.review_status !== "reviewed") {
+        problems.push("Goal heartbeat transaction mapping requires reviewed reviewer, reference, and status metadata");
       }
     }
   } else if (record.change_kind === "target_advisory_lock") {
@@ -2120,6 +2239,29 @@ function validateLegacyFenceRecord(record, baseInventory, headInventory, baseCon
       record, before?.content, after?.content, baseInventory, headInventory,
       baseSurface, headSurface, baseProtectedSurface, headProtectedSurface, headContents, trustedCallers,
     ));
+  } else if (record.change_kind === "goal_legacy_owner_bridge") {
+    const expected = goalOwnerBridgePolicy.files[record.path];
+    if (!expected) problems.push("Goal legacy-owner bridge path is not statically admitted");
+    else {
+      if (record.id !== expected.record_id) problems.push("Goal legacy-owner bridge must use the exact reviewed record id");
+      if (record.goal_owner_bridge_id !== goalOwnerBridgePolicy.id) problems.push("goal_owner_bridge_id does not match the statically reviewed bridge");
+      if (record.semantic_operation !== goalOwnerBridgePolicy.semantic_operation) problems.push("Goal legacy-owner bridge must identify the exact Rust-owned budget stop operation");
+      if (record.rust_authority !== goalOwnerBridgePolicy.rust_authority) problems.push("Goal legacy-owner bridge has an untrusted Rust owner");
+      if (record.compatibility_boundary !== goalOwnerBridgePolicy.compatibility_boundary) problems.push("Goal legacy-owner bridge has an untrusted compatibility boundary");
+      if (record.retirement_criterion !== goalOwnerBridgePolicy.retirement_criterion) problems.push("Goal legacy-owner bridge has an untrusted retirement criterion");
+      if (record.base_sha256 !== expected.base_sha256 || record.head_sha256 !== expected.head_sha256) problems.push("Goal legacy-owner bridge must pin the exact reviewed source hashes");
+      if (record.transaction_mapping_id !== expected.transaction_mapping_id) problems.push("Goal legacy-owner bridge must reference its exact transaction mapping, when required");
+      if (record.base_surface || record.head_surface || record.base_protected_surface || record.head_protected_surface) {
+        problems.push("Goal legacy-owner bridge accepts only its exact base_surfaces/head_surfaces lists");
+      }
+      problems.push(...exactSurfaceListProblems(record.base_surfaces, expected.base_surfaces, baseInventory, record.path, "base_surfaces"));
+      problems.push(...exactSurfaceListProblems(record.head_surfaces, expected.head_surfaces, headInventory, record.path, "head_surfaces"));
+      if (typeof record.reviewer !== "string" || !record.reviewer.trim()
+        || typeof record.review_reference !== "string" || !record.review_reference.trim()
+        || record.review_status !== "reviewed") {
+        problems.push("Goal legacy-owner bridge requires reviewed reviewer, reference, and status metadata");
+      }
+    }
   }
   return problems;
 }
@@ -2140,7 +2282,7 @@ function surfaceChangeCounts(before, after, types) {
   return { added, removed };
 }
 
-function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, headContents, addedSurfaceCounts, removedSurfaceCounts, trustedCallers) {
+function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, headContents, addedSurfaceCounts, removedSurfaceCounts, trustedCallers, goalOwnerBridgePolicy) {
   const failures = [];
   const records = Array.isArray(headInventory.reviewed_legacy_fence_changes)
     ? headInventory.reviewed_legacy_fence_changes : [];
@@ -2164,7 +2306,7 @@ function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, h
 
   const validRecords = [];
   for (const record of records) {
-    const problems = validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers);
+    const problems = validateLegacyFenceRecord(record, baseInventory, headInventory, baseContents, headContents, trustedCallers, goalOwnerBridgePolicy);
     if (problems.length) {
       failures.push(`${record?.id ?? "<missing id>"}: ${problems.join("; ")}`);
       continue;
@@ -2183,12 +2325,31 @@ function compareLegacyFenceChanges(baseInventory, headInventory, baseContents, h
       for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
     } else if (["native_chat_run_attempt_admission", "native_chat_side_chat_retention"].includes(record.change_kind)) {
       for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
+    } else if (record.change_kind === "goal_legacy_owner_bridge") {
+      for (const reference of record.head_surfaces.map(exactSurfaceRef)) consume(remainingAdded, reference, record.id);
     } else {
       if (record.change_kind === "existing_operation_mapping") {
         consume(remainingRemovedTransactions, exactSurfaceRef(record.base_surface), record.id);
         consume(remainingAdded, exactSurfaceRef(record.head_surface), record.id);
       }
     }
+  }
+
+  const goalMapping = goalOwnerBridgePolicy.operation_mapping;
+  const goalBridgeRecords = validRecords.filter((entry) => entry.change_kind === "goal_legacy_owner_bridge");
+  for (const bridge of goalBridgeRecords) {
+    const expected = goalOwnerBridgePolicy.files[bridge.path];
+    if (!expected?.transaction_mapping_id) continue;
+    const mapping = validRecords.find((entry) => entry.id === expected.transaction_mapping_id
+      && entry.path === bridge.path && entry.change_kind === "existing_operation_mapping"
+      && entry.semantic_operation === goalOwnerBridgePolicy.semantic_operation);
+    if (!mapping) failures.push(`${bridge.id}: Goal bridge must reference its exact reviewed heartbeat transaction mapping`);
+  }
+  for (const mapping of validRecords.filter((entry) => entry.change_kind === "existing_operation_mapping" && entry.path === goalMapping.path)) {
+    const linkedBridge = goalBridgeRecords.find((entry) => entry.path === mapping.path
+      && entry.transaction_mapping_id === mapping.id
+      && entry.semantic_operation === mapping.semantic_operation);
+    if (!linkedBridge) failures.push(`${mapping.id}: Goal heartbeat transaction mapping requires its exact linked legacy-owner bridge`);
   }
 
   for (const record of validRecords.filter((entry) => ["target_advisory_lock", "native_chat_queue_guard_callsite"].includes(entry.change_kind))) {
@@ -2395,7 +2556,7 @@ function compareMigrationManifests(baseInventory, headInventory, baseContents, h
   return { failures, added, changed, deleted };
 }
 
-function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, trustedAdmissions, trustedCallers = TRUSTED_NATIVE_CHAT_FENCE_CALLERS) {
+function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents, headContents, trustedAdmissions, trustedCallers = TRUSTED_NATIVE_CHAT_FENCE_CALLERS, goalOwnerBridgePolicy = TRUSTED_GOAL_LEGACY_OWNER_BRIDGE) {
   const failures = [];
   const addedFiles = [];
   const changedFiles = [];
@@ -2587,7 +2748,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     );
   }
   const legacyFenceComparison = compareLegacyFenceChanges(
-    baseInventory, headInventory, baseContents, headContents, unmatchedAdded, surfaceChanges.removed, trustedCallers,
+    baseInventory, headInventory, baseContents, headContents, unmatchedAdded, surfaceChanges.removed, trustedCallers, goalOwnerBridgePolicy,
   );
   failures.push(...legacyFenceComparison.failures);
 
@@ -2625,6 +2786,10 @@ function compareInventoriesWithTransportPolicyForTests(baseInventory, headInvent
 // compareInventories always use the static source table above, never records.
 function compareInventoriesWithLegacyFenceSourcePolicyForTests(base, head, before, after, trustedCallers) {
   return compareInventoriesWithPolicy(base, head, before, after, TRUSTED_TRANSPORT_ADMISSIONS, trustedCallers);
+}
+
+function compareInventoriesWithGoalLegacyOwnerBridgePolicyForTests(base, head, before, after, goalOwnerBridgePolicy) {
+  return compareInventoriesWithPolicy(base, head, before, after, TRUSTED_TRANSPORT_ADMISSIONS, TRUSTED_NATIVE_CHAT_FENCE_CALLERS, goalOwnerBridgePolicy);
 }
 
 function inventoryContentsFromRoot(rootPath, inventory) {
@@ -2732,8 +2897,8 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
 export {
   buildInventory,
   buildInventoryFromSources,
-  compareInventories, compareInventoriesWithLegacyFenceSourcePolicyForTests, compareInventoriesWithTransportPolicyForTests, compareMigrationManifests, consumeReviewedTransportSurfaces, journalAppendProblems,
+  compareInventories, compareInventoriesWithGoalLegacyOwnerBridgePolicyForTests, compareInventoriesWithLegacyFenceSourcePolicyForTests, compareInventoriesWithTransportPolicyForTests, compareMigrationManifests, consumeReviewedTransportSurfaces, journalAppendProblems,
   scanSource,
   sha256,
-  stableGeneratedPart, TRUSTED_NODE_TRANSPORT_SOURCES, TRUSTED_TRANSPORT_ADMISSIONS, TRUSTED_TRANSPORT_SURFACES, validateBoundaryRecord, validateTrustedNodeTransportSourceRecord
+  stableGeneratedPart, TRUSTED_GOAL_LEGACY_OWNER_BRIDGE, TRUSTED_NODE_TRANSPORT_SOURCES, TRUSTED_TRANSPORT_ADMISSIONS, TRUSTED_TRANSPORT_SURFACES, validateBoundaryRecord, validateTrustedNodeTransportSourceRecord
 };
