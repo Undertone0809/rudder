@@ -404,7 +404,7 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
         let mut response = client.get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         let body: serde_json::Value = response.json().await.unwrap();
-        assert_eq!(body["nodePath"], path.trim_end_matches('/'));
+        assert_eq!(body["nodePath"], path);
     }
     assert_eq!(node_requests.load(Ordering::SeqCst), 2);
 
