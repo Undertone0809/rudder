@@ -485,7 +485,7 @@ async fn execute_agent_inner(
             let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
             let ctx=Context{admin:fresh_admin,..ctx};
             authorize_org(&mut tx,&ctx).await?;
-            if op == "create" {
+            if op == "create" && public_agent_create {
                 require_create(&mut tx, &ctx).await?;
             }
             let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth,public_agent_create).await?;
