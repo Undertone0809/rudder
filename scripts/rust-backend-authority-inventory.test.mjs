@@ -14,8 +14,8 @@ import {
   consumeReviewedTransportSurfaces,
   scanSource,
   sha256,
-  TRUSTED_NODE_TRANSPORT_SOURCES,
   TRUSTED_GOAL_LEGACY_OWNER_BRIDGE,
+  TRUSTED_NODE_TRANSPORT_SOURCES,
   TRUSTED_TRANSPORT_ADMISSIONS,
   TRUSTED_TRANSPORT_SURFACES,
   validateTrustedNodeTransportSourceRecord,
@@ -873,7 +873,7 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
   ])), {
     "server/src/services/chat-agent-runs.ts": [
       "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
-      "d97223451600d68aa5caf7b06f10afa2c5ced6ca62c1e53626e624a85a8a68d4",
+      "113b1e7d3d32078172c379eb432dd88cdedc3f551cf2b5b111f4d710214cf69f",
     ],
     "server/src/services/runtime-kernel/heartbeat.execute.ts": [
       "18157d02b952fe862640e2baff40cb402c9d6e319bf3ea63b3644d40410fd53b",
