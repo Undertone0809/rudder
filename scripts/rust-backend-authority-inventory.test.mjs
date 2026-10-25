@@ -628,6 +628,7 @@ test("trusted helper semantics come from checker-pinned digests, not record revi
 const SESSION_ADMISSION_ID = "rust-native-session-proof-v1";
 const IDENTITY_ADMISSION_ID = "rust-native-identity-proof-v1";
 const PROJECT_READS_ADMISSION_ID = "rust-native-project-reads-router-v1";
+const GOAL_WRITES_ADMISSION_ID = "rust-native-goal-writes-router-v1";
 const CLI_AUTH_ADMISSION_ID = "rust-native-cli-auth-router-v1";
 const sessionAdmissionFixtureFactory = `export function nativeSessionAssertionMiddleware(options) {
   return (request, _response, next) => next();
@@ -826,25 +827,39 @@ function compareIdentityAdmissionFixture(t, options = {}) {
 function publicOwnerMountSource({
   projectExpression = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID].mount_expression,
   cliExpression = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID].mount_expression,
+  goalExpression = null,
+  includeGoalAnchors = goalExpression !== null,
   duplicateProject = false,
   duplicateCli = false,
+  duplicateGoal = false,
   moveProjectAfterAnchor = false,
   moveCliBeforeAnchor = false,
+  moveGoalBeforeAnchor = false,
+  moveGoalAfterAnchor = false,
   extra = "",
 } = {}) {
+  const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
   const projectMount = `api.use(${projectExpression});\n`;
   const cliMount = `api.use(${cliExpression});\n`;
+  const goalMount = goalExpression ? `api.use(${goalExpression});\n` : "";
   const projectBeforeAnchor = `api.use(assetRoutes(db, opts.storageService));\n`;
   const projectAfterAnchor = `api.use(appBuilderRoutes(db, { onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId), }));\n`;
   const cliBeforeAnchor = `api.use(rudderPluginRoutes(db, pluginMcpOptions));\n`;
+  const goalBeforeAnchor = `api.use(${goalPolicy.order_after_expression});\n`;
+  const goalAfterAnchor = `api.use(${goalPolicy.order_before_expression});\n`;
   const initialProject = moveProjectAfterAnchor
     ? `${projectBeforeAnchor}${projectAfterAnchor}${projectMount}${duplicateProject ? projectMount : ""}`
     : `${projectBeforeAnchor}${projectMount}${duplicateProject ? projectMount : ""}${projectAfterAnchor}`;
   const cli = moveCliBeforeAnchor
     ? `${cliMount}${duplicateCli ? cliMount : ""}${cliBeforeAnchor}`
     : `${cliBeforeAnchor}${cliMount}${duplicateCli ? cliMount : ""}`;
+  const goalMounts = `${goalMount}${duplicateGoal ? goalMount : ""}`;
+  const goal = !includeGoalAnchors ? ""
+    : moveGoalBeforeAnchor ? `${goalMounts}${goalBeforeAnchor}${goalAfterAnchor}`
+      : moveGoalAfterAnchor ? `${goalBeforeAnchor}${goalAfterAnchor}${goalMounts}`
+        : `${goalBeforeAnchor}${goalMounts}${goalAfterAnchor}`;
   return `function register(api, opts) {
-${initialProject}${cli}${extra}return api;
+${initialProject}${goal}${cli}${extra}return api;
 }
 `;
 }
@@ -873,10 +888,12 @@ function comparePublicOwnerMountFixture(t, options = {}) {
   const headRoot = temporaryTree(t);
   const sourcePath = "server/src/bootstrap/register-api-routes.ts";
   const projectPolicy = TRUSTED_TRANSPORT_ADMISSIONS[PROJECT_READS_ADMISSION_ID];
+  const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
   const cliPolicy = TRUSTED_TRANSPORT_ADMISSIONS[CLI_AUTH_ADMISSION_ID];
   const baseSource = publicOwnerMountSource({
     projectExpression: "projectRoutes(db, rustFoundationBridge)",
     cliExpression: "accessRoutes(db, { deploymentMode: opts.deploymentMode, deploymentExposure: opts.deploymentExposure, bindHost: opts.bindHost, allowedHostnames: opts.allowedHostnames, })",
+    includeGoalAnchors: options.includeGoalAdmission,
   });
   const headSource = options.headSource ?? publicOwnerMountSource(options);
   put(baseRoot, sourcePath, baseSource);
@@ -899,6 +916,9 @@ function comparePublicOwnerMountFixture(t, options = {}) {
     publicOwnerMountReviewRecord(projectPolicy, headSource),
     publicOwnerMountReviewRecord(cliPolicy, headSource),
   ];
+  if (options.includeGoalAdmission && !options.omitGoalAdmission) {
+    admissionRecords.push(publicOwnerMountReviewRecord(goalPolicy, headSource));
+  }
   const head = buildInventory(headRoot, nodeRecords, admissionRecords);
   const result = compareProductionInventories(base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head));
   return { result, base, head, baseSource, headSource };
@@ -1382,6 +1402,7 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
     "rust-native-agent-core-handler-v1",
     "rust-native-agent-core-router-v1",
     CLI_AUTH_ADMISSION_ID,
+    GOAL_WRITES_ADMISSION_ID,
     IDENTITY_ADMISSION_ID,
     PROJECT_READS_ADMISSION_ID,
     SESSION_ADMISSION_ID,
@@ -1439,6 +1460,55 @@ test("trusted policy admits only the exact Rust CLI auth and Project reads route
   for (const id of [CLI_AUTH_ADMISSION_ID, PROJECT_READS_ADMISSION_ID]) {
     assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === id).length, 1);
   }
+});
+
+test("trusted policy admits only the exact Rust Goal writes router between its fixed anchors", (t) => {
+  const goalPolicy = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
+  const goalExpression = goalPolicy.mount_expression;
+  assert.equal(goalPolicy.source_path, "server/src/bootstrap/register-api-routes.ts");
+  assert.equal(goalPolicy.receiver, "api");
+  assert.equal(goalPolicy.mount_expression, "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })");
+  assert.equal(goalPolicy.mount_guard, "Boolean(opts.rustPublicIngress)");
+  assert.equal(goalPolicy.order_after_expression, "managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.mcpDeploymentAllowlists ?? { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [], }, hostEnv: opts.mcpHostEnv ?? process.env, })");
+  assert.equal(goalPolicy.order_before_expression, "approvalRoutes(db, rustFoundationBridge)");
+  assert.equal(goalPolicy.order_after_call, true);
+  assert.equal(goalPolicy.order_before_call, true);
+  assert.equal(goalPolicy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/goal_writes.rs");
+
+  const accepted = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    goalExpression,
+  });
+  assert.deepEqual(accepted.result.failures, []);
+  assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === GOAL_WRITES_ADMISSION_ID).length, 1);
+  assert(accepted.result.allowed_transport_admissions.some((entry) => entry.id === GOAL_WRITES_ADMISSION_ID));
+
+  const missingRecord = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    goalExpression,
+    omitGoalAdmission: true,
+  });
+  assert(missingRecord.result.failures.some((failure) => failure.includes(`${GOAL_WRITES_ADMISSION_ID}: missing reviewed_transport_admissions record`)));
+
+  const wrongGuard = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    goalExpression: goalExpression.replace("Boolean(opts.rustPublicIngress)", "Boolean(opts.rustPublicIngress?.goalWrites)"),
+  });
+  assert(wrongGuard.result.failures.some((failure) => failure.includes("new Node authority surface is forbidden")));
+
+  const reordered = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    goalExpression,
+    moveGoalAfterAnchor: true,
+  });
+  assert(reordered.result.failures.some((failure) => failure.includes("native Goal writes router adapter must appear before its order-before anchor")));
+
+  const duplicate = comparePublicOwnerMountFixture(t, {
+    includeGoalAdmission: true,
+    goalExpression,
+    duplicateGoal: true,
+  });
+  assert(duplicate.result.failures.some((failure) => failure.includes(`${GOAL_WRITES_ADMISSION_ID}: trusted primary transport-admission mount must appear exactly once`)));
 });
 
 test("public owner mount admissions reject wrong guards, duplicates, and reordered mounts", (t) => {

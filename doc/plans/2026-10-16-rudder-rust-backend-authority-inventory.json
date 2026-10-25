@@ -15079,7 +15079,8 @@
       "line": 136,
       "signature": "server/src/bootstrap/register-api-routes.ts|middleware|api|<handler:goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })>",
       "receiver": "api",
-      "expression": "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })"
+      "expression": "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })",
+      "transport_admission": "rust-native-goal-writes-router-v1"
     },
     {
       "type": "middleware_mount",
@@ -59164,6 +59165,28 @@
       "mount_source_sha256": "5ffab4a9b62f1bc0eef700ddb437afa10ef37b31f3922f390ba9a3ba03de911e",
       "mount_guard": "Boolean(opts.rustPublicIngress)",
       "order_before": "api_return"
+    },
+    {
+      "id": "rust-native-goal-writes-router-v1",
+      "mount_source_path": "server/src/bootstrap/register-api-routes.ts",
+      "mount_source_sha256": "5ffab4a9b62f1bc0eef700ddb437afa10ef37b31f3922f390ba9a3ba03de911e",
+      "mount_receiver": "api",
+      "mount_expression": "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })",
+      "mount_guard": "Boolean(opts.rustPublicIngress)",
+      "order_after": "managed_mcp_connection_routes",
+      "order_before": "approval_routes",
+      "rust_proof_owner": "native/crates/server-foundation/src/public_ingress/goal_writes.rs",
+      "compatibility_boundary": "This exact startup-selected Goal route adapter is pending independent review. In Rust public-ingress mode the seven migrated Goal write handlers are not registered; unmigrated Goal operations remain explicit compatibility debt and Rust failures do not fall back to Node.",
+      "retirement_criterion": "Remove this Goal router admission after its compatibility handlers are retired in every supported deployment and the corresponding Rust routes remain the only supported owner.",
+      "reviewer": "pending independent review",
+      "review_reference": "pending exact-source review for Goal public write ingress",
+      "review_status": "pending",
+      "allowed_node_duties": [
+        "Preserve only the existing ingress-off compatibility handlers and unmigrated Goal operations."
+      ],
+      "prohibited_node_duties": [
+        "Do not register or invoke migrated Node Goal write handlers when Rust public ingress is enabled; do not add request-time fallback."
+      ]
     },
     {
       "id": "rust-native-identity-proof-v1",
