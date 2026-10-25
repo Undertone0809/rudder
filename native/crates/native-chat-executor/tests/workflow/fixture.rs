@@ -359,9 +359,13 @@ def main(argv=None):
     pub(crate) fn paths(&self) -> HostPaths {
         let process_host = std::env::var_os("RUDDER_TEST_PROCESS_HOST")
             .expect("set RUDDER_TEST_PROCESS_HOST to the built accepted process host");
-        let process_host = PathBuf::from(process_host)
+        self.paths_with_process_host(PathBuf::from(process_host))
+    }
+
+    pub(crate) fn paths_with_process_host(&self, process_host: PathBuf) -> HostPaths {
+        let process_host = process_host
             .canonicalize()
-            .expect("canonical accepted process-host binary");
+            .expect("canonical process-host binary");
         let runtime_root = self.root.path().join("runtime-root");
         let isolated_home = self.root.path().join("isolated-home");
         HostPaths {

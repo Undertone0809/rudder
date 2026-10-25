@@ -32,7 +32,7 @@ sqlx = { version = "0.8", default-features = false, features = ["postgres", "run
 thiserror = "2.0"
 tracing = "0.1"
 tokio = { version = "1.47", features = ["rt", "time"] }
-uuid = { version = "1", default-features = false, features = ["v5"] }
+uuid = { version = "1", default-features = false, features = ["v4", "v5"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -42,5 +42,6 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_IO"] }
 
 [dev-dependencies]
+rudder-native-protocol = { path = "../native-protocol" }
 tempfile = "3.23"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "time"] }

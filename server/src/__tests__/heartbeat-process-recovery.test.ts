@@ -711,6 +711,41 @@ describe("heartbeat orphaned process recovery", () => {
     expect(timedOut).toMatchObject({ status: "timed_out", errorCode: "inactivity_timeout" });
   });
 
+  it("lets the legacy owner consume a persisted budget stop through its existing cleanup path", async () => {
+    const ownerToken = randomUUID();
+    const { runId, wakeupRequestId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      runErrorCode: "cancel_requested",
+      runError: "Cancelled due to budget pause",
+    });
+    await db.update(heartbeatRuns).set({
+      executionOwnerToken: ownerToken,
+      executionLeaseExpiresAt: new Date(Date.now() + 60_000),
+    }).where(eq(heartbeatRuns.id, runId));
+
+    const ownerSignal = await renewHeartbeatRunExecutionLease(db, runId, ownerToken);
+    expect(ownerSignal).toMatchObject({
+      id: runId,
+      errorCode: "cancel_requested",
+      error: "Cancelled due to budget pause",
+    });
+    const beforeOwnerCleanup = await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(beforeOwnerCleanup).toMatchObject({ status: "running", errorCode: "cancel_requested" });
+    expect(beforeOwnerCleanup?.processExitedAt).toBeNull();
+
+    await heartbeatService(db).cancelRun(runId);
+
+    const afterOwnerCleanup = await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(afterOwnerCleanup).toMatchObject({ status: "cancelled", errorCode: "cancelled" });
+    expect(afterOwnerCleanup?.processExitedAt).not.toBeNull();
+    const wakeup = await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId)).then((rows) => rows[0]);
+    expect(wakeup?.status).toBe("cancelled");
+  });
+
   it("keeps active runs when a recent run event proves progress", async () => {
     const staleAt = new Date("2026-03-19T00:00:00.000Z");
     const recentAt = new Date("2026-03-19T00:25:00.000Z");

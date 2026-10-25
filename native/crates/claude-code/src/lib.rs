@@ -873,6 +873,7 @@ pub struct ClaudeTransport {
     request_id: String,
     owner_token: String,
     session_id: Option<ClaudeSessionSelector>,
+    process_id: Option<i32>,
     control_lease: ClaudeControlLease,
     user_input_sent: bool,
     interrupt_request: Option<ClaudeInterruptRequest>,
@@ -952,6 +953,7 @@ impl ClaudeTransport {
             request_id,
             owner_token,
             session_id: None,
+            process_id: None,
             control_lease: ClaudeControlLease::default(),
             user_input_sent: false,
             interrupt_request: None,
@@ -969,6 +971,13 @@ impl ClaudeTransport {
                 ClaudeTransportEvent::Lifecycle(value)
                     if value.get("type").and_then(Value::as_str) == Some("spawned") =>
                 {
+                    let process_id = value
+                        .get("pid")
+                        .and_then(Value::as_i64)
+                        .and_then(|pid| i32::try_from(pid).ok())
+                        .filter(|pid| *pid > 0)
+                        .ok_or(ClaudeError::InvalidEvent)?;
+                    self.process_id = Some(process_id);
                     return Ok(());
                 }
                 ClaudeTransportEvent::Lifecycle(value)
@@ -983,6 +992,12 @@ impl ClaudeTransport {
 
     pub fn session_id(&self) -> Option<&ClaudeSessionSelector> {
         self.session_id.as_ref()
+    }
+
+    /// Process identity reported by the owned process host after spawn. The
+    /// caller can persist this before sending provider input.
+    pub fn process_id(&self) -> Option<i32> {
+        self.process_id
     }
 
     pub fn connection_receipt(&self) -> ConnectionReceipt {
@@ -1794,6 +1809,12 @@ mod tests {
         transport
             .wait_spawned(Duration::from_secs(5))
             .expect("owned process reaches spawned lifecycle");
+        assert!(
+            transport
+                .process_id()
+                .is_some_and(|process_id| process_id > 0),
+            "the owned process identity is available before provider input"
+        );
         transport.stop(100).expect("send bounded host stop");
 
         let started = Instant::now();

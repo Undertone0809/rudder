@@ -20,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
+import { claimChatGeneration, clearActiveChatGenerationsForTest } from "../services/chat-generation-locks.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { getRunSummary } from "../services/run-intelligence.ts";
 
@@ -386,5 +387,74 @@ describe("chatAgentRunService", () => {
       messageId: userMessageId,
       userMessageId,
     });
+  });
+
+  it("routes a persisted budget stop to the legacy Chat owner without terminalizing its run", async () => {
+    clearActiveChatGenerationsForTest();
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Budget Chat",
+      urlKey: deriveOrganizationUrlKey("Budget Chat"),
+      issuePrefix: "BCH",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Budget Chat Runner",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Budget stop",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const run = await svc.createRun({
+      conversation: {
+        id: conversationId,
+        orgId,
+        primaryIssueId: null,
+        planMode: false,
+      },
+      agentId,
+      triggerDetail: "chat_assistant_reply",
+      linkedIssueIds: [],
+      linkedProjectId: null,
+    });
+    const abortController = new AbortController();
+    const releaseGeneration = claimChatGeneration(conversationId, abortController, randomUUID());
+    expect(releaseGeneration).not.toBeNull();
+    try {
+      await db.update(heartbeatRuns)
+        .set({ error: "Cancelled due to budget pause", errorCode: "cancel_requested" })
+        .where(eq(heartbeatRuns.id, run.id));
+
+      await svc.appendEvent({ id: run.id, orgId, agentId }, { eventType: "budget.stop.observed" });
+
+      expect(abortController.signal.aborted).toBe(true);
+      const [stillOwned] = await db.select({
+        status: heartbeatRuns.status,
+        executionOwnerToken: heartbeatRuns.executionOwnerToken,
+        errorCode: heartbeatRuns.errorCode,
+      }).from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+      expect(stillOwned).toMatchObject({
+        status: "running",
+        errorCode: "cancel_requested",
+      });
+      expect(stillOwned?.executionOwnerToken).toBeTruthy();
+    } finally {
+      svc.releaseOwnedRun(run.id);
+      releaseGeneration?.();
+      clearActiveChatGenerationsForTest();
+    }
   });
 });

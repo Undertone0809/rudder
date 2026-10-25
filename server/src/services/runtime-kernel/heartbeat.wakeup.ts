@@ -62,6 +62,21 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     const agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
+    if (existingWakeupRequestId) {
+      const existingWakeup = await db
+        .select({ executionAuthority: agentWakeupRequests.executionAuthority })
+        .from(agentWakeupRequests)
+        .where(and(
+          eq(agentWakeupRequests.id, existingWakeupRequestId),
+          eq(agentWakeupRequests.orgId, agent.orgId),
+          eq(agentWakeupRequests.agentId, agentId),
+        ))
+        .then((rows: Array<{ executionAuthority: string }>) => rows[0] ?? null);
+      if (!existingWakeup) throw notFound("Wakeup request not found");
+      if (existingWakeup.executionAuthority !== "legacy_ts") {
+        throw conflict("Native Rust wakeups are controlled by the Rust runtime");
+      }
+    }
     if (goalId) {
       const goal = await db
         .select({ id: goals.id })
@@ -888,8 +903,49 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const activeRuns = await db
       .select()
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])))
+      .where(and(
+        eq(heartbeatRuns.agentId, agentId),
+        or(
+          inArray(heartbeatRuns.status, ["queued", "running"]),
+          eq(heartbeatRuns.terminalEffectsPending, true),
+        ),
+      ))
       .orderBy(desc(heartbeatRuns.createdAt));
+
+    const activeNativeGoalRun = activeRuns.find(
+      (candidate) => candidate.executionAuthority === "native_rust" && candidate.goalId !== null,
+    );
+    if (activeNativeGoalRun) {
+      // A legacy Goal feedback/continuation wake must wait for the native owner
+      // of this Agent. Do not create a second provider Run or let Node claim a
+      // native Goal wakeup through the shared Run queue.
+      const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
+      if (existingWakeupRequestId) {
+        await updateWakeupRequestRecord(db, existingWakeupRequestId, {
+          status: "deferred_goal_blocked",
+          payload: deferredPayload,
+          runId: null,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+      } else {
+        await insertWakeupRequestRecord(db, {
+          orgId: agent.orgId,
+          agentId,
+          source,
+          triggerDetail,
+          reason,
+          payload: deferredPayload,
+          status: "deferred_goal_blocked",
+          requestedByActorType: opts.requestedByActorType ?? null,
+          requestedByActorId: opts.requestedByActorId ?? null,
+          idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
+        });
+      }
+      return null;
+    }
 
     const isSameWakeScope = (candidate: typeof heartbeatRuns.$inferSelect) => {
       const candidateTaskKey = runTaskKey(candidate);
@@ -1071,6 +1127,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         and(
           eq(agentWakeupRequests.orgId, agent.orgId),
           eq(agentWakeupRequests.agentId, agent.id),
+          eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
           inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
           sql`${agentWakeupRequests.runId} is null`,
           lte(agentWakeupRequests.requestedAt, new Date()),
@@ -1328,6 +1385,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       .from(agentWakeupRequests)
       .leftJoin(heartbeatRuns, eq(heartbeatRuns.wakeupRequestId, agentWakeupRequests.id))
       .where(and(
+        eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
         inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
         sql`${agentWakeupRequests.runId} is null`,
         isNull(heartbeatRuns.id),

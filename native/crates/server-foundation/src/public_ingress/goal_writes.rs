@@ -1,5 +1,6 @@
-//! Direct public Rust ingress for Goal writes whose transitions do not need
-//! the legacy Node wakeup dispatcher. Matched paths never proxy to Node.
+//! Direct public Rust ingress for Goal writes and supported Claude Goal Starts.
+//! Explicitly unsupported Start owners may use the legacy adapter before any
+//! native transaction commits.
 
 use super::*;
 use crate::native_session_auth::NativeIngressIdentity;
@@ -7,6 +8,10 @@ use actix_web::http::Method;
 use futures_util::StreamExt;
 use rudder_d1_persistence::{
     StoreError,
+    goal_start::{
+        GoalStartError, GoalStartInput, GoalStartPreviewInput, apply_goal_start,
+        compile_goal_start_preview_for_actor,
+    },
     goal_writes::{GoalWriteContext, GoalWriteOperation, apply_goal_write},
 };
 use serde_json::{Map, Value, json};
@@ -15,6 +20,8 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Endpoint {
     Create { organization_id: String },
+    Start { organization_id: String },
+    StartPreview { organization_id: String },
     Update { goal_id: String },
     Activate { goal_id: String },
     UpdatePlan { goal_id: String },
@@ -29,14 +36,16 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
 
 pub(super) async fn create(
     state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
-    dispatch_alias(state, request, payload).await
+    dispatch_alias(state, proxy, request, payload).await
 }
 
 pub(super) async fn dispatch_alias(
     state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
     request: HttpRequest,
     mut payload: web::Payload,
 ) -> HttpResponse {
@@ -58,7 +67,7 @@ pub(super) async fn dispatch_alias(
         }
         body.extend_from_slice(&chunk);
     }
-    execute(state, request, web::Bytes::from(body), endpoint).await
+    execute(state, proxy, request, web::Bytes::from(body), endpoint).await
 }
 
 fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
@@ -75,6 +84,28 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
         && *method == Method::POST
     {
         return Some(Endpoint::Create {
+            organization_id: decode_capture(parts[2])?,
+        });
+    }
+    if parts.len() == 5
+        && parts[0].eq_ignore_ascii_case("api")
+        && parts[1].eq_ignore_ascii_case("orgs")
+        && parts[3].eq_ignore_ascii_case("goals")
+        && parts[4].eq_ignore_ascii_case("start")
+        && *method == Method::POST
+    {
+        return Some(Endpoint::Start {
+            organization_id: decode_capture(parts[2])?,
+        });
+    }
+    if parts.len() == 5
+        && parts[0].eq_ignore_ascii_case("api")
+        && parts[1].eq_ignore_ascii_case("orgs")
+        && parts[3].eq_ignore_ascii_case("goals")
+        && parts[4].eq_ignore_ascii_case("start-preview")
+        && *method == Method::POST
+    {
+        return Some(Endpoint::StartPreview {
             organization_id: decode_capture(parts[2])?,
         });
     }
@@ -114,6 +145,7 @@ fn decode_capture(value: &str) -> Option<String> {
 
 async fn execute(
     state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
     request: HttpRequest,
     body: web::Bytes,
     endpoint: Endpoint,
@@ -124,25 +156,52 @@ async fn execute(
     if let Some(response) = private_host_rejection(&state, &request) {
         return response;
     }
-    let operation = match &endpoint {
-        Endpoint::Create { .. } => GoalWriteOperation::Create,
-        Endpoint::Update { .. } => GoalWriteOperation::Update,
-        Endpoint::Activate { .. } => GoalWriteOperation::Activate,
-        Endpoint::UpdatePlan { .. } => GoalWriteOperation::UpdatePlan,
-        Endpoint::CreateActivity { .. } => GoalWriteOperation::CreateActivity,
-        Endpoint::AssignOwner { .. } => GoalWriteOperation::AssignOwner,
-        Endpoint::Delete { .. } => GoalWriteOperation::Delete,
-    };
-    let input = match normalized_body(&request, &body, operation) {
-        Ok(value) => value,
-        Err(BodyNormalizationError::BadRequest) => {
-            return HttpResponse::BadRequest().json(json!({"error":"Invalid Goal request"}));
+    let (operation, input, preview_input, start_input) = match &endpoint {
+        Endpoint::Start { .. } => {
+            let input = match normalized_start_body(&request, &body) {
+                Ok(value) => value,
+                Err(BodyNormalizationError::BadRequest) => {
+                    return HttpResponse::BadRequest().json(json!({"error":"Validation error"}));
+                }
+                Err(BodyNormalizationError::InvalidJson) => {
+                    return HttpResponse::InternalServerError()
+                        .json(json!({"error":"Internal server error"}));
+                }
+            };
+            (None, Value::Null, None, Some(input))
         }
-        Err(BodyNormalizationError::InvalidJson) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"error":"Internal server error"}));
+        Endpoint::StartPreview { .. } => {
+            let input = match normalized_preview_body(&request, &body) {
+                Ok(value) => value,
+                Err(BodyNormalizationError::BadRequest) => {
+                    return HttpResponse::BadRequest().json(json!({"error":"Validation error"}));
+                }
+                Err(BodyNormalizationError::InvalidJson) => {
+                    return HttpResponse::InternalServerError()
+                        .json(json!({"error":"Internal server error"}));
+                }
+            };
+            (None, Value::Null, Some(input), None)
+        }
+        endpoint => {
+            let operation = goal_write_operation(endpoint);
+            let input = match normalized_body(&request, &body, operation) {
+                Ok(value) => value,
+                Err(BodyNormalizationError::BadRequest) => {
+                    return HttpResponse::BadRequest()
+                        .json(json!({"error":"Invalid Goal request"}));
+                }
+                Err(BodyNormalizationError::InvalidJson) => {
+                    return HttpResponse::InternalServerError()
+                        .json(json!({"error":"Internal server error"}));
+                }
+            };
+            (Some(operation), input, None, None)
         }
     };
+    if matches!(&endpoint, Endpoint::Start { .. }) && !native_goal_runtime_configured(&state) {
+        return forward_legacy_body(state, proxy, request, body).await;
+    }
     if state.config.forwarding_policy.identity(&request).is_err() {
         return state
             .foundation
@@ -188,49 +247,73 @@ async fn execute(
             .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
     };
 
-    let (operation, route_organization_id, goal_id, status) = match endpoint {
-        Endpoint::Create { organization_id } => (
-            GoalWriteOperation::Create,
-            Some(organization_id),
-            None,
-            StatusCode::CREATED,
-        ),
-        Endpoint::Update { goal_id } => (
-            GoalWriteOperation::Update,
-            None,
-            Some(goal_id),
-            StatusCode::OK,
-        ),
-        Endpoint::Activate { goal_id } => (
-            GoalWriteOperation::Activate,
-            None,
-            Some(goal_id),
-            StatusCode::OK,
-        ),
-        Endpoint::UpdatePlan { goal_id } => (
-            GoalWriteOperation::UpdatePlan,
-            None,
-            Some(goal_id),
-            StatusCode::CREATED,
-        ),
-        Endpoint::CreateActivity { goal_id } => (
-            GoalWriteOperation::CreateActivity,
-            None,
-            Some(goal_id),
-            StatusCode::CREATED,
-        ),
-        Endpoint::AssignOwner { goal_id } => (
-            GoalWriteOperation::AssignOwner,
-            None,
-            Some(goal_id),
-            StatusCode::OK,
-        ),
-        Endpoint::Delete { goal_id } => (
-            GoalWriteOperation::Delete,
-            None,
-            Some(goal_id),
-            StatusCode::OK,
-        ),
+    if let Endpoint::StartPreview { organization_id } = &endpoint {
+        if actor.kind != "user" {
+            return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
+        }
+        let context = GoalWriteContext {
+            organization_id,
+            actor_kind: actor.kind.as_str(),
+            actor_id: actor.id.as_str(),
+            actor_agent_id: None,
+            run_id: None,
+        };
+        let Some(preview_input) = preview_input.as_ref() else {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error":"Internal server error"}));
+        };
+        let _permit = permit;
+        return match compile_goal_start_preview_for_actor(pool, &authorizer, context, preview_input)
+            .await
+        {
+            Ok(value) => HttpResponse::Ok().json(value),
+            Err(error) => goal_start_preview_error(&state, error),
+        };
+    }
+
+    if let Endpoint::Start { organization_id } = &endpoint {
+        if actor.kind != "user" {
+            return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
+        }
+        let context = GoalWriteContext {
+            organization_id,
+            actor_kind: actor.kind.as_str(),
+            actor_id: actor.id.as_str(),
+            actor_agent_id: None,
+            run_id: None,
+        };
+        let Some(start_input) = start_input.as_ref() else {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error":"Internal server error"}));
+        };
+        let _permit = permit;
+        return match apply_goal_start(pool, &authorizer, context, start_input).await {
+            Ok(result) => HttpResponse::build(if result.replayed {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            })
+            .json(result.goal),
+            Err(GoalStartError::LegacyOwned) => {
+                forward_legacy_body(state, proxy, request, body).await
+            }
+            Err(error) => goal_start_error(&state, error),
+        };
+    }
+
+    let Some(operation) = operation else {
+        return HttpResponse::NotFound().json(json!({"error":"Goal route not found"}));
+    };
+    let (route_organization_id, goal_id, status) = match endpoint {
+        Endpoint::Create { organization_id } => (Some(organization_id), None, StatusCode::CREATED),
+        Endpoint::Start { .. } => unreachable!("Start endpoint returned above"),
+        Endpoint::StartPreview { .. } => unreachable!("preview returned above"),
+        Endpoint::Update { goal_id } => (None, Some(goal_id), StatusCode::OK),
+        Endpoint::Activate { goal_id } => (None, Some(goal_id), StatusCode::OK),
+        Endpoint::UpdatePlan { goal_id } => (None, Some(goal_id), StatusCode::CREATED),
+        Endpoint::CreateActivity { goal_id } => (None, Some(goal_id), StatusCode::CREATED),
+        Endpoint::AssignOwner { goal_id } => (None, Some(goal_id), StatusCode::OK),
+        Endpoint::Delete { goal_id } => (None, Some(goal_id), StatusCode::OK),
     };
     let organization_id = if let Some(organization_id) = route_organization_id {
         organization_id
@@ -279,6 +362,21 @@ async fn execute(
     {
         Ok(value) => HttpResponse::build(status).json(value),
         Err(error) => goal_write_error(&state, error),
+    }
+}
+
+fn goal_write_operation(endpoint: &Endpoint) -> GoalWriteOperation {
+    match endpoint {
+        Endpoint::Create { .. } => GoalWriteOperation::Create,
+        Endpoint::Start { .. } | Endpoint::StartPreview { .. } => {
+            unreachable!("Start endpoints have no generic Goal write operation")
+        }
+        Endpoint::Update { .. } => GoalWriteOperation::Update,
+        Endpoint::Activate { .. } => GoalWriteOperation::Activate,
+        Endpoint::UpdatePlan { .. } => GoalWriteOperation::UpdatePlan,
+        Endpoint::CreateActivity { .. } => GoalWriteOperation::CreateActivity,
+        Endpoint::AssignOwner { .. } => GoalWriteOperation::AssignOwner,
+        Endpoint::Delete { .. } => GoalWriteOperation::Delete,
     }
 }
 
@@ -430,6 +528,141 @@ fn normalized_body(
     Ok(value)
 }
 
+fn normalized_preview_body(
+    request: &HttpRequest,
+    body: &[u8],
+) -> Result<GoalStartPreviewInput, BodyNormalizationError> {
+    let value = if body.is_empty() {
+        Value::Object(Map::new())
+    } else if request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case("application/json")
+        })
+    {
+        serde_json::from_slice::<Value>(body).map_err(|_| BodyNormalizationError::InvalidJson)?
+    } else {
+        Value::Object(Map::new())
+    };
+    let Some(object) = value.as_object() else {
+        return Err(BodyNormalizationError::BadRequest);
+    };
+    const REQUIRED: [&str; 4] = ["title", "context", "ownerAgentId", "targetTime"];
+    if object.len() != REQUIRED.len() || REQUIRED.iter().any(|key| !object.contains_key(*key)) {
+        return Err(BodyNormalizationError::BadRequest);
+    }
+    let input: GoalStartPreviewInput =
+        serde_json::from_value(value).map_err(|_| BodyNormalizationError::BadRequest)?;
+    if input.title.trim().is_empty()
+        || input
+            .owner_agent_id
+            .as_deref()
+            .is_some_and(|value| !valid_uuid(value))
+        || input
+            .target_time
+            .as_ref()
+            .is_some_and(|value| !value.is_string() && !value.is_number())
+    {
+        return Err(BodyNormalizationError::BadRequest);
+    }
+    Ok(input)
+}
+
+fn normalized_start_body(
+    request: &HttpRequest,
+    body: &[u8],
+) -> Result<GoalStartInput, BodyNormalizationError> {
+    let value = if body.is_empty() {
+        Value::Object(Map::new())
+    } else if request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case("application/json")
+        })
+    {
+        serde_json::from_slice::<Value>(body).map_err(|_| BodyNormalizationError::InvalidJson)?
+    } else {
+        Value::Object(Map::new())
+    };
+    if !value.is_object() {
+        return Err(BodyNormalizationError::BadRequest);
+    }
+    let input: GoalStartInput =
+        serde_json::from_value(value).map_err(|_| BodyNormalizationError::BadRequest)?;
+    if input.request_key.trim().is_empty()
+        || input.packet_hash.len() != 64
+        || !input
+            .packet_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || input
+            .draft_goal_id
+            .as_deref()
+            .is_some_and(|value| !valid_uuid(value))
+    {
+        return Err(BodyNormalizationError::BadRequest);
+    }
+    Ok(input)
+}
+
+fn native_goal_runtime_configured(state: &IngressState) -> bool {
+    state.config.identity_auth.is_some()
+        && state
+            .config
+            .native_chat_runtime
+            .as_ref()
+            .is_some_and(|runtime| {
+                runtime.host.claude_runtime().is_some()
+                    && runtime.host.has_trusted_executable_search_path()
+            })
+}
+
+async fn forward_legacy_body(
+    state: web::Data<IngressState>,
+    proxy: web::Data<PublicIngressProxy>,
+    request: HttpRequest,
+    body: web::Bytes,
+) -> HttpResponse {
+    use actix_web::FromRequest;
+    let mut buffered = actix_web::dev::Payload::from(body);
+    let payload = match web::Payload::from_request(&request, &mut buffered).await {
+        Ok(payload) => payload,
+        Err(_) => {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "goal_start_forward_unavailable",
+            );
+        }
+    };
+    super::forward_compatibility(state, proxy, request, payload).await
+}
+
+fn valid_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+        && Uuid::parse_str(value).is_ok()
+}
+
 fn normalize_activation(object: &mut Map<String, Value>) {
     for key in ["autonomyEnvelope", "humanAuthorities", "evaluationPolicy"] {
         object.entry(key).or_insert_with(|| json!({}));
@@ -501,6 +734,81 @@ fn goal_write_error(state: &IngressState, error: StoreError) -> HttpResponse {
     }
 }
 
+fn goal_start_preview_error(state: &IngressState, error: GoalStartError) -> HttpResponse {
+    match error {
+        GoalStartError::LegacyOwned => state.foundation.json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "goal_start_ownership_unresolved",
+        ),
+        GoalStartError::Store(StoreError::InvalidInput) => {
+            HttpResponse::BadRequest().json(json!({"error":"Validation error"}))
+        }
+        GoalStartError::Store(
+            StoreError::PublicIdentityUnauthorized | StoreError::Unauthorized,
+        ) => HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"})),
+        GoalStartError::Store(StoreError::PublicIdentityForbidden) => HttpResponse::Forbidden()
+            .json(json!({"error":"User does not have access to this organization"})),
+        GoalStartError::Store(StoreError::GoalForbidden) => {
+            HttpResponse::Forbidden().json(json!({"error":"Board access required"}))
+        }
+        GoalStartError::Store(error) => goal_write_error(state, error),
+        GoalStartError::Database(_) => state.foundation.json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "goal_start_preview_failed",
+        ),
+        GoalStartError::Conflict(message) => {
+            HttpResponse::Conflict().json(json!({"error":message}))
+        }
+        GoalStartError::Unprocessable { message, details } => {
+            let mut body = json!({"error":message});
+            if let Some(details) = details {
+                body["details"] = details;
+            }
+            HttpResponse::UnprocessableEntity().json(body)
+        }
+    }
+}
+
+fn goal_start_error(state: &IngressState, error: GoalStartError) -> HttpResponse {
+    match error {
+        GoalStartError::LegacyOwned => state.foundation.json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "goal_start_ownership_unresolved",
+        ),
+        GoalStartError::Store(StoreError::InvalidInput) => {
+            HttpResponse::BadRequest().json(json!({"error":"Validation error"}))
+        }
+        GoalStartError::Store(
+            StoreError::PublicIdentityUnauthorized | StoreError::Unauthorized,
+        ) => HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"})),
+        GoalStartError::Store(StoreError::PublicIdentityForbidden) => HttpResponse::Forbidden()
+            .json(json!({"error":"User does not have access to this organization"})),
+        GoalStartError::Store(StoreError::GoalForbidden) => {
+            HttpResponse::Forbidden().json(json!({"error":"Board access required"}))
+        }
+        GoalStartError::Store(StoreError::NotFound) => {
+            HttpResponse::NotFound().json(json!({"error":"Goal not found"}))
+        }
+        GoalStartError::Store(StoreError::GoalConflict | StoreError::NotOwned) => {
+            HttpResponse::Conflict().json(json!({"error":"Goal changed; reload and retry"}))
+        }
+        GoalStartError::Store(error) => state.foundation.mutation_error(error),
+        GoalStartError::Database(_) => state
+            .foundation
+            .json_error(StatusCode::INTERNAL_SERVER_ERROR, "goal_start_failed"),
+        GoalStartError::Conflict(message) => {
+            HttpResponse::Conflict().json(json!({"error":message}))
+        }
+        GoalStartError::Unprocessable { message, details } => {
+            let mut body = json!({"error":message});
+            if let Some(details) = details {
+                body["details"] = details;
+            }
+            HttpResponse::UnprocessableEntity().json(body)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +818,8 @@ mod tests {
         let native = [
             ("/api/orgs/org-1/goals", Method::POST),
             ("/API/ORGS/org-1/GOALS/", Method::POST),
+            ("/API/ORGS/org-1/GOALS/START/", Method::POST),
+            ("/API/ORGS/org-1/GOALS/START-PREVIEW/", Method::POST),
             (
                 "/api/goals/11111111-1111-4111-8111-111111111111",
                 Method::PATCH,
@@ -534,11 +844,17 @@ mod tests {
             "/api/goals/gol_abcdef01/feedback",
             "/api/goals/gol_abcdef01/change-proposals",
             "/api/goals/gol_abcdef01/result-proposals",
-            "/api/orgs/org-1/goals/start",
-            "/api/orgs/org-1/goals/start-preview",
         ] {
             assert!(!is_reserved_path(path, &Method::POST), "POST {path}");
         }
+        assert!(!is_reserved_path(
+            "/api/orgs/org-1/goals/start-preview",
+            &Method::GET
+        ));
         assert!(!is_reserved_path("/api/goals/gol_abcdef01", &Method::POST));
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "goal_writes/http_tests.rs"]
+mod http_tests;

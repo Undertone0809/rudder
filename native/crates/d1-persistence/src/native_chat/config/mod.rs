@@ -13,7 +13,7 @@ mod resolve;
 mod runtime;
 
 pub use claude::ClaudeLocalConfig;
-pub(crate) use claude::resolve_claude_config;
+pub(crate) use claude::{resolve_claude_config, resolve_goal_claude_config};
 pub use cursor::CursorLocalConfig;
 pub(crate) use cursor::resolve_cursor_config;
 pub use hermes::HermesLocalConfig;

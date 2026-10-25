@@ -353,9 +353,18 @@ fn finish_one_shot(
         &fs::read(fixture.root.join("operation/terminal-receipt.json")).unwrap(),
     )
     .unwrap();
+    assert_eq!(receipt["requestId"], "test");
+    assert_eq!(receipt["opaqueOwnerToken"], "operation");
     assert_eq!(receipt["childPid"], fixture.pid);
     assert_eq!(receipt["terminal"], terminal);
     assert_eq!(receipt["terminal"]["receiptWritten"], true);
+    let descriptor: Value = serde_json::from_slice(
+        &fs::read(fixture.root.join("operation/owner-descriptor.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(descriptor["requestId"], "test");
+    assert_eq!(descriptor["opaqueOwnerToken"], "operation");
+    assert_eq!(descriptor["childPid"], fixture.pid);
     assert_eq!(unsafe { libc::kill(-(fixture.pid as i32), 0) }, -1);
 }
 

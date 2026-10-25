@@ -1,5 +1,6 @@
+import { type RuntimeExecutionAuthority } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { organizations } from "./organizations.js";
 
@@ -14,6 +15,8 @@ export const agentWakeupRequests = pgTable(
     reason: text("reason"),
     payload: jsonb("payload").$type<Record<string, unknown>>(),
     status: text("status").notNull().default("queued"),
+    /** Queue ownership is fixed when the wakeup is created, before a run exists. */
+    executionAuthority: text("execution_authority").$type<RuntimeExecutionAuthority>().notNull().default("legacy_ts"),
     coalescedCount: integer("coalesced_count").notNull().default(0),
     requestedByActorType: text("requested_by_actor_type"),
     requestedByActorId: text("requested_by_actor_id"),
@@ -28,6 +31,10 @@ export const agentWakeupRequests = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    executionAuthorityCheck: check(
+      "agent_wakeup_requests_execution_authority_check",
+      sql`${table.executionAuthority} in ('legacy_ts', 'native_rust')`,
+    ),
     companyAgentStatusIdx: index("agent_wakeup_requests_company_agent_status_idx").on(
       table.orgId,
       table.agentId,

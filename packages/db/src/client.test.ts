@@ -290,15 +290,15 @@ describe("migration catalog", () => {
 
     expect(latestEntry).toMatchObject({
       idx: journal.entries.length - 1,
-      tag: "0183_runtime_retention_expiry_lifecycle",
+      tag: "0184_goal_run_ownership",
     });
     expect(fs.existsSync(new URL(`${latestEntry.tag}.sql`, migrationsUrl))).toBe(true);
 
     const latestSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0183_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0184_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string; prevId: string };
     const previousSnapshot = JSON.parse(
-      fs.readFileSync(new URL("meta/0182_snapshot.json", migrationsUrl), "utf8"),
+      fs.readFileSync(new URL("meta/0183_snapshot.json", migrationsUrl), "utf8"),
     ) as { id: string };
     expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
   });
@@ -1007,6 +1007,7 @@ describe("applyPendingMigrations", () => {
           "0181_native_chat_rust_admission.sql",
           "0182_native_chat_finalization_guards.sql",
           "0183_runtime_retention_expiry_lifecycle.sql",
+          "0184_goal_run_ownership.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1211,6 +1212,7 @@ describe("applyPendingMigrations", () => {
           "0181_native_chat_rust_admission.sql",
           "0182_native_chat_finalization_guards.sql",
           "0183_runtime_retention_expiry_lifecycle.sql",
+          "0184_goal_run_ownership.sql",
         ],
         reason: "pending-migrations",
       });

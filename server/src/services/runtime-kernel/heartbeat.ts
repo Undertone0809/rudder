@@ -63,7 +63,11 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
 import { createHeartbeatIssueCancellationHandlers } from "./heartbeat.issue-cancellation.js";
-import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
+import {
+  createHeartbeatMiscHandlers,
+  hasActiveNativeGoalRun,
+  queuedLegacyRunCancellationReason,
+} from "./heartbeat.misc.js";
 import { claimAvailableQueuedRuns } from "./heartbeat.queue.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
@@ -1143,28 +1147,9 @@ export function heartbeatService(
       && ["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"].includes(initialWakeReason),
     );
 
-    async function cancelQueuedRunDuringClaim(reason: string) {
-      const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
-        finishedAt: new Date(),
-        error: reason,
-        errorCode: "cancelled",
-      }, { expectedStatuses: ["queued"], processExitedAt: new Date() });
-      if (!cancelled) return null;
-      await setWakeupStatus(run.wakeupRequestId, "cancelled", {
-        finishedAt: new Date(),
-        error: reason,
-      });
-      if (cancelled) {
-        await appendRunEvent(cancelled, {
-          eventType: "lifecycle",
-          stream: "system",
-          level: "warn",
-          message: "run cancelled",
-        });
-        await completeTerminalControlEffects(cancelled, { startNext: false });
-      }
-      return null;
-    }
+    const cancelQueuedRunDuringClaim = (reason: string) => miscHandlers.cancelQueuedRunDuringClaim(run, reason);
+    const cancellationReason = await queuedLegacyRunCancellationReason(db, run);
+    if (cancellationReason) return await cancelQueuedRunDuringClaim(cancellationReason);
 
     const agent = await getAgent(run.agentId);
     if (!agent) {
@@ -1243,6 +1228,7 @@ export function heartbeatService(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (pendingTerminalEffects) return null;
+      if (await hasActiveNativeGoalRun(tx, run.agentId)) return null;
       if (initialIsGoalWake) {
         await tx.execute(sql`select id from goals where id = ${initialGoalId} and org_id = ${run.orgId} for update`);
       }
@@ -1253,6 +1239,7 @@ export function heartbeatService(
         .where(eq(heartbeatRuns.id, run.id))
         .then((rows) => rows[0] ?? null);
       if (!currentRun || currentRun.status !== "queued") return null;
+      if (currentRun.errorCode === "cancel_requested") return issueCancellationHandlers.cancelQueuedRunWithinClaimTransaction(tx, currentRun, currentRun.error ?? "Cancelled due to budget pause");
 
       const currentContext = parseObject(currentRun.contextSnapshot);
       const issueCancellationReason = await issueCancellationHandlers.getQueuedIssueCancellationReason({
@@ -2209,14 +2196,17 @@ export function heartbeatService(
     ...wakeupHandlers,
     afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
   });
+  let cancelRunInternalForExecution!: (...args: any[]) => Promise<any>;
   const executeHandlers = createHeartbeatExecuteHandlers({
     ...baseContext,
     ...recoveryHandlers,
     ...releaseHandlers,
     ...wakeupHandlers,
+    cancelRunInternal: (...args: any[]) => cancelRunInternalForExecution(...args),
     beforeAssignmentRecoveryEnqueue: testHooks?.beforeAssignmentRecoveryEnqueue,
   });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
+  cancelRunInternalForExecution = miscHandlers.cancelRunInternal;
   const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy, warnInactiveRuns } = recoveryHandlers;
   const { enqueueWakeup } = wakeupHandlers;
   const { releaseIssueExecutionAndPromote } = releaseHandlers;
@@ -2388,6 +2378,7 @@ export function heartbeatService(
   async function resumePendingWakeupRequests(opts: { orgId?: string; startImmediately?: boolean } = {}) {
     const pendingWakeups = await db.select().from(agentWakeupRequests).where(and(
       opts.orgId ? eq(agentWakeupRequests.orgId, opts.orgId) : undefined,
+      eq(agentWakeupRequests.executionAuthority, "legacy_ts"),
       inArray(agentWakeupRequests.status, [
         "queued",
         "deferred_agent_paused",

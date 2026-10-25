@@ -121,7 +121,7 @@ export type {
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,
-  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent, NativeChatExecutionAuthority, NativeChatProtocolPhase
+  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent, NativeChatExecutionAuthority, NativeChatProtocolPhase, RuntimeExecutionAuthority
 } from "./heartbeat.js";
 export type {
   InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,

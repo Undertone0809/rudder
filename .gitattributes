@@ -1,3 +1,5 @@
+native/crates/native-chat-executor/tests/fixtures/goal-instruction-prefix-node.txt text eol=lf
+native/crates/server-foundation/src/goal_started_prompt_template.txt text eol=lf
 packages/db/src/migrations/*.sql text eol=lf
 patches/embedded-postgres@18.1.0-beta.16.patch text eol=lf
 scripts/fixtures/embedded-postgres-18.1.0-beta.16/index.js.txt text eol=lf
