@@ -462,6 +462,76 @@ pub(super) async fn revalidate_in_snapshot(
     })
 }
 
+pub(super) enum NativeOrganizationScope {
+    Unauthorized,
+    Unrestricted,
+    Restricted(Vec<String>),
+}
+
+/// Revalidates a board session and obtains the current organization-list
+/// visibility in the same repeatable-read snapshot as the caller's list query.
+pub(super) async fn organization_scope_in_snapshot(
+    connection: &mut PgConnection,
+    identity: &NativeSessionIdentity,
+    kind: NativeSessionAuthKind,
+) -> Result<NativeOrganizationScope, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT s.id, s.user_id
+        FROM session AS s
+        INNER JOIN "user" AS u ON u.id = s.user_id
+        WHERE s.id = $1
+          AND s.token = $2
+          AND CASE WHEN $3 THEN s.expires_at >= clock_timestamp()
+                   ELSE s.expires_at > clock_timestamp() END
+        LIMIT 2
+        "#,
+    )
+    .bind(&identity.session_id)
+    .bind(&identity.token)
+    .bind(kind == NativeSessionAuthKind::BetterAuth)
+    .fetch_all(&mut *connection)
+    .await?;
+    if rows.len() != 1 || rows[0].0 != identity.session_id || rows[0].1 != identity.user_id {
+        return Ok(NativeOrganizationScope::Unauthorized);
+    }
+
+    organization_scope_for_user_in_snapshot(connection, &identity.user_id).await
+}
+
+pub(super) async fn organization_scope_for_user_in_snapshot(
+    connection: &mut PgConnection,
+    user_id: &str,
+) -> Result<NativeOrganizationScope, sqlx::Error> {
+    let is_instance_admin: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS (
+             SELECT 1 FROM instance_user_roles
+             WHERE user_id = $1 AND role = 'instance_admin'
+           )"#,
+    )
+    .bind(user_id)
+    .fetch_one(&mut *connection)
+    .await?;
+    if is_instance_admin {
+        return Ok(NativeOrganizationScope::Unrestricted);
+    }
+
+    let organization_ids: Vec<String> = sqlx::query_scalar(
+        r#"SELECT COALESCE(
+             array_agg(DISTINCT org_id::text ORDER BY org_id::text),
+             ARRAY[]::text[]
+           )
+           FROM organization_memberships
+           WHERE principal_type = 'user'
+             AND principal_id = $1
+             AND status = 'active'"#,
+    )
+    .bind(user_id)
+    .fetch_one(&mut *connection)
+    .await?;
+    Ok(NativeOrganizationScope::Restricted(organization_ids))
+}
+
 pub(super) fn session_cookie_header_names(config: &NativeSessionAuthConfig) -> [&str; 2] {
     [
         config.session_cookie_name(),
