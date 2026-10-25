@@ -15,6 +15,8 @@ pub mod automation_reads;
 mod branding;
 pub mod calendar;
 pub mod cost_reads;
+pub mod goal_budget;
+pub mod goal_costs;
 pub mod goal_reads;
 pub mod goal_run_resources;
 pub mod goal_runs;

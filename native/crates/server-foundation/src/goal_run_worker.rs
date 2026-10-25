@@ -9,6 +9,7 @@ use crate::{
     public_ingress_config::{NativeChatPublicRuntime, NativeIdentityAuthConfig},
 };
 use rudder_d1_persistence::{
+    goal_costs,
     goal_run_resources::load_goal_started_resources,
     goal_runs::{self, GoalRunClaim},
 };
@@ -19,6 +20,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::path::Path;
 use std::{
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -141,6 +143,45 @@ async fn run_queue(
     shutdown: Arc<AtomicBool>,
 ) {
     while !shutdown.load(Ordering::Acquire) {
+        let pending_effects = match goal_costs::list_due_terminal_effects(&pool).await {
+            Ok(pending) => pending,
+            Err(error) => {
+                tracing::warn!(event = "native_goal_terminal_effect_scan_failed", error = %error);
+                sleep(POLL_INTERVAL).await;
+                continue;
+            }
+        };
+        for terminal_effects in pending_effects {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            if let Err(error) = goal_costs::settle_terminal_effects(
+                &pool,
+                &terminal_effects.organization_id,
+                &terminal_effects.run_id,
+            )
+            .await
+            {
+                tracing::error!(
+                    event = "native_goal_terminal_effect_settlement_pending",
+                    run_id = %terminal_effects.run_id,
+                    error = %error,
+                );
+            }
+        }
+        // A failed ledger or budget effect must not permit another provider
+        // launch in that organization before durable settlement is retried.
+        let pending_effect_orgs = match goal_costs::pending_terminal_effect_organizations(&pool)
+            .await
+        {
+            Ok(orgs) => orgs.into_iter().collect::<HashSet<_>>(),
+            Err(error) => {
+                tracing::warn!(event = "native_goal_terminal_effect_state_failed", error = %error);
+                sleep(POLL_INTERVAL).await;
+                continue;
+            }
+        };
+
         let due = match goal_runs::list_due_native_goal_wakeups(&pool).await {
             Ok(due) => due,
             Err(error) => {
@@ -154,6 +195,9 @@ async fn run_queue(
         for wakeup in due {
             if shutdown.load(Ordering::Acquire) {
                 break;
+            }
+            if pending_effect_orgs.contains(&wakeup.organization_id) {
+                continue;
             }
             match goal_runs::claim_wakeup(&pool, &wakeup.organization_id, &wakeup.wakeup_request_id)
                 .await
@@ -356,7 +400,7 @@ async fn finalize_unlaunched_failure(
     match goal_runs::finalize_unlaunched(pool, claim, "failed", Some(error), &Value::Null, &result)
         .await
     {
-        Ok(true) => {}
+        Ok(true) => settle_terminal_effects(pool, claim).await,
         Ok(false) => tracing::warn!(
             event = "native_goal_unlaunched_failure_unresolved",
             run_id = %claim.run_id,
@@ -382,7 +426,7 @@ async fn finalize_unlaunched_cancel(pool: &PgPool, claim: &GoalRunClaim) {
     )
     .await
     {
-        Ok(true) => {}
+        Ok(true) => settle_terminal_effects(pool, claim).await,
         Ok(false) => tracing::warn!(
             event = "native_goal_unlaunched_cancel_unresolved",
             run_id = %claim.run_id,
@@ -423,7 +467,10 @@ async fn finalize_observation(
         )
         .await
         {
-            Ok(true) => return,
+            Ok(true) => {
+                settle_terminal_effects(pool, claim).await;
+                return;
+            }
             Ok(false) => {}
             Err(error) => tracing::error!(
                 event = "native_goal_unlaunched_finalization_failed",
@@ -465,7 +512,7 @@ async fn finalize_observation(
     )
     .await
     {
-        Ok(true) => {}
+        Ok(true) => settle_terminal_effects(pool, claim).await,
         Ok(false) => tracing::error!(
             event = "native_goal_finalization_unresolved",
             run_id = %claim.run_id,
@@ -475,5 +522,17 @@ async fn finalize_observation(
             run_id = %claim.run_id,
             error = %error,
         ),
+    }
+}
+
+async fn settle_terminal_effects(pool: &PgPool, claim: &GoalRunClaim) {
+    if let Err(error) =
+        goal_costs::settle_terminal_effects(pool, &claim.organization_id, &claim.run_id).await
+    {
+        tracing::error!(
+            event = "native_goal_terminal_effect_settlement_pending",
+            run_id = %claim.run_id,
+            error = %error,
+        );
     }
 }

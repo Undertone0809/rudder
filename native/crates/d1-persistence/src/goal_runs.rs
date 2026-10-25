@@ -307,13 +307,9 @@ pub async fn claim_wakeup(
         tx.rollback().await?;
         return Err(GoalRunError::Ineligible);
     }
-    if crate::native_chat::ensure_goal_run_budget_settleable(&mut tx, &organization_id, &agent_id)
-        .await
-        .is_err()
-    {
-        tx.rollback().await?;
-        return Err(GoalRunError::Ineligible);
-    }
+    // Goal Runs now write and settle their own durable cost event. Keep the
+    // shared hard-stop preflight above, but do not apply Native Chat's
+    // unknown-cost fail-closed gate to this billed Goal execution path.
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(
            SELECT 1 FROM heartbeat_runs
@@ -686,7 +682,13 @@ pub async fn finalize(
              session_id_after=$12, session_params_after_json=$13::jsonb,
              result_summary_json=$14::jsonb,
              process_exited_at=statement_timestamp(), execution_owner_token=NULL,
-             execution_lease_expires_at=NULL, updated_at=statement_timestamp(),
+             execution_lease_expires_at=NULL, terminal_effects_pending=true,
+             terminal_effects_json=$15::jsonb, terminal_effects_completed_json=NULL,
+             terminal_effects_dead_lettered_json=NULL, terminal_effects_attempts_json=NULL,
+             terminal_effects_next_attempt_at=NULL, terminal_effects_dead_lettered_at=NULL,
+             terminal_effects_claim_token=NULL, terminal_effects_claimed_at=NULL,
+             terminal_effects_attempt_count=0, terminal_effects_last_error=NULL,
+             updated_at=statement_timestamp(),
              status=CASE WHEN error_code='cancel_requested' OR $4='cancelled' THEN 'cancelled' ELSE $4 END,
              finished_at=coalesce(finished_at,statement_timestamp()),
              error=CASE WHEN error_code='cancel_requested' THEN error ELSE $5 END
@@ -713,6 +715,7 @@ pub async fn finalize(
     .bind(result.get("sessionId").and_then(Value::as_str))
     .bind(result.get("sessionParamsAfter").map(Value::to_string))
     .bind(summary)
+    .bind(json!({"version":1,"goalRunCostSettlement":true}).to_string())
     .fetch_optional(&mut *tx)
     .await?;
     let Some(run) = run else {
@@ -753,18 +756,6 @@ pub async fn finalize(
         _ => "failed",
     })
     .bind(error)
-    .bind(&claim.run_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE agents a SET status=CASE WHEN a.status='running' THEN 'idle' ELSE a.status END,
-             updated_at=statement_timestamp() WHERE a.org_id=$1::uuid AND a.id=$2::uuid
-             AND NOT EXISTS (SELECT 1 FROM heartbeat_runs r
-               WHERE r.org_id=a.org_id AND r.agent_id=a.id AND r.id<>$3::uuid
-                 AND (r.status='running' OR r.terminal_effects_pending=true))",
-    )
-    .bind(&claim.organization_id)
-    .bind(&claim.agent_id)
     .bind(&claim.run_id)
     .execute(&mut *tx)
     .await?;
@@ -797,7 +788,13 @@ pub async fn finalize_unlaunched(
          SET error_code=CASE WHEN error_code='cancel_requested' OR $4='cancelled' THEN 'cancelled' WHEN $4='timed_out' THEN 'timeout' ELSE NULL END,
              usage_json=$5::jsonb, result_json=$6::jsonb, result_summary_json=$10::jsonb,
              execution_owner_token=NULL, execution_lease_expires_at=NULL,
-             updated_at=statement_timestamp(),
+             terminal_effects_pending=true,
+             terminal_effects_json=$11::jsonb, terminal_effects_completed_json=NULL,
+             terminal_effects_dead_lettered_json=NULL, terminal_effects_attempts_json=NULL,
+             terminal_effects_next_attempt_at=NULL, terminal_effects_dead_lettered_at=NULL,
+             terminal_effects_claim_token=NULL, terminal_effects_claimed_at=NULL,
+             terminal_effects_attempt_count=0, terminal_effects_last_error=NULL,
+             process_exited_at=statement_timestamp(), updated_at=statement_timestamp(),
              status=CASE WHEN error_code='cancel_requested' OR $4='cancelled' THEN 'cancelled' ELSE $4 END,
              finished_at=coalesce(finished_at,statement_timestamp()),
              error=CASE WHEN error_code='cancel_requested' THEN error ELSE $7 END
@@ -820,6 +817,7 @@ pub async fn finalize_unlaunched(
     .bind(&claim.attempt_id)
     .bind(claim.attempt_epoch)
     .bind(summary)
+    .bind(json!({"version":1,"goalRunCostSettlement":true}).to_string())
     .fetch_optional(&mut *tx)
     .await?;
     let Some(run) = run else {
@@ -863,18 +861,6 @@ pub async fn finalize_unlaunched(
     .execute(&mut *tx)
     .await?;
     append_terminal_event(&mut tx, claim, &final_status).await?;
-    sqlx::query(
-        "UPDATE agents a SET status=CASE WHEN a.status='running' THEN 'idle' ELSE a.status END,
-             updated_at=statement_timestamp() WHERE a.org_id=$1::uuid AND a.id=$2::uuid
-             AND NOT EXISTS (SELECT 1 FROM heartbeat_runs r
-               WHERE r.org_id=a.org_id AND r.agent_id=a.id AND r.id<>$3::uuid
-                 AND (r.status='running' OR r.terminal_effects_pending=true))",
-    )
-    .bind(&claim.organization_id)
-    .bind(&claim.agent_id)
-    .bind(&claim.run_id)
-    .execute(&mut *tx)
-    .await?;
     tx.commit().await?;
     Ok(true)
 }
@@ -967,21 +953,36 @@ pub async fn request_cancel(
         .map_err(|_| GoalRunError::InvalidWakeup)?
         .to_string();
     let mut tx = pool.begin().await?;
-    mark_native_goal_write(&mut tx).await?;
+    let requested =
+        request_cancel_in_transaction(&mut tx, &organization_id, &run_id, reason).await?;
+    tx.commit().await?;
+    Ok(requested)
+}
+
+/// Persist a cooperative stop request inside an existing budget/effects
+/// transaction. The owner remains running until its process cleanup proof is
+/// finalized by the matching execution claim.
+pub(crate) async fn request_cancel_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    run_id: &str,
+    reason: &str,
+) -> Result<bool, GoalRunError> {
+    mark_native_goal_write(tx).await?;
     let run = sqlx::query(
         "UPDATE heartbeat_runs SET error=CASE WHEN error_code='cancel_requested' THEN error ELSE $3 END,
            error_code='cancel_requested', updated_at=statement_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
+           AND goal_id IS NOT NULL AND scene='heartbeat' AND target_type='wakeup_request'
            AND status='running'
          RETURNING agent_id::text AS agent_id",
     )
     .bind(&organization_id)
     .bind(&run_id)
     .bind(reason)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let Some(run) = run else {
-        tx.rollback().await?;
         return Ok(false);
     };
     let agent_id: String = run.try_get("agent_id")?;
@@ -997,8 +998,7 @@ pub async fn request_cancel(
     .bind(&run_id)
     .bind(&agent_id)
     .bind(format!("goal-run-cancel:{run_id}"))
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(true)
 }
