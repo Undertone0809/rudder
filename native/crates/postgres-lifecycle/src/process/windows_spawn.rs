@@ -54,7 +54,6 @@ fn start_error(message: &str) -> OwnerError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::process::{ChildJob, configure_child_process, supervised_spawn};
     use std::{path::Path, time::Duration};
     use tokio::process::Command;
