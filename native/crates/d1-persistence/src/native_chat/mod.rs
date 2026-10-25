@@ -82,8 +82,17 @@ pub struct FirstSendRequest {
     issue_creation_mode: Option<String>,
     #[serde(rename = "planMode")]
     plan_mode: Option<bool>,
+    #[serde(rename = "contextLinks", default)]
+    context_links: Vec<FirstSendContextLink>,
     title: Option<String>,
     body: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FirstSendContextLink {
+    entity_type: String,
+    entity_id: String,
 }
 
 /// Execute an organization-scoped admission command. Browser principals are
@@ -156,6 +165,7 @@ pub async fn execute_first_send(
             "Plan mode is not supported by Native Chat first-send admission",
         ));
     }
+    let context_goal_id = first_send::context_goal_id(&request.context_links)?;
     let title = first_send::title(request.title.as_deref(), &body)?;
     let input = first_send::FirstSendInput {
         client_mutation_id: &client_mutation_id,
@@ -165,6 +175,7 @@ pub async fn execute_first_send(
         issue_creation_mode: issue_creation_mode.as_deref(),
         title: &title,
         body: &body,
+        context_goal_id: context_goal_id.as_deref(),
     };
     first_send::submit(pool, actor, &organization_id, &input, host).await
 }
@@ -232,6 +243,7 @@ pub async fn lookup_first_send_submission(
             "Plan mode is not supported by Native Chat first-send admission",
         ));
     }
+    let context_goal_id = first_send::context_goal_id(&request.context_links)?;
     let title = first_send::title(request.title.as_deref(), &body)?;
     let input = first_send::FirstSendInput {
         client_mutation_id: &client_mutation_id,
@@ -241,6 +253,7 @@ pub async fn lookup_first_send_submission(
         issue_creation_mode: issue_creation_mode.as_deref(),
         title: &title,
         body: &body,
+        context_goal_id: context_goal_id.as_deref(),
     };
     first_send::lookup_submission(pool, actor, &organization_id, &input).await
 }
@@ -279,7 +292,8 @@ mod wire_tests {
             "effortOverride":"high",
             "issueCreationMode":"manual_approval",
             "planMode":false,
-            "title":"A first chat"
+            "title":"A first chat",
+            "contextLinks":[]
         }))
         .unwrap();
         assert_eq!(first_send.client_mutation_id, "first-mutation");
@@ -287,6 +301,16 @@ mod wire_tests {
             first_send.preferred_agent_id.as_deref(),
             Some("21000000-0000-4000-8000-000000000001")
         );
+        assert!(first_send.context_links.is_empty());
+
+        let goal_context: FirstSendRequest = serde_json::from_value(json!({
+            "clientMutationId":"goal-first-mutation",
+            "body":"hello",
+            "contextLinks":[{"entityType":"goal","entityId":"30000000-0000-4000-8000-000000000001"}]
+        }))
+        .unwrap();
+        assert_eq!(goal_context.context_links.len(), 1);
+        assert_eq!(goal_context.context_links[0].entity_type, "goal");
 
         for invalid in [
             json!({"operation":"submit_native_chat_turn","conversationId":"x","clientMutationId":"m","body":"hi","orgId":"other"}),
@@ -301,7 +325,6 @@ mod wire_tests {
             json!({"clientMutationId":"m","body":"hi","conversationId":"caller-id"}),
             json!({"clientMutationId":"m","body":"hi","orgId":"caller-org"}),
             json!({"clientMutationId":"m","body":"hi","runId":"caller-run"}),
-            json!({"clientMutationId":"m","body":"hi","contextLinks":[]}),
             json!({"clientMutationId":"m","body":"hi","inlineAnnotations":[]}),
             json!({"clientMutationId":"m","body":"hi","files":[]}),
         ] {

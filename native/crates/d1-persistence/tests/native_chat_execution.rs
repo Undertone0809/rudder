@@ -115,7 +115,11 @@ impl ExecutionHost {
 }
 
 fn verified_actor(organization_id: &str, id: &str, nonce: &str) -> VerifiedActor {
-    let actor = ActorIdentity::new("user", id).expect("valid actor identity");
+    verified_actor_kind(organization_id, "user", id, nonce)
+}
+
+fn verified_actor_kind(organization_id: &str, kind: &str, id: &str, nonce: &str) -> VerifiedActor {
+    let actor = ActorIdentity::new(kind, id).expect("valid actor identity");
     let path = format!("/internal/orgs/{organization_id}/native-chat-execution");
     let body = b"{}";
     let request_id = format!("execution-{nonce}");

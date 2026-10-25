@@ -583,6 +583,16 @@ async fn goal(
     Ok(())
 }
 
+/// Reuse the organization-scoped Goal lock for Native Chat's initial context
+/// link without exposing the broader link-mutation transaction API.
+pub(crate) async fn validate_native_chat_goal_context(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    organization_id: &str,
+    goal_id: &str,
+) -> Result<(), StoreError> {
+    goal(tx, organization_id, goal_id).await
+}
+
 fn validate_primary_projection(
     goals: &BTreeSet<String>,
     primary_goal_after: Option<&str>,

@@ -73,7 +73,7 @@ export type {
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent, ChatStreamAssistantSnapshotEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, NativeChatTurnAdmissionReceipt, NativeChatTurnAdmissionRequest
+  ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, NativeChatRecoveryPointer, NativeChatRecoveryRead, NativeChatTurnAdmissionReceipt, NativeChatTurnAdmissionRequest
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {

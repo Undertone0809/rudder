@@ -22,7 +22,14 @@ mod browser_session;
 mod cli_auth;
 mod email_auth;
 mod native_chat;
+mod organization_resources;
+mod project_reads;
+mod project_writes;
 mod runtime_bindings;
+
+pub(crate) fn ensure_project_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    agent_core::ensure_organization_workspace_root(org_id)
+}
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
 const LLM_REFLECTION_AUTH_PATH: &str = PRIVATE_LLM_REFLECTION_AUTH_ADAPTER_PATH;
@@ -350,6 +357,18 @@ impl PublicIngressRuntime {
                     web::get().to(goal_assigned_collection),
                 )
                 .route(
+                    "/api/orgs/{org_id}/projects",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(project_reads::collection),
+                )
+                .route(
+                    "/api/projects/{project_ref}",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(project_reads::detail),
+                )
+                .route(
                     "/llms/agent-configuration.txt",
                     web::route()
                         .guard(guard::Any(guard::Get()).or(guard::Head()))
@@ -447,11 +466,20 @@ fn public_ingress_startup_receipt(
         "/api/orgs/:org_id/goals",
         "/api/orgs/:org_id/goals/workspace",
         "/api/orgs/:org_id/goals/assigned",
+        "/api/orgs/:org_id/resources",
+        "/api/orgs/:org_id/resources/:resource_id",
+        "/api/orgs/:org_id/intelligence-profiles",
     ];
     if native_identity_enabled {
         direct_routes.extend([
             "/api/orgs/:org_id/agents",
             "/api/agents/:agent_id/permissions",
+            "/api/orgs/:org_id/agent-configurations",
+            "/api/orgs/:org_id/agents/name-suggestion",
+            "/api/agents/:agent_id/configuration",
+            "/api/agents/:agent_id/config-revisions",
+            "/api/agents/:agent_id/config-revisions/:revision_id",
+            "/api/agents/:agent_id/config-revisions/:revision_id/rollback",
         ]);
     }
     if session_auth_kind.is_some() {
@@ -614,6 +642,12 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
+    if project_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return project_reads::dispatch_alias(state, request, payload).await;
+    }
+    if project_writes::is_reserved_path(request.uri().path()) {
+        return project_writes::dispatch_alias(state, request, payload).await;
+    }
     if agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()
             && agent_core::is_reserved_path(request.uri().path(), request.method()))
@@ -631,6 +665,11 @@ async fn proxy_request(
         && let Some(endpoint) = email_auth::endpoint_for_path(request.uri().path())
     {
         return email_auth::handle(state, request, payload, endpoint).await;
+    }
+    if let Some(endpoint) =
+        organization_resources::endpoint_for_path(request.uri().path(), request.method())
+    {
+        return organization_resources::handle(state, request, payload, endpoint).await;
     }
     if let Some(endpoint) = cli_auth::endpoint_for_path(request.uri().path()) {
         return cli_auth::handle(state, request, payload, endpoint).await;
@@ -675,6 +714,8 @@ async fn proxy_request(
             .is_some_and(|auth| auth.better_auth_email_auth_enabled())
             && email_auth::reserved_path(request.uri().path()))
         || cli_auth::reserved_path(request.uri().path())
+        || organization_resources::reserved_path(request.uri().path())
+        || project_writes::is_reserved_path(request.uri().path())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
@@ -2371,7 +2412,10 @@ mod tests {
                 "/api/orgs/:org_id/members/directory",
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",
-                "/api/orgs/:org_id/goals/assigned"
+                "/api/orgs/:org_id/goals/assigned",
+                "/api/orgs/:org_id/resources",
+                "/api/orgs/:org_id/resources/:resource_id",
+                "/api/orgs/:org_id/intelligence-profiles"
             ])
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
@@ -2401,8 +2445,17 @@ mod tests {
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",
                 "/api/orgs/:org_id/goals/assigned",
+                "/api/orgs/:org_id/resources",
+                "/api/orgs/:org_id/resources/:resource_id",
+                "/api/orgs/:org_id/intelligence-profiles",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
+                "/api/orgs/:org_id/agent-configurations",
+                "/api/orgs/:org_id/agents/name-suggestion",
+                "/api/agents/:agent_id/configuration",
+                "/api/agents/:agent_id/config-revisions",
+                "/api/agents/:agent_id/config-revisions/:revision_id",
+                "/api/agents/:agent_id/config-revisions/:revision_id/rollback",
                 "/api/auth/get-session",
                 "/api/auth/sign-up/email",
                 "/api/auth/sign-in/email",

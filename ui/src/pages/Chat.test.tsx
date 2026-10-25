@@ -52,6 +52,7 @@ import {
   chatIssueApprovalPayloadWithProposalOverride,
   chatSidePanelTargetFromHref,
   computeDisplayedChatMessages,
+  displayedChatMessageState,
   draftIssueContextLabel,
   findLatestUnansweredAskUserMessage,
   findRetrySourceUserMessage,
@@ -1766,6 +1767,20 @@ describe("interrupted chat messages", () => {
       message({ id: "interrupted", role: "assistant", status: "interrupted" }),
       message({ id: "completed", role: "assistant", status: "completed" }),
     ])).toBeNull();
+  });
+
+  it("shows orphaned owner-loss output as interrupted without offering a retry continuation", () => {
+    const lost = message({
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      generationTerminalReason: "native_chat_owner_lost_cleanup_unknown",
+      body: "Partial output",
+    });
+
+    expect(displayedChatMessageState(lost)).toBe("interrupted");
+    expect(canContinueInterruptedChatMessage({ ...lost, status: "interrupted" })).toBe(false);
+    expect(latestContinuableInterruptedChatMessage([{ ...lost, status: "interrupted" }])).toBeNull();
   });
 });
 

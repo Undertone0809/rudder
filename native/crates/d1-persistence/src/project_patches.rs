@@ -83,6 +83,83 @@ struct Attachment {
     is_primary: bool,
 }
 
+const PROJECT_COLORS: &[&str] = &[
+    "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+    "linear-gradient(135deg, #7c3aed 0%, #d946ef 100%)",
+    "linear-gradient(135deg, #db2777 0%, #f97316 100%)",
+    "linear-gradient(135deg, #ef4444 0%, #f59e0b 100%)",
+    "linear-gradient(135deg, #f97316 0%, #facc15 100%)",
+    "linear-gradient(135deg, #10b981 0%, #84cc16 100%)",
+    "linear-gradient(135deg, #059669 0%, #14b8a6 100%)",
+    "linear-gradient(135deg, #0d9488 0%, #06b6d4 100%)",
+    "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)",
+    "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)",
+    "linear-gradient(135deg, #f43f5e 0%, #ec4899 100%)",
+    "linear-gradient(135deg, #be123c 0%, #7c2d12 100%)",
+    "linear-gradient(135deg, #a16207 0%, #ca8a04 100%)",
+    "linear-gradient(135deg, #16a34a 0%, #0f766e 100%)",
+    "linear-gradient(135deg, #0891b2 0%, #4338ca 100%)",
+    "linear-gradient(135deg, #6d28d9 0%, #be185d 100%)",
+    "linear-gradient(135deg, #475569 0%, #0f766e 100%)",
+    "linear-gradient(135deg, #334155 0%, #7c3aed 100%)",
+];
+
+const PROJECT_ICONS: &[&str] = &[
+    "folder",
+    "dollar",
+    "book",
+    "graduation-cap",
+    "pencil",
+    "pen-tool",
+    "braces",
+    "terminal",
+    "music",
+    "popcorn",
+    "paintbrush",
+    "palette",
+    "stethoscope",
+    "clover",
+    "flower",
+    "briefcase",
+    "chart",
+    "database",
+    "dumbbell",
+    "notebook",
+    "scale",
+    "plane",
+    "globe",
+    "home",
+    "tree-palm",
+    "heart",
+    "gift",
+    "wrench",
+    "paw-print",
+    "flask",
+    "brain",
+    "code",
+    "rocket",
+    "target",
+    "lightbulb",
+    "shield",
+    "megaphone",
+    "users",
+    "calendar",
+    "package",
+];
+
+const EXECUTION_WORKSPACE_MODES: &[&str] = &[
+    "shared_workspace",
+    "isolated_workspace",
+    "operator_branch",
+    "adapter_default",
+];
+const EXECUTION_WORKSPACE_STRATEGIES: &[&str] = &[
+    "project_primary",
+    "git_worktree",
+    "adapter_managed",
+    "cloud_sandbox",
+];
+
 impl Patch {
     pub(crate) fn parse(value: &Value) -> Result<Self, StoreError> {
         let object = value.as_object().ok_or(StoreError::InvalidInput)?;
@@ -131,10 +208,32 @@ impl Patch {
 
         let execution_workspace_policy =
             parse_field::<Option<Value>>(object, "executionWorkspacePolicy")?;
-        if execution_workspace_policy
-            .as_ref()
-            .is_some_and(|value| value.as_ref().is_some_and(|value| !value.is_object()))
-        {
+        if let Some(Some(policy)) = &execution_workspace_policy {
+            validate_execution_workspace_policy(policy)?;
+        }
+
+        let color: Option<Option<String>> = parse_field(object, "color")?;
+        if color.as_ref().is_some_and(|value| {
+            value
+                .as_ref()
+                .is_some_and(|value| !valid_project_color(value))
+        }) {
+            return Err(StoreError::InvalidInput);
+        }
+        let icon: Option<Option<String>> = parse_field(object, "icon")?;
+        if icon.as_ref().is_some_and(|value| {
+            value
+                .as_ref()
+                .is_some_and(|value| !PROJECT_ICONS.contains(&value.as_str()))
+        }) {
+            return Err(StoreError::InvalidInput);
+        }
+        let archived_at: Option<Option<String>> = parse_field(object, "archivedAt")?;
+        if archived_at.as_ref().is_some_and(|value| {
+            value
+                .as_ref()
+                .is_some_and(|value| !valid_project_datetime(value))
+        }) {
             return Err(StoreError::InvalidInput);
         }
 
@@ -173,10 +272,10 @@ impl Patch {
             status,
             lead_agent_id: parse_field(object, "leadAgentId")?,
             target_date: parse_field(object, "targetDate")?,
-            color: parse_field(object, "color")?,
-            icon: parse_field(object, "icon")?,
+            color,
+            icon,
             execution_workspace_policy,
-            archived_at: parse_field(object, "archivedAt")?,
+            archived_at,
             goal_ids,
             resource_attachments,
             new_resources,
@@ -190,6 +289,130 @@ impl Patch {
     pub(crate) fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
+}
+
+fn valid_project_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let legacy_hex = bytes.len() == 7
+        && bytes[0] == b'#'
+        && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit());
+    legacy_hex || PROJECT_COLORS.contains(&value)
+}
+
+fn valid_project_datetime(value: &str) -> bool {
+    let Some(value) = value.strip_suffix('Z') else {
+        return false;
+    };
+    let normalized = if let Some((whole_seconds, fraction)) = value.split_once('.') {
+        if fraction.is_empty() || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+        format!("{whole_seconds}.{}Z", &fraction[..fraction.len().min(9)])
+    } else {
+        format!("{value}Z")
+    };
+    time::OffsetDateTime::parse(&normalized, &time::format_description::well_known::Rfc3339).is_ok()
+}
+
+fn valid_project_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+        && matches!(bytes[14].to_ascii_lowercase(), b'1'..=b'8')
+        && matches!(bytes[19].to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
+}
+
+fn validate_execution_workspace_policy(value: &Value) -> Result<(), StoreError> {
+    let object = value.as_object().ok_or(StoreError::InvalidInput)?;
+    const ALLOWED: &[&str] = &[
+        "enabled",
+        "defaultMode",
+        "allowIssueOverride",
+        "defaultProjectWorkspaceId",
+        "workspaceStrategy",
+        "workspaceRuntime",
+        "branchPolicy",
+        "pullRequestPolicy",
+        "runtimePolicy",
+        "cleanupPolicy",
+    ];
+    if object.keys().any(|key| !ALLOWED.contains(&key.as_str()))
+        || !object.get("enabled").is_some_and(Value::is_boolean)
+        || object.get("defaultMode").is_some_and(|value| {
+            value
+                .as_str()
+                .is_none_or(|value| !EXECUTION_WORKSPACE_MODES.contains(&value))
+        })
+        || object
+            .get("allowIssueOverride")
+            .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    if let Some(workspace_id) = object.get("defaultProjectWorkspaceId")
+        && !workspace_id.is_null()
+        && !workspace_id.as_str().is_some_and(valid_project_uuid)
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    if let Some(strategy) = object.get("workspaceStrategy")
+        && !strategy.is_null()
+    {
+        let strategy = strategy.as_object().ok_or(StoreError::InvalidInput)?;
+        const STRATEGY_FIELDS: &[&str] = &[
+            "type",
+            "baseRef",
+            "branchTemplate",
+            "worktreeParentDir",
+            "provisionCommand",
+            "teardownCommand",
+        ];
+        if strategy
+            .keys()
+            .any(|key| !STRATEGY_FIELDS.contains(&key.as_str()))
+            || strategy.get("type").is_some_and(|value| {
+                value
+                    .as_str()
+                    .is_none_or(|value| !EXECUTION_WORKSPACE_STRATEGIES.contains(&value))
+            })
+            || [
+                "baseRef",
+                "branchTemplate",
+                "worktreeParentDir",
+                "provisionCommand",
+                "teardownCommand",
+            ]
+            .iter()
+            .any(|key| {
+                strategy
+                    .get(*key)
+                    .is_some_and(|value| !value.is_null() && !value.is_string())
+            })
+        {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    for key in [
+        "workspaceRuntime",
+        "branchPolicy",
+        "pullRequestPolicy",
+        "runtimePolicy",
+        "cleanupPolicy",
+    ] {
+        if object
+            .get(key)
+            .is_some_and(|value| !value.is_null() && !value.is_object())
+        {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    Ok(())
 }
 
 fn parse_field<T: DeserializeOwned>(
@@ -1160,4 +1383,60 @@ fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn public_color_icon_policy_and_archived_at_match_shared_project_schema() {
+        assert!(Patch::parse(&json!({"color":"#A0b1C2"})).is_ok());
+        assert!(
+            Patch::parse(&json!({
+                "color":"linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+                "icon":"graduation-cap",
+                "executionWorkspacePolicy":{
+                    "enabled":true,
+                    "defaultMode":"isolated_workspace",
+                    "allowIssueOverride":false,
+                    "defaultProjectWorkspaceId":"123e4567-e89b-42d3-a456-426614174000",
+                    "workspaceStrategy":{"type":"git_worktree","baseRef":null},
+                    "workspaceRuntime":{},
+                    "branchPolicy":null,
+                    "pullRequestPolicy":{},
+                    "runtimePolicy":{},
+                    "cleanupPolicy":{}
+                },
+                "archivedAt":"2026-10-25T12:30:00.123456789012Z"
+            }))
+            .is_ok()
+        );
+        assert!(
+            Patch::parse(&json!({
+                "executionWorkspacePolicy":null,
+                "archivedAt":null
+            }))
+            .is_ok()
+        );
+
+        for patch in [
+            json!({"color":"url(https://example.invalid/color)"}),
+            json!({"icon":"custom-upload"}),
+            json!({"executionWorkspacePolicy":{}}),
+            json!({"executionWorkspacePolicy":{"enabled":true,"unknown":true}}),
+            json!({"executionWorkspacePolicy":{"enabled":true,"defaultMode":"isolated"}}),
+            json!({"executionWorkspacePolicy":{"enabled":true,"workspaceStrategy":{"type":"unknown"}}}),
+            json!({"executionWorkspacePolicy":{"enabled":true,"workspaceRuntime":[]}}),
+            json!({"executionWorkspacePolicy":{"enabled":true,"defaultProjectWorkspaceId":"not-a-uuid"}}),
+            json!({"archivedAt":"2026-10-25T12:30:00+00:00"}),
+            json!({"archivedAt":"2026-02-30T12:30:00Z"}),
+        ] {
+            assert!(
+                Patch::parse(&patch).is_err(),
+                "accepted invalid patch: {patch}"
+            );
+        }
+    }
 }

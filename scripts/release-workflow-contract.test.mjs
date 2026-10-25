@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -35,6 +36,35 @@ function runMirrorPolicy(eventName, input, skipMirror) {
 }
 
 describe("unified delivery workflows", () => {
+  function runBackupDirectoryPreflight(platform, rejectPosixInstall = false) {
+    const job = workflowJob(releaseWorkflow, "desktop-candidate");
+    const start = job.indexOf('          backup_dir="$RUNNER_TEMP/desktop-candidate-migration-backups"');
+    const end = job.indexOf("\n          printf ", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const script = job.slice(start, end).replace(/^ {10}/gm, "");
+    const root = mkdtempSync(join(tmpdir(), "rudder-release-backup-preflight-"));
+    try {
+      execFileSync("bash", ["-e", "-c", `${rejectPosixInstall ? "install() { return 97; };\n" : ""}${script}`], {
+        env: { ...process.env, MATRIX_PLATFORM: platform, RUNNER_TEMP: root },
+        stdio: "pipe",
+      });
+      const directory = join(root, "desktop-candidate-migration-backups");
+      expect(readdirSync(directory)).toEqual([]);
+      if (platform !== "windows") expect(statSync(directory).mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("preflights a writable Windows migration backup directory without POSIX chmod", () => {
+    runBackupDirectoryPreflight("windows", true);
+  });
+
+  (process.platform === "win32" ? it.skip : it)("keeps POSIX migration backup directories private and writable", () => {
+    runBackupDirectoryPreflight("linux");
+  });
+
   it("exposes Test, Release, and Docs Release as the delivery workflows", () => {
     expect(testWorkflow).toMatch(/^name: Test$/m);
     expect(releaseWorkflow).toMatch(/^name: Release$/m);

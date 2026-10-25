@@ -1341,12 +1341,16 @@ export function formatChatPrimaryIssueBreadcrumb(issue: ChatPrimaryIssueSummary)
 export const INTERRUPTED_CHAT_CONTINUATION_PROMPT = "Continue from the interrupted chat run.";
 export const INTERRUPTED_CHAT_PLACEHOLDER = "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.";
 
-export function canContinueInterruptedChatMessage(message: Pick<ChatMessage, "role" | "status">) {
-  return message.role === "assistant" && message.status === "interrupted";
+export function canContinueInterruptedChatMessage(
+  message: Pick<ChatMessage, "role" | "status" | "generationTerminalReason">,
+) {
+  return message.role === "assistant"
+    && message.status === "interrupted"
+    && message.generationTerminalReason !== "native_chat_owner_lost_cleanup_unknown";
 }
 
 export function visibleInterruptedChatMessageBody(
-  message: Pick<ChatMessage, "role" | "status" | "body">,
+  message: Pick<ChatMessage, "role" | "status" | "body" | "generationTerminalReason">,
 ) {
   if (!canContinueInterruptedChatMessage(message)) return message.body;
   const normalizedBody = message.body.trim();
@@ -1472,7 +1476,13 @@ export function isSteerFallbackChatMessage(message: Pick<ChatMessage, "role" | "
 }
 
 export function displayedChatMessageState(message: Pick<ChatMessage, "role" | "status" | "generationTerminalReason">) {
-  return isSteerFallbackChatMessage(message) ? "completed" as const : message.status;
+  if (isSteerFallbackChatMessage(message)) return "completed" as const;
+  if (message.role === "assistant"
+    && message.status === "streaming"
+    && message.generationTerminalReason === "native_chat_owner_lost_cleanup_unknown") {
+    return "interrupted" as const;
+  }
+  return message.status;
 }
 
 export function shouldHideSteerFallbackAssistantBubble(

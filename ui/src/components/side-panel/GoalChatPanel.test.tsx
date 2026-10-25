@@ -4,9 +4,14 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
-import { readPendingChatStopRecovery } from "@/lib/chat-stop-recovery";
+import {
+  createPendingChatStopRecovery,
+  readPendingChatStopRecovery,
+  savePendingChatStopRecovery,
+} from "@/lib/chat-stop-recovery";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import type { ChatStreamEvent } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -24,8 +29,12 @@ vi.mock("@/api/chats", () => ({
     get: vi.fn(),
     listMessages: vi.fn(),
     listQueue: vi.fn(),
+    getNativeChatCapabilities: vi.fn(),
+    readNativeChatControl: vi.fn(),
+    readNativeChatRecovery: vi.fn(),
     sendFirstMessageStream: vi.fn(),
     sendMessageStream: vi.fn(),
+    checkpointMessageStream: vi.fn(),
     reconcilePendingMessageSend: vi.fn(),
     stopMessageStream: vi.fn(),
   },
@@ -36,16 +45,18 @@ vi.mock("@/pages/Chat.messages", () => ({
 }));
 vi.mock("@/components/chat/ChatComposer", () => ({
   ChatComposerSurface: ({ children, testId }: { children: ReactNode; testId?: string }) => <div data-testid={testId}>{children}</div>,
-  ChatComposerEditor: ({ value, onChange, onSubmit, placeholder }: {
+  ChatComposerEditor: ({ value, onChange, onSubmit, placeholder, readOnly }: {
     value: string;
     onChange: (value: string) => void;
     onSubmit: () => void;
     placeholder: string;
+    readOnly?: boolean;
   }) => (
     <textarea
       aria-label="Goal chat message"
       value={value}
       placeholder={placeholder}
+      readOnly={readOnly}
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit();
@@ -167,6 +178,31 @@ beforeEach(() => {
     activeGenerationStatus: "running",
     items: [],
   } as never);
+  vi.mocked(chatsApi.getNativeChatCapabilities).mockResolvedValue({
+    executionAuthority: "native_rust",
+    firstSend: true,
+    readTurn: true,
+    nativeControls: true,
+    recoveryRead: true,
+  });
+  vi.mocked(chatsApi.readNativeChatControl).mockResolvedValue({
+    executionAuthority: "native_rust",
+    orgId: "org-1",
+    conversationId: "chat-goal-1",
+    generationId: "generation-1",
+    attemptEpoch: 2,
+    controlVersion: 3,
+    lastClientCheckpointSeq: null,
+    lastClientCheckpointHash: null,
+    lastSequence: 0,
+    runtimeTerminal: false,
+  });
+  vi.mocked(chatsApi.readNativeChatRecovery).mockResolvedValue({
+    executionAuthority: "native_rust",
+    orgId: "org-1",
+    conversationId: "chat-goal-1",
+    recovery: null,
+  });
   vi.mocked(chatsApi.sendFirstMessageStream).mockImplementation(async (_orgId, body, options) => {
     await options.onEvent({
       type: "ack",
@@ -178,11 +214,21 @@ beforeEach(() => {
     } as never);
   });
   vi.mocked(chatsApi.sendMessageStream).mockResolvedValue(undefined);
+  vi.mocked(chatsApi.checkpointMessageStream).mockResolvedValue({
+    generationId: "generation-1",
+    generationSeq: 1,
+    advanced: true,
+  });
   vi.mocked(chatsApi.reconcilePendingMessageSend).mockReset().mockImplementation(async (_conversationId, request) => ({
     outcome: "not_found",
     clientMutationId: request.clientMutationId,
   }));
-  vi.mocked(chatsApi.stopMessageStream).mockResolvedValue({ stopped: true } as never);
+  vi.mocked(chatsApi.stopMessageStream).mockImplementation(async (_chatId, request) => ({
+    stopped: true,
+    disposition: "stopped",
+    controlActionId: request!.controlActionId,
+    generationId: request!.expectedGenerationId!,
+  }));
   window.localStorage.clear();
   navigate.mockReset();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
@@ -199,6 +245,129 @@ afterEach(() => {
 });
 
 describe("GoalChatPanel", () => {
+  it("persists the latest rendered Goal stream checkpoint", async () => {
+    const pending = deferred<void>();
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+        generationId: "generation-goal-checkpoint",
+        attemptEpoch: 2,
+        generationSeq: 1,
+        bodyHash: "a".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "visible Goal prefix",
+        generationId: "generation-goal-checkpoint",
+        attemptEpoch: 2,
+        generationSeq: 2,
+        bodyHash: "b".repeat(64),
+      } as never);
+      await pending.promise;
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Review this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-streaming"]')?.textContent)
+      .toBe("visible Goal prefix"));
+    await waitUntil(() => expect(chatsApi.checkpointMessageStream).toHaveBeenCalledWith("chat-goal-1", {
+      generationId: "generation-goal-checkpoint",
+      attemptEpoch: 2,
+      generationSeq: 2,
+      renderedBodyHash: "b".repeat(64),
+    }));
+    await act(async () => pending.resolve());
+  });
+
+  it.each(["final", "terminal error", "unconfirmed error"] as const)("handles pending Goal checkpoints on %s", async (terminalEvent) => {
+    const checkpoint = deferred<unknown>();
+    const keepStreamOpen = deferred<void>();
+    let emitEvent: ((event: ChatStreamEvent) => Promise<void> | void) | null = null;
+    vi.mocked(chatsApi.checkpointMessageStream).mockReturnValueOnce(checkpoint.promise as never);
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      emitEvent = options.onEvent;
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 1,
+        bodyHash: "a".repeat(64),
+      } as never);
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: "first visible prefix",
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 2,
+        bodyHash: "b".repeat(64),
+      } as never);
+      await keepStreamOpen.promise;
+      if (terminalEvent !== "final") {
+        await options.onEvent({
+          type: "error",
+          error: "The Goal stream failed.",
+          ...(terminalEvent === "terminal error" ? { terminal: true } : {}),
+        } as never);
+      }
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+
+    await waitUntil(() => expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await emitEvent?.({
+        type: "assistant_delta",
+        delta: " and a newer pending prefix",
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 3,
+        bodyHash: "c".repeat(64),
+      } as never);
+    });
+    if (terminalEvent === "final") {
+      await act(async () => {
+        await emitEvent?.({
+          type: "final",
+          messages: [{
+            id: "message-assistant",
+            conversationId: "chat-goal-1",
+            role: "assistant",
+            body: "The Goal stream is complete.",
+          }],
+        } as never);
+        keepStreamOpen.resolve();
+      });
+      await waitUntil(() => expect(rendered.container.textContent).toContain("The Goal stream is complete."));
+    } else {
+      await act(async () => keepStreamOpen.resolve());
+      await waitUntil(() => expect(rendered.container.querySelector('[role="alert"]')).not.toBeNull());
+    }
+
+    await act(async () => {
+      checkpoint.reject(new Error("terminal stream checkpoint was rejected"));
+      await new Promise((resolve) => setTimeout(resolve, 550));
+    });
+    if (terminalEvent === "unconfirmed error") {
+      expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(2);
+      expect(chatsApi.checkpointMessageStream).toHaveBeenLastCalledWith("chat-goal-1", {
+        generationId: "generation-goal-terminal-checkpoint",
+        attemptEpoch: 3,
+        generationSeq: 3,
+        renderedBodyHash: "c".repeat(64),
+      });
+    } else {
+      expect(chatsApi.checkpointMessageStream).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("hydrates the composer from the new Goal when the scope changes with the same body prop", async () => {
     const initialTarget = { ...target, body: "Shared body" };
     const nextTarget = { ...initialTarget, organizationId: "org-2", goalId: "goal-2" };
@@ -351,6 +520,11 @@ describe("GoalChatPanel", () => {
     });
 
     const rendered = renderPanel();
+    const threadPagesKey = queryKeys.messenger.threadPages("org-1", false);
+    rendered.queryClient.setQueryData(threadPagesKey, {
+      pages: [{ items: [{ threadKey: "chat:chat-goal-1", metadata: { activeGenerationId: "generation-1" } }] }],
+      pageParams: [null],
+    });
     await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
     change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
@@ -366,10 +540,257 @@ describe("GoalChatPanel", () => {
       expectedGenerationId: "generation-1",
       expectedAttemptEpoch: 2,
       expectedControlVersion: 3,
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     })));
     await waitUntil(() => expect(rendered.container.textContent).toContain("Response stopped."));
     expect(rendered.container.textContent).toContain("Retry message");
     expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+    expect(rendered.queryClient.getQueryState(threadPagesKey)?.isInvalidated).toBe(true);
+  });
+
+  it("settles an owner-lost Stop without claiming cleanup or offering retry", async () => {
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (_chatId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        generationId: "generation-1",
+        attemptEpoch: 2,
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+      } as never);
+      await new Promise<void>((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    });
+    vi.mocked(chatsApi.listQueue).mockResolvedValue({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 3,
+      activeGenerationStatus: "running",
+      items: [],
+    } as never);
+    vi.mocked(chatsApi.stopMessageStream).mockImplementationOnce(async (_chatId, request) => {
+      vi.mocked(chatsApi.listQueue).mockResolvedValue({
+        activeGenerationId: null,
+        activeAttemptEpoch: null,
+        activeControlVersion: null,
+        activeGenerationStatus: null,
+        items: [],
+      } as never);
+      vi.mocked(chatsApi.readNativeChatRecovery).mockResolvedValueOnce({
+        executionAuthority: "native_rust",
+        orgId: "org-1",
+        conversationId: "chat-goal-1",
+        recovery: {
+          generationId: "generation-1",
+          runId: "run-1",
+          attemptEpoch: 2,
+          generationStatus: "interrupted_unverified",
+          controlState: "control_lost",
+          cleanupState: "unknown",
+        },
+      });
+      return {
+        stopped: false,
+        disposition: "control_lost",
+        controlActionId: request!.controlActionId,
+        generationId: request!.expectedGenerationId!,
+        idempotent: false,
+      };
+    });
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await waitUntil(() => expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).not.toBeNull());
+
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
+
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-owner-loss-blocked"]')).not.toBeNull());
+    expect(rendered.container.textContent).toContain("Rudder could not confirm it stopped");
+    expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).toBeNull();
+    expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+    expect(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')?.readOnly).toBe(true);
+    expect(rendered.container.textContent).not.toContain("Response stopped.");
+    expect(rendered.container.textContent).not.toContain("Retry message");
+    expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+  });
+
+  it("reopens a held generation from the durable recovery pointer when the legacy queue has no active generation", async () => {
+    vi.mocked(chatsApi.listQueue).mockResolvedValue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [],
+    } as never);
+    vi.mocked(chatsApi.readNativeChatRecovery).mockResolvedValue({
+      executionAuthority: "native_rust",
+      orgId: "org-1",
+      conversationId: "chat-goal-1",
+      recovery: {
+        generationId: "generation-1",
+        runId: "run-1",
+        attemptEpoch: 2,
+        generationStatus: "interrupted_unverified",
+        controlState: "control_lost",
+        cleanupState: "unknown",
+      },
+    });
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-owner-loss-blocked"]')).not.toBeNull());
+
+    expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).toBeNull();
+    expect(rendered.container.querySelector('[aria-label="Continue response"]')).toBeNull();
+    expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+    expect(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')?.readOnly).toBe(true);
+  });
+
+  it("blocks Goal sends when a native recovery pointer cannot be read", async () => {
+    vi.mocked(chatsApi.listQueue).mockResolvedValue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [],
+    } as never);
+    vi.mocked(chatsApi.readNativeChatRecovery).mockRejectedValue(new Error("read failed"));
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.querySelector('[data-testid="goal-chat-recovery-status-unavailable"]')).not.toBeNull());
+
+    expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+    expect(rendered.container.textContent).toContain("Sending is paused");
+  });
+
+  it("blocks immediate Goal chat submission until native recovery status resolves", async () => {
+    const pendingCapabilities = deferred<Awaited<ReturnType<typeof chatsApi.getNativeChatCapabilities>>>();
+    vi.mocked(chatsApi.getNativeChatCapabilities).mockReturnValue(pendingCapabilities.promise);
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(chatsApi.getNativeChatCapabilities).toHaveBeenCalled());
+    expect(rendered.container.querySelector('[data-testid="goal-chat-recovery-status-checking"]')).not.toBeNull();
+    expect(rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled).toBe(true);
+
+    const editor = rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!;
+    change(editor, "Send before the recovery check completes.");
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+
+    expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(chatsApi.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(rendered.container.textContent).toContain("Sending is paused until the check finishes");
+
+    await act(async () => {
+      pendingCapabilities.resolve({
+        executionAuthority: "native_rust",
+        firstSend: true,
+        readTurn: true,
+        nativeControls: true,
+        recoveryRead: true,
+      });
+      await pendingCapabilities.promise;
+    });
+    await waitUntil(() => expect(chatsApi.readNativeChatRecovery).toHaveBeenCalledWith("chat-goal-1", "org-1"));
+  });
+
+  it("retains the legacy Stop route when the Native capability endpoint is absent", async () => {
+    vi.mocked(chatsApi.getNativeChatCapabilities).mockResolvedValue(null);
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { id: "message-user", conversationId: "chat-goal-1", role: "user", body },
+      } as never);
+      await new Promise<void>((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    });
+
+    const rendered = renderPanel();
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
+    change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await waitUntil(() => expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).not.toBeNull());
+    act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
+
+    await waitUntil(() => expect(chatsApi.stopMessageStream).toHaveBeenCalledTimes(1));
+    expect(chatsApi.readNativeChatControl).not.toHaveBeenCalled();
+    expect(chatsApi.stopMessageStream).toHaveBeenCalledWith("chat-goal-1", expect.objectContaining({
+      controlActionId: expect.any(String),
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 3,
+    }));
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Response stopped."));
+  });
+
+  it("repairs an incomplete Goal Stop after reopen only for the original generation and attempt", async () => {
+    const saved = createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-goal-1",
+      request: {
+        controlActionId: "goal-old-stop",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: null,
+    });
+    savePendingChatStopRecovery(saved);
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(chatsApi.stopMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(chatsApi.readNativeChatControl).toHaveBeenCalledWith("chat-goal-1", "org-1", "generation-1");
+    expect(chatsApi.stopMessageStream).toHaveBeenCalledWith("chat-goal-1", {
+      controlActionId: "goal-old-stop",
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 3,
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Response stopped."));
+    expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+  });
+
+  it("drops an incomplete Goal Stop instead of applying it to a replacement run", async () => {
+    savePendingChatStopRecovery(createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-goal-1",
+      request: {
+        controlActionId: "goal-obsolete-stop",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+      },
+      frozenDraft: null,
+    }));
+    vi.mocked(chatsApi.listQueue).mockResolvedValue({
+      activeGenerationId: "generation-2",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 4,
+      activeGenerationStatus: "running",
+      items: [],
+    } as never);
+    vi.mocked(chatsApi.readNativeChatControl).mockResolvedValue({
+      executionAuthority: "native_rust",
+      orgId: "org-1",
+      conversationId: "chat-goal-1",
+      generationId: "generation-2",
+      attemptEpoch: 1,
+      controlVersion: 4,
+      lastClientCheckpointSeq: null,
+      lastClientCheckpointHash: null,
+      lastSequence: 0,
+      runtimeTerminal: false,
+    });
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("The earlier Stop could not be tied to this response."));
+
+    expect(chatsApi.readNativeChatControl).toHaveBeenCalledWith("chat-goal-1", "org-1", "generation-1");
+    expect(chatsApi.stopMessageStream).not.toHaveBeenCalled();
+    expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+    expect(rendered.container.textContent).not.toContain("Response stopped.");
   });
 
   it("keeps Stop disabled until the first Chat acknowledgement supplies a durable target", async () => {
@@ -417,10 +838,12 @@ describe("GoalChatPanel", () => {
         messages: [{ id: "message-assistant", conversationId: "chat-goal-1", role: "assistant", body: "Completed before Stop." }],
       } as never);
     });
-    vi.mocked(chatsApi.stopMessageStream).mockResolvedValueOnce({
+    vi.mocked(chatsApi.stopMessageStream).mockImplementationOnce(async (_chatId, request) => ({
       stopped: false,
       disposition: "completion_committed",
-    } as never);
+      controlActionId: request!.controlActionId,
+      generationId: request!.expectedGenerationId!,
+    }));
 
     const rendered = renderPanel();
     await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
@@ -429,6 +852,8 @@ describe("GoalChatPanel", () => {
     await waitUntil(() => expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).not.toBeNull());
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
 
+    await waitUntil(() => expect(chatsApi.readNativeChatControl).toHaveBeenCalledTimes(1));
+    await waitUntil(() => expect(chatsApi.stopMessageStream).toHaveBeenCalledTimes(1));
     await waitUntil(() => expect(rendered.container.textContent).toContain("Response completed before Stop reached the cutoff."));
     expect(streamSignal?.aborted).toBe(false);
     expect(rendered.container.textContent).not.toContain("Retry message");
@@ -452,6 +877,7 @@ describe("GoalChatPanel", () => {
         stopped: true,
         disposition: "stopping",
         controlActionId: request!.controlActionId,
+        generationId: request!.expectedGenerationId,
       } as never));
 
     const first = renderPanel();
@@ -460,7 +886,7 @@ describe("GoalChatPanel", () => {
     act(() => first.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
     await waitUntil(() => expect(first.container.querySelector('[aria-label="Stop streaming"]')).not.toBeNull());
     act(() => first.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
-    await waitUntil(() => expect(first.container.textContent).toContain("Stop confirmation pending."));
+    await waitUntil(() => expect(first.container.textContent).toContain("Rudder could not confirm that the response stopped."));
     const firstRequest = vi.mocked(chatsApi.stopMessageStream).mock.calls[0]?.[1];
     expect(readPendingChatStopRecovery("org-1", "chat-goal-1")?.request).toEqual(firstRequest);
 
@@ -477,6 +903,7 @@ describe("GoalChatPanel", () => {
   });
 
   it("keeps the stream running when Stop is definitively rejected", async () => {
+    vi.mocked(chatsApi.getNativeChatCapabilities).mockResolvedValue(null);
     let streamSignal: AbortSignal | undefined;
     vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, body, options) => {
       streamSignal = options.signal;
@@ -499,9 +926,45 @@ describe("GoalChatPanel", () => {
     await waitUntil(() => expect(rendered.container.querySelector('[aria-label="Stop streaming"]')).not.toBeNull());
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Stop streaming"]')?.click());
 
-    await waitUntil(() => expect(rendered.container.textContent).toContain("Stop was rejected. control version changed"));
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Rudder did not accept the Stop request."));
+    expect(rendered.container.textContent).not.toContain("control version changed");
     expect(streamSignal?.aborted).toBe(false);
     expect(readPendingChatStopRecovery("org-1", "chat-goal-1")).toBeNull();
+  });
+
+  it.each([
+    ["network", new TypeError("Failed to fetch\u001b[31m internal transport detail")],
+    ["incomplete-fence", new ApiError("complete_stop_fence_required raw detail", 400, { error: "complete_stop_fence_required" })],
+    ["conflict", new ApiError("control version changed private detail", 409, { error: "control version changed" })],
+    ["server", new ApiError("database stack trace private detail", 503, { error: "internal_error" })],
+  ] as const)("keeps a truthful retry state without showing %s diagnostics", async (_label, failure) => {
+    const recovery = createPendingChatStopRecovery({
+      orgId: "org-1",
+      chatId: "chat-goal-1",
+      executionAuthority: "native_rust",
+      request: {
+        controlActionId: "goal-complete-stop",
+        expectedGenerationId: "generation-1",
+        expectedAttemptEpoch: 2,
+        expectedControlVersion: 3,
+        lastCommittedRenderSeq: 0,
+        renderedBodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      },
+      frozenDraft: null,
+    });
+    savePendingChatStopRecovery(recovery);
+    vi.mocked(chatsApi.stopMessageStream).mockRejectedValueOnce(failure);
+
+    const rendered = renderPanel(vi.fn(), { ...target, conversationId: "chat-goal-1" });
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Rudder could not confirm that the response stopped."));
+
+    expect(rendered.container.textContent).not.toContain("complete_stop_fence_required");
+    expect(rendered.container.textContent).not.toContain("control version changed");
+    expect(rendered.container.textContent).not.toContain("database stack trace");
+    expect(rendered.container.textContent).not.toContain("Failed to fetch");
+    expect(rendered.container.textContent).not.toContain("internal transport detail");
+    expect(readPendingChatStopRecovery("org-1", "chat-goal-1")?.request).toEqual(recovery.request);
+    expect(chatsApi.stopMessageStream).toHaveBeenCalledTimes(1);
   });
 
   it("retries the same message after a stream failure", async () => {

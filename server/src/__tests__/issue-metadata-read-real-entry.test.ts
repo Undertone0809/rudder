@@ -137,7 +137,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
       app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
       app.use((req, _res, next) => { if (req.header("x-oracle-missing-user") === "1" && req.actor.type === "board") delete req.actor.userId; next(); });
       if (oracle) app.use("/api", legacyRoutes(db));
-      else { app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected)); }
+      else { app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected, { nativeResourceRoutes: mode === "required" })); }
       app.use(errorHandler); return app;
     }
     oracleServer = app(true).listen(0, "127.0.0.1"); await once(oracleServer, "listening");
@@ -320,7 +320,7 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     for (const url of [`/issues/${ownIssue}/attachments`,`/issues/${ownIssue}/work-products`,`/orgs/${org}/issues/follows`,`/orgs/${org}/intelligence-profiles`]) await pair(url, boardToken);
     expect(await snapshot()).toEqual(before);
   });
-  it.runIf(mode !== "node")("returns503 through the actual public ingress for every selected read on outage", async () => {
+  it.runIf(mode !== "node")("preserves native catalog reads when the private bridge is unavailable", async () => {
     const port = await freePort();
     const unavailable = {
       issueMetadataRead: (actor, orgId, input) => requestIssueMetadataRead(`http://127.0.0.1:${port}`, "synthetic-unavailable-key", 1000, actor, orgId, input),
@@ -331,11 +331,13 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
       server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       const app = express(); if (mode === "required") app.use(nativeIdentity.middleware()); app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
       app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
-      app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected)); app.use(errorHandler);
+      app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected, { nativeResourceRoutes: mode === "required" })); app.use(errorHandler);
       server = app.listen(upstreamPort, "127.0.0.1"); await once(server, "listening");
       const outageTarget = mode === "required" ? target : server;
-      for (const url of [`/issues/${ownIssue}/attachments`,`/issues/${ownIssue}/work-products`,`/orgs/${org}/issues/follows`,`/orgs/${org}/resources`,`/orgs/${org}/intelligence-profiles`])
+      for (const url of [`/issues/${ownIssue}/attachments`,`/issues/${ownIssue}/work-products`,`/orgs/${org}/issues/follows`])
         expect((await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`)).status).toBe(503);
+      for (const url of [`/orgs/${org}/resources`,`/orgs/${org}/intelligence-profiles`])
+        expect((await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`)).status).toBe(mode === "required" ? 200 : 503);
     }
   });
 });

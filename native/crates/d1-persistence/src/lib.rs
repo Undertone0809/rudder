@@ -29,6 +29,7 @@ mod project_creations;
 mod project_deletions;
 pub mod project_library;
 mod project_patches;
+mod project_public_writes;
 pub mod project_reads;
 pub mod request_reads;
 pub mod run_visibility;
@@ -144,6 +145,10 @@ pub enum ResultState {
         response: Value,
         operation: OrganizationResourceOperation,
     },
+    OrganizationResourceCreated {
+        resource_id: String,
+        response: Value,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -163,6 +168,28 @@ pub struct OrganizationResourceCommand {
     pub run_id: Option<String>,
     pub operation: OrganizationResourceOperation,
     pub data: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct OrganizationResourceCreateCommand {
+    pub organization_id: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub idempotency_key: String,
+    pub run_id: Option<String>,
+    pub data: Value,
+}
+
+#[derive(Debug, Error)]
+pub enum PublicOrganizationResourceError {
+    #[error("the current identity is unauthorized")]
+    Unauthorized,
+    #[error("the current identity is forbidden")]
+    Forbidden,
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Catalog(#[from] organization_catalog_reads::OrganizationCatalogReadError),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -239,6 +266,10 @@ pub enum StoreError {
     NotOwned,
     #[error("actor binding or current CEO authority is invalid")]
     Unauthorized,
+    #[error("public identity is no longer authorized")]
+    PublicIdentityUnauthorized,
+    #[error("public identity is forbidden from this organization")]
+    PublicIdentityForbidden,
     #[error("invalid bounded command input")]
     InvalidInput,
     #[error("invalid project resource input")]
@@ -293,6 +324,18 @@ impl MutationStore {
         let result =
             project_creations::apply(&mut tx, command, input, &metadata, provisioner).await;
         transaction::finish(tx, result).await
+    }
+
+    /// Create a Project through the public boundary. Identity is revalidated
+    /// after locking the organization mutation boundary and in the same
+    /// transaction as Project creation, receipt, audit, and ownership state.
+    pub async fn project_create_public(
+        &self,
+        command: ProjectCreateCommand,
+        provisioner: &dyn ProjectCreateProvisioner,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::create(&self.pool, command, provisioner, authorizer).await
     }
 
     /// Read the current organization fence before constructing an opaque
@@ -547,6 +590,16 @@ impl MutationStore {
         transaction::finish(tx, result).await
     }
 
+    /// Apply a public Project patch after atomically claiming a legacy
+    /// Node-owned Project fence when needed.
+    pub async fn project_patch_public(
+        &self,
+        command: ProjectPatchCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::patch(&self.pool, command, authorizer).await
+    }
+
     /// Read the optimistic component context for deletion or a durable replay.
     /// A matching receipt survives the Project fence cascade and takes
     /// precedence over any Project row recreated with the same UUID.
@@ -609,6 +662,27 @@ impl MutationStore {
         transaction::finish(tx, result).await
     }
 
+    /// Delete a public Project, including a matching durable replay after the
+    /// Project row and its component fence have been removed.
+    pub async fn project_delete_public(
+        &self,
+        command: ProjectDeleteCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, StoreError> {
+        project_public_writes::delete(&self.pool, command, authorizer).await
+    }
+
+    /// Read the exact response persisted for a Project resource-attachment
+    /// mutation. This is used only after the public mutation has committed.
+    pub async fn project_resource_attachment_response(
+        &self,
+        organization_id: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        project_public_writes::attachment_response(&self.pool, organization_id, idempotency_key)
+            .await
+    }
+
     /// Apply an organization resource update or delete through its component
     /// ownership fence and persist the resource response as a durable receipt.
     pub async fn organization_resource_mutate(
@@ -616,6 +690,47 @@ impl MutationStore {
         command: OrganizationResourceCommand,
     ) -> Result<CommittedMutation, StoreError> {
         organization_resources::mutate(&self.pool, command).await
+    }
+
+    /// Mutate an organization resource from the direct public Rust ingress.
+    /// Unlike the signed private pilot command above, this path revalidates
+    /// the current public identity in the same transaction and may atomically
+    /// claim a legacy Node-owned resource before changing it.
+    pub async fn organization_resource_mutate_public(
+        &self,
+        command: OrganizationResourceCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, PublicOrganizationResourceError> {
+        organization_resources::mutate_public(&self.pool, command, authorizer).await
+    }
+
+    /// Create or reuse an organization resource through the direct public
+    /// ingress, with identity revalidation, resource ownership, audit, and
+    /// outbox effects committed atomically.
+    pub async fn organization_resource_create_public(
+        &self,
+        command: OrganizationResourceCreateCommand,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<CommittedMutation, PublicOrganizationResourceError> {
+        organization_resources::create_public(&self.pool, command, authorizer).await
+    }
+
+    /// Read the organization catalog under the same repeatable-read snapshot
+    /// used to revalidate the public identity.
+    pub async fn organization_catalog_read_public(
+        &self,
+        organization_id: &str,
+        input: &organization_catalog_reads::OrganizationCatalogReadInput,
+        authorizer: &dyn agent_core::NativeAgentAuthorizer,
+    ) -> Result<String, PublicOrganizationResourceError> {
+        organization_catalog_reads::read_organization_catalog_public(
+            &self.pool,
+            organization_id,
+            input,
+            authorizer,
+        )
+        .await
+        .map_err(PublicOrganizationResourceError::from)
     }
 }
 

@@ -10,6 +10,7 @@ use sqlx::PgPool;
 mod input;
 mod paths;
 mod reconcile;
+mod recovery;
 mod runtime_check;
 mod send;
 pub(super) fn reserved_path(path: &str) -> bool {
@@ -80,6 +81,11 @@ pub(super) fn configure(routes: &mut web::ServiceConfig, send_enabled: bool) {
             web::resource("/api/chats/{chat_id}/messages/stream/control")
                 .app_data(web::PayloadConfig::new(8192))
                 .route(web::get().to(control_state)),
+        )
+        .service(
+            web::resource("/api/chats/{chat_id}/messages/stream/recovery")
+                .app_data(web::PayloadConfig::new(8192))
+                .route(web::get().to(recovery::read)),
         );
 }
 
@@ -100,6 +106,7 @@ async fn capabilities(state: web::Data<IngressState>, request: HttpRequest) -> H
                 && state.foundation.native_chat_worker.is_some(),
             "readTurn": enabled,
             "nativeControls": enabled,
+            "recoveryRead": enabled,
         }))
 }
 
@@ -395,9 +402,9 @@ async fn stop(
         // The D1 operation proves that no claim or provider effect ever existed.
         // A race won by the worker rejects this path and retains normal Stop intent.
         let final_request = control::FinalizeUnclaimedStop {
-            conversation_id: stop_request.conversation_id,
-            generation_id: stop_request.generation_id,
-            control_action_id: stop_request.control_action_id,
+            conversation_id: stop_request.conversation_id.clone(),
+            generation_id: stop_request.generation_id.clone(),
+            control_action_id: stop_request.control_action_id.clone(),
         };
         match control::finalize_unclaimed_stop(&pool, &actor, &final_request).await {
             Ok(finalized) => {
@@ -408,6 +415,11 @@ async fn stop(
                 return result(Ok(response));
             }
             Err(PersistenceError::Http(409, _)) => (),
+            Err(error) => return result::<serde_json::Value>(Err(error)),
+        }
+        match control::recover_expired_claimed_stop(&pool, &actor, &stop_request).await {
+            Ok(Some(recovered)) => return result(Ok(stop_response(recovered))),
+            Ok(None) => (),
             Err(error) => return result::<serde_json::Value>(Err(error)),
         }
     }
@@ -423,6 +435,7 @@ fn stop_response(receipt: control::StopReceipt) -> serde_json::Value {
             "stopping"
         }
         control::StopOutcome::Stopped => "stopped",
+        control::StopOutcome::ControlLost => "control_lost",
         control::StopOutcome::CompletionCommitted => "completion_committed",
         control::StopOutcome::AlreadyTerminal => "no_active_generation",
     };
@@ -708,6 +721,25 @@ mod tests {
         assert_eq!(response["stopped"], true);
         assert_eq!(response["disposition"], "stopped");
         assert_eq!(response["idempotent"], true);
+    }
+
+    #[actix_web::test]
+    async fn control_loss_settles_the_request_without_claiming_provider_exit() {
+        let response = stop_response(control::StopReceipt {
+            control_action_id: "action".into(),
+            generation_id: "generation".into(),
+            outcome: control::StopOutcome::ControlLost,
+            idempotent: false,
+            applied_control_version: None,
+            accepted_through_seq: Some(0),
+            frozen_body_hash: Some(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+            ),
+            input_disposition: None,
+        });
+        assert_eq!(response["stopped"], false);
+        assert_eq!(response["disposition"], "control_lost");
+        assert_eq!(response["idempotent"], false);
     }
 }
 

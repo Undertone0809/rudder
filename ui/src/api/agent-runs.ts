@@ -15,6 +15,9 @@ export interface ActiveRunForIssue extends HeartbeatRun {
 
 export interface LiveRunForIssue {
   id: string;
+  executionAuthority?: HeartbeatRun["executionAuthority"];
+  chatGenerationId?: string | null;
+  chatConversationId?: string | null;
   status: string;
   executionPhase?: HeartbeatRun["executionPhase"];
   invocationSource: string;

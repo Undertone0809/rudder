@@ -86,7 +86,9 @@ export function registerApiRoutes(
   );
   api.use(
     "/orgs",
-    organizationRoutes(db, opts.storageService, workspacePreview, rustFoundationBridge),
+    organizationRoutes(db, opts.storageService, workspacePreview, rustFoundationBridge, {
+      nativeResourceRoutes: Boolean(opts.rustPublicIngress),
+    }),
   );
   api.use("/orgs", aiSearchRoutes(db));
   api.use(organizationSkillRoutes(db));
@@ -98,7 +100,9 @@ export function registerApiRoutes(
   ));
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
-  api.use(projectRoutes(db, rustFoundationBridge));
+  api.use(projectRoutes(db, rustFoundationBridge, {
+    nativeProjectReads: Boolean(opts.rustPublicIngress),
+  }));
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
   }));
