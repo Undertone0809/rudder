@@ -283,7 +283,7 @@ const TRUSTED_GOAL_LEGACY_OWNER_BRIDGE = Object.freeze({
     "server/src/services/chat-agent-runs.ts": Object.freeze({
       record_id: "goal-budget-cross-owner-stop-v1.chat-agent-runs",
       base_sha256: "3020f94518283349fbc231b13bac14775923a385cf3ce98aba689ec9e30ca08f",
-      head_sha256: "d97223451600d68aa5caf7b06f10afa2c5ced6ca62c1e53626e624a85a8a68d4",
+      head_sha256: "113b1e7d3d32078172c379eb432dd88cdedc3f551cf2b5b111f4d710214cf69f",
       base_surfaces: Object.freeze([
         Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then(… [sha256:db9d44c3fc3e87cdc4d35d59e619c61046997d2aa931833b4999761448d3d780]", line: 264 }),
         Object.freeze({ type: "worker_schedule_candidate", signature: "server/src/services/chat-agent-runs.ts|worker-schedule-candidate|setInterval|() => { void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) … [sha256:1b20f031737c5c3a6e0d83b5a10f4ff5edbb3ced489e5103c1a727efe2ad48bf]", line: 316 }),
