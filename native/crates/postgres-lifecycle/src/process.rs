@@ -24,6 +24,9 @@ use tokio::{
     time::{Instant, sleep, timeout},
 };
 
+#[cfg(windows)]
+mod windows_spawn;
+
 pub(crate) struct OwnedPostgresProcess {
     child: Child,
     process_group: u32,
@@ -424,6 +427,8 @@ pub(crate) fn supervised_spawn(command: &mut Command) -> Result<OwnedPostgresPro
     })?;
     #[cfg(windows)]
     let job = ChildJob::assign(&child)?;
+    #[cfg(windows)]
+    windows_spawn::resume_suspended_child(process_group)?;
     Ok(OwnedPostgresProcess {
         child,
         process_group,
@@ -436,6 +441,12 @@ pub(crate) fn supervised_spawn(command: &mut Command) -> Result<OwnedPostgresPro
 }
 
 fn configure_child_process(_command: &mut Command) -> Result<(), OwnerError> {
+    #[cfg(windows)]
+    {
+        // The launcher must not spawn PostgreSQL before its cleanup job owns it.
+        _command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+        _command.kill_on_drop(true);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
