@@ -249,7 +249,7 @@ async fn resolve_claude_config_for_row(
         return Err(invalid("Claude heartbeat policy must be an object"));
     }
 
-    let env = resolve_agent_env(tx, &organization_id, object.get("env")).await?;
+    let env = resolve_agent_env(tx, organization_id, object.get("env")).await?;
     let env_facts: Vec<Value> = env
         .iter()
         .map(|(key, value)| json!({"name":key,"sha256":fingerprint::digest(value.as_bytes())}))
@@ -261,7 +261,7 @@ async fn resolve_claude_config_for_row(
             "SELECT project_id::text AS project_id, project_workspace_id::text AS workspace_id
              FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR SHARE",
         )
-        .bind(&organization_id)
+        .bind(organization_id)
         .bind(issue_id)
         .fetch_optional(&mut **tx)
         .await?
@@ -275,7 +275,7 @@ async fn resolve_claude_config_for_row(
     };
     let workspace = resolve_issue_workspace(
         tx,
-        &organization_id,
+        organization_id,
         issue_id.as_deref(),
         project_id.as_deref(),
         workspace_id.as_deref(),
@@ -294,7 +294,7 @@ async fn resolve_claude_config_for_row(
         host.workspace_home(),
         host.previous_documents_root(),
         host.friendly_workspace_home(),
-        &organization_id,
+        organization_id,
         &agent_row,
     )
     .map_err(|_| invalid("managed Agent workspace is unavailable"))?;
@@ -309,7 +309,7 @@ async fn resolve_claude_config_for_row(
         host.workspace_home(),
         host.previous_documents_root(),
         host.friendly_workspace_home(),
-        &organization_id,
+        organization_id,
         &agent_row,
         host.operator_home(),
         &cwd,

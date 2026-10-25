@@ -1072,6 +1072,7 @@ pub async fn renew_cleanup_lease(
 /// Persist one terminal provider outcome only after the owned Claude process
 /// proved cleanup. Without cleanup evidence the caller must leave the Run
 /// unresolved and retain its execution lease for reconciliation.
+#[allow(clippy::too_many_arguments)] // Keep terminal fields aligned with the owned process receipt.
 pub async fn finalize(
     pool: &PgPool,
     claim: &GoalRunClaim,
@@ -1398,8 +1399,8 @@ pub(crate) async fn request_cancel_in_transaction(
            AND status='running'
          RETURNING agent_id::text AS agent_id",
     )
-    .bind(&organization_id)
-    .bind(&run_id)
+    .bind(organization_id)
+    .bind(run_id)
     .bind(reason)
     .fetch_optional(&mut **tx)
     .await?;
@@ -1415,8 +1416,8 @@ pub(crate) async fn request_cancel_in_transaction(
            'lifecycle','system','warn','run cancellation requested',$4
          ON CONFLICT (run_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING",
     )
-    .bind(&organization_id)
-    .bind(&run_id)
+    .bind(organization_id)
+    .bind(run_id)
     .bind(&agent_id)
     .bind(format!("goal-run-cancel:{run_id}"))
     .execute(&mut **tx)

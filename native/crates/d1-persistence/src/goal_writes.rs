@@ -371,6 +371,7 @@ async fn activate(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // Reuse activation with the existing Start request and owner facts.
 pub(super) async fn activate_goal_start(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     context: &GoalWriteContext<'_>,
@@ -397,6 +398,7 @@ pub(super) async fn activate_goal_start(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // The same transition serves direct activation and atomic Goal Start.
 async fn activate_with_options(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     context: &GoalWriteContext<'_>,
@@ -1096,7 +1098,7 @@ fn require_active_goal(row: &sqlx::postgres::PgRow) -> Result<(), StoreError> {
     let summary: Option<String> = row.try_get("continuation_summary")?;
     if owner.is_none()
         || outcome.as_deref().is_none_or(str::is_empty)
-        || !criteria.as_array().is_some_and(|items| !items.is_empty())
+        || criteria.as_array().is_none_or(Vec::is_empty)
         || plan_revision < 1
         || continuation.is_none()
         || summary.as_deref().is_none_or(str::is_empty)

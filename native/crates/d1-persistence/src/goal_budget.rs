@@ -407,9 +407,11 @@ async fn cancel_pending_native_goal_wakeups(
     org_id: &str,
     policy: &BudgetPolicy,
 ) -> Result<(), GoalBudgetError> {
-    let agent_filter = (policy.scope_type == "agent")
-        .then_some(" AND agent_id=$2::uuid")
-        .unwrap_or("");
+    let agent_filter = if policy.scope_type == "agent" {
+        " AND agent_id=$2::uuid"
+    } else {
+        ""
+    };
     let sql = format!(
         "UPDATE agent_wakeup_requests SET status='cancelled',finished_at=statement_timestamp(),
            error='Cancelled due to budget pause',updated_at=statement_timestamp()
@@ -430,9 +432,11 @@ async fn cancel_active_native_goal_runs(
     event: &GoalCostEventRef<'_>,
     policy: &BudgetPolicy,
 ) -> Result<(), GoalBudgetError> {
-    let agent_filter = (policy.scope_type == "agent")
-        .then_some(" AND agent_id=$2::uuid")
-        .unwrap_or("");
+    let agent_filter = if policy.scope_type == "agent" {
+        " AND agent_id=$2::uuid"
+    } else {
+        ""
+    };
     let sql = format!(
         "SELECT id::text FROM heartbeat_runs WHERE org_id=$1::uuid
            AND execution_authority='native_rust' AND goal_id IS NOT NULL
@@ -461,9 +465,11 @@ async fn cancel_pending_legacy_wakeups(
     org_id: &str,
     policy: &BudgetPolicy,
 ) -> Result<(), GoalBudgetError> {
-    let agent_filter = (policy.scope_type == "agent")
-        .then_some(" AND agent_id=$2::uuid")
-        .unwrap_or("");
+    let agent_filter = if policy.scope_type == "agent" {
+        " AND agent_id=$2::uuid"
+    } else {
+        ""
+    };
     let sql = format!(
         "UPDATE agent_wakeup_requests SET status='cancelled',finished_at=statement_timestamp(),
            error='Cancelled due to budget pause',updated_at=statement_timestamp()
@@ -486,9 +492,11 @@ async fn request_legacy_run_cancellation(
     org_id: &str,
     policy: &BudgetPolicy,
 ) -> Result<(), GoalBudgetError> {
-    let agent_filter = (policy.scope_type == "agent")
-        .then_some(" AND agent_id=$2::uuid")
-        .unwrap_or("");
+    let agent_filter = if policy.scope_type == "agent" {
+        " AND agent_id=$2::uuid"
+    } else {
+        ""
+    };
     let sql = format!(
         "UPDATE heartbeat_runs SET error='Cancelled due to budget pause',
            error_code='cancel_requested',updated_at=statement_timestamp()
@@ -509,9 +517,11 @@ async fn request_native_chat_stops(
     org_id: &str,
     policy: &BudgetPolicy,
 ) -> Result<(), GoalBudgetError> {
-    let agent_filter = (policy.scope_type == "agent")
-        .then_some(" AND agent_id=$2::uuid")
-        .unwrap_or("");
+    let agent_filter = if policy.scope_type == "agent" {
+        " AND agent_id=$2::uuid"
+    } else {
+        ""
+    };
     let sql = format!(
         "SELECT id::text FROM heartbeat_runs WHERE org_id=$1::uuid
            AND execution_authority='native_rust' AND chat_generation_id IS NOT NULL

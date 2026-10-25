@@ -94,7 +94,7 @@ pub async fn resolve_native_goal_run_cancel_target(
                 *allowed
             } else {
                 let allowed = matches!(
-                    authorizer.revalidate(&mut *tx, &organization_id).await?,
+                    authorizer.revalidate(&mut tx, &organization_id).await?,
                     NativeAgentAccess::Authorized
                 );
                 org_access.insert(organization_id, allowed);
@@ -211,7 +211,7 @@ async fn request_in_transaction(
     .await?
     .ok_or(NativeGoalRunCancelError::NotFound)?;
 
-    match authorizer.revalidate(&mut **tx, organization_id).await? {
+    match authorizer.revalidate(tx, organization_id).await? {
         NativeAgentAccess::Authorized => {}
         NativeAgentAccess::Unauthorized => return Err(NativeGoalRunCancelError::Unauthorized),
         NativeAgentAccess::Forbidden => return Err(NativeGoalRunCancelError::Forbidden),
