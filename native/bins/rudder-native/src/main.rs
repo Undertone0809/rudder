@@ -16,6 +16,7 @@ use rudder_workspace_manifest_core::{
     read_file, watch_workspace,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -599,6 +600,24 @@ fn handle_metadata_args() -> bool {
 
 fn main() {
     if handle_metadata_args() {
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("mcp-server") {
+        if std::env::args().nth(2).is_some() {
+            eprintln!("rudder-native: mcp-server does not accept command arguments");
+            std::process::exit(2);
+        }
+        let environment = std::env::vars().collect::<BTreeMap<_, _>>();
+        if rudder_agent_cli_core::run_mcp_server(
+            io::stdin().lock(),
+            io::stdout().lock(),
+            &environment,
+        )
+        .is_err()
+        {
+            eprintln!("rudder-native: MCP transport failed");
+            std::process::exit(2);
+        }
         return;
     }
     match run() {

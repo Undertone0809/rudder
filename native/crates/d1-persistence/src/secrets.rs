@@ -10,7 +10,7 @@ use base64::{Engine as _, engine::general_purpose};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use std::{env, fs, fs::OpenOptions, io::Write, path::PathBuf};
 use uuid::Uuid;
 
@@ -332,6 +332,72 @@ pub(crate) fn decrypt_runtime_secret(material: &Value, expected_sha256: &str) ->
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     (actual == expected_sha256).then_some(value)
+}
+
+/// Resolve a persisted secret reference for an in-process native workflow.
+/// Only the existing local-encrypted provider can be materialized here;
+/// external providers remain governed by their configured provider adapter.
+pub(crate) async fn resolve_local_runtime_secret_reference(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    binding: &Value,
+) -> Result<Option<String>, SecretsError> {
+    let Some(secret_id) = binding.get("secretId").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let (latest, version) = match binding.get("version") {
+        None => (true, 0),
+        Some(Value::String(value)) if value == "latest" => (true, 0),
+        Some(Value::Number(value)) => {
+            let Some(version) = value
+                .as_u64()
+                .and_then(|version| i32::try_from(version).ok())
+                .filter(|version| *version > 0)
+            else {
+                return Ok(None);
+            };
+            (false, version)
+        }
+        _ => return Ok(None),
+    };
+    let row = sqlx::query(
+        "SELECT s.provider,s.purpose,v.material::text AS material,v.value_sha256,
+                v.revoked_at IS NOT NULL AS revoked
+         FROM organization_secrets s
+         JOIN organization_secret_versions v ON v.secret_id=s.id
+         WHERE s.org_id=$1::uuid AND s.id=$2::uuid
+           AND v.version=CASE WHEN $3::boolean THEN s.latest_version ELSE $4::integer END
+         FOR SHARE OF s,v",
+    )
+    .bind(org_id)
+    .bind(secret_id)
+    .bind(latest)
+    .bind(version)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let provider: String = row.try_get("provider")?;
+    if provider != "local_encrypted" {
+        return Err(http(
+            422,
+            format!("{provider} provider is not configured in this deployment"),
+        ));
+    }
+    if row.try_get::<String, _>("purpose")? != "user_managed"
+        || row.try_get::<bool, _>("revoked")?
+    {
+        return Ok(None);
+    }
+    let material = row
+        .try_get::<String, _>("material")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok());
+    let hash = row.try_get::<String, _>("value_sha256").ok();
+    Ok(material
+        .zip(hash)
+        .and_then(|(material, hash)| decrypt_runtime_secret(&material, &hash)))
 }
 
 fn provider_list() -> Value {

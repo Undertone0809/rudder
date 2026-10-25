@@ -164,5 +164,6 @@ fn method_name(method: HttpMethod) -> &'static str {
         HttpMethod::Get => "GET",
         HttpMethod::Post => "POST",
         HttpMethod::Patch => "PATCH",
+        HttpMethod::Delete => "DELETE",
     }
 }
