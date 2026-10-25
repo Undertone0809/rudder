@@ -18,9 +18,11 @@ use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
+mod approval_reads;
 mod browser_session;
 mod cli_auth;
 mod email_auth;
+mod goal_writes;
 mod native_chat;
 mod organization_resources;
 mod project_reads;
@@ -347,7 +349,11 @@ impl PublicIngressRuntime {
                     "/api/orgs/{org_id}/runtime-bindings/{binding_id}",
                     web::get().to(runtime_bindings::historical),
                 )
-                .route("/api/orgs/{org_id}/goals", web::get().to(goal_collection))
+                .service(
+                    web::resource("/api/orgs/{org_id}/goals")
+                        .route(web::get().to(goal_collection))
+                        .route(web::post().to(goal_writes::create)),
+                )
                 .route(
                     "/api/orgs/{org_id}/goals/workspace",
                     web::get().to(goal_workspace_collection),
@@ -367,6 +373,36 @@ impl PublicIngressRuntime {
                     web::route()
                         .guard(guard::Any(guard::Get()).or(guard::Head()))
                         .to(project_reads::detail),
+                )
+                .route(
+                    "/api/orgs/{org_id}/approvals",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(approval_reads::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(approval_reads::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/issues",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(approval_reads::dispatch_alias),
+                )
+                .route(
+                    "/api/issues/{issue_id}/approvals",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(approval_reads::dispatch_alias),
+                )
+                .route(
+                    "/api/orgs/{org_id}/labels",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()))
+                        .to(approval_reads::dispatch_alias),
                 )
                 .route(
                     "/llms/agent-configuration.txt",
@@ -469,6 +505,11 @@ fn public_ingress_startup_receipt(
         "/api/orgs/:org_id/resources",
         "/api/orgs/:org_id/resources/:resource_id",
         "/api/orgs/:org_id/intelligence-profiles",
+        "/api/orgs/:org_id/approvals",
+        "/api/approvals/:approval_id",
+        "/api/approvals/:approval_id/issues",
+        "/api/issues/:issue_id/approvals",
+        "/api/orgs/:org_id/labels",
     ];
     if native_identity_enabled {
         direct_routes.extend([
@@ -645,8 +686,14 @@ async fn proxy_request(
     if project_reads::is_reserved_path(request.uri().path(), request.method()) {
         return project_reads::dispatch_alias(state, request, payload).await;
     }
+    if approval_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return approval_reads::dispatch_alias(state, request, payload).await;
+    }
     if project_writes::is_reserved_path(request.uri().path()) {
         return project_writes::dispatch_alias(state, request, payload).await;
+    }
+    if goal_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return goal_writes::dispatch_alias(state, request, payload).await;
     }
     if agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()
@@ -716,6 +763,7 @@ async fn proxy_request(
         || cli_auth::reserved_path(request.uri().path())
         || organization_resources::reserved_path(request.uri().path())
         || project_writes::is_reserved_path(request.uri().path())
+        || goal_writes::is_reserved_path(request.uri().path(), request.method())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()
@@ -2415,7 +2463,12 @@ mod tests {
                 "/api/orgs/:org_id/goals/assigned",
                 "/api/orgs/:org_id/resources",
                 "/api/orgs/:org_id/resources/:resource_id",
-                "/api/orgs/:org_id/intelligence-profiles"
+                "/api/orgs/:org_id/intelligence-profiles",
+                "/api/orgs/:org_id/approvals",
+                "/api/approvals/:approval_id",
+                "/api/approvals/:approval_id/issues",
+                "/api/issues/:issue_id/approvals",
+                "/api/orgs/:org_id/labels"
             ])
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
@@ -2448,6 +2501,11 @@ mod tests {
                 "/api/orgs/:org_id/resources",
                 "/api/orgs/:org_id/resources/:resource_id",
                 "/api/orgs/:org_id/intelligence-profiles",
+                "/api/orgs/:org_id/approvals",
+                "/api/approvals/:approval_id",
+                "/api/approvals/:approval_id/issues",
+                "/api/issues/:issue_id/approvals",
+                "/api/orgs/:org_id/labels",
                 "/api/orgs/:org_id/agents",
                 "/api/agents/:agent_id/permissions",
                 "/api/orgs/:org_id/agent-configurations",

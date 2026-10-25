@@ -42,8 +42,13 @@ import { goalService, heartbeatService, logActivity } from "../services/index.js
 import type { RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
+export function goalRoutes(
+  db: Db,
+  rustFoundationBridge?: RustFoundationBridge,
+  options: { nativeGoalWrites?: boolean } = {},
+) {
   const router = Router();
+  const legacyGoalWriteRoutes = options.nativeGoalWrites ? undefined : router;
   const svc = goalService(db);
   const heartbeat = heartbeatService(db);
 
@@ -295,7 +300,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.status(result.dispatch ? 201 : 200).json(publicGoalCheckpoint(result.checkpoint));
   });
 
-  router.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertBoard(req);
     assertCompanyAccess(req, orgId);
@@ -347,7 +352,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.status(replayed ? 200 : 201).json(publicGoalView(goal));
   });
 
-  router.patch("/goals/:id", validate(updateGoalSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.patch("/goals/:id", validate(updateGoalSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
@@ -370,7 +375,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.json(publicGoalView(goal));
   });
 
-  router.post("/goals/:id/activate", validate(activateGoalSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/goals/:id/activate", validate(activateGoalSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
@@ -393,7 +398,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.json(publicGoalDetail(await svc.detail(id)));
   });
 
-  router.post("/goals/:id/plan", validate(updateGoalPlanSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/goals/:id/plan", validate(updateGoalPlanSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
@@ -416,7 +421,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.status(201).json(publicGoalPlan(plan));
   });
 
-  router.post("/goals/:id/activities", validate(createGoalActivitySchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/goals/:id/activities", validate(createGoalActivitySchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await loadAuthorizedGoal(req, id);
     if (!existing) {
@@ -598,7 +603,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.json(publicGoalResultProposal(proposal));
   });
 
-  router.post("/goals/:id/owner", validate(assignGoalOwnerSchema), async (req, res) => {
+  legacyGoalWriteRoutes?.post("/goals/:id/owner", validate(assignGoalOwnerSchema), async (req, res) => {
     const id = req.params.id as string;
     assertBoard(req);
     const existing = await loadAuthorizedGoal(req, id);
@@ -670,7 +675,7 @@ export function goalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) 
     res.json(publicGoalView(goal));
   });
 
-  router.delete("/goals/:id", async (req, res) => {
+  legacyGoalWriteRoutes?.delete("/goals/:id", async (req, res) => {
     const id = req.params.id as string;
     assertBoard(req);
     const existing = await loadAuthorizedGoal(req, id);

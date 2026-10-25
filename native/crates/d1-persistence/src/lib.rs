@@ -17,6 +17,7 @@ pub mod calendar;
 pub mod cost_reads;
 pub mod goal_reads;
 mod goal_sets;
+pub mod goal_writes;
 pub mod issue_checkout;
 pub mod issue_metadata_reads;
 pub mod legacy_read_json;
@@ -270,6 +271,10 @@ pub enum StoreError {
     PublicIdentityUnauthorized,
     #[error("public identity is forbidden from this organization")]
     PublicIdentityForbidden,
+    #[error("Goal command conflicts with current Goal state")]
+    GoalConflict,
+    #[error("actor is not allowed to perform this Goal command")]
+    GoalForbidden,
     #[error("invalid bounded command input")]
     InvalidInput,
     #[error("invalid project resource input")]

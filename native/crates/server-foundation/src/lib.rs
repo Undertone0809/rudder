@@ -1220,6 +1220,8 @@ impl AppState {
         let (status, reason) = match error {
             StoreError::NotFound => (StatusCode::NOT_FOUND, "mutation_target_not_found"),
             StoreError::NotOwned => (StatusCode::CONFLICT, "mutation_not_owned"),
+            StoreError::GoalConflict => (StatusCode::CONFLICT, "goal_conflict"),
+            StoreError::GoalForbidden => (StatusCode::FORBIDDEN, "goal_forbidden"),
             StoreError::Unauthorized => (StatusCode::FORBIDDEN, "mutation_unauthorized"),
             StoreError::PublicIdentityUnauthorized => {
                 (StatusCode::UNAUTHORIZED, "mutation_identity_unauthorized")

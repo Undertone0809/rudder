@@ -62,7 +62,16 @@ function isOrganizationBrandingChatOperationApproval(approval: {
         || Object.prototype.hasOwnProperty.call(patch, "logoAssetId")));
 }
 
-export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
+export interface ApprovalRouteOptions {
+  /** Rust's public listener owns the migrated read-only Approval endpoints. */
+  nativeApprovalReads?: boolean;
+}
+
+export function approvalRoutes(
+  db: Db,
+  rustFoundationBridge?: RustFoundationBridge,
+  options: ApprovalRouteOptions = {},
+) {
   const router = Router();
   const svc = approvalService(db);
   const access = accessService(db);
@@ -169,22 +178,26 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     );
   }
 
-  router.get("/orgs/:orgId/approvals", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", status: approvalStatusQuery(req.query.status) }, db);
-  });
+  if (!options.nativeApprovalReads) {
+    router.get("/orgs/:orgId/approvals", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await sendApprovalRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", status: approvalStatusQuery(req.query.status) }, db);
+    });
+  }
 
-  router.get("/approvals/:id", async (req, res) => {
-    const id = req.params.id as string;
-    const approval = await approvalReadIdentity(db, "approval", id);
-    if (!approval) {
-      res.status(404).json({ error: "Approval not found" });
-      return;
-    }
-    assertCompanyAccess(req, approval.orgId);
-    await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "detail", targetId: approval.id }, db);
-  });
+  if (!options.nativeApprovalReads) {
+    router.get("/approvals/:id", async (req, res) => {
+      const id = req.params.id as string;
+      const approval = await approvalReadIdentity(db, "approval", id);
+      if (!approval) {
+        res.status(404).json({ error: "Approval not found" });
+        return;
+      }
+      assertCompanyAccess(req, approval.orgId);
+      await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "detail", targetId: approval.id }, db);
+    });
+  }
 
   router.post("/orgs/:orgId/approvals", validate(createApprovalSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -255,16 +268,18 @@ export function approvalRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     res.status(201).json(redactApprovalPayload(approval));
   });
 
-  router.get("/approvals/:id/issues", async (req, res) => {
-    const id = req.params.id as string;
-    const approval = await approvalReadIdentity(db, "approval", id);
-    if (!approval) {
-      res.status(404).json({ error: "Approval not found" });
-      return;
-    }
-    assertCompanyAccess(req, approval.orgId);
-    await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "issues", targetId: approval.id }, db);
-  });
+  if (!options.nativeApprovalReads) {
+    router.get("/approvals/:id/issues", async (req, res) => {
+      const id = req.params.id as string;
+      const approval = await approvalReadIdentity(db, "approval", id);
+      if (!approval) {
+        res.status(404).json({ error: "Approval not found" });
+        return;
+      }
+      assertCompanyAccess(req, approval.orgId);
+      await sendApprovalRead(res, rustFoundationBridge, req.actor, approval.orgId, { operation: "issues", targetId: approval.id }, db);
+    });
+  }
 
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
