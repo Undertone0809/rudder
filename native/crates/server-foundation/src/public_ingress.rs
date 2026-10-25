@@ -21,6 +21,7 @@ mod agent_core;
 mod browser_session;
 mod cli_auth;
 mod email_auth;
+mod goal_writes;
 mod native_chat;
 mod organization_resources;
 mod project_reads;
@@ -347,7 +348,11 @@ impl PublicIngressRuntime {
                     "/api/orgs/{org_id}/runtime-bindings/{binding_id}",
                     web::get().to(runtime_bindings::historical),
                 )
-                .route("/api/orgs/{org_id}/goals", web::get().to(goal_collection))
+                .service(
+                    web::resource("/api/orgs/{org_id}/goals")
+                        .route(web::get().to(goal_collection))
+                        .route(web::post().to(goal_writes::create)),
+                )
                 .route(
                     "/api/orgs/{org_id}/goals/workspace",
                     web::get().to(goal_workspace_collection),
@@ -648,6 +653,9 @@ async fn proxy_request(
     if project_writes::is_reserved_path(request.uri().path()) {
         return project_writes::dispatch_alias(state, request, payload).await;
     }
+    if goal_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return goal_writes::dispatch_alias(state, request, payload).await;
+    }
     if agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()
             && agent_core::is_reserved_path(request.uri().path(), request.method()))
@@ -716,6 +724,7 @@ async fn proxy_request(
         || cli_auth::reserved_path(request.uri().path())
         || organization_resources::reserved_path(request.uri().path())
         || project_writes::is_reserved_path(request.uri().path())
+        || goal_writes::is_reserved_path(request.uri().path(), request.method())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())
         || (state.config.native_chat_mutations.is_some()

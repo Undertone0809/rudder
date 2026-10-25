@@ -134,7 +134,9 @@ export function registerApiRoutes(
     },
     hostEnv: opts.mcpHostEnv ?? process.env,
   }));
-  api.use(goalRoutes(db, rustFoundationBridge));
+  api.use(goalRoutes(db, rustFoundationBridge, {
+    nativeGoalWrites: Boolean(opts.rustPublicIngress),
+  }));
   api.use(approvalRoutes(db, rustFoundationBridge));
   api.use(requestRoutes(db, rustFoundationBridge));
   api.use(secretRoutes(db, rustFoundationBridge));

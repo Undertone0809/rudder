@@ -26,13 +26,24 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { goalRoutes } from "../routes/goals.js";
 import { goalService, publicGoalActivity, publicGoalCheckpoint, publicGoalDetail, publicGoalView } from "../services/goals.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
+
+// The fixture exercises Goal reads through the actual service plus Rust writes.
+// Avoid loading unrelated service integrations and their optional packages.
+vi.mock("../services/index.js", async () => {
+  const { goalService } = await import("../services/goals.js");
+  return {
+    goalService,
+    heartbeatService: () => ({ wakeup: vi.fn(), resumePendingWakeupRequests: vi.fn() }),
+    logActivity: vi.fn(),
+  };
+});
 
 // Requires the exact candidate's built binary, never a fake HTTP fixture.
 // cargo build --locked --manifest-path native/Cargo.toml -p rudder-server-foundation --bin rudder-server-foundation
@@ -48,6 +59,8 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
   let db: ReturnType<typeof createDb>;
   let database: { initialise(): Promise<void>; start(): Promise<void>; stop(): Promise<void> };
   let root = ""; let fixtureBinary = ""; let bridge: RustFoundationBridge; let server: Server; let target: Server | string;
+  let nodeGoalWriteRequests = 0;
+  const postgresErrors: string[] = [];
   const orgId = randomUUID(); const foreignOrg = randomUUID(); const goalId = randomUUID(); const foreignGoal = randomUUID();
   const activeEmptyId = randomUUID(); const cardRunGoalId = randomUUID(); const cardProposalGoalId = randomUUID(); const childId = randomUUID(); const agentId = randomUUID(); const nonOwnerAgentId = randomUUID(); const foreignAgent = randomUUID(); const projectId = randomUUID();
   const runningRunId = randomUUID(); const failedRunId = randomUUID(); const wakeupId = randomUUID();
@@ -61,7 +74,7 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
   let baseline: Record<string, unknown>;
   async function snapshot() {
     const result: Record<string, unknown> = {};
-    for (const table of ["goals", "goal_activities", "goal_plans", "goal_owner_assignments", "goal_checkpoints", "agent_wakeup_requests", "heartbeat_runs", "chat_conversations", "goal_feedback_entries", "goal_change_proposals", "goal_result_proposals", "organization_mutation_state", "organization_mutation_receipts", "activity_log"]) {
+    for (const table of ["goals", "goal_activities", "goal_plans", "goal_owner_assignments", "goal_checkpoints", "agent_wakeup_requests", "heartbeat_runs", "chat_conversations", "goal_feedback_entries", "goal_change_proposals", "goal_result_proposals", "organization_mutation_state", "organization_mutation_receipts", "organization_mutation_outbox", "activity_log"]) {
       result[table] = (await db.execute(sql.raw(`SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text AS value FROM "${table}" t`)))[0]?.value;
     }
     return result;
@@ -90,7 +103,7 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-goal-read-entry-"));
     const dbPort = await port();
     const EmbeddedPostgres = (await import("embedded-postgres")).default;
-    database = new EmbeddedPostgres({ databaseDir: root, user: "rudder", password: "rudder", port: dbPort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-c", "unix_socket_directories=", "-c", "dynamic_shared_memory_type=mmap"], onLog: () => {}, onError: () => {} });
+    database = new EmbeddedPostgres({ databaseDir: root, user: "rudder", password: "rudder", port: dbPort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-c", "unix_socket_directories=", "-c", "dynamic_shared_memory_type=mmap"], onLog: (line) => { if (/\b(?:ERROR|FATAL|PANIC)\b/.test(String(line))) postgresErrors.push(String(line).slice(-1_000)); }, onError: () => {} });
     await database.initialise(); await database.start();
     await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${dbPort}/postgres`, "rudder");
     const url = `postgres://rudder:rudder@127.0.0.1:${dbPort}/rudder`;
@@ -266,8 +279,23 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     bridge = createRustFoundationBridge({ databaseUrl: url, binaryPath: fixtureBinary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10_000, ...(ingress === "required" ? { publicIngress: { identityAuth: nativeIdentity.identityAuth, listenAddr: "127.0.0.1:0", nodeUpstream: `http://127.0.0.1:${nodePort}`, authorizationKey: "goal-read-synthetic-ingress-authorization-key" } } : {}) });
     const app = express(); if (ingress === "required") app.use(nativeIdentity.middleware()); app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+    if (ingress === "required") {
+      app.use("/api", (req, res, next) => {
+        const route = req.path.toLowerCase().replace(/\/+$/, "");
+        const directGoalWrite = (req.method === "POST" && (
+          /^\/orgs\/[^/]+\/goals$/.test(route)
+          || /^\/goals\/[^/]+\/(activate|plan|activities|owner)$/.test(route)
+        )) || ((req.method === "PATCH" || req.method === "DELETE") && /^\/goals\/[^/]+$/.test(route));
+        if (!directGoalWrite) {
+          next();
+          return;
+        }
+        nodeGoalWriteRequests += 1;
+        res.status(599).json({ error: "Native Goal write reached the Node fixture" });
+      });
+    }
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
-    app.use("/api", goalRoutes(db, bridge)); app.use(errorHandler);
+    app.use("/api", goalRoutes(db, bridge, { nativeGoalWrites: ingress === "required" })); app.use(errorHandler);
     server = app.listen(nodePort, "127.0.0.1"); await once(server, "listening");
     await bridge.start(); target = server;
     if (ingress === "required") { await bridge.waitForPublicIngressReady!(); target = bridge.publicIngressBaseUrl!; }
@@ -414,6 +442,177 @@ describe.each(["off", "required"] as const)("Goal reads through public HTTP, rea
     }
     expect(await snapshot()).toEqual(baseline);
   });
+  const publicGoalWriteTest = ingress === "required" ? it : it.skip;
+  publicGoalWriteTest("creates, edits, activates, plans, records activity and deletes Goals through Rust without Node write fallback", async () => {
+    const draftTitle = `Native Goal draft ${randomUUID()}`;
+    const updatedDraftTitle = `${draftTitle} updated`;
+    const lifecycleTitle = `Native Goal lifecycle ${randomUUID()}`;
+    const ownedGoalIds: string[] = [];
+    nodeGoalWriteRequests = 0;
+    try {
+      const invalidUpdate = await request(target)
+        .patch(`/api/goals/${goalId}`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ title: "Should not persist", unexpected: true });
+      expect(invalidUpdate.status, JSON.stringify(invalidUpdate.body)).toBe(400);
+      expect(await snapshot()).toEqual(baseline);
+      const wakeupsBefore = (await db.select({ id: agentWakeupRequests.id }).from(agentWakeupRequests).where(eq(agentWakeupRequests.orgId, orgId)))
+        .map((row) => row.id).sort();
+
+      const draft = await request(target)
+        .post(`/api/orgs/${orgId}/goals`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ title: ` ${draftTitle} `, description: "Before edit" });
+      expect(draft.status, JSON.stringify(draft.body)).toBe(201);
+      expect(draft.body).toMatchObject({ orgId, title: draftTitle, lifecycle: "draft" });
+      const draftId = draft.body.id as string;
+      ownedGoalIds.push(draftId);
+
+      const updatedDraft = await request(target)
+        .patch(`/api/goals/${draftId}`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ title: updatedDraftTitle, description: "After edit" });
+      expect(updatedDraft.status, JSON.stringify(updatedDraft.body)).toBe(200);
+      expect(updatedDraft.body).toMatchObject({ id: draftId, title: updatedDraftTitle, description: "After edit" });
+
+      const deletedDraft = await request(target)
+        .delete(`/api/goals/${draftId}`)
+        .set("authorization", `Bearer ${boardToken}`);
+      expect(deletedDraft.status, JSON.stringify(deletedDraft.body)).toBe(200);
+      expect(deletedDraft.body).toMatchObject({ id: draftId, lifecycle: "draft" });
+      expect((await get(`/api/goals/${draftId}`, boardToken)).status).toBe(404);
+
+      const created = await request(target)
+        .post(`/api/orgs/${orgId}/goals`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ title: lifecycleTitle, description: "Public Rust Goal workflow", ownerAgentId: agentId });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      expect(created.body).toMatchObject({ orgId, title: lifecycleTitle, lifecycle: "draft", ownerAgentId: agentId });
+      const lifecycleGoalId = created.body.id as string;
+      ownedGoalIds.push(lifecycleGoalId);
+
+      const updated = await request(target)
+        .patch(`/api/goals/${lifecycleGoalId}`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ description: "Edited before activation" });
+      expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+      expect(updated.body.description).toBe("Edited before activation");
+
+      const activated = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/activate`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({
+          confirmed: true,
+          ownerAgentId: agentId,
+          outcomeStatement: "Complete the public Goal workflow",
+          objectiveMode: "target",
+          criteria: [{ id: "completed", label: "A persisted public update exists", evaluator: "human" }],
+          initialContinuation: { kind: "wait", summary: "Wait for a public workflow update" },
+          initialPlan: { summary: "Record the initial plan" },
+        });
+      expect(activated.status, JSON.stringify(activated.body)).toBe(200);
+      expect(activated.body).toMatchObject({ id: lifecycleGoalId, lifecycle: "active", ownerAgentId: agentId });
+      expect((await request(target)
+        .delete(`/api/goals/${lifecycleGoalId}`)
+        .set("authorization", `Bearer ${boardToken}`)).status).toBe(409);
+
+      const beforeRejectedActivity = await db.execute(sql`SELECT count(*)::int AS count FROM goal_activities WHERE org_id=${orgId}::uuid AND goal_id=${lifecycleGoalId}::uuid`);
+      const beforeRejectedAudit = await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${lifecycleGoalId}`);
+      const beforeRejectedOutbox = await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox o JOIN activity_log a ON a.org_id=o.org_id AND a.id=o.activity_id WHERE a.org_id=${orgId}::uuid AND a.entity_type='goal' AND a.entity_id=${lifecycleGoalId}`);
+      const wrongGoalRun = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/activities`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ summary: "Wrong Goal run reference", activityKind: "progress", runRef: runningRunId });
+      expect(wrongGoalRun.status).toBe(422);
+      const invalidEvidence = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/activities`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ summary: "Invalid evidence must roll back", activityKind: "progress", evidenceRefs: ["not-a-uri"] });
+      expect(invalidEvidence.status).toBe(422);
+      const afterRejectedActivity = await db.execute(sql`SELECT count(*)::int AS count FROM goal_activities WHERE org_id=${orgId}::uuid AND goal_id=${lifecycleGoalId}::uuid`);
+      expect(afterRejectedActivity[0]?.count).toBe(beforeRejectedActivity[0]?.count);
+      const afterRejectedAudit = await db.execute(sql`SELECT count(*)::int AS count FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${lifecycleGoalId}`);
+      expect(afterRejectedAudit[0]?.count).toBe(beforeRejectedAudit[0]?.count);
+      const afterRejectedOutbox = await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox o JOIN activity_log a ON a.org_id=o.org_id AND a.id=o.activity_id WHERE a.org_id=${orgId}::uuid AND a.entity_type='goal' AND a.entity_id=${lifecycleGoalId}`);
+      expect(afterRejectedOutbox[0]?.count).toBe(beforeRejectedOutbox[0]?.count);
+
+      const planned = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/plan`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ summary: "Revised plan from the public Rust route" });
+      expect(planned.status, JSON.stringify(planned.body)).toBe(201);
+      expect(planned.body).toMatchObject({ goalId: lifecycleGoalId, revision: 2, summary: "Revised plan from the public Rust route" });
+
+      const reassigned = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/owner`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send({ agentId: nonOwnerAgentId, authorityRef: "public-goal-test" });
+      expect(reassigned.status, JSON.stringify(reassigned.body)).toBe(200);
+      expect(reassigned.body).toMatchObject({ goalId: lifecycleGoalId, agentId: nonOwnerAgentId });
+
+      const activityPayload = { summary: "Persisted through native public ingress", activityKind: "progress", evidenceRefs: ["issue://GOAL-1"], idempotencyKey: "goal-write-activity-replay" };
+      const activity = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/activities`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send(activityPayload);
+      expect(activity.status, `${JSON.stringify(activity.body)}\n${postgresErrors.slice(-8).join("\n")}`).toBe(201);
+      expect(activity.body).toMatchObject({ goalId: lifecycleGoalId, summary: "Persisted through native public ingress", activityKind: "progress" });
+
+      const activityCountsBeforeReplay = await db.execute(sql`SELECT
+        (SELECT count(*)::int FROM goal_activities WHERE org_id=${orgId}::uuid AND goal_id=${lifecycleGoalId}::uuid) AS activity_count,
+        (SELECT count(*)::int FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${lifecycleGoalId} AND action='goal.activity_added') AS audit_count,
+        (SELECT count(*)::int FROM organization_mutation_outbox o JOIN activity_log a ON a.org_id=o.org_id AND a.id=o.activity_id WHERE a.org_id=${orgId}::uuid AND a.entity_type='goal' AND a.entity_id=${lifecycleGoalId} AND a.action='goal.activity_added') AS outbox_count`);
+      const replayedActivity = await request(target)
+        .post(`/api/goals/${lifecycleGoalId}/activities`)
+        .set("authorization", `Bearer ${boardToken}`)
+        .send(activityPayload);
+      expect(replayedActivity.status, JSON.stringify(replayedActivity.body)).toBe(201);
+      expect(replayedActivity.body.id).toBe(activity.body.id);
+      const activityCountsAfterReplay = await db.execute(sql`SELECT
+        (SELECT count(*)::int FROM goal_activities WHERE org_id=${orgId}::uuid AND goal_id=${lifecycleGoalId}::uuid) AS activity_count,
+        (SELECT count(*)::int FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${lifecycleGoalId} AND action='goal.activity_added') AS audit_count,
+        (SELECT count(*)::int FROM organization_mutation_outbox o JOIN activity_log a ON a.org_id=o.org_id AND a.id=o.activity_id WHERE a.org_id=${orgId}::uuid AND a.entity_type='goal' AND a.entity_id=${lifecycleGoalId} AND a.action='goal.activity_added') AS outbox_count`);
+      expect(activityCountsAfterReplay).toEqual(activityCountsBeforeReplay);
+
+      const detail = await get(`/api/goals/${lifecycleGoalId}`, boardToken);
+      expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+      expect(detail.body.ownerAgentId).toBe(nonOwnerAgentId);
+      expect(detail.body.plan).toMatchObject({ revision: 2, summary: "Revised plan from the public Rust route" });
+      expect(detail.body.activities.some((entry: { summary: string }) => entry.summary === "Persisted through native public ingress")).toBe(true);
+      const foreignUpdate = await request(target)
+        .patch(`/api/goals/${lifecycleGoalId}`)
+        .set("authorization", `Bearer ${foreignToken}`)
+        .send({ title: "Cross-organization write" });
+      expect(foreignUpdate.status).toBe(403);
+      expect((await get(`/api/goals/${lifecycleGoalId}`, boardToken)).body.title).toBe(lifecycleTitle);
+      const actions = await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${lifecycleGoalId}`);
+      expect(actions.map((row) => row.action)).toEqual(expect.arrayContaining([
+        "goal.created", "goal.updated", "goal.activated", "goal.plan_updated", "goal.owner_reassigned", "goal.activity_added",
+      ]));
+      const outboxActions = await db.execute(sql`SELECT a.action,o.event_type FROM organization_mutation_outbox o JOIN activity_log a ON a.org_id=o.org_id AND a.id=o.activity_id WHERE a.org_id=${orgId}::uuid AND a.entity_type='goal' AND a.entity_id=${lifecycleGoalId}`);
+      expect(outboxActions.map((row) => `${row.action}:${row.event_type}`)).toEqual(expect.arrayContaining([
+        "goal.created:activity.logged", "goal.updated:activity.logged", "goal.activated:activity.logged",
+        "goal.plan_updated:activity.logged", "goal.owner_reassigned:activity.logged", "goal.activity_added:activity.logged",
+      ]));
+      const retryDelete = await request(target)
+        .delete(`/api/goals/${draftId}`)
+        .set("authorization", `Bearer ${boardToken}`);
+      expect(retryDelete.status).toBe(404);
+      const draftActions = await db.execute(sql`SELECT action FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${draftId}`);
+      expect(draftActions.map((row) => row.action).sort()).toEqual(["goal.created", "goal.deleted", "goal.updated"]);
+      const wakeupsAfter = (await db.select({ id: agentWakeupRequests.id }).from(agentWakeupRequests).where(eq(agentWakeupRequests.orgId, orgId)))
+        .map((row) => row.id).sort();
+      expect(wakeupsAfter).toEqual(wakeupsBefore);
+      expect(nodeGoalWriteRequests).toBe(0);
+    } finally {
+      for (const goalId of ownedGoalIds) {
+        await db.execute(sql`DELETE FROM organization_mutation_outbox WHERE org_id=${orgId}::uuid AND activity_id IN (SELECT id FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${goalId})`);
+        await db.execute(sql`DELETE FROM activity_log WHERE org_id=${orgId}::uuid AND entity_type='goal' AND entity_id=${goalId}`);
+        await db.execute(sql`DELETE FROM goals WHERE org_id=${orgId}::uuid AND id=${goalId}::uuid`);
+      }
+      expect(await snapshot()).toEqual(baseline);
+    }
+  }, 60_000);
   it("fails closed when the native Goal read transport is unavailable", async () => {
     const nativeGoalRead = bridge.goalRead;
     bridge.goalRead = async () => { throw new Error("simulated native Goal read transport failure"); };

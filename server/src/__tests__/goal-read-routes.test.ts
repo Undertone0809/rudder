@@ -22,6 +22,11 @@ function app(actor: Request["actor"] = BOARD, bridge?: RustFoundationBridge) {
   result.use(errorHandler);
   return result;
 }
+function registeredGoalRoutes(nativeGoalWrites: boolean) {
+  return (goalRoutes({} as Db, undefined, { nativeGoalWrites }) as unknown as {
+    stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }>;
+  }).stack.flatMap((layer) => layer.route ? [{ path: layer.route.path, methods: layer.route.methods }] : []);
+}
 beforeEach(() => {
   vi.clearAllMocks();
   svc.getById.mockResolvedValue({ id: GOAL, orgId: ORG });
@@ -35,6 +40,34 @@ const selections = [
   { path: `/goals/${GOAL}/dependencies`, view: "dependencies", goalId: GOAL },
 ];
 describe("Rust Goal GET authority", () => {
+  it("unmounts the seven Rust-owned Node writers only in native mode", () => {
+    const writers = [
+      ["post", "/orgs/:orgId/goals"],
+      ["patch", "/goals/:id"],
+      ["post", "/goals/:id/activate"],
+      ["post", "/goals/:id/plan"],
+      ["post", "/goals/:id/activities"],
+      ["post", "/goals/:id/owner"],
+      ["delete", "/goals/:id"],
+    ] as const;
+    const legacyRoutes = registeredGoalRoutes(false);
+    const nativeRoutes = registeredGoalRoutes(true);
+
+    for (const [method, path] of writers) {
+      expect(legacyRoutes.some((route) => route.path === path && route.methods[method])).toBe(true);
+      expect(nativeRoutes.some((route) => route.path === path && route.methods[method])).toBe(false);
+    }
+    for (const [method, path] of [
+      ["post", "/orgs/:orgId/goals/start"],
+      ["post", "/orgs/:orgId/goals/start-preview"],
+      ["post", "/goals/:id/checkpoint"],
+      ["post", "/goals/:id/focus"],
+      ["post", "/goals/:id/feedback"],
+    ] as const) {
+      expect(nativeRoutes.some((route) => route.path === path && route.methods[method])).toBe(true);
+    }
+  });
+
   it.each(selections)("forwards exact native response for $view with mutation pilots off", async ({ path, view, goalId }) => {
     const bytes = Buffer.from('{"native":"public response","long":"' + "x".repeat(100_000) + '"}');
     const goalRead = vi.fn().mockResolvedValue({ status: 200, contentType: "application/json", body: bytes });
