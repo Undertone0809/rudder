@@ -1141,7 +1141,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
     it.runIf(process.platform !== "win32")("seeds a first Codex Agent through the packaged Rust MCP command", async () => {
         const seedOrg = randomUUID();
         await db.execute(sql`INSERT INTO organizations(id,name,url_key,issue_prefix) VALUES(${seedOrg}::uuid,'Native seed acceptance',${seedOrg},${`S${seedOrg.slice(0, 8)}`})`);
-        await db.execute(sql`INSERT INTO organization_mutation_state(org_id,owner,fence_epoch) VALUES(${seedOrg}::uuid,'rust',7)`);
+        await db.execute(sql`INSERT INTO organization_mutation_state(org_id,owner,fence_epoch) VALUES(${seedOrg}::uuid,'rust',7) ON CONFLICT(org_id) DO NOTHING`);
         await db.execute(sql`INSERT INTO organization_memberships(org_id,principal_type,principal_id,status,membership_role) VALUES(${seedOrg}::uuid,'user',${owner},'active','member')`);
         const probeRoot = path.join(root, `native-codex-probe-${randomUUID()}`);
         const sourceHome = path.join(probeRoot, "source-codex-home");
@@ -1220,12 +1220,13 @@ console.log(JSON.stringify({type:"turn.completed"}));
                 });
                 expect(rejected.status, rejected.text).toBe(422);
             }
+            const profilesBeforeSeed = await scalar(sql`SELECT count(*) AS value FROM organization_intelligence_profiles WHERE org_id=${org}::uuid`);
             const seeded = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
                 name: `Native no-probe seed ${randomUUID()}`, agentRuntimeType: "process",
                 agentRuntimeConfig: { command: "synthetic-uninstalled-command" }, seedOrganizationIntelligenceDefaults: true,
             });
             expect(seeded.status, seeded.text).toBe(201);
-            expect(await scalar(sql`SELECT count(*) AS value FROM organization_intelligence_profiles WHERE org_id=${org}::uuid`)).toBeGreaterThan(0);
+            expect(await scalar(sql`SELECT count(*) AS value FROM organization_intelligence_profiles WHERE org_id=${org}::uuid`)).toBe(profilesBeforeSeed);
             const selected = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
                 name: `Native encrypted HOME ${randomUUID()}`, agentRuntimeType: "codex_local",
                 agentRuntimeConfig: { env: { HOME: { type: "secret_ref", secretId } } }, desiredSkills: ["global:native-encrypted-root"],
