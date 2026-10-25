@@ -648,7 +648,10 @@ async fn public_goal_start_preserves_legacy_forwarding_when_native_identity_is_u
 async fn public_goal_start_stays_native_and_fails_closed_when_database_is_disabled() {
     let mut host = fixture::FixtureHost::new("public-goal-start-database-disabled");
     install_goal_start_claude(&mut host);
-    let paths = host.paths();
+    // This request must fail before any provider dispatch, so the test binary
+    // is a safe placeholder and the all-targets suite needs no process-host
+    // executable merely to exercise database-disabled routing.
+    let paths = host.paths_with_process_host(std::env::current_exe().unwrap());
     let context = host.take_context();
     let native_runtime =
         crate::NativeChatPublicRuntime::new(context, paths, Duration::from_secs(30)).unwrap();

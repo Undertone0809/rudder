@@ -82,7 +82,7 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     .unwrap();
     let date_fixture_owner = "55555555-5555-4555-8555-555555555555";
     sqlx::query(
-        "INSERT INTO agents (id,org_id,name,role,status,capabilities) VALUES ($1::uuid,$2::uuid,'Unicode Goal owner','engineer','idle',$3)",
+        "INSERT INTO agents (id,org_id,name,role,status,capabilities,agent_runtime_type) VALUES ($1::uuid,$2::uuid,'Unicode Goal owner','engineer','idle',$3,'claude_local')",
     )
     .bind(date_fixture_owner)
     .bind(ORG)
