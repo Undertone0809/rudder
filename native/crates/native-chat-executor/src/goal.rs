@@ -306,7 +306,7 @@ fn execute_goal_claude_blocking(
                 observation.turn.usage(),
                 observation.turn.total_cost_usd_micros(),
                 config.model.as_deref(),
-                local.env.contains_key("ANTHROPIC_API_KEY"),
+                claude_goal_uses_metered_api(&local.env),
             );
             let result_json = json!({
                 "provider": "anthropic",
@@ -445,6 +445,11 @@ fn claude_usage_payload(
     usage
 }
 
+fn claude_goal_uses_metered_api(env: &BTreeMap<String, String>) -> bool {
+    env.get("ANTHROPIC_API_KEY")
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
 fn unresolved(error_code: &str, error: &str) -> GoalRunExecutionObservation {
     GoalRunExecutionObservation {
         state: GoalRunExecutionState::Unresolved,
@@ -458,7 +463,9 @@ fn unresolved(error_code: &str, error: &str) -> GoalRunExecutionObservation {
 
 #[cfg(test)]
 mod tests {
-    use super::{GoalRunExecutionState, claude_usage_payload, unresolved};
+    use super::{
+        GoalRunExecutionState, claude_goal_uses_metered_api, claude_usage_payload, unresolved,
+    };
     use serde_json::{Value, json};
 
     #[test]
@@ -491,6 +498,30 @@ mod tests {
         assert_eq!(usage["billingType"], "subscription_included");
         assert_eq!(usage["model"], "unknown");
         assert!(usage.get("costUsd").is_none());
+    }
+
+    #[test]
+    fn claude_goal_billing_matches_node_non_empty_api_key_check() {
+        use std::collections::BTreeMap;
+
+        let raw = json!({"input_tokens": 1, "output_tokens": 2});
+        for (api_key, expected_billing_type) in [
+            (None, "subscription_included"),
+            (Some(""), "subscription_included"),
+            (Some(" \t\n "), "subscription_included"),
+            (Some("sk-ant-example"), "metered_api"),
+        ] {
+            let env = api_key
+                .map(|value| BTreeMap::from([("ANTHROPIC_API_KEY".to_owned(), value.to_owned())]))
+                .unwrap_or_default();
+            let usage = claude_usage_payload(
+                Some(&raw),
+                Some(1_000_000),
+                Some("claude-4"),
+                claude_goal_uses_metered_api(&env),
+            );
+            assert_eq!(usage["billingType"], expected_billing_type);
+        }
     }
 
     #[test]
