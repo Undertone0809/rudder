@@ -16,6 +16,7 @@ mod branding;
 pub mod calendar;
 pub mod cost_reads;
 pub mod goal_reads;
+pub mod goal_run_resources;
 mod goal_sets;
 pub mod goal_writes;
 pub mod issue_checkout;
