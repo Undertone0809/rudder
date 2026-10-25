@@ -1597,7 +1597,7 @@ async fn rust_create_resolves_local_encrypted_home_roots_without_persisting_plai
         .expect("seed encrypted secret version");
     }
     sqlx::query(
-        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2,'external-skill-home','vault','user_managed',1,$3)",
+        "INSERT INTO organization_secrets(id,org_id,name,provider,purpose,latest_version,created_by_user_id) VALUES ($1::uuid,$2::uuid,'external-skill-home','vault','user_managed',1,$3)",
     )
     .bind(EXTERNAL_SKILL_HOME_SECRET_ID)
     .bind(ORG)
