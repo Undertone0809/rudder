@@ -262,6 +262,14 @@ async fn board_key(database: &fixture::Database) -> String {
     token
 }
 
+async fn board_key_user_id(database: &fixture::Database, token: &str) -> String {
+    sqlx::query_scalar("SELECT user_id FROM board_api_keys WHERE key_hash=$1")
+        .bind(crate::native_bearer_auth::hash_token(token))
+        .fetch_one(&database.pool)
+        .await
+        .unwrap()
+}
+
 async fn legacy_run(database: &fixture::Database) -> String {
     sqlx::query_scalar(
         "INSERT INTO heartbeat_runs(org_id,agent_id,status,started_at,invocation_source,execution_authority,context_snapshot)
@@ -406,6 +414,47 @@ async fn seed_legacy_run_with_id(
     .unwrap();
 }
 
+async fn seed_side_chat_run_with_id(
+    database: &fixture::Database,
+    org_id: &str,
+    agent_id: &str,
+    run_id: &str,
+    conversation_id: &str,
+    owner_user_id: &str,
+) {
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO chat_conversations
+           (id,org_id,title,conversation_kind,created_by_user_id,status,side_chat_state)
+         VALUES($1::uuid,$2::uuid,'Reference visibility fixture','side_chat',$3,'resolved','completed')",
+    )
+    .bind(conversation_id)
+    .bind(org_id)
+    .bind(owner_user_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs
+           (id,org_id,agent_id,invocation_source,status,started_at,finished_at,
+            execution_authority,chat_conversation_id,context_snapshot)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','completed',clock_timestamp(),clock_timestamp(),
+            'legacy_ts',$4::uuid,'{\"scene\":\"side_chat\"}'::jsonb)",
+    )
+    .bind(run_id)
+    .bind(org_id)
+    .bind(agent_id)
+    .bind(conversation_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
 #[actix_web::test]
 #[ignore = "requires PostgreSQL binaries; disposable database and public ingress HTTP tests"]
 async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legacy_boundary() {
@@ -419,6 +468,11 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     let foreign_agent_key = agent_key(&database, FOREIGN_AGENT, OTHER, false).await;
     let revoked_key = agent_key(&database, fixture::CEO, fixture::ORG, true).await;
     let board_token = board_key(&database).await;
+    let board_user_id = board_key_user_id(&database, &board_token).await;
+    let other_board_user_id = {
+        let other_board_token = board_key(&database).await;
+        board_key_user_id(&database, &other_board_token).await
+    };
 
     let (node_upstream, node_hits, node_requests, node_responses, node_task) =
         start_node_mock().await;
@@ -699,8 +753,115 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "Run ID prefix is ambiguous");
     assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+
+    // Node hides every side-chat Run from Agent callers before resolving a
+    // prefix. The hidden Run must not make the visible native Goal Run
+    // ambiguous for Rust ingress.
+    let agent_visible_native_id = "0badcafe-0000-4000-8000-000000000001";
+    seed_native_goal_run_with_id(
+        &database,
+        fixture::ORG,
+        fixture::CEO,
+        GOAL,
+        agent_visible_native_id,
+        "agent-visible-sidechat-collision",
+    )
+    .await;
+    seed_side_chat_run_with_id(
+        &database,
+        fixture::ORG,
+        fixture::CEO,
+        "0badcafe-1111-4000-8000-000000000002",
+        "62000000-0000-4000-8000-000000000001",
+        &board_user_id,
+    )
+    .await;
+    let (status, body) = post_cancel(
+        format!("{}/api/agent-runs/run_0badcafe/cancel", legacy_ingress.base),
+        Some(&valid_key),
+        json!({"scope":"agent-hidden-sidechat"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], agent_visible_native_id);
+    assert_eq!(body["errorCode"], "cancel_requested");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+
+    // Board callers can see only their own side-chat Runs. A collision with a
+    // different user's same-org side chat must still resolve the unique
+    // visible native Goal Run.
+    let board_visible_native_id = "feebdaed-0000-4000-8000-000000000001";
+    seed_native_goal_run_with_id(
+        &database,
+        fixture::ORG,
+        OTHER_AGENT,
+        SECOND_GOAL,
+        board_visible_native_id,
+        "board-visible-other-sidechat-collision",
+    )
+    .await;
+    seed_side_chat_run_with_id(
+        &database,
+        fixture::ORG,
+        OTHER_AGENT,
+        "feebdaed-1111-4000-8000-000000000002",
+        "62000000-0000-4000-8000-000000000002",
+        &other_board_user_id,
+    )
+    .await;
+    let (status, body) = post_cancel(
+        format!("{}/api/agent-runs/run_feebdaed/cancel", legacy_ingress.base),
+        Some(&board_token),
+        json!({"scope":"board-hidden-other-sidechat"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], board_visible_native_id);
+    assert_eq!(body["errorCode"], "cancel_requested");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+
+    // The Board caller's own side-chat Run remains visible, so the same
+    // collision is genuinely ambiguous and keeps Node's 409 response/body.
+    let board_owned_native_id = "facefeed-0000-4000-8000-000000000001";
+    seed_native_goal_run_with_id(
+        &database,
+        fixture::ORG,
+        OTHER_AGENT,
+        SECOND_GOAL,
+        board_owned_native_id,
+        "board-owned-sidechat-collision",
+    )
+    .await;
+    seed_side_chat_run_with_id(
+        &database,
+        fixture::ORG,
+        OTHER_AGENT,
+        "facefeed-1111-4000-8000-000000000002",
+        "62000000-0000-4000-8000-000000000003",
+        &board_user_id,
+    )
+    .await;
+    let board_ambiguous_path = "/api/agent-runs/run_facefeed/cancel";
+    node_responses.lock().unwrap().insert(
+        board_ambiguous_path.to_owned(),
+        (
+            StatusCode::CONFLICT,
+            json!({"error":"Run ID prefix is ambiguous"}),
+        ),
+    );
+    let board_ambiguous_payload = json!({"scope":"board-owned-sidechat-ambiguous"});
+    let (status, body) = post_cancel(
+        format!("{}{}", legacy_ingress.base, board_ambiguous_path),
+        Some(&board_token),
+        board_ambiguous_payload.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "Run ID prefix is ambiguous");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 4);
+
     let captured = node_requests.lock().unwrap();
-    assert_eq!(captured.len(), 3);
+    assert_eq!(captured.len(), 4);
     assert_eq!(captured[1].0, foreign_only_path);
     assert_eq!(
         serde_json::from_slice::<Value>(&captured[1].1).unwrap(),
@@ -710,6 +871,11 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(
         serde_json::from_slice::<Value>(&captured[2].1).unwrap(),
         duplicate_payload
+    );
+    assert_eq!(captured[3].0, board_ambiguous_path);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&captured[3].1).unwrap(),
+        board_ambiguous_payload
     );
     legacy_ingress.task.abort();
     node_task.abort();

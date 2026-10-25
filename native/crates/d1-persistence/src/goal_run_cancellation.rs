@@ -41,6 +41,7 @@ pub async fn resolve_native_goal_run_cancel_target(
     pool: &PgPool,
     reference: &str,
     scoped_authorizer: Option<&dyn NativeAgentAuthorizer>,
+    side_chat_owner_id: Option<&str>,
 ) -> Result<Option<NativeGoalRunCancelTarget>, sqlx::Error> {
     let reference = reference.trim();
     let parsed_uuid = Uuid::parse_str(reference).ok();
@@ -57,8 +58,7 @@ pub async fn resolve_native_goal_run_cancel_target(
             "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
                     r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
              FROM heartbeat_runs r
-             WHERE replace(r.id::text,'-','') LIKE $1 || '%'
-             ORDER BY r.created_at DESC,r.id DESC",
+             WHERE replace(r.id::text,'-','') LIKE $1 || '%'",
             prefix,
         )
     } else {
@@ -70,13 +70,22 @@ pub async fn resolve_native_goal_run_cancel_target(
         // the transactional authorizer return the existing cross-org 403.
         sqlx::query(query).bind(value).fetch_all(pool).await?
     } else if let Some(authorizer) = scoped_authorizer {
-        // Node resolves short prefixes inside the caller's authorized org
-        // scope before deciding whether the reference is unique. Query every
-        // matching row, then apply the same Rust authorization predicate per
-        // distinct org; limiting globally first would hide an in-scope match
-        // behind foreign-org collisions.
+        // Node applies both its organization scope and the caller-specific
+        // side-chat visibility predicate before deciding whether a short
+        // reference is unique. Apply side-chat visibility in SQL before
+        // collecting candidates, then apply the existing Rust authorization
+        // predicate per distinct org. Limiting globally first would hide an
+        // in-scope visible match behind foreign or private rows.
         let mut tx = pool.begin().await?;
-        let candidates = sqlx::query(query).bind(value).fetch_all(&mut *tx).await?;
+        let visible_query = format!(
+            "{query} AND {} ORDER BY r.created_at DESC,r.id DESC",
+            crate::run_visibility::predicate("r", 2)
+        );
+        let candidates = sqlx::query(&visible_query)
+            .bind(value)
+            .bind(side_chat_owner_id)
+            .fetch_all(&mut *tx)
+            .await?;
         let mut org_access = HashMap::<String, bool>::new();
         let mut scoped = Vec::new();
         for row in candidates {
@@ -107,8 +116,7 @@ pub async fn resolve_native_goal_run_cancel_target(
             sqlx::query(
                 "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
                         r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
-                 FROM heartbeat_runs r
-                 WHERE replace(r.id::text,'-','') LIKE $1 || '%'
+                 FROM heartbeat_runs r WHERE replace(r.id::text,'-','') LIKE $1 || '%'
                  ORDER BY r.created_at DESC,r.id DESC LIMIT 2",
             )
             .bind(value)
