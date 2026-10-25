@@ -514,8 +514,7 @@ fn prepare_codex_home(org_id: &str, config: &Value) -> Result<(PathBuf, Value), 
     let source = configured_source
         .or_else(|| env_nonempty(config, "RUDDER_SHARED_CODEX_HOME").map(PathBuf::from))
         .or_else(|| env::var("RUDDER_SHARED_CODEX_HOME").ok().map(PathBuf::from))
-        .or_else(|| env::var("CODEX_HOME").ok())
-        .map(PathBuf::from)
+        .or_else(|| env::var("CODEX_HOME").ok().map(PathBuf::from))
         .map(absolute_path)
         .unwrap_or_else(|| home_directory(config, false).join(".codex"));
     let target = managed_runtime_home(config, org_id, "codex-home")?;
