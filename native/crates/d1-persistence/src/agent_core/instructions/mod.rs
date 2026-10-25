@@ -20,6 +20,30 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Return the checked-in first-party create bundle used by the former Node
+/// route's onboarding materializer. The public Rust Create path stores this
+/// content in the existing transactional instructions outbox.
+pub(super) fn default_create_bundle_files(role: &str) -> BTreeMap<String, String> {
+    let (memory, soul, tools) = if role == "ceo" {
+        (
+            include_str!("templates/ceo/MEMORY.md"),
+            include_str!("templates/ceo/SOUL.md"),
+            include_str!("templates/ceo/TOOLS.md"),
+        )
+    } else {
+        (
+            include_str!("templates/default/MEMORY.md"),
+            include_str!("templates/default/SOUL.md"),
+            include_str!("templates/default/TOOLS.md"),
+        )
+    };
+    BTreeMap::from([
+        ("MEMORY.md".to_owned(), memory.to_owned()),
+        ("SOUL.md".to_owned(), soul.to_owned()),
+        ("TOOLS.md".to_owned(), tools.to_owned()),
+    ])
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Host {

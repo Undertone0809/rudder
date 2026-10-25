@@ -106,6 +106,15 @@ pub fn normalize_public_input(
     json_boundary::stack(|| validation::validate(operation, Some(&input)))
 }
 
+/// Normalize the public `POST /api/orgs/:orgId/agents` schema into the
+/// private AgentCore create contract. Public callers never control the
+/// internal `nodeOwned` preparation object.
+pub fn normalize_public_agent_create_input(
+    input: Option<Value>,
+) -> std::result::Result<Value, AgentCoreError> {
+    json_boundary::stack(|| validation::normalize_public_agent_create(input))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCoreRequest {
@@ -138,9 +147,9 @@ pub struct AgentCoreRequest {
     pub instructions_host: Option<instructions::Host>,
 }
 
-/// The deliberately small Rust-owned portion of the Agent create contract.
-/// The public Express route still owns secret normalization, skills,
-/// instructions, managed MCP, intelligence defaults, and avatar assets.
+/// The normalized Agent create contract shared by the public Rust ingress and
+/// the private compatibility bridge. Public callers are expanded by the Rust
+/// ingress before this strict internal shape is parsed.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentCreateRequest {
@@ -161,10 +170,10 @@ pub struct AgentCreateRequest {
     /// bundled Rudder skills are always enabled at runtime.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub desired_skills: Vec<String>,
-    /// Node-owned preparation is accepted only by the private Rust bridge.
-    /// The public create route does not expose this field until parity is
-    /// complete. Raw provider material and unsupported runtime fields are
-    /// rejected by validation.
+    /// Trusted route preparation. Public clients cannot submit this field;
+    /// Rust ingress creates it after validating public Agent-create input.
+    /// The private bridge may still provide prepared Node-owned compatibility
+    /// data while its public cohort remains on the legacy route.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_owned: Option<AgentCreateNodeOwned>,
 }
@@ -347,7 +356,7 @@ pub async fn execute_agent(
     actor: &VerifiedActor,
     r: &AgentCoreRequest,
 ) -> Result<(u16, String)> {
-    execute_agent_inner(pool, actor, r, None).await
+    execute_agent_inner(pool, actor, r, None, false).await
 }
 
 /// Execute a command admitted by native public ingress. The typed credential
@@ -359,7 +368,23 @@ pub async fn execute_agent_with_native_auth(
     r: &AgentCoreRequest,
     native_auth: &dyn NativeAgentAuthorizer,
 ) -> Result<(u16, String)> {
-    execute_agent_inner(pool, actor, r, Some(native_auth)).await
+    execute_agent_inner(pool, actor, r, Some(native_auth), false).await
+}
+
+/// Execute a create selected by the public Rust ingress. This explicit
+/// authority entry point runs the same transactional AgentCore implementation
+/// while enabling its Rust-owned create effects without relying on the old
+/// private-bridge pilot gates.
+pub async fn execute_public_agent_create_with_native_auth(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    r: &AgentCoreRequest,
+    native_auth: &dyn NativeAgentAuthorizer,
+) -> Result<(u16, String)> {
+    if r.operation != "create" {
+        return Err(common::http(400, "Invalid Agent command"));
+    }
+    execute_agent_inner(pool, actor, r, Some(native_auth), true).await
 }
 
 /// Check whether an already authenticated browser user may inspect Agent
@@ -405,10 +430,11 @@ async fn execute_agent_inner(
     actor: &VerifiedActor,
     r: &AgentCoreRequest,
     native_auth: Option<&dyn NativeAgentAuthorizer>,
+    public_agent_create: bool,
 ) -> Result<(u16, String)> {
     json_boundary::run(async{
         admit_agent(actor,r)?;
-        if r.operation == "create" && !agent_create_feature_enabled() {
+        if r.operation == "create" && !public_agent_create && !agent_create_feature_enabled() {
             return Err(http(404, "Rust Agent create authority is disabled"));
         }
         let mut tx=pool.begin().await?;
@@ -421,6 +447,7 @@ async fn execute_agent_inner(
         let input=validation::validate(&r.operation,(!r.input_missing).then_some(&r.input))?;
         if r.operation == "create"
             && intelligence::requested(&AgentCreateRequest::parse(&input)?)
+            && !public_agent_create
             && !intelligence::feature_enabled()
         {
             return Err(http(404, "Rust Agent intelligence/avatar authority is disabled"));
@@ -458,10 +485,10 @@ async fn execute_agent_inner(
             let fresh_admin=if op=="permissions" && ctx.user().is_some(){sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$1 AND role='instance_admin')").bind(ctx.user()).fetch_one(&mut *tx).await?}else{ctx.admin};
             let ctx=Context{admin:fresh_admin,..ctx};
             authorize_org(&mut tx,&ctx).await?;
-            if op == "create" {
+            if op == "create" && public_agent_create {
                 require_create(&mut tx, &ctx).await?;
             }
-            let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth).await?;
+            let body=writes::execute(&mut tx,&ctx,op,current.as_ref(),&input,native_auth,public_agent_create).await?;
             sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(&org).execute(&mut *tx).await?;
             tx.commit().await?;
             if op == "create" {

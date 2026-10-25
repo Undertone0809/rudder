@@ -117,6 +117,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
     let nodeUrl = "";
     let publicUrl = "";
     let nodeNativeIngressPathHits = 0;
+    let nodeNativeIngressPaths: string[] = [];
     let nativeWorkspaceHome = "";
     let nativeOrganizationAgents = "";
     const nativeIdentity = nativeIdentityIngressFixture();
@@ -194,8 +195,8 @@ describe("Agent core twenty-route real HTTP authority", () => {
         binary = resolveFoundationBinary(repo);
         console.info("Agent core source binary", { sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"), binary });
         root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-agent-core-http-"));
-        const PgConstructor = (await import("embedded-postgres")).default;
         const dbPort = await port();
+        const PgConstructor = (await import("embedded-postgres")).default;
         pg = new PgConstructor({ databaseDir: root, user: "rudder", password: "synthetic", port: dbPort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], postgresFlags: ["-c", "unix_socket_directories=", "-c", "dynamic_shared_memory_type=mmap", "-c", "shared_buffers=16MB", "-c", "max_connections=24"], onLog: () => { }, onError: () => { } });
         await pg.initialise();
         await pg.start();
@@ -203,6 +204,8 @@ describe("Agent core twenty-route real HTTP authority", () => {
         databaseUrl = `postgres://rudder:synthetic@127.0.0.1:${dbPort}/rudder`;
         await applyPendingMigrations(databaseUrl);
         db = createDb(databaseUrl);
+        const postgresVersion = await db.execute(sql`SELECT version() AS version`);
+        console.info("Agent core PostgreSQL runtime", postgresVersion[0]?.version);
         for (const [id, name, prefix] of [[org, "Agent core", "AC"], [otherOrg, "Foreign", "FC"]]) {
             await db.execute(sql `INSERT INTO organizations(id,name,url_key,issue_prefix) VALUES(${id}::uuid,${name},${id},${prefix})`);
             await db.execute(sql `INSERT INTO organization_mutation_state(org_id,owner,fence_epoch) VALUES(${id}::uuid,'rust',7) ON CONFLICT(org_id) DO NOTHING`);
@@ -226,6 +229,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
         app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
         app.use((req, _res, next) => {
             if ((req.method === "GET" && /^\/api\/orgs\/[^/]+\/(?:agents|members\/directory)\/?$/i.test(req.path))
+                || (req.method === "POST" && /^\/api\/orgs\/[^/]+\/agents\/?$/i.test(req.path))
                 || (["GET", "HEAD"].includes(req.method) && /^\/api\/agents\/[^/]+\/?$/i.test(req.path))
                 || (req.method === "PATCH" && /^\/api\/agents\/[^/]+\/permissions\/?$/i.test(req.path))
                 || (["GET", "HEAD"].includes(req.method) && (/^\/api\/orgs\/[^/]+\/agent-configurations\/?$/i.test(req.path)
@@ -241,6 +245,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
                 || (["GET", "HEAD"].includes(req.method) && /^\/api\/instance\/scheduler-heartbeats\/?$/i.test(req.path))
                 || (req.method === "POST" && /^\/api\/auth\/local-(?:exchange|offline|claim|signout-all)\/?$/i.test(req.path))) {
                 nodeNativeIngressPathHits += 1;
+                nodeNativeIngressPaths.push(`${req.method} ${req.path}`);
             }
             next();
         });
@@ -912,60 +917,169 @@ describe("Agent core twenty-route real HTTP authority", () => {
         await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${id}::uuid,'synthetic detail',${hash(token)})`);
         return { id, token, workspace };
     }
-    it("persists Rust-owned Codex permission defaults for the selected Profile through public create", async () => {
+    it("creates Agents through the default public Rust path with Node-compatible permissions", async () => {
         const gates = agentCreateGates;
         const previous = gates.map(key => process.env[key]);
         try {
-            for (const key of gates) process.env[key] = "true";
-            // Earlier recovery cases restart this child. Apply the private
-            // authority gates to this exact process, not a superseded startup.
+            for (const key of gates) delete process.env[key];
+            // The public Rust path must own creates with every old pilot gate
+            // off. Restart so the foundation sees this exact inherited env.
             await bridge!.close();
             await bridge!.start();
             publicUrl = bridge!.publicIngressBaseUrl!;
+            nodeNativeIngressPathHits = 0;
+            nodeNativeIngressPaths = [];
             for (const [config, expected] of [
-                [{ profileId: "operator-default" }, false],
+                [{ profileId: "operator-default" }, true],
                 [{ profileId: "default" }, true],
                 [{}, true],
                 [{ profileId: "operator-default", dangerouslyBypassApprovalsAndSandbox: true }, true],
                 [{ profileId: "default", dangerouslyBypassApprovalsAndSandbox: false }, false],
                 [{ profileId: "operator-default", dangerouslyBypassSandbox: false }, undefined],
             ] as const) {
-                const result = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Native Profile ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: config, seedOrganizationIntelligenceDefaults: false });
+                const result = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Native Profile ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: config });
                 expect(result.status, JSON.stringify(result.body)).toBe(201);
                 const saved = (await db.execute(sql`SELECT agent_runtime_config FROM agents WHERE id=${result.body.id}::uuid`))[0]!.agent_runtime_config as Record<string, unknown>;
+                expect(nodeNativeIngressPathHits, `public Rust Agent create must not hit Node: ${nodeNativeIngressPaths.join(", ")}`).toBe(0);
                 expect(result.body.agentRuntimeConfig.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
                 expect(saved.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
                 if ("dangerouslyBypassSandbox" in config) expect(saved.dangerouslyBypassSandbox).toBe(false);
+                expect(saved.model).toBe("gpt-5.6-luna");
+                expect(saved.modelReasoningEffort).toBe("medium");
+                expect(saved.search).toBe(true);
             }
-            // Keep the real public listener and Node preflight running, but fail
-            // the actual native-create process dependency after valid admission.
-            const beforeFailure = await db.execute(sql`SELECT
-                (SELECT count(*) FROM agents) AS agents,
-                (SELECT count(*) FROM agent_enabled_skills) AS skills,
-                (SELECT count(*) FROM organization_skills) AS catalog,
-                (SELECT count(*) FROM agent_config_revisions) AS revisions,
-                (SELECT count(*) FROM activity_log) AS activity,
-                (SELECT count(*) FROM organization_mutation_outbox) AS outbox`);
-            const directories = fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null;
-            const unavailable = createRustFoundationBridge({ databaseUrl, binaryPath: path.join(root, "missing-create-foundation"), mode: "required", actorEnvelopeKey: "synthetic-unavailable-create-key-32bytes" });
-            const originalCreate = bridge!.agentCreate;
-            bridge!.agentCreate = unavailable.agentCreate;
+            nodeNativeIngressPathHits = 0;
+            const createInput = {
+                name: `Direct Rust create ${randomUUID()}`,
+                role: "engineer",
+                agentRuntimeType: "process",
+                budgetMonthlyCents: 125,
+            };
+            const created = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, createInput);
+            expect(created.status, JSON.stringify(created.body)).toBe(201);
+            expect(created.body).toMatchObject({ name: createInput.name, role: "engineer", agentRuntimeType: "process" });
+            expect(nodeNativeIngressPathHits).toBe(0);
+            expect(await scalar(sql`SELECT count(*) AS value FROM organization_memberships WHERE org_id=${org}::uuid AND principal_type='agent' AND principal_id=${created.body.id} AND status='active'`)).toBe(1);
+            expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE org_id=${org}::uuid AND principal_type='agent' AND principal_id=${created.body.id} AND permission_key='tasks:assign'`)).toBe(1);
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE org_id=${org}::uuid AND entity_id=${created.body.id} AND action='agent.created'`)).toBe(1);
+            expect(await scalar(sql`SELECT count(*) AS value FROM budget_policies WHERE org_id=${org}::uuid AND scope_type='agent' AND scope_id=${created.body.id}::uuid AND amount=125`)).toBe(1);
+
+            const skillHome = path.join(root, `agent-create-skills-${randomUUID()}`);
+            const installSkill = (relative: string) => {
+                const skillFile = path.join(skillHome, relative, "SKILL.md");
+                fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+                fs.writeFileSync(skillFile, "---\nname: Test skill\n---\n");
+            };
+            installSkill(".agents/skills/release-notes");
+            installSkill(".agents/skills/unique-global");
+            installSkill(".agents/skills/reviewer");
+            installSkill(".claude/skills/reviewer");
+            const mcpConnectionId = randomUUID();
+            const mcpToolId = randomUUID();
+            await db.execute(sql`INSERT INTO mcp_connections
+                (id, org_id, name, display_name, provider, transport, access_mode, status, canonical_state, safe_config, enabled)
+                VALUES (${mcpConnectionId}::uuid, ${org}::uuid, ${`agent-create-${mcpConnectionId}`}, 'Agent Create Test', 'custom', 'streamable_http', 'read_write', 'active', 'canonical', '{}'::jsonb, true)`);
+            await db.execute(sql`INSERT INTO custom_integration_tools
+                (id, org_id, connection_id, external_tool_name, rudder_tool_name, input_schema, status, enabled)
+                VALUES (${mcpToolId}::uuid, ${org}::uuid, ${mcpConnectionId}::uuid, 'lookup', 'test.lookup', '{}'::jsonb, 'active', true)`);
+            const skillEnv = {
+                HOME: { type: "plain", value: skillHome },
+            };
+            const selectedSkills = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                name: `Native typed skills ${randomUUID()}`,
+                role: "engineer",
+                agentRuntimeType: "claude_local",
+                agentRuntimeConfig: { env: skillEnv },
+                desiredSkills: ["global:release-notes", "adapter:claude_local:reviewer"],
+            });
+            expect(selectedSkills.status, JSON.stringify(selectedSkills.body)).toBe(201);
+            const persistedSelections = (await db.execute(sql`SELECT skill_key FROM agent_enabled_skills WHERE org_id=${org}::uuid AND agent_id=${selectedSkills.body.id}::uuid ORDER BY skill_key`))
+                .map((row) => row.skill_key);
+            expect(persistedSelections).toEqual(["adapter:claude_local:reviewer", "global:release-notes"]);
+            const managedCreate = (await db.execute(sql`SELECT workspace_key, agent_runtime_config FROM agents WHERE org_id=${org}::uuid AND id=${selectedSkills.body.id}::uuid`))[0]!;
+            const instructionRoot = String(managedCreate.agent_runtime_config.instructionsRootPath);
+            expect(managedCreate.agent_runtime_config.instructionsBundleMode).toBe("managed");
+            expect(instructionRoot).toBe(path.join(nativeOrganizationAgents, managedCreate.workspace_key, "instructions"));
+            expect(fs.readFileSync(path.join(instructionRoot, "SOUL.md"), "utf8")).toContain("# SOUL.md -- Agent Persona");
+            expect(await scalar(sql`SELECT count(*) AS value FROM agent_instruction_bundles WHERE org_id=${org}::uuid AND agent_id=${selectedSkills.body.id}::uuid AND state='materialized' AND materialized_at IS NOT NULL`)).toBe(1);
+            const mcpBinding = (await db.execute(sql`SELECT access_mode, enabled_tool_ids FROM agent_custom_integration_bindings WHERE org_id=${org}::uuid AND agent_id=${selectedSkills.body.id}::uuid AND connection_id=${mcpConnectionId}::uuid AND status='active'`))[0];
+            expect(mcpBinding).toMatchObject({ access_mode: "full", enabled_tool_ids: [mcpToolId] });
+            expect(await scalar(sql`SELECT count(*) AS value FROM activity_log WHERE org_id=${org}::uuid AND agent_id=${selectedSkills.body.id}::uuid AND action='mcp_agent_binding.created' AND details->>'source'='agent_creation'`)).toBe(1);
+            expect(nodeNativeIngressPathHits).toBe(0);
+            await db.execute(sql`DELETE FROM mcp_connections WHERE org_id=${org}::uuid AND id=${mcpConnectionId}::uuid`);
+
+            const bareGlobal = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                name: `Native bare skill ${randomUUID()}`,
+                role: "engineer",
+                agentRuntimeType: "process",
+                agentRuntimeConfig: { env: skillEnv },
+                desiredSkills: ["unique-global"],
+            });
+            expect(bareGlobal.status, JSON.stringify(bareGlobal.body)).toBe(201);
+            expect((await db.execute(sql`SELECT skill_key FROM agent_enabled_skills WHERE org_id=${org}::uuid AND agent_id=${bareGlobal.body.id}::uuid`))
+                .map((row) => row.skill_key)).toEqual(["global:unique-global"]);
+
+            const beforeInvalidSkillCreates = await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`);
+            for (const desiredSkills of [
+                ["global:missing"],
+                ["reviewer"],
+                ["global:reviewer", "adapter:claude_local:reviewer"],
+            ]) {
+                const invalidSkills = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, {
+                    name: `Invalid native skills ${randomUUID()}`,
+                    role: "engineer",
+                    agentRuntimeType: "process",
+                    agentRuntimeConfig: { env: skillEnv },
+                    desiredSkills,
+                });
+                expect(invalidSkills.status, JSON.stringify(invalidSkills.body)).toBe(422);
+                expect(nodeNativeIngressPathHits).toBe(0);
+            }
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`)).toBe(beforeInvalidSkillCreates);
+
+            const beforeInvalidCreate = await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`);
+            const invalidCreate = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Invalid native create ${randomUUID()}`, agentRuntimeType: "unsupported-runtime" });
+            expect(invalidCreate.status, JSON.stringify(invalidCreate.body)).toBe(400);
+            expect(nodeNativeIngressPathHits).toBe(0);
+            expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`)).toBe(beforeInvalidCreate);
+
+            const deniedBoard = await call(publicUrl, "post", `/api/orgs/${org}/agents`, otherToken, { name: `Denied board ${randomUUID()}` });
+            expect(deniedBoard.status, JSON.stringify(deniedBoard.body)).toBe(403);
+            expect(deniedBoard.body.error).toBe("Missing permission: agents:create");
+            await db.execute(sql`INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key) VALUES(${org}::uuid,'user',${other},'agents:create')`);
+            const grantedBoard = await call(publicUrl, "post", `/api/orgs/${org}/agents`, otherToken, { name: `Granted board ${randomUUID()}` });
+            expect(grantedBoard.status, JSON.stringify(grantedBoard.body)).toBe(201);
+            const foreignBoard = await call(publicUrl, "post", `/api/orgs/${org}/agents`, outsiderToken, { name: `Foreign board ${randomUUID()}` });
+            expect(foreignBoard.status, JSON.stringify(foreignBoard.body)).toBe(403);
+
+            const deniedAgent = await call(publicUrl, "post", `/api/orgs/${org}/agents`, agentToken, { name: `Denied agent ${randomUUID()}` });
+            expect(deniedAgent.status, JSON.stringify(deniedAgent.body)).toBe(403);
+            expect(deniedAgent.body.error).toBe("Missing permission: can create agents");
+
+            // Node gives an explicit false in Agent permissions precedence
+            // over a separate agents:create grant. Keep this exact POST case
+            // covered at the native public ingress boundary as well.
+            await db.execute(sql`INSERT INTO principal_permission_grants(org_id,principal_type,principal_id,permission_key) VALUES(${org}::uuid,'agent',${agent},'agents:create')`);
             try {
-                const failed = await call(publicUrl, "post", `/api/orgs/${org}/agents`, ownerToken, { name: `Unavailable native create ${randomUUID()}`, role: "engineer", agentRuntimeType: "codex_local", agentRuntimeConfig: { profileId: "operator-default" }, desiredSkills: [], seedOrganizationIntelligenceDefaults: false });
-                expect(failed.status, JSON.stringify(failed.body)).toBe(503);
-                expect(failed.body.code).toBe("rust_agent_create_cutover_request_failed");
-                expect(await db.execute(sql`SELECT
-                    (SELECT count(*) FROM agents) AS agents,
-                    (SELECT count(*) FROM agent_enabled_skills) AS skills,
-                    (SELECT count(*) FROM organization_skills) AS catalog,
-                    (SELECT count(*) FROM agent_config_revisions) AS revisions,
-                    (SELECT count(*) FROM activity_log) AS activity,
-                    (SELECT count(*) FROM organization_mutation_outbox) AS outbox`)).toEqual(beforeFailure);
-                expect(fs.existsSync(nativeOrganizationAgents) ? fs.readdirSync(nativeOrganizationAgents).sort() : null).toEqual(directories);
+                expect(await scalar(sql`SELECT count(*) AS value FROM principal_permission_grants WHERE org_id=${org}::uuid AND principal_type='agent' AND principal_id=${agent} AND permission_key='agents:create'`)).toBe(1);
+                const agentCountBeforeExplicitDeny = await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`);
+                nodeNativeIngressPathHits = 0;
+                const explicitDenyWithGrant = await call(publicUrl, "post", `/api/orgs/${org}/agents`, agentToken, { name: `Denied despite create grant ${randomUUID()}` });
+                expect(explicitDenyWithGrant.status, JSON.stringify(explicitDenyWithGrant.body)).toBe(403);
+                expect(explicitDenyWithGrant.body.error).toBe("Missing permission: can create agents");
+                expect(await scalar(sql`SELECT count(*) AS value FROM agents WHERE org_id=${org}::uuid`)).toBe(agentCountBeforeExplicitDeny);
+                expect(nodeNativeIngressPathHits).toBe(0);
             } finally {
-                bridge!.agentCreate = originalCreate;
-                await unavailable.close();
+                await db.execute(sql`DELETE FROM principal_permission_grants WHERE org_id=${org}::uuid AND principal_type='agent' AND principal_id=${agent} AND permission_key='agents:create'`);
             }
+
+            const creator = randomUUID();
+            const creatorToken = `synthetic-agent-create-${randomUUID()}`;
+            await db.execute(sql`INSERT INTO agents(id,org_id,name,role,status,permissions,workspace_key) VALUES(${creator}::uuid,${org}::uuid,'Default create permission','engineer','idle','{}',${creator})`);
+            await db.execute(sql`INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES(${org}::uuid,${creator}::uuid,'synthetic create',${hash(creatorToken)})`);
+            const allowedAgent = await call(publicUrl, "post", `/api/orgs/${org}/agents`, creatorToken, { name: `Allowed agent ${randomUUID()}` });
+            expect(allowedAgent.status, JSON.stringify(allowedAgent.body)).toBe(201);
+            expect(nodeNativeIngressPathHits).toBe(0);
         } finally {
             gates.forEach((key, i) => previous[i] === undefined ? delete process.env[key] : process.env[key] = previous[i]);
             await bridge!.close();

@@ -348,7 +348,14 @@ impl OwnerSession {
         check_startup_control(&parent, &cancellation)?;
 
         let log_path = postgres_log_path(&data_dir);
-        let mut child = spawn_postgres(&binaries.postgres, &data_dir, port, &bin_dir, &log_path)?;
+        let mut child = spawn_postgres(
+            &binaries.postgres,
+            &binaries.pg_ctl,
+            &data_dir,
+            port,
+            &bin_dir,
+            &log_path,
+        )?;
         let ready_result = wait_until_ready(
             &mut child,
             ConnectionConfig {

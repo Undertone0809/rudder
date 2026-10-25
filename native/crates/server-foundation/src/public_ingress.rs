@@ -428,11 +428,14 @@ impl PublicIngressRuntime {
                         .to(llm_adapter_configuration),
                 );
             let app = if config.identity_auth.is_some() {
-                app.route(
-                    "/api/orgs/{org_id}/agents",
-                    web::route()
-                        .guard(guard::Any(guard::Get()).or(guard::Head()))
-                        .to(agent_core::roster),
+                app.service(
+                    web::resource("/api/orgs/{org_id}/agents")
+                        .route(
+                            web::route()
+                                .guard(guard::Any(guard::Get()).or(guard::Head()))
+                                .to(agent_core::roster),
+                        )
+                        .route(web::post().to(agent_core::dispatch_alias)),
                 )
                 .route(
                     "/api/agents/{agent_id}/permissions",
@@ -752,11 +755,12 @@ async fn proxy_request(
     if goal_writes::is_reserved_path(request.uri().path(), request.method()) {
         return goal_writes::dispatch_alias(state, proxy, request, payload).await;
     }
-    if agent_core::is_detail_path(request.uri().path(), request.method())
+    if agent_core::is_agent_create_path(request.uri().path(), request.method())
+        || agent_core::is_detail_path(request.uri().path(), request.method())
         || (state.config.identity_auth.is_some()
             && agent_core::is_reserved_path(request.uri().path(), request.method()))
     {
-        return agent_core::dispatch_alias(state, request, payload).await;
+        return agent_core::dispatch_alias(state, proxy, request, payload).await;
     }
     if let Some(endpoint) = crate::local_account_ingress::endpoint_for_path(request.uri().path()) {
         return crate::local_account_ingress::handle(state, request, payload, endpoint).await;

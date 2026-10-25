@@ -5,6 +5,7 @@ use super::{
     AgentCreateNodeOwned, AgentCreatePermissions, AgentCreateRequest,
     common::{Result, Tx, js_trim, uuid_like},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -222,6 +223,287 @@ pub(super) fn validate(operation: &str, value: Option<&Value>) -> Result<Value> 
         value => return Err(fail(vec![wrong("string", value, json!([key]))])),
     }
     Ok(output)
+}
+
+/// Validate the public Agent-create contract and translate it to the private
+/// create command. Unknown request fields follow Zod's strip behavior; the
+/// private `nodeOwned` preparation object is never accepted from a client.
+pub(super) fn normalize_public_agent_create(input: Option<Value>) -> Result<Value> {
+    let Some(Value::Object(source)) = input.as_ref() else {
+        return Err(validation_error(vec![wrong(
+            "object",
+            input.as_ref(),
+            json!([]),
+        )]));
+    };
+    if source
+        .get("seedOrganizationIntelligenceDefaults")
+        .is_some_and(|value| value == true)
+    {
+        return Err(AgentCoreError::Http(
+            503,
+            "First-Agent intelligence runtime-chain preflight requires the compatibility handler"
+                .into(),
+            None,
+        ));
+    }
+    if let Some(seed) = source.get("seedOrganizationIntelligenceDefaults")
+        && !seed.is_boolean()
+    {
+        return Err(validation_error(vec![wrong(
+            "boolean",
+            Some(seed),
+            json!(["seedOrganizationIntelligenceDefaults"]),
+        )]));
+    }
+
+    let mut public = serde_json::Map::new();
+    for key in [
+        "name",
+        "role",
+        "title",
+        "capabilities",
+        "agentRuntimeType",
+        "agentRuntimeConfig",
+        "runtimeConfig",
+        "budgetMonthlyCents",
+        "permissions",
+        "metadata",
+        "desiredSkills",
+    ] {
+        if let Some(value) = source.get(key) {
+            public.insert(key.to_owned(), value.clone());
+        }
+    }
+    if let Some(Value::Object(permissions)) = public.get_mut("permissions") {
+        permissions.retain(|key, _| matches!(key.as_str(), "canCreateAgents" | "canManageSkills"));
+    }
+
+    let icon = match source.get("icon") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => {
+            let value = js_trim(value);
+            if value.is_empty() {
+                None
+            } else if is_public_icon_name(value) || super::writes::supported_avatar_icon(value) {
+                Some(value.to_owned())
+            } else {
+                return Err(validation_error(vec![json!({
+                    "code":"custom",
+                    "path":["icon"],
+                    "message":"Invalid input"
+                })]));
+            }
+        }
+        value => {
+            return Err(validation_error(vec![wrong(
+                "string",
+                value,
+                json!(["icon"]),
+            )]));
+        }
+    };
+
+    let mut config = public
+        .get("agentRuntimeConfig")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !config.is_object() {
+        return Err(validation_error(vec![wrong(
+            "object",
+            public.get("agentRuntimeConfig"),
+            json!(["agentRuntimeConfig"]),
+        )]));
+    }
+    let runtime_type = public
+        .get("agentRuntimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("process");
+    // Public API runtime types are the shared contract. Older Rust-private
+    // records may still contain gemini_local, but it is not a public create
+    // option in this version of @rudderhq/shared.
+    if ![
+        "process",
+        "http",
+        "claude_local",
+        "codex_local",
+        "opencode_local",
+        "pi_local",
+        "cursor",
+        "openclaw_gateway",
+        "hermes_gateway",
+        "hermes_local",
+    ]
+    .contains(&runtime_type)
+    {
+        return Err(validation_error(vec![json!({
+            "code":"invalid_enum_value",
+            "options":["process","http","claude_local","codex_local","opencode_local","pi_local","cursor","openclaw_gateway","hermes_gateway","hermes_local"],
+            "path":["agentRuntimeType"],
+            "message":"Invalid enum value"
+        })]));
+    }
+
+    let managed_instructions = matches!(runtime_type, "claude_local" | "codex_local" | "cursor");
+    let prompt_template = config
+        .as_object_mut()
+        .and_then(|object| object.remove("promptTemplate"));
+    if prompt_template.is_some() && !managed_instructions {
+        return Err(AgentCoreError::Http(
+            503,
+            "Rust Agent create cannot prepare explicit instructions for this adapter".into(),
+            None,
+        ));
+    }
+    if contains_explicit_instruction_config(&config) {
+        return Err(AgentCoreError::Http(
+            503,
+            "Rust Agent create cannot atomically prepare explicit instructions paths".into(),
+            None,
+        ));
+    }
+    strip_node_owned_runtime_keys(&mut config);
+    public.insert("agentRuntimeConfig".to_owned(), config.clone());
+
+    let mut node_owned = serde_json::Map::new();
+    node_owned.insert("normalizedAgentRuntimeConfig".to_owned(), config);
+    if let Some(icon) = icon {
+        // The legacy helper accepts only uploaded, DiceBear, and Oreo values;
+        // built-in icon names are valid schema input but resolve to a default.
+        if super::writes::supported_avatar_icon(&icon) {
+            node_owned.insert("avatarIcon".to_owned(), json!(icon));
+        }
+    }
+    if managed_instructions {
+        let prompt = prompt_template
+            .as_ref()
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let files =
+            super::instructions::default_create_bundle_files(role_for_bundle(&public["role"]));
+        let mut files = files;
+        if !js_trim(prompt).is_empty() {
+            files.insert("SOUL.md".to_owned(), prompt.to_owned());
+        }
+        node_owned.insert(
+            "instructionsBundle".to_owned(),
+            json!({"entryFile":"SOUL.md","files":files,"clearLegacyPromptTemplate":true}),
+        );
+    }
+    public.insert("nodeOwned".to_owned(), Value::Object(node_owned));
+    let normalized = validate("create", Some(&Value::Object(public)))?;
+    Ok(normalized)
+}
+
+fn role_for_bundle(value: &Value) -> &str {
+    match value.as_str() {
+        Some("ceo") => "ceo",
+        _ => "default",
+    }
+}
+
+fn is_public_icon_name(value: &str) -> bool {
+    matches!(
+        value,
+        "bot"
+            | "cpu"
+            | "brain"
+            | "zap"
+            | "rocket"
+            | "code"
+            | "terminal"
+            | "shield"
+            | "eye"
+            | "search"
+            | "wrench"
+            | "hammer"
+            | "lightbulb"
+            | "sparkles"
+            | "star"
+            | "heart"
+            | "flame"
+            | "bug"
+            | "cog"
+            | "database"
+            | "globe"
+            | "lock"
+            | "mail"
+            | "message-square"
+            | "file-code"
+            | "git-branch"
+            | "package"
+            | "puzzle"
+            | "target"
+            | "wand"
+            | "atom"
+            | "circuit-board"
+            | "radar"
+            | "swords"
+            | "telescope"
+            | "microscope"
+            | "crown"
+            | "gem"
+            | "hexagon"
+            | "pentagon"
+            | "fingerprint"
+    )
+}
+
+fn contains_explicit_instruction_config(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_explicit_instruction_config),
+        Value::Object(values) => values.iter().any(|(key, child)| {
+            matches!(
+                key.as_str(),
+                "promptTemplate"
+                    | "bootstrapPromptTemplate"
+                    | "instructionsRootPath"
+                    | "instructionsFilePath"
+                    | "agentsMdPath"
+                    | "instructionsEntryFile"
+                    | "instructionsBundleMode"
+            ) || contains_explicit_instruction_config(child)
+        }),
+        _ => false,
+    }
+}
+
+fn strip_node_owned_runtime_keys(value: &mut Value) {
+    match value {
+        Value::Array(values) => values.iter_mut().for_each(strip_node_owned_runtime_keys),
+        Value::Object(values) => {
+            for key in [
+                "promptTemplate",
+                "bootstrapPromptTemplate",
+                "instructionsFilePath",
+                "instructionsRootPath",
+                "instructionsEntryFile",
+                "instructionsBundleMode",
+                "agentsMdPath",
+                "rudderBrowserEnabled",
+                "rudderBrowserCapability",
+                "rudderSkillSync",
+                "paperclipSkillSync",
+                "rudderRuntimeSkills",
+                "paperclipRuntimeSkills",
+                "workspaceStrategy",
+                "workspaceRuntime",
+                "cwd",
+            ] {
+                values.remove(key);
+            }
+            if let Some(fallbacks) = values.get_mut("modelFallbacks")
+                && let Value::Array(fallbacks) = fallbacks
+            {
+                for fallback in fallbacks {
+                    if let Some(config) = fallback.get_mut("config") {
+                        strip_node_owned_runtime_keys(config);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn validation_error(issues: Vec<Value>) -> AgentCoreError {
@@ -454,20 +736,160 @@ fn reject_secret_like(value: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Parse and normalize the Rust-owned create subset. Defaults mirror
-/// createAgentSchema; fields with side effects still owned by Node are
-/// rejected instead of being silently discarded.
-pub(super) fn apply_codex_create_defaults(runtime_type: &str, config: &mut Value) {
-    if runtime_type != "codex_local" {
-        return;
+fn reject_secret_like_except_device_key(value: &Value, path: &str) -> Result<()> {
+    if let Some(array) = value.as_array() {
+        for (index, child) in array.iter().enumerate() {
+            reject_secret_like_except_device_key(child, &format!("{path}[{index}]"))?;
+        }
+        return Ok(());
     }
-    if config["dangerouslyBypassApprovalsAndSandbox"].is_boolean()
-        || config["dangerouslyBypassSandbox"].is_boolean()
-    {
-        return;
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    for (key, child) in object {
+        let child_path = format!("{path}.{key}");
+        let device_key = path == "agentRuntimeConfig" && key == "devicePrivateKeyPem";
+        if (secret_like_key(key) && !device_key) || node_owned_runtime_key(key) {
+            return Err(unsupported_field(&child_path));
+        }
+        if key == "env" {
+            validate_env(child, &child_path)?;
+        } else if key == "modelFallbacks" {
+            validate_model_fallbacks(child, &child_path)?;
+        } else {
+            reject_secret_like_except_device_key(child, &child_path)?;
+        }
     }
-    config["dangerouslyBypassApprovalsAndSandbox"] =
-        json!(config["profileId"] != "operator-default");
+    Ok(())
+}
+
+/// Apply the runtime defaults used by the public create route. The old private
+/// bridge retains its compatibility bypass default; the public Rust path omits
+/// that legacy Node default in the same way as the existing Rust cutover.
+pub(super) fn apply_create_defaults(
+    runtime_type: &str,
+    config: &mut Value,
+    public_agent_create: bool,
+) -> Result<()> {
+    let Some(object) = config.as_object_mut() else {
+        return Err(unsupported_field("agentRuntimeConfig"));
+    };
+    if !public_agent_create {
+        if runtime_type == "codex_local"
+            && !(object
+                .get("dangerouslyBypassApprovalsAndSandbox")
+                .is_some_and(Value::is_boolean)
+                || object
+                    .get("dangerouslyBypassSandbox")
+                    .is_some_and(Value::is_boolean))
+        {
+            let bypass =
+                object.get("profileId").and_then(Value::as_str) != Some("operator-default");
+            object.insert(
+                "dangerouslyBypassApprovalsAndSandbox".to_owned(),
+                json!(bypass),
+            );
+        }
+        return Ok(());
+    }
+    match runtime_type {
+        "codex_local" => {
+            // Node's public create default is true unless either supported
+            // bypass key is explicitly boolean. The UI sends false for its
+            // operator-default profile, but API callers that omit the field
+            // retain the established public create behavior.
+            if !(object
+                .get("dangerouslyBypassApprovalsAndSandbox")
+                .is_some_and(Value::is_boolean)
+                || object
+                    .get("dangerouslyBypassSandbox")
+                    .is_some_and(Value::is_boolean))
+            {
+                object.insert(
+                    "dangerouslyBypassApprovalsAndSandbox".to_owned(),
+                    json!(true),
+                );
+            }
+            if object
+                .get("model")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                object.insert("model".to_owned(), json!("gpt-5.6-luna"));
+            }
+            let has_reasoning_effort =
+                ["modelReasoningEffort", "reasoningEffort"]
+                    .iter()
+                    .any(|key| {
+                        object
+                            .get(*key)
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| !value.trim().is_empty())
+                    });
+            if !has_reasoning_effort {
+                object.insert("modelReasoningEffort".to_owned(), json!("medium"));
+            }
+            if !object.get("search").is_some_and(Value::is_boolean) {
+                object.insert("search".to_owned(), json!(true));
+            }
+        }
+        "cursor" => {
+            if object
+                .get("model")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                object.insert("model".to_owned(), json!("auto"));
+            }
+        }
+        "openclaw_gateway" => {
+            let disable_device_auth =
+                parse_boolean_like(object.get("disableDeviceAuth")) == Some(true);
+            let has_device_key = object
+                .get("devicePrivateKeyPem")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if !disable_device_auth && !has_device_key {
+                object.insert(
+                    "devicePrivateKeyPem".to_owned(),
+                    json!(generate_ed25519_private_key_pem()?),
+                );
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_boolean_like(value: Option<&Value>) -> Option<bool> {
+    match value? {
+        Value::Bool(value) => Some(*value),
+        Value::Number(value) if value.as_f64() == Some(1.0) => Some(true),
+        Value::Number(value) if value.as_f64() == Some(0.0) => Some(false),
+        Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn generate_ed25519_private_key_pem() -> Result<String> {
+    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+        .map_err(|_| {
+        AgentCoreError::Http(503, "Secure randomness is unavailable".into(), None)
+    })?;
+    let encoded = STANDARD.encode(pkcs8.as_ref());
+    let wrapped = encoded
+        .as_bytes()
+        .chunks(64)
+        .map(|line| std::str::from_utf8(line).expect("base64 is ASCII"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        "-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----\n"
+    ))
 }
 
 pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
@@ -581,7 +1003,11 @@ pub(super) fn parse_create(value: &Value) -> Result<AgentCreateRequest> {
             json!(["agentRuntimeConfig"]),
         )]));
     }
-    reject_secret_like(&agent_runtime_config, "agentRuntimeConfig")?;
+    if agent_runtime_type == "openclaw_gateway" {
+        reject_secret_like_except_device_key(&agent_runtime_config, "agentRuntimeConfig")?;
+    } else {
+        reject_secret_like(&agent_runtime_config, "agentRuntimeConfig")?;
+    }
     let runtime_config = object
         .get("runtimeConfig")
         .cloned()
@@ -1273,15 +1699,88 @@ mod tests {
                 None,
             ),
         ] {
-            apply_codex_create_defaults("codex_local", &mut config);
+            apply_create_defaults("codex_local", &mut config, false).unwrap();
             assert_eq!(
                 config["dangerouslyBypassApprovalsAndSandbox"].as_bool(),
                 expected
             );
         }
         let mut other_runtime = json!({"profileId":"operator-default"});
-        apply_codex_create_defaults("hermes_local", &mut other_runtime);
+        apply_create_defaults("hermes_local", &mut other_runtime, false).unwrap();
         assert_eq!(other_runtime, json!({"profileId":"operator-default"}));
+    }
+
+    #[test]
+    fn public_codex_create_matches_node_bypass_defaults_and_preserves_explicit_flags() {
+        for (mut config, expected) in [
+            (json!({"profileId":"operator-default"}), Some(true)),
+            (json!({"profileId":"default"}), Some(true)),
+            (json!({}), Some(true)),
+            (
+                json!({"profileId":"operator-default","dangerouslyBypassApprovalsAndSandbox":false}),
+                Some(false),
+            ),
+            (
+                json!({"profileId":"default","dangerouslyBypassApprovalsAndSandbox":true}),
+                Some(true),
+            ),
+            (
+                json!({"profileId":"operator-default","dangerouslyBypassSandbox":false}),
+                None,
+            ),
+        ] {
+            apply_create_defaults("codex_local", &mut config, true).unwrap();
+            assert_eq!(
+                config["dangerouslyBypassApprovalsAndSandbox"].as_bool(),
+                expected
+            );
+        }
+
+        let mut config = json!({"profileId":"operator-default"});
+        apply_create_defaults("codex_local", &mut config, true).unwrap();
+        assert_eq!(config["model"], "gpt-5.6-luna");
+        assert_eq!(config["modelReasoningEffort"], "medium");
+        assert_eq!(config["search"], true);
+
+        let mut cursor = json!({});
+        apply_create_defaults("cursor", &mut cursor, true).unwrap();
+        assert_eq!(cursor["model"], "auto");
+    }
+
+    #[test]
+    fn public_agent_create_normalizes_public_schema_and_strips_unknown_fields() {
+        let normalized = normalize_public_agent_create(Some(json!({
+            "name":"  Native Agent  ",
+            "role":"engineer",
+            "permissions":{"canCreateAgents":false,"unknown":true},
+            "agentRuntimeConfig":{"command":"custom-agent"},
+            "nodeOwned":{"avatarIcon":"forged"},
+            "unknown":"stripped"
+        })))
+        .unwrap();
+        let request = AgentCreateRequest::parse(&normalized).unwrap();
+        assert_eq!(request.name.as_deref(), Some("Native Agent"));
+        assert_eq!(request.role, "engineer");
+        assert!(!request.permissions.can_create_agents);
+        assert!(request.permissions.can_manage_skills);
+        assert_eq!(
+            request
+                .node_owned
+                .as_ref()
+                .and_then(|node| node.avatar_icon.as_deref()),
+            None
+        );
+        assert_eq!(request.agent_runtime_config["command"], "custom-agent");
+    }
+
+    #[test]
+    fn public_agent_create_preflight_does_not_accept_intelligence_seed() {
+        let error = normalize_public_agent_create(Some(json!({
+            "name":"First Agent",
+            "seedOrganizationIntelligenceDefaults":true
+        })))
+        .unwrap_err();
+        assert!(matches!(error, AgentCoreError::Http(503, ..)));
     }
 
     #[test]
