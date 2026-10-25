@@ -568,8 +568,17 @@ jobs:
 
       - name: Windows real PostgreSQL lifecycle
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          RUDDER_TEST_POSTGRES_BIN_DIR="$RUDDER_POSTGRES_BIN_DIR" cargo test --locked --manifest-path native/Cargo.toml -p rudder-postgres-lifecycle --test postgres_lifecycle creates_attaches_and_stops_only_its_owned_cluster -- --exact --test-threads=1
+          $testRoot = Join-Path $env:RUNNER_TEMP "rudder-postgres-lifecycle"
+          New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+          icacls $testRoot /grant "$($env:USERNAME):(OI)(CI)F" /Q | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Could not grant the runner user access to disposable PostgreSQL test data" }
+          if (-not $env:RUDDER_POSTGRES_BIN_DIR) { throw "The PostgreSQL test runtime was not prepared" }
+          $env:RUDDER_TEST_POSTGRES_BIN_DIR = $env:RUDDER_POSTGRES_BIN_DIR
+          $env:RUDDER_TEST_POSTGRES_TEMP_DIR = $testRoot
+          cargo test --locked --manifest-path native/Cargo.toml -p rudder-postgres-lifecycle --test postgres_lifecycle creates_attaches_and_stops_only_its_owned_cluster -- --exact --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows native admission preflight
         if: runner.os == 'Windows'
