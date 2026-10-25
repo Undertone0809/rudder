@@ -1271,7 +1271,7 @@
     },
     {
       "path": "desktop/src/desktop-quit-flow.ts",
-      "sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
+      "sha256": "30ca722baf9d169e5b14b7a49bcce56cd6956ad5f0b392ef70819c751a50e748",
       "families": [
         "electron_process_graph"
       ]
@@ -59334,43 +59334,24 @@
       ]
     },
     {
-      "path": "desktop/src/computer-broker-registration.ts",
-      "base_sha256": "8c979b09c52100ed681bdb5df1ad42c2161cecd2a583b0f4d3ccdc3e83c47a88",
-      "head_sha256": "2e752ae4d90aea77a1de8d4fa02d2d1fb4b4b11d3dd85845cec367e4bb49ad8a",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "transport_adapter",
-      "rust_authority": "No Computer backend authority migration is claimed by this client timeout. Native Chat stop remains Rust-owned in server-foundation public_ingress/native_chat and d1-persistence native_chat/control/stop; existing Computer settings and broker backend ownership remains migration debt.",
-      "compatibility_boundary": "The Electron Computer HTTP client adds only a five-second AbortSignal deadline to its existing requests so an unresponsive settings read cannot hold the Desktop disconnect queue. No domain validation, persistence, process execution, or backend fallback is added.",
       "allowed_node_duties": [
-        "Send existing Desktop Computer broker/settings client requests with a bounded wait and surface transport errors."
+        "Coordinate Desktop quit/update prompts, inspect active-run summaries through the local API, and submit bounded Rust public stop/cancel requests for native_rust runs; retain the existing heartbeat cancel request only for legacy_ts runs."
       ],
-      "prohibited_node_duties": [
-        "No new backend business rules, writers, fallback, or authoritative run terminalization."
-      ],
-      "retirement_criterion": "Retire existing Node Computer backend responsibilities when their public settings/broker/runtime workflows move to Rust; retain only the Electron client request boundary.",
-      "reviewer": "/root/rust_delivery_review_r15",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/desktop-quit-composed-r1/independent-stage-review-r1.json",
-      "review_status": "reviewed"
-    },
-    {
-      "allowed_node_duties": [
-        "Coordinate Desktop quit/update prompts, inspect active-run summaries through the local API, and submit bounded stop requests for native_rust runs."
-      ],
-      "base_sha256": "1303f692b226198083e4123d848f5f2b0ecd7cc851264c6b75ba687b37f1c18d",
+      "base_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
       "change_kind": "modified_node_compatibility",
-      "compatibility_boundary": "Electron Desktop is a client of the public Rust Native Chat control/stop API for native_rust runs and does not own run state or provider execution. The existing heartbeat cancel request remains only for legacy_ts runs; native_rust failures do not fall back to that Node route.",
-      "head_sha256": "accd874120a423f86912ae43ca0942b106ec11b6efb9c3965a004e26fac65033",
+      "compatibility_boundary": "Electron Desktop inspects live-run identity and submits bounded Rust public cancellation for native Goal Runs (native_rust with a valid goalId and no Chat identity), and uses the typed Rust stop API for Native Chat. Only legacy_ts runs use the existing Node heartbeat-cancel route. Native Rust stop failures do not fall back to Node.",
+      "head_sha256": "30ca722baf9d169e5b14b7a49bcce56cd6956ad5f0b392ef70819c751a50e748",
       "node_role": "transport_adapter",
       "path": "desktop/src/desktop-quit-flow.ts",
       "prohibited_node_duties": [
-        "No authoritative Native Chat generation, cutoff, recovery, persistence, or provider-process decisions.",
-        "No Node fallback when a Rust-owned Native Chat stop fails."
+        "No authoritative native run state, provider execution or termination, persistence, recovery, or terminalization.",
+        "No Node fallback when cancellation of a Rust-owned run fails."
       ],
-      "retirement_criterion": "Retire only the legacy heartbeat-cancel branch when supported runtime modes no longer expose Node-owned runs; keep Desktop quit UX as a client of the Rust public API.",
+      "retirement_criterion": "Retire the legacy heartbeat-cancel branch when all first-party legacy_ts run ownership is migrated to Rust; keep Desktop quit/update UX as a client of the Rust public APIs.",
       "review_status": "reviewed",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/native_chat/mod.rs owns public control/stop request handling; native/crates/d1-persistence/src/native_chat/control/stop.rs and native_chat/execution own durable stop and settlement state.",
+      "rust_authority": "Rust public ingress in native/crates/server-foundation/src/public_ingress/agent_runs.rs owns native Goal Agent Run cancellation; native/crates/server-foundation/src/public_ingress/native_chat/mod.rs owns Native Chat stop handling. The durable cancellation and terminal effects are owned by native/crates/d1-persistence/src/goal_run_cancellation.rs and native_chat/control/stop. The existing Node heartbeat cancellation route remains only for legacy_ts runs.",
       "reviewer": "/root/rust_delivery_review_r15",
-      "review_reference": "/private/tmp/rudder-rust-migration-authority-20261025/api-delivery-r1/desktop-quit-composed-r1/independent-stage-review-r1.json"
+      "review_reference": "/private/tmp/goal-native-quit-r1/independent-final-review-r1.json"
     }
   ],
   "reviewed_legacy_fence_changes": [

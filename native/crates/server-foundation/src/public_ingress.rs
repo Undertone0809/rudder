@@ -23,6 +23,7 @@ mod approval_reads;
 mod browser_session;
 mod cli_auth;
 mod email_auth;
+mod goal_singular_reads;
 mod goal_writes;
 mod native_chat;
 mod organization_resources;
@@ -794,6 +795,9 @@ async fn proxy_request(
         {
             return get_session(state, request).await;
         }
+    }
+    if let Some((reference, view)) = goal_singular_reads::classify(&request) {
+        return goal_singular_reads::dispatch(state, request, payload, reference, view).await;
     }
     if let Some((org_id, view, assigned)) = public_goal_collection_route(&request) {
         return goal_collection_proxy_alias(state, request, payload, org_id, view, assigned).await;
