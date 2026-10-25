@@ -447,7 +447,7 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
         StatusCode::INTERNAL_SERVER_ERROR
     );
     let unavailable_create_body: serde_json::Value = unavailable_create.json().await.unwrap();
-    assert_eq!(unavailable_create_body["reason"], "internal_server_error");
+    assert_eq!(unavailable_create_body["reason"], "mutation_failed");
     assert_eq!(
         node_requests.load(Ordering::SeqCst),
         configured_write_node_count
