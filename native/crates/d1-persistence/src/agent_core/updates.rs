@@ -40,9 +40,8 @@ pub(super) async fn execute(
         .remove("replaceAgentRuntimeConfig")
         .is_some_and(|value| value == true);
     // Skill selection has a separate public endpoint. The shared PATCH schema
-    // historically inherited this create-only field; it is intentionally not
-    // treated as an Agent table column here.
-    patch.remove("desiredSkills");
+    // historically inherited this create-only field; preserve it for the
+    // legacy activity summary, but do not treat it as an Agent table column.
 
     let existing_config = row["agentRuntimeConfig"]
         .as_object()
@@ -163,6 +162,7 @@ pub(super) async fn execute(
 
     let before = config_snapshot(row);
     let mut database_patch = patch.clone();
+    database_patch.remove("desiredSkills");
     database_patch.insert("updatedAt".into(), json!(now()));
     let updated = update(tx, ctx.org, id, &Value::Object(database_patch)).await?;
     let after = config_snapshot(&updated);

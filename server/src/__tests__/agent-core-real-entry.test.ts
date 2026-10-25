@@ -590,6 +590,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
                 runtimeConfig: { heartbeat: { enabled: false, intervalSec: 30 }, password: "never-return-this" },
                 budgetMonthlyCents: 7200,
                 metadata: { profileSource: "board-editor" },
+                desiredSkills: ["profile-patch-does-not-enable-skills"],
                 status: "paused",
                 workspaceKey: "client-cannot-replace-workspace-key",
             });
@@ -604,6 +605,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
                 budgetMonthlyCents: 7200,
             });
             expect(profilePatch.body).not.toHaveProperty("workspaceKey");
+            expect(profilePatch.body).not.toHaveProperty("desiredSkills");
             expect(profilePatch.body.agentRuntimeConfig).toMatchObject({
                 retained: "existing",
                 profileExtension: { enabled: true },
@@ -622,7 +624,7 @@ describe("Agent core twenty-route real HTTP authority", () => {
             expect(JSON.stringify(profileRevisions[0]?.after_config)).toContain("***REDACTED***");
             const [profileActivity] = await db.execute(sql`SELECT details FROM activity_log WHERE entity_id=${subject} AND action='agent.updated' ORDER BY created_at DESC LIMIT 1`);
             expect(profileActivity?.details).toMatchObject({
-                changedTopLevelKeys: ["agentRuntimeConfig", "budgetMonthlyCents", "capabilities", "icon", "metadata", "name", "runtimeConfig", "status", "title"],
+                changedTopLevelKeys: ["agentRuntimeConfig", "budgetMonthlyCents", "capabilities", "desiredSkills", "icon", "metadata", "name", "runtimeConfig", "status", "title"],
                 changedAdapterConfigKeys: ["env", "profileExtension", "retained"],
                 changedRuntimeConfigKeys: ["heartbeat", "password"],
             });
