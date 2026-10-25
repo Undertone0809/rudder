@@ -8,7 +8,7 @@ use rudder_d1_persistence::{
     },
     goal_writes::GoalWriteContext,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::PgConnection;
 use std::{future::Future, pin::Pin};
 use support::{CEO, Database, FOREIGN_GOAL, GOAL, ORG, OTHER};
@@ -40,7 +40,7 @@ fn preview_input(owner_id: &str, title: &str) -> GoalStartPreviewInput {
         title: title.to_owned(),
         context: Some("Keep the result inspectable.".to_owned()),
         owner_agent_id: Some(owner_id.to_owned()),
-        target_time: Some("2026-08-20T10:00:00.000Z".to_owned()),
+        target_time: Some(json!("2026-08-20T10:00:00.000Z")),
     }
 }
 
@@ -76,6 +76,38 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     let database = Database::start().await;
     let capable = "Plan and execute end-to-end software releases with verifiable evidence.";
     set_owner_capabilities(&database, CEO, capable).await;
+    let date_fixture: Value = serde_json::from_str(include_str!(
+        "fixtures/goal-start-date-coercion-typescript.json"
+    ))
+    .unwrap();
+    let date_fixture_owner = "55555555-5555-4555-8555-555555555555";
+    sqlx::query(
+        "INSERT INTO agents (id,org_id,name,role,status,capabilities) VALUES ($1::uuid,$2::uuid,'Unicode Goal owner','engineer','idle',$3)",
+    )
+    .bind(date_fixture_owner)
+    .bind(ORG)
+    .bind(capable)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    for (target_time, fixture_key) in [
+        (json!("2026-10-25"), "dateOnly"),
+        (json!(1_792_886_400_000_i64), "epochMillis"),
+    ] {
+        let parity_preview = compile_goal_start_preview(
+            &database.pool,
+            ORG,
+            &GoalStartPreviewInput {
+                title: "把已验证的发布结果交付给客户".to_owned(),
+                context: Some("面向中国用户，记录可验证证据。".to_owned()),
+                owner_agent_id: Some(date_fixture_owner.to_owned()),
+                target_time: Some(target_time),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(parity_preview, date_fixture[fixture_key]);
+    }
     sqlx::query(
         "INSERT INTO agents (id,org_id,name,role,status,capabilities) VALUES ($1::uuid,$2::uuid,'Foreign Goal owner','engineer','idle',$3)",
     )
@@ -324,4 +356,87 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     .await
     .unwrap();
     assert_eq!(stray_wakeup_count, 0);
+
+    // The public start path hashes and stores the Zod-normalized packet, not
+    // the raw JSON submitted by a client.
+    let normalization_fixture: Value = serde_json::from_str(include_str!(
+        "fixtures/goal-start-packet-normalization-typescript.json"
+    ))
+    .unwrap();
+    let normalization_start = GoalStartInput {
+        request_key: "goal-start-zod-normalization".to_owned(),
+        packet_hash: normalization_fixture["packetHash"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        packet: normalization_fixture["input"].clone(),
+        allow_capability_mismatch: true,
+        draft_goal_id: None,
+    };
+    let normalized_result = apply_goal_start(
+        &database.pool,
+        &Authorized,
+        actor(ORG),
+        &normalization_start,
+    )
+    .await
+    .unwrap();
+    assert!(!normalized_result.replayed);
+    assert_eq!(
+        normalized_result.goal["title"],
+        "把已验证的发布结果交付给客户"
+    );
+    let stored_normalized_packet: Value = sqlx::query_scalar(
+        "SELECT packet FROM goal_start_requests WHERE org_id=$1::uuid AND request_key='goal-start-zod-normalization'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_normalized_packet, normalization_fixture["packet"]);
+
+    // Two simultaneous submissions with the same idempotency key resolve to
+    // one completed Goal Start and one durable wake intent.
+    let concurrent_start = start_input("goal-start-concurrent", &preview, None, false);
+    let concurrent_authorizer = Authorized;
+    let (left, right) = tokio::join!(
+        apply_goal_start(
+            &database.pool,
+            &concurrent_authorizer,
+            actor(ORG),
+            &concurrent_start,
+        ),
+        apply_goal_start(
+            &database.pool,
+            &concurrent_authorizer,
+            actor(ORG),
+            &concurrent_start,
+        ),
+    );
+    let left = left.unwrap();
+    let right = right.unwrap();
+    assert_ne!(left.replayed, right.replayed);
+    assert_eq!(left.goal["id"], right.goal["id"]);
+    assert_eq!(
+        left.dispatch.wakeup_request_id,
+        right.dispatch.wakeup_request_id
+    );
+    let concurrent_request_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM goal_start_requests WHERE org_id=$1::uuid AND request_key='goal-start-concurrent' AND status='completed'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(concurrent_request_count, 1);
+    let concurrent_idempotency_key = left.dispatch.idempotency_key.clone();
+    let concurrent_wakeup_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(concurrent_idempotency_key)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(concurrent_wakeup_count, 1);
 }

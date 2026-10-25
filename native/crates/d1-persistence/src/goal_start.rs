@@ -20,7 +20,10 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row, Transaction};
 use std::collections::HashSet;
 use thiserror::Error;
-use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
+use time::{
+    Date, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset,
+    format_description::{self, well_known::Rfc3339},
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -28,7 +31,9 @@ pub struct GoalStartPreviewInput {
     pub title: String,
     pub context: Option<String>,
     pub owner_agent_id: Option<String>,
-    pub target_time: Option<String>,
+    /// Zod's `z.coerce.date()` accepts date-only strings, RFC3339 strings, and
+    /// epoch-millisecond JSON numbers. Normalize before packet compilation.
+    pub target_time: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,7 +122,7 @@ pub async fn compile_goal_start_preview(
     let org = canonical_uuid(organization_id)?;
     let target_time = input
         .target_time
-        .as_deref()
+        .as_ref()
         .map(normalize_target_time)
         .transpose()?;
     let normalized = GoalStartPreviewInput {
@@ -128,7 +133,7 @@ pub async fn compile_goal_start_preview(
             .as_deref()
             .map(canonical_uuid)
             .transpose()?,
-        target_time,
+        target_time: target_time.map(Value::String),
     };
     if !has_concrete_goal_outcome(&normalized) {
         return Ok(outcome_blocker());
@@ -165,14 +170,13 @@ pub async fn apply_goal_start(
     {
         return Err(StoreError::InvalidInput.into());
     }
-    let computed_hash = stable_goal_hash(&input.packet)?;
+    let (normalized_packet, packet) = normalize_packet(&input.packet)?;
+    let computed_hash = stable_goal_hash(&normalized_packet)?;
     if computed_hash != input.packet_hash {
         return Err(GoalStartError::Conflict(
             "Goal Start packet hash does not match the submitted packet",
         ));
     }
-    let packet = validate_packet(&input.packet)?;
-
     let mut tx = pool.begin().await?;
     let result = async {
         lock_organization(&mut tx, &org).await?;
@@ -184,7 +188,14 @@ pub async fn apply_goal_start(
         require_board(&context)?;
 
         if let Some(replay) = read_start_request(&mut tx, &org, request_key).await? {
-            return replay_start(&mut tx, &org, &context, &input.packet, &input.packet_hash, replay)
+            return replay_start(
+                &mut tx,
+                &org,
+                &context,
+                &normalized_packet,
+                &input.packet_hash,
+                replay,
+            )
                 .await;
         }
 
@@ -204,7 +215,9 @@ pub async fn apply_goal_start(
             title: packet.title.clone(),
             context: packet.description.clone(),
             owner_agent_id: Some(packet.owner_agent_id.clone()),
-            target_time: packet.activation["evaluationDeadline"].as_str().map(str::to_owned),
+            target_time: packet.activation["evaluationDeadline"]
+                .as_str()
+                .map(|value| Value::String(value.to_owned())),
         };
         if !owner_can_advance_goal(&owner, &preview_input) && !input.allow_capability_mismatch {
             return Err(GoalStartError::unprocessable(
@@ -218,7 +231,7 @@ pub async fn apply_goal_start(
         .bind(&org)
         .bind(request_key)
         .bind(&input.packet_hash)
-        .bind(input.packet.to_string())
+        .bind(normalized_packet.to_string())
         .bind(input.draft_goal_id.as_deref())
         .fetch_optional(&mut *tx)
         .await?
@@ -321,48 +334,244 @@ struct ValidatedStartPacket {
     activation: Value,
 }
 
-fn validate_packet(packet: &Value) -> Result<ValidatedStartPacket, GoalStartError> {
+fn normalize_packet(packet: &Value) -> Result<(Value, ValidatedStartPacket), GoalStartError> {
     let object = packet.as_object().ok_or(StoreError::InvalidInput)?;
-    if object.get("version") != Some(&Value::from(1)) {
+    reject_unknown_keys(
+        object,
+        &[
+            "version",
+            "title",
+            "description",
+            "ownerAgentId",
+            "activation",
+        ],
+    )?;
+    if object.get("version").and_then(Value::as_f64) != Some(1.0) {
         return Err(StoreError::InvalidInput.into());
     }
-    let title = object
-        .get("title")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or(StoreError::InvalidInput)?
-        .to_owned();
+    let title = required_trimmed_string(object.get("title"))?;
     let description = match object.get("description") {
         Some(Value::Null) => None,
         Some(Value::String(value)) => Some(value.clone()),
         _ => return Err(StoreError::InvalidInput.into()),
     };
-    let owner_agent_id = object
-        .get("ownerAgentId")
-        .and_then(Value::as_str)
-        .map(canonical_uuid)
-        .transpose()?
-        .ok_or(StoreError::InvalidInput)?;
-    let activation = object
+    let owner_input = required_string(object.get("ownerAgentId"))?;
+    let owner_agent_id = goal_start_uuid(owner_input)?;
+    let raw_activation = object
         .get("activation")
-        .filter(|value| value.is_object())
-        .cloned()
+        .and_then(Value::as_object)
         .ok_or(StoreError::InvalidInput)?;
-    let activation_owner = activation
-        .get("ownerAgentId")
-        .and_then(Value::as_str)
-        .map(canonical_uuid)
-        .transpose()?;
-    if activation_owner.as_deref() != Some(owner_agent_id.as_str()) {
+
+    // `activateGoalSchema` strips unknown object keys and materializes its
+    // record/array defaults. Preserve those parsed values for hashing and
+    // storage instead of hashing raw input while mutating different values.
+    let confirmed = raw_activation.get("confirmed") == Some(&Value::Bool(true));
+    if !confirmed {
         return Err(StoreError::InvalidInput.into());
     }
-    Ok(ValidatedStartPacket {
+    let activation_owner_input = required_string(raw_activation.get("ownerAgentId"))?;
+    let _activation_owner = goal_start_uuid(activation_owner_input)?;
+    if activation_owner_input != owner_input {
+        return Err(StoreError::InvalidInput.into());
+    }
+    let outcome = required_trimmed_string(raw_activation.get("outcomeStatement"))?;
+    let objective_mode = required_enum_value(
+        raw_activation.get("objectiveMode"),
+        &["target", "maximize", "maintain", "decide"],
+    )?;
+    let criteria_value = raw_activation
+        .get("criteria")
+        .and_then(Value::as_array)
+        .filter(|criteria| !criteria.is_empty())
+        .ok_or(StoreError::InvalidInput)?;
+    let mut criteria = Vec::with_capacity(criteria_value.len());
+    let mut criterion_ids = HashSet::new();
+    for value in criteria_value {
+        let criterion = value.as_object().ok_or(StoreError::InvalidInput)?;
+        let id = required_trimmed_string(criterion.get("id"))?;
+        if !criterion_ids.insert(id.clone()) {
+            return Err(StoreError::InvalidInput.into());
+        }
+        let label = required_trimmed_string(criterion.get("label"))?;
+        let evaluator = required_enum_value(
+            criterion.get("evaluator"),
+            &["artifact", "metric", "policy", "human"],
+        )?;
+        let mut normalized = json!({"id": id, "label": label, "evaluator": evaluator});
+        if let Some(refs) = criterion.get("evidenceRequirements") {
+            let refs = refs.as_array().ok_or(StoreError::InvalidInput)?;
+            let refs = refs
+                .iter()
+                .map(|reference| {
+                    let reference = required_trimmed_string(Some(reference))?;
+                    if !evidence_reference_is_valid(&reference) {
+                        return Err(StoreError::InvalidInput.into());
+                    }
+                    Ok(Value::String(reference))
+                })
+                .collect::<Result<Vec<_>, GoalStartError>>()?;
+            normalized["evidenceRequirements"] = Value::Array(refs);
+        }
+        criteria.push(normalized);
+    }
+
+    let autonomy_envelope = optional_json_record(raw_activation.get("autonomyEnvelope"))?;
+    let human_authorities = optional_json_record(raw_activation.get("humanAuthorities"))?;
+    let evaluation_policy = optional_json_record(raw_activation.get("evaluationPolicy"))?;
+    let action_deadline = optional_goal_date(raw_activation.get("actionDeadline"))?;
+    let evaluation_deadline = optional_goal_date(raw_activation.get("evaluationDeadline"))?;
+    if let (Some(Value::String(action)), Some(Value::String(evaluation))) =
+        (&action_deadline, &evaluation_deadline)
+        && OffsetDateTime::parse(evaluation, &Rfc3339).map_err(|_| StoreError::InvalidInput)?
+            < OffsetDateTime::parse(action, &Rfc3339).map_err(|_| StoreError::InvalidInput)?
+    {
+        return Err(StoreError::InvalidInput.into());
+    }
+
+    let raw_continuation = raw_activation
+        .get("initialContinuation")
+        .and_then(Value::as_object)
+        .ok_or(StoreError::InvalidInput)?;
+    let continuation_kind = required_enum_value(
+        raw_continuation.get("kind"),
+        &["commitment", "wait", "decision", "verification"],
+    )?;
+    let continuation_summary = required_trimmed_string(raw_continuation.get("summary"))?;
+    let mut continuation = json!({"kind": continuation_kind, "summary": continuation_summary});
+    if let Some(wake_condition) = raw_continuation.get("wakeCondition") {
+        continuation["wakeCondition"] = match wake_condition {
+            Value::Null => Value::Null,
+            Value::String(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(StoreError::InvalidInput.into());
+                }
+                Value::String(trimmed.to_owned())
+            }
+            _ => return Err(StoreError::InvalidInput.into()),
+        };
+    }
+
+    let raw_plan = raw_activation
+        .get("initialPlan")
+        .and_then(Value::as_object)
+        .ok_or(StoreError::InvalidInput)?;
+    let plan_summary = required_trimmed_string(raw_plan.get("summary"))?;
+    let plan = json!({
+        "summary": plan_summary,
+        "hypotheses": array_or_empty(raw_plan.get("hypotheses"))?,
+        "selectedPaths": array_or_empty(raw_plan.get("selectedPaths"))?,
+        "rejectedPaths": array_or_empty(raw_plan.get("rejectedPaths"))?,
+        "sequencing": array_or_empty(raw_plan.get("sequencing"))?,
+        "budgetAllocations": optional_json_record(raw_plan.get("budgetAllocations"))?,
+        "invalidationConditions": array_or_empty(raw_plan.get("invalidationConditions"))?,
+    });
+    // Retain the object as parsed by Zod: unknown keys in nested objects are
+    // stripped, and optional plan collections are present with defaults.
+    let mut activation = json!({
+        "confirmed": true,
+        "ownerAgentId": activation_owner_input,
+        "outcomeStatement": outcome,
+        "objectiveMode": objective_mode,
+        "criteria": criteria,
+        "autonomyEnvelope": autonomy_envelope,
+        "humanAuthorities": human_authorities,
+        "evaluationPolicy": evaluation_policy,
+        "initialContinuation": continuation,
+        "initialPlan": plan,
+    });
+    if let Some(deadline) = action_deadline {
+        activation["actionDeadline"] = deadline;
+    }
+    if let Some(deadline) = evaluation_deadline {
+        activation["evaluationDeadline"] = deadline;
+    }
+    let normalized_packet = json!({
+        "version": 1,
+        "title": title,
+        "description": description,
+        "ownerAgentId": owner_input,
+        "activation": activation,
+    });
+    let validated = ValidatedStartPacket {
         title,
         description,
         owner_agent_id,
-        activation,
-    })
+        activation: activation.clone(),
+    };
+    Ok((normalized_packet, validated))
+}
+
+fn reject_unknown_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+) -> Result<(), StoreError> {
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn required_string(value: Option<&Value>) -> Result<&str, StoreError> {
+    value
+        .and_then(Value::as_str)
+        .ok_or(StoreError::InvalidInput)
+}
+
+fn required_trimmed_string(value: Option<&Value>) -> Result<String, StoreError> {
+    let value = required_string(value)?.trim();
+    if value.is_empty() {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok(value.to_owned())
+}
+
+fn required_enum_value(value: Option<&Value>, choices: &[&str]) -> Result<String, StoreError> {
+    let value = required_string(value)?;
+    if choices.contains(&value) {
+        Ok(value.to_owned())
+    } else {
+        Err(StoreError::InvalidInput)
+    }
+}
+
+fn goal_start_uuid(value: &str) -> Result<String, StoreError> {
+    let canonical = canonical_uuid(value)?;
+    let bytes = canonical.as_bytes();
+    if !matches!(bytes[14], b'1'..=b'8') || !matches!(bytes[19], b'8'..=b'b') {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok(canonical)
+}
+
+fn optional_json_record(value: Option<&Value>) -> Result<Value, StoreError> {
+    match value {
+        None => Ok(json!({})),
+        Some(Value::Object(object)) => Ok(Value::Object(object.clone())),
+        _ => Err(StoreError::InvalidInput),
+    }
+}
+
+fn array_or_empty(value: Option<&Value>) -> Result<Value, StoreError> {
+    match value {
+        None => Ok(json!([])),
+        Some(Value::Array(array)) => Ok(Value::Array(array.clone())),
+        _ => Err(StoreError::InvalidInput),
+    }
+}
+
+fn evidence_reference_is_valid(value: &str) -> bool {
+    Regex::new(r"(?i)^[a-z][a-z0-9+.-]*:[^\s]+$")
+        .expect("constant evidence reference regex")
+        .is_match(value)
+}
+
+fn optional_goal_date(value: Option<&Value>) -> Result<Option<Value>, StoreError> {
+    match value {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(Value::Null)),
+        Some(value) => normalize_target_time(value).map(|value| Some(Value::String(value))),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1151,9 +1360,33 @@ fn ascii_words(value: &str) -> HashSet<String> {
         .collect()
 }
 
-fn normalize_target_time(value: &str) -> Result<String, StoreError> {
-    let parsed = OffsetDateTime::parse(value, &Rfc3339).map_err(|_| StoreError::InvalidInput)?;
+fn normalize_target_time(value: &Value) -> Result<String, StoreError> {
+    let parsed = match value {
+        Value::String(value) => parse_goal_date_string(value)?,
+        Value::Number(value) => {
+            let milliseconds = value.as_f64().ok_or(StoreError::InvalidInput)?.trunc();
+            if !milliseconds.is_finite() || milliseconds.abs() > 8_640_000_000_000_000.0 {
+                return Err(StoreError::InvalidInput);
+            }
+            OffsetDateTime::from_unix_timestamp_nanos((milliseconds as i128) * 1_000_000)
+                .map_err(|_| StoreError::InvalidInput)?
+        }
+        _ => return Err(StoreError::InvalidInput),
+    };
     Ok(js_datetime(parsed))
+}
+
+fn parse_goal_date_string(value: &str) -> Result<OffsetDateTime, StoreError> {
+    if value.len() == 10
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+    {
+        let format = format_description::parse_borrowed::<2>("[year]-[month]-[day]")
+            .map_err(|_| StoreError::InvalidInput)?;
+        let date = Date::parse(value, &format).map_err(|_| StoreError::InvalidInput)?;
+        return Ok(PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc());
+    }
+    OffsetDateTime::parse(value, &Rfc3339).map_err(|_| StoreError::InvalidInput)
 }
 
 fn js_datetime(value: OffsetDateTime) -> String {
@@ -1240,7 +1473,7 @@ mod tests {
             title: "Publish a verified Goal Workspace release candidate".to_owned(),
             context: Some("Keep the result inspectable.".to_owned()),
             owner_agent_id: Some(owner.id.clone()),
-            target_time: Some("2026-08-20T10:00:00.000Z".to_owned()),
+            target_time: Some(json!("2026-08-20T10:00:00.000Z")),
         };
         let preview = compile_preview(&input, Some(&owner)).unwrap();
 
@@ -1249,6 +1482,111 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(preview, typescript_fixture);
+    }
+
+    #[test]
+    fn start_packet_matches_zod_trimming_defaults_and_unknown_key_behavior() {
+        let oracle: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/goal-start-packet-normalization-typescript.json"
+        ))
+        .unwrap();
+        let (oracle_packet, _) = normalize_packet(&oracle["input"]).unwrap();
+        assert_eq!(oracle_packet, oracle["packet"]);
+        assert_eq!(
+            stable_goal_hash(&oracle_packet).unwrap(),
+            oracle["packetHash"]
+        );
+
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/goal-start-preview-typescript.json"
+        ))
+        .unwrap();
+        let mut raw = fixture["packet"].clone();
+        raw["title"] = json!("  Publish a verified Goal Workspace release candidate  ");
+        raw["activation"]["outcomeStatement"] =
+            json!("  Publish a verified Goal Workspace release candidate  ");
+        raw["activation"]["unknownActivationField"] = json!("discarded by z.object");
+        raw["activation"]["criteria"][0]["id"] = json!(" primary-outcome ");
+        raw["activation"]["criteria"][0]["label"] = json!(" normalized criterion ");
+        raw["activation"]["criteria"][0]["unknownCriterionField"] = json!(true);
+        raw["activation"]["initialPlan"]["summary"] = json!(" normalized plan ");
+        raw["activation"]["initialPlan"]["unknownPlanField"] = json!(true);
+        raw["activation"]["initialContinuation"]["summary"] = json!(" normalized continuation ");
+
+        let raw_hash = stable_goal_hash(&raw).unwrap();
+        let (normalized, validated) = normalize_packet(&raw).unwrap();
+        assert_ne!(stable_goal_hash(&normalized).unwrap(), raw_hash);
+        assert_eq!(
+            normalized["title"],
+            "Publish a verified Goal Workspace release candidate"
+        );
+        assert_eq!(
+            normalized["activation"]["criteria"][0]["id"],
+            "primary-outcome"
+        );
+        assert_eq!(
+            normalized["activation"]["criteria"][0]["label"],
+            "normalized criterion"
+        );
+        assert_eq!(
+            normalized["activation"]["initialPlan"]["summary"],
+            "normalized plan"
+        );
+        assert_eq!(
+            normalized["activation"]["initialContinuation"]["summary"],
+            "normalized continuation"
+        );
+        assert!(
+            normalized["activation"]
+                .get("unknownActivationField")
+                .is_none()
+        );
+        assert!(
+            normalized["activation"]["criteria"][0]
+                .get("unknownCriterionField")
+                .is_none()
+        );
+        assert!(
+            normalized["activation"]["initialPlan"]
+                .get("unknownPlanField")
+                .is_none()
+        );
+        assert_eq!(
+            normalized["activation"]["initialPlan"]["hypotheses"],
+            json!([])
+        );
+        assert_eq!(validated.title, normalized["title"]);
+        assert_eq!(validated.activation, normalized["activation"]);
+
+        raw["unknownPacketField"] = json!(true);
+        assert!(normalize_packet(&raw).is_err());
+    }
+
+    #[test]
+    fn target_time_coercion_matches_zod_date_only_and_epoch_milliseconds() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/goal-start-date-coercion-typescript.json"
+        ))
+        .unwrap();
+        let owner = capable_owner();
+        let common = GoalStartPreviewInput {
+            title: "把已验证的发布结果交付给客户".to_owned(),
+            context: Some("面向中国用户，记录可验证证据。".to_owned()),
+            owner_agent_id: Some(owner.id.clone()),
+            target_time: None,
+        };
+        for (input_value, fixture_key) in [
+            (json!("2026-10-25"), "dateOnly"),
+            (json!(1_792_886_400_000_i64), "epochMillis"),
+        ] {
+            let normalized_time = normalize_target_time(&input_value).unwrap();
+            let mut input = common.clone();
+            input.target_time = Some(Value::String(normalized_time));
+            assert_eq!(
+                compile_preview(&input, Some(&owner)).unwrap(),
+                fixture[fixture_key]
+            );
+        }
     }
 
     #[test]
