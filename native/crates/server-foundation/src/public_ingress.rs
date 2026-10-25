@@ -709,23 +709,20 @@ async fn proxy_request(
 ) -> HttpResponse {
     if let Some(reference) = agent_runs::cancellation_reference(&request) {
         let target = match &state.foundation.database {
-            DatabaseState::Configured(pool) => {
-                match rudder_d1_persistence::goal_run_cancellation::resolve_native_goal_run_cancel_target(
-                    pool,
-                    &reference,
-                )
-                .await
-                {
-                    Ok(target) => target,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "native Agent Run cancellation lookup failed");
-                        return state.foundation.json_error(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "agent_run_cancel_unavailable",
-                        );
-                    }
+            DatabaseState::Configured(pool) => match agent_runs::resolve_native_goal_cancel_target(
+                pool, &state, &request, &reference,
+            )
+            .await
+            {
+                Ok(target) => target,
+                Err(error) => {
+                    tracing::warn!(error = %error, "native Agent Run cancellation lookup failed");
+                    return state.foundation.json_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "agent_run_cancel_unavailable",
+                    );
                 }
-            }
+            },
             DatabaseState::Disabled => {
                 return state.foundation.json_error(
                     StatusCode::SERVICE_UNAVAILABLE,

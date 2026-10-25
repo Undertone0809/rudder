@@ -12,6 +12,7 @@ use crate::{
 };
 use serde_json::json;
 use sqlx::{PgPool, Postgres, Row, Transaction};
+use std::collections::HashMap;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -39,9 +40,12 @@ pub enum NativeGoalRunCancelError {
 pub async fn resolve_native_goal_run_cancel_target(
     pool: &PgPool,
     reference: &str,
+    scoped_authorizer: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<Option<NativeGoalRunCancelTarget>, sqlx::Error> {
     let reference = reference.trim();
-    let (query, value) = if let Ok(id) = Uuid::parse_str(reference) {
+    let parsed_uuid = Uuid::parse_str(reference).ok();
+    let is_uuid = parsed_uuid.is_some();
+    let (query, value) = if let Some(id) = parsed_uuid {
         (
             "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
                     r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
@@ -54,14 +58,64 @@ pub async fn resolve_native_goal_run_cancel_target(
                     r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
              FROM heartbeat_runs r
              WHERE replace(r.id::text,'-','') LIKE $1 || '%'
-             ORDER BY r.created_at DESC,r.id DESC LIMIT 2",
+             ORDER BY r.created_at DESC,r.id DESC",
             prefix,
         )
     } else {
         return Ok(None);
     };
 
-    let rows = sqlx::query(query).bind(value).fetch_all(pool).await?;
+    let rows = if is_uuid {
+        // Preserve the legacy exact-UUID behavior: resolve globally, then let
+        // the transactional authorizer return the existing cross-org 403.
+        sqlx::query(query).bind(value).fetch_all(pool).await?
+    } else if let Some(authorizer) = scoped_authorizer {
+        // Node resolves short prefixes inside the caller's authorized org
+        // scope before deciding whether the reference is unique. Query every
+        // matching row, then apply the same Rust authorization predicate per
+        // distinct org; limiting globally first would hide an in-scope match
+        // behind foreign-org collisions.
+        let mut tx = pool.begin().await?;
+        let candidates = sqlx::query(query).bind(value).fetch_all(&mut *tx).await?;
+        let mut org_access = HashMap::<String, bool>::new();
+        let mut scoped = Vec::new();
+        for row in candidates {
+            let organization_id: String = row.try_get("organization_id")?;
+            let allowed = if let Some(allowed) = org_access.get(&organization_id) {
+                *allowed
+            } else {
+                let allowed = matches!(
+                    authorizer.revalidate(&mut *tx, &organization_id).await?,
+                    NativeAgentAccess::Authorized
+                );
+                org_access.insert(organization_id, allowed);
+                allowed
+            };
+            if allowed {
+                scoped.push(row);
+            }
+        }
+        tx.commit().await?;
+        scoped
+    } else {
+        // When Rust cannot resolve an identity, retain the old fail-closed
+        // classification for one globally unique native target. Ambiguous
+        // short references stay on the legacy auth/resolution path.
+        if is_uuid {
+            sqlx::query(query).bind(value).fetch_all(pool).await?
+        } else {
+            sqlx::query(
+                "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
+                        r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
+                 FROM heartbeat_runs r
+                 WHERE replace(r.id::text,'-','') LIKE $1 || '%'
+                 ORDER BY r.created_at DESC,r.id DESC LIMIT 2",
+            )
+            .bind(value)
+            .fetch_all(pool)
+            .await?
+        }
+    };
     if rows.len() != 1 {
         return Ok(None);
     }
@@ -79,6 +133,13 @@ pub async fn resolve_native_goal_run_cancel_target(
         run_id: row.try_get("run_id")?,
     };
     Ok(Some(target))
+}
+
+/// Whether this is a short Run reference rather than a full UUID. The public
+/// ingress uses this to obtain an authorization scope before classifying the
+/// reference, while exact UUID resolution keeps its legacy global semantics.
+pub fn is_short_run_id_reference(reference: &str) -> bool {
+    Uuid::parse_str(reference.trim()).is_err() && run_id_prefix(reference).is_some()
 }
 
 /// Revalidate the public identity and its organization access on the same

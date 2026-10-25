@@ -10,6 +10,7 @@ use actix_web::http::Method;
 use futures_util::StreamExt;
 use rudder_d1_persistence::goal_run_cancellation::{
     NativeGoalRunCancelError, NativeGoalRunCancelTarget, request_authorized_cancel,
+    resolve_native_goal_run_cancel_target,
 };
 use serde_json::json;
 
@@ -32,6 +33,34 @@ pub(super) fn cancellation_reference(request: &HttpRequest) -> Option<String> {
         .ok()
         .map(|value| value.into_owned())
         .filter(|value| !value.is_empty())
+}
+
+pub(super) async fn resolve_native_goal_cancel_target(
+    pool: &sqlx::PgPool,
+    state: &IngressState,
+    request: &HttpRequest,
+    reference: &str,
+) -> Result<Option<NativeGoalRunCancelTarget>, sqlx::Error> {
+    if !rudder_d1_persistence::goal_run_cancellation::is_short_run_id_reference(reference) {
+        return resolve_native_goal_run_cancel_target(pool, reference, None).await;
+    }
+
+    // Short references must be classified in the request's authorized org
+    // scope before deciding whether to dispatch natively. If Rust identity is
+    // unavailable, the D1 resolver keeps its existing unique-global-native
+    // fail-closed behavior; unmatched or ambiguous references remain untouched
+    // for Node's established auth and scoped-resolution path.
+    let Ok(identity) = resolve_public_http_identity(state, request).await else {
+        return resolve_native_goal_run_cancel_target(pool, reference, None).await;
+    };
+    let Some((actor, session_id)) = agent_core::actor_and_session(&identity) else {
+        return resolve_native_goal_run_cancel_target(pool, reference, None).await;
+    };
+    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, state)
+    else {
+        return resolve_native_goal_run_cancel_target(pool, reference, None).await;
+    };
+    resolve_native_goal_run_cancel_target(pool, reference, Some(&authorizer)).await
 }
 
 pub(super) async fn cancel_native_goal_run(

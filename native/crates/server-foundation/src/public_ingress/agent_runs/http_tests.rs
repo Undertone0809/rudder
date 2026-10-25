@@ -2,11 +2,12 @@
 
 use super::*;
 use crate::native_chat_test_fixture as fixture;
-use crate::native_chat_test_fixture::support::{GOAL, OTHER};
+use crate::native_chat_test_fixture::support::{FOREIGN_GOAL, GOAL, OTHER};
 use actix_web::{App, HttpServer, web};
 use rudder_d1_persistence::goal_runs;
 use serde_json::{Value, json};
 use sqlx::Row;
+use std::collections::HashMap;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -73,26 +74,36 @@ async fn start_node_mock() -> (
     String,
     Arc<AtomicUsize>,
     Arc<Mutex<Vec<(String, Vec<u8>)>>>,
+    Arc<Mutex<HashMap<String, (StatusCode, Value)>>>,
     tokio::task::JoinHandle<std::io::Result<()>>,
 ) {
     let hits = Arc::new(AtomicUsize::new(0));
     let requests = Arc::new(Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+    let responses = Arc::new(Mutex::new(HashMap::<String, (StatusCode, Value)>::new()));
     let server = HttpServer::new({
         let hits = hits.clone();
         let requests = requests.clone();
+        let responses = responses.clone();
         move || {
             let hits = hits.clone();
             let requests = requests.clone();
+            let responses = responses.clone();
             App::new().default_service(web::to(move |request: HttpRequest, body: web::Bytes| {
                 let hits = hits.clone();
                 let requests = requests.clone();
+                let responses = responses.clone();
                 async move {
                     hits.fetch_add(1, Ordering::SeqCst);
-                    requests
+                    let uri = request.uri().to_string();
+                    requests.lock().unwrap().push((uri.clone(), body.to_vec()));
+                    let path = request.uri().path();
+                    let (status, response) = responses
                         .lock()
                         .unwrap()
-                        .push((request.uri().to_string(), body.to_vec()));
-                    HttpResponse::Ok().json(json!({ "proxied": true }))
+                        .get(path)
+                        .cloned()
+                        .unwrap_or((StatusCode::OK, json!({ "proxied": true })));
+                    HttpResponse::build(status).json(response)
                 }
             }))
         }
@@ -101,7 +112,7 @@ async fn start_node_mock() -> (
     .unwrap();
     let address = server.addrs()[0];
     let task = actix_web::rt::spawn(server.run());
-    (format!("http://{address}"), hits, requests, task)
+    (format!("http://{address}"), hits, requests, responses, task)
 }
 
 async fn post_cancel(
@@ -264,6 +275,137 @@ async fn legacy_run(database: &fixture::Database) -> String {
     .unwrap()
 }
 
+async fn seed_native_goal_run_with_id(
+    database: &fixture::Database,
+    org_id: &str,
+    agent_id: &str,
+    goal_id: &str,
+    run_id: &str,
+    label: &str,
+) -> String {
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:goal_run',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_type='claude_local',status='idle'
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(org_id)
+    .bind(agent_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE goals SET owner_agent_id=$2::uuid,lifecycle='active',status='active',
+           plan_revision=1 WHERE org_id=$1::uuid AND id=$3::uuid",
+    )
+    .bind(org_id)
+    .bind(agent_id)
+    .bind(goal_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let request_id = format!("short-reference-{label}");
+    let payload = json!({
+        "event":"goal_started",
+        "goalId":goal_id,
+        "taskKey":format!("goal:{goal_id}:goal_started:{request_id}"),
+        "goalStartRequestId":request_id,
+        "_paperclipWakeContext":{
+            "goalId":goal_id,
+            "goal":{"id":goal_id,"title":"Short reference fixture"},
+            "plan":{"revision":1},
+            "continuation":{"summary":"Continue fixture"}
+        }
+    });
+    let wakeup_id: String = sqlx::query_scalar(
+        "INSERT INTO agent_wakeup_requests
+           (org_id,agent_id,source,trigger_detail,reason,payload,status,execution_authority,claimed_at)
+         VALUES($1::uuid,$2::uuid,'on_demand','system','goal_started',$3::jsonb,'claimed','native_rust',clock_timestamp())
+         RETURNING id::text",
+    )
+    .bind(org_id)
+    .bind(agent_id)
+    .bind(payload.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let owner_token = format!("short-reference-owner-{label}");
+    let session_intent = json!({
+        "kind":"fresh",
+        "reuseScope":"none",
+        "sourceRunId":null,
+        "sessionId":null,
+        "sessionParams":null
+    });
+    sqlx::query(
+        "INSERT INTO heartbeat_runs
+           (id,org_id,agent_id,invocation_source,status,started_at,wakeup_request_id,
+            execution_authority,goal_id,scene,target_type,target_id,idempotency_key,
+            session_intent_json,context_snapshot,execution_owner_token,execution_lease_expires_at)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','running',clock_timestamp(),$4::uuid,
+            'native_rust',$5::uuid,'heartbeat','wakeup_request',$4::text,$6,$7::jsonb,
+            $8::jsonb,$9,clock_timestamp()+interval '5 minutes')",
+    )
+    .bind(run_id)
+    .bind(org_id)
+    .bind(agent_id)
+    .bind(&wakeup_id)
+    .bind(goal_id)
+    .bind(format!("goal-start:{request_id}"))
+    .bind(session_intent.to_string())
+    .bind(json!({"goalId":goal_id,"wakeReason":"goal_started"}).to_string())
+    .bind(&owner_token)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_wakeup_requests SET run_id=$3::uuid,updated_at=clock_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(org_id)
+    .bind(&wakeup_id)
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO heartbeat_run_attempts
+           (org_id,run_id,agent_id,attempt_index,runtime_type,status,owner_token,attempt_epoch)
+         VALUES($1::uuid,$2::uuid,$3::uuid,1,'claude_local','started',$4,1)",
+    )
+    .bind(org_id)
+    .bind(run_id)
+    .bind(agent_id)
+    .bind(owner_token)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    wakeup_id
+}
+
+async fn seed_legacy_run_with_id(
+    database: &fixture::Database,
+    org_id: &str,
+    agent_id: &str,
+    run_id: &str,
+) {
+    sqlx::query(
+        "INSERT INTO heartbeat_runs(id,org_id,agent_id,status,invocation_source,
+           execution_authority,context_snapshot)
+         VALUES($1::uuid,$2::uuid,$3::uuid,'failed','manual','legacy_ts','{}'::jsonb)",
+    )
+    .bind(run_id)
+    .bind(org_id)
+    .bind(agent_id)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+}
+
 #[actix_web::test]
 #[ignore = "requires PostgreSQL binaries; disposable database and public ingress HTTP tests"]
 async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legacy_boundary() {
@@ -278,7 +420,8 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     let revoked_key = agent_key(&database, fixture::CEO, fixture::ORG, true).await;
     let board_token = board_key(&database).await;
 
-    let (node_upstream, node_hits, node_requests, node_task) = start_node_mock().await;
+    let (node_upstream, node_hits, node_requests, node_responses, node_task) =
+        start_node_mock().await;
     let ingress = start_ingress(&database, &node_upstream, true).await;
     let url = |run_id: &str| format!("{}/api/agent-runs/{run_id}/cancel", ingress.base);
 
@@ -436,12 +579,137 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(status, actix_web::http::StatusCode::OK, "{body}");
     assert_eq!(body["proxied"], true);
     assert_eq!(node_hits.load(Ordering::SeqCst), 1);
+    {
+        let captured = node_requests.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].0, format!("/api/agent-runs/{legacy_id}/cancel"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&captured[0].1).unwrap(),
+            payload
+        );
+    }
+
+    // A foreign-only short reference must be unresolved in this caller's org
+    // and retain Node's 404 surface instead of selecting a foreign Run and
+    // returning Rust's exact-UUID-style 403.
+    let foreign_only_id = "deadbeef-0000-4000-8000-000000000001";
+    seed_native_goal_run_with_id(
+        &database,
+        OTHER,
+        FOREIGN_AGENT,
+        FOREIGN_GOAL,
+        foreign_only_id,
+        "foreign-only",
+    )
+    .await;
+    let foreign_only_path = "/api/agent-runs/run_deadbeef/cancel";
+    node_responses.lock().unwrap().insert(
+        foreign_only_path.to_owned(),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"error":"Agent run not found"}),
+        ),
+    );
+    let (status, body) = post_cancel(
+        format!("{}{}", legacy_ingress.base, foreign_only_path),
+        Some(&valid_key),
+        json!({"scope":"foreign-only"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"], "Agent run not found");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 2);
+
+    // A foreign collision must not make a uniquely in-scope native Goal Run
+    // ambiguous. The typed short reference should still reach Rust and leave
+    // the foreign legacy row untouched.
+    let scoped_run_id = "cafebabe-0000-4000-8000-000000000001";
+    let foreign_collision_id = "cafebabe-1111-4000-8000-000000000002";
+    let scoped_wakeup = seed_native_goal_run_with_id(
+        &database,
+        fixture::ORG,
+        fixture::CEO,
+        GOAL,
+        scoped_run_id,
+        "scoped-collision",
+    )
+    .await;
+    seed_legacy_run_with_id(&database, OTHER, FOREIGN_AGENT, foreign_collision_id).await;
+    let second_foreign_collision_id = "cafebabe-2222-4000-8000-000000000003";
+    seed_native_goal_run_with_id(
+        &database,
+        OTHER,
+        FOREIGN_AGENT,
+        FOREIGN_GOAL,
+        second_foreign_collision_id,
+        "scoped-collision-newer-foreign",
+    )
+    .await;
+    let (status, body) = post_cancel(
+        format!("{}/api/agent-runs/run_cafebabe/cancel", legacy_ingress.base),
+        Some(&valid_key),
+        json!({"scope":"cross-org-collision"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], scoped_run_id);
+    assert_eq!(body["wakeupRequestId"], scoped_wakeup);
+    assert_eq!(body["status"], "running");
+    assert_eq!(body["errorCode"], "cancel_requested");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 2);
+    let foreign_collision_error: Option<String> = sqlx::query_scalar(
+        "SELECT error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(OTHER)
+    .bind(foreign_collision_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_collision_error, None);
+
+    // Duplicates in the caller's own org remain ambiguous and are delegated
+    // intact to the legacy resolver, which keeps the existing 409 response.
+    let duplicate_native_id = "baddad01-0000-4000-8000-000000000001";
+    let duplicate_legacy_id = "baddad01-1111-4000-8000-000000000002";
+    seed_native_goal_run_with_id(
+        &database,
+        fixture::ORG,
+        fixture::CEO,
+        GOAL,
+        duplicate_native_id,
+        "duplicate-native",
+    )
+    .await;
+    seed_legacy_run_with_id(&database, fixture::ORG, fixture::CEO, duplicate_legacy_id).await;
+    let duplicate_path = "/api/agent-runs/run_baddad01/cancel";
+    node_responses.lock().unwrap().insert(
+        duplicate_path.to_owned(),
+        (
+            StatusCode::CONFLICT,
+            json!({"error":"Run ID prefix is ambiguous"}),
+        ),
+    );
+    let duplicate_payload = json!({"scope":"own-org-ambiguous"});
+    let (status, body) = post_cancel(
+        format!("{}{}", legacy_ingress.base, duplicate_path),
+        Some(&valid_key),
+        duplicate_payload.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "Run ID prefix is ambiguous");
+    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
     let captured = node_requests.lock().unwrap();
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].0, format!("/api/agent-runs/{legacy_id}/cancel"));
+    assert_eq!(captured.len(), 3);
+    assert_eq!(captured[1].0, foreign_only_path);
     assert_eq!(
-        serde_json::from_slice::<Value>(&captured[0].1).unwrap(),
-        payload
+        serde_json::from_slice::<Value>(&captured[1].1).unwrap(),
+        json!({"scope":"foreign-only"})
+    );
+    assert_eq!(captured[2].0, duplicate_path);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&captured[2].1).unwrap(),
+        duplicate_payload
     );
     legacy_ingress.task.abort();
     node_task.abort();
