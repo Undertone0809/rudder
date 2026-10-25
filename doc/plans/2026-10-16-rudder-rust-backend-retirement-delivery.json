@@ -258,10 +258,10 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-25T23:38:48+00:00",
+    "updated_at": "2026-10-25T23:53:41+00:00",
     "observed_main": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
     "branch": "codex/rust-organization-core-writes-20261026",
-    "status": "bounded_rust_api_slices_author_validated_with_independent_review_and_protected_ci_pending",
+    "status": "organization_core_writes_author_validation_pass; independent final stage review, independent PAV, and protected PR CI pending",
     "scope": "The current G slice adds Rust-owned organization write routes when native public ingress is selected; ingress-off/default development and standalone modes keep the Node compatibility handlers. The inherited Rust organization-read and Agent/MCP/Create slices remain separately scoped. Overall first-party backend retirement is incomplete.",
     "recent_source_deliveries": [
       {
@@ -745,6 +745,128 @@
         "protected CI",
         "production release or installed-artifact acceptance"
       ]
+    },
+    "integrated_organization_core_writes_20261026": {
+      "supersedes_prior_author_snapshot": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
+      "branch": "codex/rust-organization-core-writes-20261026",
+      "observed_origin_main": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
+      "local_integration_merge": {
+        "commit": "f0f2cde68650b15621ea0edeff8000c61e559937",
+        "parents": [
+          "af94c1fc7d0163b5123c811d795a994e60619336",
+          "62a1c196684a9e346891420bb107c97c74446977"
+        ],
+        "purpose": "Integrate the locally reviewed D organization-read/authentication correction into G; preserve the G off-mode Node route gates. The only content conflict was the delivery ledger."
+      },
+      "final_author_checkpoint": {
+        "head": "6836a8a0b66319b1c979f73f9d2bc5d8d7adf692",
+        "tree": "10a0f4f83116b24e2cef71c38c36f166d28133c6",
+        "followup": "One test-only expected error reason was corrected from internal_server_error to the selected Rust create route's actual 500 mutation_failed body. No production source changed."
+      },
+      "scope": {
+        "rust_selected": [
+          "POST /api/orgs",
+          "PATCH /api/orgs/:orgId",
+          "PATCH /api/orgs/:orgId/branding",
+          "POST /api/orgs/:orgId/archive",
+          "DELETE /api/orgs/:orgId"
+        ],
+        "ingress_off": "Existing Node handlers remain for default development and standalone compatibility. Their later retirement and a default Rust switch are not part of this slice.",
+        "not_claimed": [
+          "full organization API retirement",
+          "global Rust backend completion",
+          "release or installed-app delivery"
+        ]
+      },
+      "author_checks": {
+        "strict_all_target_clippy": {
+          "result": "PASS",
+          "log": "/private/tmp/rudder-org-write-20261026/combined-clippy-r2.log",
+          "sha256": "1841f9df896c8e7f72fc4e3e36acb9dffc5346e78e3d4d8a1f33a452c4d4c764",
+          "scope": "D1 persistence and FoundationCore, all targets, -D warnings; before the later one-line test assertion edit, whose exact source compiled in the Foundation test build."
+        },
+        "filesystem_tests": [
+          {
+            "result": "2/2 PASS",
+            "log": "/private/tmp/rudder-org-write-20261026/named-layout-fs-combined-r1.log",
+            "sha256": "51975cca34e762ed470257e13eab4b9cb1bb45ff9b870d785d6d2efff8f1ff48"
+          },
+          {
+            "result": "2/2 PASS",
+            "log": "/private/tmp/rudder-org-write-20261026/removal-layout-fs-combined-r1.log",
+            "sha256": "8d55ae4bd80324a9d88a6ee82decfa0ae8232b2251dbec4ba6704b1e05222481"
+          }
+        ],
+        "foundation_test_binary_build": {
+          "result": "PASS",
+          "log": "/private/tmp/rudder-org-write-20261026/combined-f0f2/foundation-test-build-r2.log",
+          "sha256": "e0f517047d63892a433c4f043edf10fbbfde2df9827cbd6d26afba51fd12609a",
+          "frozen_artifact": "/private/tmp/rudder-org-write-20261026/combined-f0f2/frozen-r2/rudder-server-foundation-core-tests",
+          "artifact_sha256": "ac684fa963cc5c90a0880cd8e088ffbdf37f82e576f4e7d3958cb7ffcd69556a"
+        },
+        "standalone_server_binary": {
+          "result": "PASS",
+          "log": "/private/tmp/rudder-org-write-20261026/combined-server-bin-build-r1.log",
+          "artifact": "/private/tmp/rudder-org-write-20261026/combined-f0f2/frozen-r1/rudder-server-foundation",
+          "artifact_sha256": "5e23ff6d04e355f4cd7e7ea26bf21779ebddbdfbe7d483003acb83a2f35e9bda",
+          "source_equivalence": "Only the Foundation test assertion changed after this production binary was built."
+        },
+        "public_http_postgresql": {
+          "result": "Both cases PASS 1/1 on a fresh isolated PostgreSQL 18.4 profile after 187 migrations; Node business sentinel remained zero for writes.",
+          "database_name": "rudder_org_write_test_r2",
+          "profile": "/private/tmp/ow-fxEc3W",
+          "port": 50056,
+          "server_pid": 60589,
+          "migrations_log": "/private/tmp/ow-fxEc3W/migrate-r2.log",
+          "read_case_log": "/private/tmp/ow-fxEc3W/organization-read-http-r2-final.log",
+          "write_case_log": "/private/tmp/ow-fxEc3W/organization-write-http-r2-final.log",
+          "shutdown": "Owned pg_ctl profile stopped; pg_ctl status reports no server; no listener remained on port 50056. The earlier failed read attempt is preserved at organization-read-http-r2.log; its only mismatch was the stale assertion fixed above."
+        },
+        "rustfmt": {
+          "result": "PASS",
+          "command": "cargo fmt --manifest-path native/Cargo.toml --all --check"
+        },
+        "authority_inventory": {
+          "generated": "PASS; no inventory source delta after G/D integration",
+          "check": {
+            "result": "PASS 919 files / 4643 surfaces / 9 unknowns",
+            "log": "/private/tmp/rudder-org-write-20261026/combined-final-r1/inventory-check.log",
+            "sha256": "095fa38781a947634ce3d23495047cb484fa8a756e91493ed8b462e3f4ed0dc3"
+          },
+          "trusted_base_compare": {
+            "result": "PASS against origin/main 23d0524d; no failures or surface adds/removals; exactly the three reviewed Node compatibility files changed",
+            "log": "/private/tmp/rudder-org-write-20261026/combined-final-r1/trusted-compare.log",
+            "sha256": "1c0ea2e8023aa584c5d2aad3b899584e15edcd3ea6ff817e3cbf3de5e5161705"
+          },
+          "policy_tests": {
+            "result": "PASS 46/46",
+            "log": "/private/tmp/rudder-org-write-20261026/combined-final-r1/authority-tests.log",
+            "sha256": "1afb0e0efb8a60ed9fbf64474e743fff4c45e80a896326c93c86fc056f690ca3"
+          }
+        },
+        "reused_by_content_equivalence": {
+          "node_gate_tests": "PASS 5/5 in r7; all three Node route gate files are byte-identical to the accepted r7 manifest.",
+          "workspace_typecheck": "PASS 18/19 projects in r7; no Node/TypeScript source changed during D integration or final test correction.",
+          "changed_import_lint": "PASS 5 files in r7; Node compatibility source is unchanged since that run."
+        }
+      },
+      "stage_findings_closed": [
+        "Local implicit board creation/update/archive activity remains user/local-board scoped.",
+        "Non-admin create is denied before a row is written.",
+        "Configured-database mutation failure remains HTTP 500 mutation_failed with no Node fallback; disabled-database handling remains a distinct 503 case.",
+        "Create transaction rollback compensates the newly provisioned workspace after a confirmed database rollback.",
+        "Delete covers existing project/issue/run/retention lineage while preserving a second organization.",
+        "Create and PATCH have public readback; budget policy, analytics, activity, membership, labels, aliases, and friendly workspace layout are verified."
+      ],
+      "remaining_gates": [
+        "Independent final stage review on this exact integrated checkpoint",
+        "Independent PAV on a fresh frozen candidate",
+        "Exact-head required protected PR CI and normal protected merge"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false
     }
   }
 }
