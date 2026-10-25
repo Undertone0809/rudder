@@ -74,7 +74,7 @@ async fn creates_attaches_and_stops_only_its_owned_cluster() {
         return;
     };
     let root = tempfile::tempdir().unwrap();
-    let data_dir = root.path().join("instances/Rudder 用户 fresh profile/db");
+    let data_dir = root.path().join("instances/fresh profile/db");
     assert!(!data_dir.parent().unwrap().exists());
     let port_probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let requested_port = port_probe.local_addr().unwrap().port();
