@@ -1,11 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect as baseExpect, test, type Page } from "@playwright/test";
 import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createDb } from "../../packages/db/src/index.js";
 import { startNativeChatFixture } from "./support/native-chat-fixture";
+import { nativeSmokeFixtureOptions as fixtureOptions } from "./support/native-smoke";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const expect = baseExpect.configure({ timeout: 30_000 });
 const PROVIDER = "vendor/native-chat-executor-model";
 const ORIGINAL_MESSAGE = "Continue the accepted response after reconnecting.";
 const NEWER_DRAFT = "Keep this newer unsent draft through recovery.";
@@ -21,33 +21,7 @@ type ExecutionSnapshot = {
   generationStatus: string | null;
 };
 
-function resolveBinary(envName: string, relativeDefault: string) {
-  const configured = process.env[envName]?.trim();
-  const candidate = configured ? path.resolve(configured) : path.join(REPO_ROOT, relativeDefault);
-  return access(candidate).then(() => candidate).catch(() => {
-    throw new Error(`${envName} must point to an existing test binary; checked ${candidate}`);
-  });
-}
-
-async function fixtureOptions() {
-  const postgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
-  if (!postgresBinDir) throw new Error("RUDDER_POSTGRES_BIN_DIR must point to the disposable PostgreSQL 17 binaries");
-  return {
-    exampleBinary: await resolveBinary(
-      "RUDDER_NATIVE_CHAT_E2E_EXAMPLE",
-      "native/target/debug/examples/native_chat_browser_fixture",
-    ),
-    foundationBinary: await resolveBinary(
-      "RUDDER_SERVER_FOUNDATION_PATH",
-      "native/target/debug/rudder-server-foundation",
-    ),
-    processHost: await resolveBinary(
-      "RUDDER_TEST_PROCESS_HOST",
-      "native/target/debug/rudder-process-host",
-    ),
-    postgresBinDir: path.resolve(postgresBinDir),
-  };
-}
+test.describe.configure({ timeout: 240_000 });
 
 async function readProviderEvents(eventsPath: string): Promise<Array<Record<string, unknown>>> {
   try {
@@ -126,7 +100,7 @@ async function openChat(page: Page, fixture: Awaited<ReturnType<typeof startNati
   return composer;
 }
 
-test("resumes the exact accepted Run after reload without replacing a newer draft", async ({ page }, testInfo) => {
+test("@smoke resumes the exact accepted Run after reload without replacing a newer draft", async ({ page }, testInfo) => {
   const fixture = await startNativeChatFixture({ ...(await fixtureOptions()), mode: "visible_checkpoint" });
   let passed = false;
   try {

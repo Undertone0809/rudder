@@ -21,13 +21,35 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-export function resolveRunChatTranscriptTarget(run: HeartbeatRun): RunChatTranscriptTarget | null {
+export function resolveRunChatTranscriptTarget(
+  run: HeartbeatRun,
+  events: readonly HeartbeatRunEvent[] = [],
+): RunChatTranscriptTarget | null {
   const context = run.contextSnapshot;
   const conversationId = nonEmptyString(run.chatConversationId) ?? nonEmptyString(context?.conversationId);
   // Only an assistant message owns the persisted runtime transcript. The
   // initial messageId/userMessageId values identify the prompt, and querying
   // either one would silently return an empty transcript.
-  const messageId = nonEmptyString(context?.assistantMessageId);
+  const result = objectValue(run.resultJson);
+  const finalization = objectValue(result?.nativeChatFinalization);
+  const nativeResult = objectValue(finalization?.result);
+  // Native runs publish their assistant projection after admission. Its run
+  // identity is essential: a shared provider session can contain other turns.
+  if (result && Object.prototype.hasOwnProperty.call(result, "nativeChatFinalization")) {
+    if (nativeResult?.runId !== run.id) return null;
+    const messageId = nonEmptyString(nativeResult.assistantMessageId);
+    // An explicit null means this turn produced no assistant projection. Do
+    // not replace that terminal fact with a stale context or event reference.
+    return conversationId && messageId ? { conversationId, messageId } : null;
+  }
+  const terminalEvent = events.reduce<HeartbeatRunEvent | null>((latest, event) => {
+    const payload = objectValue(event.payload);
+    if (event.runId !== run.id || event.eventType !== "status" || payload?.runId !== run.id
+      || !nonEmptyString(payload.assistantMessageId)) return latest;
+    return !latest || event.seq > latest.seq ? event : latest;
+  }, null);
+  const messageId = nonEmptyString(context?.assistantMessageId)
+    ?? nonEmptyString(objectValue(terminalEvent?.payload)?.assistantMessageId);
   if (!conversationId || !messageId) return null;
   return { conversationId, messageId };
 }

@@ -196,7 +196,9 @@ exec ${JSON.stringify(E2E_CODEX_STUB)} "$@"
   return scriptPath;
 }
 
-test.describe("@smoke real work loop", () => {
+test.describe("@legacy real work loop", () => {
+  // These workflows retain their Node adapter coverage; Native Chat smoke
+  // acceptance lives in native-chat-smoke.spec.ts.
   test.describe.configure({ timeout: 180_000 });
 
   test("completes Chat -> Agent Run -> result and reloads the persisted evidence", async ({ page }) => {
