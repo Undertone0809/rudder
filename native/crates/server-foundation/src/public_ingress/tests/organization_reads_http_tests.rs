@@ -732,6 +732,7 @@ async fn native_organization_create_update_branding_archive_and_delete_are_rust_
     let (foundation, runtime) = organization_reads_runtime(
         Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
         &upstream,
+        true,
     );
     let address = runtime.bound_addr();
     let control = runtime.control();
