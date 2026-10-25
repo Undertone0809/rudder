@@ -269,7 +269,7 @@ const TARGET_LOCK_RECEIVERS = new Set(["tx"]);
 const GOAL_LEGACY_OWNER_BRIDGE_ID = "goal-budget-cross-owner-stop-v1";
 const GOAL_LEGACY_OWNER_SEMANTIC_OPERATION = "goal_budget.request_legacy_run_cancellation";
 const GOAL_LEGACY_OWNER_RUST_AUTHORITY = "native::d1_persistence::goal_budget::request_legacy_run_cancellation";
-const GOAL_LEGACY_OWNER_COMPATIBILITY_BOUNDARY = "Rust owns Goal budget stop decisions and writes cancel_requested; these exact Node paths only observe that marker and let the existing legacy owner finish cleanup for work still owned by the legacy heartbeat runtime.";
+const GOAL_LEGACY_OWNER_COMPATIBILITY_BOUNDARY = "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.";
 const GOAL_LEGACY_OWNER_RETIREMENT_CRITERION = "Remove these exact Node marker readers and heartbeat transaction guard after all Goal-owned execution and every first-party run lifecycle are Rust-owned; this admission grants no other Node query, writer, caller scope, or timer cadence.";
 const GOAL_LEGACY_OWNER_OPERATION_MAPPING_ID = "goal-budget-cross-owner-stop-v1.heartbeat-transaction";
 

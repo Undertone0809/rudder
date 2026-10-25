@@ -314,7 +314,7 @@ function goalBridgeTestFixture(t) {
       base_surfaces: fileEntry.base_surfaces,
       head_surfaces: fileEntry.head_surfaces,
       rust_authority: "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
-      compatibility_boundary: "Rust writes the Goal stop marker; exact legacy owners only observe it and complete cleanup.",
+      compatibility_boundary: "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
       retirement_criterion: "Remove these exact readers after the Goal run lifecycle is fully Rust-owned.",
       reviewer: "reviewer@example.test",
       review_reference: "test-only exact bridge fixture",
@@ -340,7 +340,7 @@ function goalBridgeTestFixture(t) {
     base_protected_surface: { type: baseWriter.type, signature: baseWriter.signature, line: baseWriter.line },
     head_protected_surface: { type: headWriter.type, signature: headWriter.signature, line: headWriter.line },
     rust_authority: "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
-    compatibility_boundary: "Rust writes the Goal stop marker; exact legacy owners only observe it and complete cleanup.",
+    compatibility_boundary: "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
     retirement_criterion: "Remove these exact readers after the Goal run lifecycle is fully Rust-owned.",
     reviewer: "reviewer@example.test",
     review_reference: "test-only exact bridge fixture",
@@ -350,7 +350,7 @@ function goalBridgeTestFixture(t) {
     id: "test-goal-stop-bridge-v1",
     semantic_operation: "goal_budget.request_legacy_run_cancellation",
     rust_authority: "native::d1_persistence::goal_budget::request_legacy_run_cancellation",
-    compatibility_boundary: "Rust writes the Goal stop marker; exact legacy owners only observe it and complete cleanup.",
+    compatibility_boundary: "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.",
     retirement_criterion: "Remove these exact readers after the Goal run lifecycle is fully Rust-owned.",
     files: filePolicy,
     operation_mapping: {
@@ -866,6 +866,7 @@ test("Goal legacy-owner bridge production pins match the exact reviewed B source
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.id, "goal-budget-cross-owner-stop-v1");
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.semantic_operation, "goal_budget.request_legacy_run_cancellation");
   assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.rust_authority, "native::d1_persistence::goal_budget::request_legacy_run_cancellation");
+  assert.equal(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.compatibility_boundary, "Rust owns Goal budget decisions, native Goal run/wakeup ownership, and durable cancellation markers. These exact Node paths read those Rust-owned marker/owner fields, fence legacy admission or mutation, and forward legacy_ts stop intents through existing cleanup. This admits no new Node policy, native-row mutation, writer, or timer cadence.");
   assert.deepEqual(Object.keys(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files).sort(), [...goalLegacyBridgePaths].sort());
   assert.deepEqual(Object.fromEntries(Object.entries(TRUSTED_GOAL_LEGACY_OWNER_BRIDGE.files).map(([sourcePath, entry]) => [
     sourcePath, [entry.base_sha256, entry.head_sha256],
