@@ -146,32 +146,10 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
     let node_handle = node.handle();
     let node_task = actix_web::rt::spawn(node);
 
-    let foundation = Arc::new(
-        AppState::new(ServerConfig {
-            database_url: Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
-            actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
-            workers: 1,
-            ..ServerConfig::default()
-        })
-        .unwrap(),
+    let (foundation, runtime) = organization_reads_runtime(
+        Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
+        &upstream,
     );
-    let mut ingress =
-        PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap();
-    ingress.identity_auth = Some(
-        crate::public_ingress_config::NativeIdentityAuthConfig::new(
-            INTERNAL,
-            "native-organization-read-agent-jwt-secret",
-            "rudder-test",
-            "rudder-api",
-            true,
-        )
-        .unwrap(),
-    );
-    ingress.session_auth = Some(
-        NativeSessionAuthConfig::new(NativeSessionAuthKind::BetterAuth, SECRET, false, INTERNAL)
-            .unwrap(),
-    );
-    let runtime = PublicIngressRuntime::bind(ingress, foundation).unwrap();
     let address = runtime.bound_addr();
     let control = runtime.control();
     let task = actix_web::rt::spawn(runtime.run());
@@ -352,6 +330,22 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
     );
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
 
+    sqlx::query("UPDATE board_api_keys SET revoked_at=now() WHERE id=$1::uuid")
+        .bind(&board_key_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut revoked_board = client
+        .get(format!("{base}/api/orgs"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {board_token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked_board.status(), StatusCode::UNAUTHORIZED);
+    let revoked_board_body: serde_json::Value = revoked_board.json().await.unwrap();
+    assert_eq!(revoked_board_body["reason"], "unauthorized");
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+
     sqlx::query(
         "UPDATE organization_memberships SET status='inactive' WHERE org_id=$1::uuid AND principal_id=$2",
     )
@@ -382,6 +376,22 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
         serde_json::json!({"error":"User does not have access to this organization"})
     );
 
+    sqlx::query("DELETE FROM session WHERE id=$1")
+        .bind(&session_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut revoked_session = client
+        .get(&detail_url)
+        .insert_header((header::COOKIE, session_cookie.as_str()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked_session.status(), StatusCode::UNAUTHORIZED);
+    let revoked_session_body: serde_json::Value = revoked_session.json().await.unwrap();
+    assert_eq!(revoked_session_body["reason"], "unauthorized");
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+
     let mut local_list = client.get(format!("{base}/api/orgs")).send().await.unwrap();
     assert_eq!(local_list.status(), StatusCode::OK);
     let local_list_body: serde_json::Value = local_list.json().await.unwrap();
@@ -408,8 +418,50 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
     }
     assert_eq!(node_requests.load(Ordering::SeqCst), 2);
 
+    let DatabaseState::Configured(database_pool) = &foundation.database else {
+        panic!("the HTTP runtime must keep its configured database pool");
+    };
+    database_pool.close().await;
+    for path in [
+        "/api/orgs",
+        "/api/orgs/60000000-0000-4000-8000-000000000099",
+    ] {
+        let mut response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{path}"
+        );
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["reason"], "internal_server_error", "{path}");
+    }
+    assert_eq!(node_requests.load(Ordering::SeqCst), 2);
+
     control.stop(true).await;
     task.await.unwrap().unwrap();
+
+    let (_disabled_foundation, disabled_runtime) = organization_reads_runtime(None, &upstream);
+    let disabled_address = disabled_runtime.bound_addr();
+    let disabled_control = disabled_runtime.control();
+    let disabled_task = actix_web::rt::spawn(disabled_runtime.run());
+    let disabled_base = format!("http://{disabled_address}");
+    for path in [
+        "/api/orgs",
+        "/api/orgs/60000000-0000-4000-8000-000000000099",
+    ] {
+        let mut response = client
+            .get(format!("{disabled_base}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["reason"], "database_disabled", "{path}");
+    }
+    assert_eq!(node_requests.load(Ordering::SeqCst), 2);
+    disabled_control.stop(true).await;
+    disabled_task.await.unwrap().unwrap();
+
     node_handle.stop(true).await;
     node_task.await.unwrap().unwrap();
 
@@ -427,11 +479,6 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
         .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&agent_key_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM session WHERE id=$1")
-        .bind(&session_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -479,6 +526,39 @@ async fn native_organization_list_and_detail_match_projection_scope_and_node_bou
         .await
         .unwrap();
     pool.close().await;
+}
+
+fn organization_reads_runtime(
+    database_url: Option<String>,
+    upstream: &str,
+) -> (Arc<AppState>, PublicIngressRuntime) {
+    let foundation = Arc::new(
+        AppState::new(ServerConfig {
+            database_url,
+            actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+            workers: 1,
+            ..ServerConfig::default()
+        })
+        .unwrap(),
+    );
+    let mut ingress =
+        PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), upstream, INTERNAL).unwrap();
+    ingress.identity_auth = Some(
+        crate::public_ingress_config::NativeIdentityAuthConfig::new(
+            INTERNAL,
+            "native-organization-read-agent-jwt-secret",
+            "rudder-test",
+            "rudder-api",
+            true,
+        )
+        .unwrap(),
+    );
+    ingress.session_auth = Some(
+        NativeSessionAuthConfig::new(NativeSessionAuthKind::BetterAuth, SECRET, false, INTERNAL)
+            .unwrap(),
+    );
+    let runtime = PublicIngressRuntime::bind(ingress, foundation.clone()).unwrap();
+    (foundation, runtime)
 }
 
 async fn insert_organization(pool: &sqlx::PgPool, suffix: &str, label: &str) -> String {
