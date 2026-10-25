@@ -1021,12 +1021,14 @@ pub(crate) async fn cleanup_failed_start(
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 async fn wait_for_port_closed(port: u16) -> Result<(), OwnerError> {
     let deadline = Instant::now() + STOP_TIMEOUT;
     loop {
-        match timeout(
-            Duration::from_millis(250),
+        // A short per-probe timeout can cancel a Windows connect before the
+        // socket reports refusal. Keep each probe within the existing stop deadline.
+        match tokio::time::timeout_at(
+            deadline,
             tokio::net::TcpStream::connect(("127.0.0.1", port)),
         )
         .await
@@ -1040,7 +1042,12 @@ async fn wait_for_port_closed(port: u16) -> Result<(), OwnerError> {
                     error,
                 ));
             }
-            Err(_) => {}
+            Err(_) => {
+                return Err(OwnerError::new(
+                    "postgres_stop_timeout",
+                    "PostgreSQL port closure could not be confirmed before the stop deadline",
+                ));
+            }
         }
         if Instant::now() >= deadline {
             return Err(OwnerError::new(
@@ -1100,5 +1107,47 @@ async fn run_pg_ctl_stop(pg_ctl: &Path, data_dir: &Path, mode: &str) -> Result<(
             ));
         }
         sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod port_closure_tests {
+    use super::{STOP_TIMEOUT, wait_for_port_closed};
+    use std::{io::ErrorKind, net::TcpListener, time::Duration};
+    use tokio::time::{Instant, timeout};
+
+    #[tokio::test]
+    async fn closed_loopback_port_is_confirmed_without_short_probe_cancellation() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let started = Instant::now();
+        let error = timeout(
+            STOP_TIMEOUT,
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await
+        .expect("closed-port connect did not finish within the stop deadline")
+        .expect_err("closed port unexpectedly accepted a connection");
+        println!(
+            "closed-loopback connect: {:?} after {:?}",
+            error.kind(),
+            started.elapsed()
+        );
+        assert_eq!(error.kind(), ErrorKind::ConnectionRefused);
+        wait_for_port_closed(port).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_listener_is_not_reported_closed_and_shutdown_is_observed() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(
+            timeout(Duration::from_millis(150), wait_for_port_closed(port))
+                .await
+                .is_err()
+        );
+        drop(listener);
+        wait_for_port_closed(port).await.unwrap();
     }
 }

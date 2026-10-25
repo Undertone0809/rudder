@@ -566,9 +566,9 @@ jobs:
           cargo test --locked --manifest-path native/Cargo.toml -p rudder-d1-persistence --lib agent_core::instructions::tests -- --test-threads=1
           cargo test --locked --manifest-path native/Cargo.toml -p rudder-server-foundation-core --lib native_chat_startup::tests -- --test-threads=1
 
-      - name: Windows suspended database launcher preflight
+      - name: Windows suspended launcher and port-closure preflight
         if: runner.os == 'Windows'
-        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-postgres-lifecycle --lib process::windows_spawn::tests -- --test-threads=1 --nocapture
+        run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-postgres-lifecycle --lib process:: -- --test-threads=1 --nocapture
 
       - name: Windows real PostgreSQL lifecycle
         if: runner.os == 'Windows'
