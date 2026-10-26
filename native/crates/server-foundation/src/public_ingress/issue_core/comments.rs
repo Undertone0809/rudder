@@ -455,7 +455,11 @@ fn normalize_bare_library_paths(markdown: &str, root: &std::path::Path) -> Strin
         };
         output.push_str(&markdown[cursor..start]);
         let mut end = start + root_text.len();
-        if markdown.as_bytes().get(end) != Some(&b'/') {
+        if markdown
+            .as_bytes()
+            .get(end)
+            .is_none_or(|byte| !std::path::is_separator(char::from(*byte)))
+        {
             output.push_str(&markdown[start..end]);
             cursor = end;
             continue;
@@ -474,7 +478,6 @@ fn normalize_bare_library_paths(markdown: &str, root: &std::path::Path) -> Strin
             .map(char::len_utf8)
             .sum::<usize>();
         let candidate = &raw[..raw.len() - trailing_len];
-        output.push_str(&markdown[cursor..start]);
         if let Some((relative, basename)) = local_library_file(candidate, root) {
             output.push('[');
             output.push_str(&escape_markdown_label(&basename));
@@ -583,7 +586,7 @@ mod tests {
         std::fs::write(&image, "image").unwrap();
 
         let markdown = format!(
-            "[report]({}) {} `{} ` and ``{}``\n\n```text\n{}\n```\n![image]({})",
+            "Summary: [report]({}) {} `{} ` and ``{}``\n\n```text\n{}\n```\n![image]({})",
             report.display(),
             bare.display(),
             report.display(),
@@ -596,6 +599,8 @@ mod tests {
 
         assert!(normalized.contains(&format!("[report]({expected_report})")));
         assert!(normalized.contains("[bare.md](library-file://file?p=bare.md)"));
+        assert_eq!(normalized.matches("Summary: ").count(), 1);
+        assert_eq!(normalized.matches("[report](").count(), 1);
         assert!(normalized.contains(&format!("`{} `", report.display())));
         assert!(normalized.contains(&format!("``{}``", report.display())));
         assert!(normalized.contains(&format!("```text\n{}\n```", report.display())));
