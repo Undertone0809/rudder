@@ -94,6 +94,7 @@ pub struct IssueCoreWriteRequest<'a> {
     pub operation: IssueCoreWriteOperation,
     pub issue_id: Option<&'a str>,
     pub input: &'a Value,
+    pub comment_activity_details: Option<&'a Value>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +200,7 @@ pub async fn apply_issue_core_write(
     let operation = request.operation;
     let issue_id = request.issue_id;
     let input = request.input;
+    let comment_activity_details = request.comment_activity_details;
     let org = canonical_uuid(org_id)?;
     let mut staged_asset_objects = Vec::new();
     if !matches!(actor_kind, "user" | "agent") || actor_id.trim().is_empty() {
@@ -221,7 +223,10 @@ pub async fn apply_issue_core_write(
                 return Err(http(403, "User does not have access to this organization"));
             }
         }
-        if matches!(operation, IssueCoreWriteOperation::Create | IssueCoreWriteOperation::Update) {
+        if matches!(
+            operation,
+            IssueCoreWriteOperation::Create | IssueCoreWriteOperation::Update
+        ) {
             crate::issue_input_validation::validate_nested_fields(input)
                 .map_err(|message| http(422, message))?;
         }
@@ -252,8 +257,15 @@ pub async fn apply_issue_core_write(
                     agent_id: actor_agent_id,
                     run_id,
                 };
-                let (value, post_commit) =
-                    update_issue(&mut tx, &org, &mutation_actor, &id, input).await?;
+                let (value, post_commit) = update_issue(
+                    &mut tx,
+                    &org,
+                    &mutation_actor,
+                    &id,
+                    input,
+                    comment_activity_details,
+                )
+                .await?;
                 (200, value, post_commit, Vec::new())
             }
             IssueCoreWriteOperation::Delete => {
@@ -770,6 +782,10 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             wake_source: "review",
             role: Some("reviewer"),
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         });
     }
     enqueue_issue_wakeups(tx, org, &id, actor_kind, actor_id, wakeups).await?;
@@ -1050,6 +1066,7 @@ async fn update_issue(
     actor: &IssueMutationActor<'_>,
     id: &str,
     input: &Value,
+    comment_activity_details: Option<&Value>,
 ) -> Result<(Value, Option<IssueUpdatePostCommit>)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
@@ -1805,6 +1822,11 @@ async fn update_issue(
         if has_field_changes {
             comment_details["updated"] = Value::Bool(true);
         }
+        if let Some(extra) = comment_activity_details.and_then(Value::as_object) {
+            for (key, value) in extra {
+                comment_details[key] = value.clone();
+            }
+        }
         write_activity_options(
             tx,
             ActivityWrite {
@@ -1925,6 +1947,10 @@ async fn update_issue(
             wake_source: "review",
             role: Some("reviewer"),
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         });
     }
     enqueue_issue_wakeups(tx, org, id, actor_kind, actor_id, wakeups).await?;
@@ -2627,6 +2653,10 @@ impl IssueWakeupIntent {
             wake_source: source,
             role: None,
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         }
     }
 }

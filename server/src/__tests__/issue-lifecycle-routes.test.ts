@@ -2524,6 +2524,17 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("keeps Node Issue comments mounted only in legacy ingress mode", async () => {
+    const app = await createApp(createBoardActor(), undefined, true);
+    const response = await request(app)
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Must be handled by Rust in required ingress." });
+
+    expect(response.status).toBe(404);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+  });
+
   it("requires a bound run before a collaborator can add an issue comment", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({

@@ -27,6 +27,7 @@ mod goal_sets;
 pub mod goal_start;
 pub mod goal_writes;
 pub mod issue_checkout;
+pub mod issue_comments;
 pub mod issue_core_reads;
 pub mod issue_core_writes;
 mod issue_input_validation;

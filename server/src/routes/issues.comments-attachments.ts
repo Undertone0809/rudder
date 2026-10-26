@@ -48,7 +48,9 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     workspaceBrowser,
     assertAgentRunCheckoutOwnership,
     resolveAgentIssueRunId,
+    nativeIssueCore,
   } = ctx;
+  if (!nativeIssueCore) {
   router.get("/issues/:id/comments", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -513,6 +515,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
 
     res.status(201).json(comment);
   });
+  }
 
   router.get("/issues/:id/attachments", async (req, res) => {
     const issueId = req.params.id as string;

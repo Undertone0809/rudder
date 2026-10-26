@@ -21,6 +21,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+mod comments;
+
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +54,24 @@ enum Endpoint {
     },
     Checkout {
         issue_id: String,
+    },
+    CommentList {
+        issue_id: String,
+    },
+    CommentCreate {
+        issue_id: String,
+    },
+    CommentGet {
+        issue_id: String,
+        comment_id: String,
+    },
+    CommentUpdate {
+        issue_id: String,
+        comment_id: String,
+    },
+    CommentDelete {
+        issue_id: String,
+        comment_id: String,
     },
 }
 
@@ -106,6 +126,10 @@ fn endpoint_path_shape(path: &str, method: &Method) -> bool {
         if api.eq_ignore_ascii_case("api")
             && issues.eq_ignore_ascii_case("issues")
             && ["attachments", "work-products", "checkout"].iter().any(|candidate| leaf.eq_ignore_ascii_case(candidate)))
+        || matches!(parts.as_slice(), [api, issues, _id, comments]
+            if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
+        || matches!(parts.as_slice(), [api, issues, _id, comments, _comment_id]
+            if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
         || matches!(parts.as_slice(), [api, orgs, _org_id, issues, follows]
             if api.eq_ignore_ascii_case("api")
                 && orgs.eq_ignore_ascii_case("orgs")
@@ -215,6 +239,56 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
                 issue_id: decode_capture(issue_id)?,
             })
         }
+        ([api, issues, issue_id, comments], method)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && matches!(*method, Method::GET | Method::HEAD)
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentList {
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentCreate {
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], method)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && matches!(*method, Method::GET | Method::HEAD)
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentGet {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], &Method::PATCH)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentUpdate {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentDelete {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
+            })
+        }
         _ => None,
     }
 }
@@ -300,6 +374,22 @@ pub(super) async fn dispatch_alias(
             read_follows(state, request, &organization_id).await
         }
         Endpoint::Checkout { issue_id } => checkout(state, request, &body, &issue_id).await,
+        Endpoint::CommentList { issue_id } => comments::list(state, request, &issue_id).await,
+        Endpoint::CommentCreate { issue_id } => {
+            comments::create(state, request, &body, &issue_id).await
+        }
+        Endpoint::CommentGet {
+            issue_id,
+            comment_id,
+        } => comments::get(state, request, &issue_id, &comment_id).await,
+        Endpoint::CommentUpdate {
+            issue_id,
+            comment_id,
+        } => comments::update(state, request, &body, &issue_id, &comment_id).await,
+        Endpoint::CommentDelete {
+            issue_id,
+            comment_id,
+        } => comments::delete(state, request, &issue_id, &comment_id).await,
     }
 }
 
@@ -539,6 +629,7 @@ async fn execute_issue_write(
         operation,
         issue_id: resolved_issue_id.as_deref(),
         input: &input,
+        comment_activity_details: None,
     };
     let asset_storage: Option<&dyn IssueAssetStorage> = state
         .config

@@ -1119,6 +1119,7 @@ export function issueRoutes(
     workspaceBrowser,
     assertAgentRunCheckoutOwnership,
     resolveAgentIssueRunId,
+    nativeIssueCore: nativePublicIssueIngress,
   });
   return router;
 }

@@ -40,6 +40,10 @@ pub(crate) struct IssueWakeupIntent {
     pub(crate) wake_source: &'static str,
     pub(crate) role: Option<&'static str>,
     pub(crate) comment: Option<Value>,
+    pub(crate) relationship: Option<&'static str>,
+    pub(crate) expected_issue_execution_run_id: Option<String>,
+    pub(crate) payload_extra: Option<Value>,
+    pub(crate) context_extra: Option<Value>,
 }
 
 pub(crate) struct IssueWakeupActor<'a> {
@@ -460,12 +464,18 @@ async fn enqueue_board_checkout_wakeup(
         wake_source: "assignment",
         role: None,
         comment: None,
+        relationship: None,
+        expected_issue_execution_run_id: None,
+        payload_extra: None,
+        context_extra: None,
     };
     let requested_by = IssueWakeupActor {
         kind: "user",
         id: requested_by_user_id,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by).await
+    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by)
+        .await
+        .map(|_| ())
 }
 
 /// Admit an assignment or reviewer wakeup in the same transaction as an Issue
@@ -477,7 +487,7 @@ pub(crate) async fn enqueue_issue_core_wakeup(
     issue_id: &str,
     wakeup: &IssueWakeupIntent,
     requested_by: &IssueWakeupActor<'_>,
-) -> Result<()> {
+) -> std::result::Result<Option<String>, IssueCheckoutError> {
     let agent = sqlx::query(
         "SELECT name,status,pause_reason,runtime_config,agent_runtime_type FROM agents WHERE org_id=$1::uuid AND id=$2::uuid",
     )
@@ -509,11 +519,12 @@ async fn enqueue_issue_wakeup_with_agent(
     agent: &WakeupAgent<'_>,
     wakeup: &IssueWakeupIntent,
     requested_by: &IssueWakeupActor<'_>,
-) -> Result<()> {
+) -> std::result::Result<Option<String>, IssueCheckoutError> {
     let wake_on_demand = wake_on_demand_enabled(agent.runtime_config);
     let issue_context = sqlx::query(
         "SELECT i.id::text AS id, i.identifier, i.title, i.description, i.status, i.priority,
                 i.goal_id::text AS goal_id, i.project_id::text AS project_id,
+                i.execution_run_id::text AS execution_run_id,
                 i.assignee_agent_id::text AS assignee_agent_id,
                 i.assignee_user_id, i.reviewer_agent_id::text AS reviewer_agent_id,
                 i.reviewer_user_id, i.created_at::text AS created_at,
@@ -536,6 +547,7 @@ async fn enqueue_issue_wakeup_with_agent(
     let priority: String = issue_context.try_get("priority")?;
     let goal_id: Option<String> = issue_context.try_get("goal_id")?;
     let project_id: Option<String> = issue_context.try_get("project_id")?;
+    let execution_run_id: Option<String> = issue_context.try_get("execution_run_id")?;
     let assignee_user_id: Option<String> = issue_context.try_get("assignee_user_id")?;
     let reviewer_agent_id: Option<String> = issue_context.try_get("reviewer_agent_id")?;
     let reviewer_user_id: Option<String> = issue_context.try_get("reviewer_user_id")?;
@@ -574,6 +586,25 @@ async fn enqueue_issue_wakeup_with_agent(
         "createdAt": created_at,
         "updatedAt": updated_at,
     });
+    if let Some(expected_run_id) = wakeup.expected_issue_execution_run_id.as_deref() {
+        let active_matches = execution_run_id.as_deref() == Some(expected_run_id)
+            && (assignee_agent_id.as_deref() == Some(wakeup.agent_id.as_str())
+                || reviewer_agent_id.as_deref() == Some(wakeup.agent_id.as_str()))
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND status='running')",
+            )
+            .bind(org)
+            .bind(expected_run_id)
+            .bind(&wakeup.agent_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        if !active_matches {
+            return Err(http(
+                409,
+                "The active issue run changed before Steer was accepted",
+            ));
+        }
+    }
     let mut context = json!({
         "issueId": issue_id,
         "taskId": issue_id,
@@ -602,15 +633,30 @@ async fn enqueue_issue_wakeup_with_agent(
         context["wakeCommentId"] = comment["id"].clone();
         context["comment"] = comment.clone();
     }
+    if let Some(relationship) = wakeup.relationship {
+        context["relationship"] = Value::String(relationship.to_owned());
+    }
     if let Some(project_id) = project_id {
         context["projectId"] = Value::String(project_id);
     }
     if let Some(goal_id) = goal_id.as_ref() {
         context["goalId"] = Value::String(goal_id.clone());
     }
+    if let Some(extra) = wakeup.context_extra.as_ref().and_then(Value::as_object) {
+        context
+            .as_object_mut()
+            .expect("context is an object")
+            .extend(extra.clone());
+    }
     let mut payload = json!({"issueId": issue_id, "mutation": &wakeup.mutation});
     if let Some(comment) = wakeup.comment.as_ref() {
         payload["commentId"] = comment["id"].clone();
+    }
+    if let Some(extra) = wakeup.payload_extra.as_ref().and_then(Value::as_object) {
+        payload
+            .as_object_mut()
+            .expect("payload is an object")
+            .extend(extra.clone());
     }
     let deferred_payload = deferred_wakeup_payload(&payload, &context);
 
@@ -644,6 +690,7 @@ async fn enqueue_issue_wakeup_with_agent(
         ("queued", wakeup.reason, payload.clone())
     };
     let mut linked_run_id: Option<String> = None;
+    let mut expected_response_run_id: Option<String> = None;
     let mut finished = matches!(status, "skipped");
 
     if status == "queued" {
@@ -656,9 +703,10 @@ async fn enqueue_issue_wakeup_with_agent(
              JOIN issues i ON i.org_id=r.org_id AND i.id=$2::uuid
              WHERE r.org_id=$1::uuid
                AND (r.status IN ('queued','running') OR r.terminal_effects_pending=true)
-               AND r.context_snapshot->>'issueId'=$2
+               AND (r.context_snapshot->>'issueId'=$2 OR r.id=i.execution_run_id)
                AND (i.execution_cancellation_at IS NULL OR r.created_at>i.execution_cancellation_at)
-             ORDER BY CASE WHEN r.status='running' THEN 0 ELSE 1 END, r.created_at
+             ORDER BY CASE WHEN r.id=i.execution_run_id THEN 0 ELSE 1 END,
+                      CASE WHEN r.status='running' THEN 0 ELSE 1 END, r.created_at
              LIMIT 1",
         )
         .bind(org)
@@ -667,9 +715,24 @@ async fn enqueue_issue_wakeup_with_agent(
         .await?;
         if let Some(active) = active {
             let active_run_id: String = active.try_get("id")?;
+            let active_agent_id: String = active.try_get("agent_id")?;
             let active_agent_name: String = active.try_get("agent_name")?;
             let terminal_effects_pending: bool = active.try_get("terminal_effects_pending")?;
-            if active_agent_name
+            if let Some(expected_run_id) = wakeup.expected_issue_execution_run_id.as_deref() {
+                if active_run_id != expected_run_id
+                    || active_agent_id != wakeup.agent_id
+                    || active.try_get::<String, _>("status")? != "running"
+                {
+                    return Err(http(
+                        409,
+                        "The active issue run changed before Steer was accepted",
+                    ));
+                }
+                status = "deferred_issue_execution";
+                reason = "issue_execution_deferred";
+                payload = deferred_payload.clone();
+                expected_response_run_id = Some(active_run_id);
+            } else if active_agent_name
                 .trim()
                 .eq_ignore_ascii_case(agent.name.trim())
                 && !terminal_effects_pending
@@ -757,13 +820,20 @@ async fn enqueue_issue_wakeup_with_agent(
                  WHERE org_id=$1::uuid AND id=$2::uuid",
             )
             .bind(org)
-            .bind(existing_id)
+            .bind(&existing_id)
             .bind(merged_payload)
             .bind(reason)
             .bind(status)
             .execute(&mut **tx)
             .await?;
-            return Ok(());
+            let run_id = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT run_id::text FROM agent_wakeup_requests WHERE org_id=$1::uuid AND id=$2::uuid",
+            )
+            .bind(org)
+            .bind(&existing_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            return Ok(expected_response_run_id.or(run_id));
         }
     }
 
@@ -789,6 +859,7 @@ async fn enqueue_issue_wakeup_with_agent(
     .fetch_one(&mut **tx)
     .await?;
 
+    let mut admitted_run_id = linked_run_id.clone();
     if status == "queued" {
         let task_session = sqlx::query(
             "SELECT session_params_json::text AS session_params_json, session_display_id
@@ -851,6 +922,7 @@ async fn enqueue_issue_wakeup_with_agent(
         .bind(session_params_before.as_ref().map(Value::to_string))
         .fetch_one(&mut **tx)
         .await?;
+        admitted_run_id = Some(run_id.clone());
         sqlx::query(
             "UPDATE agent_wakeup_requests SET run_id=$3::uuid,updated_at=clock_timestamp()
              WHERE org_id=$1::uuid AND id=$2::uuid",
@@ -872,7 +944,7 @@ async fn enqueue_issue_wakeup_with_agent(
         .execute(&mut **tx)
         .await?;
     }
-    Ok(())
+    Ok(expected_response_run_id.or(admitted_run_id))
 }
 
 fn wake_on_demand_enabled(runtime_config: &Value) -> bool {
@@ -963,7 +1035,10 @@ async fn current_issue(tx: &mut Tx<'_>, org: &str, id: &str) -> Result<Option<Cu
     }))
 }
 
-async fn stale_run(tx: &mut Tx<'_>, run_id: &str) -> Result<bool> {
+pub(crate) async fn stale_run(
+    tx: &mut Tx<'_>,
+    run_id: &str,
+) -> std::result::Result<bool, IssueCheckoutError> {
     let run = sqlx::query_as::<_, (Option<String>, Option<bool>)>(
         "SELECT status, terminal_effects_pending FROM heartbeat_runs WHERE id=$1::uuid",
     )

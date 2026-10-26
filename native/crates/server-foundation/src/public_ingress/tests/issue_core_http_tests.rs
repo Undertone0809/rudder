@@ -636,6 +636,155 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             Some(run_id.clone())
         )
     );
+
+    let agent_comment = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&agent_token)
+        .header("x-rudder-run-id", &run_id)
+        .json(&json!({"body":"Agent comment from the public Rust route."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_comment.status(), StatusCode::CREATED);
+    let agent_comment: serde_json::Value = agent_comment.json().await.unwrap();
+    let agent_comment_id = agent_comment["id"].as_str().unwrap().to_owned();
+    let agent_comment_short_ref = agent_comment["shortRef"].as_str().unwrap().to_owned();
+    assert_eq!(agent_comment["authorAgentId"], agent_id);
+    let board_comment = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Board response."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(board_comment.status(), StatusCode::CREATED);
+    let board_comment: serde_json::Value = board_comment.json().await.unwrap();
+    let board_comment_id = board_comment["id"].as_str().unwrap().to_owned();
+    let agent_interrupt = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&agent_token)
+        .header("x-rudder-run-id", &run_id)
+        .json(&json!({"body":"Agents cannot interrupt from comments.","interrupt":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_interrupt.status(), StatusCode::FORBIDDEN);
+    let run_after_rejected_agent_interrupt: Option<String> = sqlx::query_scalar(
+        "SELECT error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(run_after_rejected_agent_interrupt, None);
+    let invalid_reopen = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Invalid reopen flag.","reopen":"true"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid_reopen.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let listed_comments = client
+        .get(format!(
+            "{base}/api/issues/{issue_id}/comments?order=asc&limit=10"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed_comments.status(), StatusCode::OK);
+    let listed_comments: serde_json::Value = listed_comments.json().await.unwrap();
+    assert_eq!(listed_comments.as_array().unwrap().len(), 2);
+    assert_eq!(listed_comments[0]["id"], agent_comment_id);
+    let read_by_short_ref = client
+        .get(format!(
+            "{base}/api/issues/{issue_id}/comments/{agent_comment_short_ref}"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read_by_short_ref.status(), StatusCode::OK);
+    assert_eq!(
+        read_by_short_ref.json::<serde_json::Value>().await.unwrap()["id"],
+        agent_comment_id
+    );
+    let missing_cursor = client
+        .get(format!(
+            "{base}/api/issues/{issue_id}/comments?after=cmt_ffffffff"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_cursor.status(), StatusCode::NOT_FOUND);
+    let edited_board_comment = client
+        .patch(format!(
+            "{base}/api/issues/{issue_id}/comments/{board_comment_id}"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Board response edited."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edited_board_comment.status(), StatusCode::OK);
+    assert_eq!(
+        edited_board_comment
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["body"],
+        "Board response edited."
+    );
+    let deleted_board_comment = client
+        .delete(format!(
+            "{base}/api/issues/{issue_id}/comments/{board_comment_id}"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted_board_comment.status(), StatusCode::OK);
+    let deleted_board_comment: serde_json::Value = deleted_board_comment.json().await.unwrap();
+    assert_eq!(deleted_board_comment["body"], "");
+    assert!(deleted_board_comment["deletedAt"].is_string());
+    let forged_comment_activity = client
+        .patch(format!("{base}/api/issues/{issue_id}"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "comment":"Public clients cannot forge internal comment audit details.",
+            "commentActivityDetails":{
+                "interruptedRunId":run_id,
+                "steerRunId":run_id,
+                "reopened":true
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forged_comment_activity.status(), StatusCode::OK);
+    let forged_comment_activity: serde_json::Value = forged_comment_activity.json().await.unwrap();
+    let forged_comment_id = forged_comment_activity["comment"]["id"].as_str().unwrap();
+    let forged_comment_activity_details: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.comment_added' AND details->>'commentId'=$3",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(forged_comment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        forged_comment_activity_details
+            .get("interruptedRunId")
+            .is_none()
+    );
+    assert!(forged_comment_activity_details.get("steerRunId").is_none());
+    assert!(forged_comment_activity_details.get("reopened").is_none());
+    let node_fallback_comments = node_requests.load(Ordering::SeqCst);
+    assert_eq!(node_fallback_comments, 1);
+
     let block_claim = client
         .patch(format!("{base}/api/issues/{issue_id}"))
         .bearer_auth(&agent_token)
@@ -2198,6 +2347,91 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .await
     .unwrap();
     assert_eq!(foreign_scope_after, foreign_scope_before);
+
+    sqlx::query("UPDATE issues SET status='done' WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&org_id)
+        .bind(&issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let steered_comment = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"Please continue with this feedback.",
+            "reopen":true,
+            "steer":{"expectedRunId":run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(steered_comment.status(), StatusCode::CREATED);
+    let steered_comment: serde_json::Value = steered_comment.json().await.unwrap();
+    assert!(
+        steered_comment["body"]
+            .as_str()
+            .unwrap()
+            .contains("Please continue with this feedback.")
+    );
+    assert!(
+        steered_comment["body"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("agent://{agent_id}?intent=wake"))
+    );
+    let reopened_issue = client
+        .get(format!("{base}/api/issues/{issue_id}"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reopened_issue.status(), StatusCode::OK);
+    let reopened_issue: serde_json::Value = reopened_issue.json().await.unwrap();
+    assert_eq!(reopened_issue["status"], "todo");
+    let reopened_activity_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.updated' AND details->>'reopened'='true' AND details->>'source'='comment'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reopened_activity_count, 1);
+    let (steer_request_status, steer_request_reason, steer_request_run_id, steer_request_payload):
+        (String, String, Option<String>, serde_json::Value) = sqlx::query_as(
+            "SELECT status,reason,run_id::text,payload FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid AND payload->>'issueId'=$3 AND reason='issue_execution_deferred' ORDER BY requested_at DESC LIMIT 1",
+        )
+        .bind(&org_id)
+        .bind(&agent_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(steer_request_status, "deferred_issue_execution");
+    assert_eq!(steer_request_reason, "issue_execution_deferred");
+    assert_eq!(steer_request_run_id, None);
+    assert_eq!(steer_request_payload["steerRunId"], run_id);
+    let steered_run: (String, Option<String>) = sqlx::query_as(
+        "SELECT status,error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        steered_run,
+        ("running".to_owned(), Some("cancel_requested".to_owned()))
+    );
+    let steer_cancel_activity_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND action='heartbeat.cancelled' AND entity_id=$2 AND details->>'source'='issue_comment_steer'",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(steer_cancel_activity_count, 1);
 
     assert_eq!(node_requests.load(Ordering::SeqCst), 1);
     control.stop(true).await;
