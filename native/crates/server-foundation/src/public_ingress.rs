@@ -26,6 +26,7 @@ mod email_auth;
 mod goal_singular_reads;
 mod goal_writes;
 mod native_chat;
+mod organization_reads;
 mod organization_resources;
 mod project_reads;
 mod project_writes;
@@ -773,6 +774,9 @@ async fn proxy_request(
         && let Some(endpoint) = email_auth::endpoint_for_path(request.uri().path())
     {
         return email_auth::handle(state, request, payload, endpoint).await;
+    }
+    if organization_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return organization_reads::dispatch_alias(state, request, payload).await;
     }
     if let Some(endpoint) =
         organization_resources::endpoint_for_path(request.uri().path(), request.method())
@@ -2378,6 +2382,9 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
+
+    #[path = "organization_reads_http_tests.rs"]
+    mod organization_reads_http_tests;
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";

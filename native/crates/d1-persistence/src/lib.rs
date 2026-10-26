@@ -30,6 +30,7 @@ pub mod legacy_read_json;
 mod links;
 pub mod native_chat;
 pub mod organization_catalog_reads;
+pub mod organization_reads;
 mod organization_resources;
 pub mod overview_reads;
 mod project_creations;
