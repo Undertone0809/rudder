@@ -1046,33 +1046,57 @@ pub(super) fn native_authorizer<'a>(
 
 pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
     let facts = host_paths::AgentHostFacts::resolve(org_id)?;
-    let host = &facts.instructions_host;
-    rudder_d1_persistence::agent_core::resolve_organization_workspace_root(
-        &host.instance_root,
-        &host.workspace_home,
-        &host.previous_documents_root,
-        host.friendly_workspace_home,
-        &host.hostname,
+    let host = organization_workspace_host(&facts.instructions_host);
+    rudder_d1_persistence::agent_core::resolve_organization_workspace_root(&host, org_id)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| ())
+}
+
+pub(super) fn ensure_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = organization_workspace_host(&facts.instructions_host);
+    rudder_d1_persistence::agent_core::ensure_organization_workspace_layout(
+        &host,
+        std::path::Path::new(&facts.process_working_directory),
         org_id,
     )
     .map(|path| path.to_string_lossy().into_owned())
     .map_err(|_| ())
 }
 
-pub(super) fn ensure_organization_workspace_root(org_id: &str) -> Result<String, ()> {
+pub(super) fn ensure_named_organization_workspace_root(
+    org_id: &str,
+    organization_name: &str,
+) -> Result<String, ()> {
     let facts = host_paths::AgentHostFacts::resolve(org_id)?;
-    let host = &facts.instructions_host;
-    rudder_d1_persistence::agent_core::ensure_organization_workspace_layout(
-        &host.instance_root,
-        &host.workspace_home,
-        &host.previous_documents_root,
-        host.friendly_workspace_home,
-        &host.hostname,
+    let host = organization_workspace_host(&facts.instructions_host);
+    rudder_d1_persistence::agent_core::ensure_named_organization_workspace_layout(
+        &host,
         std::path::Path::new(&facts.process_working_directory),
         org_id,
+        organization_name,
     )
     .map(|path| path.to_string_lossy().into_owned())
     .map_err(|_| ())
+}
+
+pub(super) fn remove_organization_workspace_root(org_id: &str) -> Result<(), ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let host = organization_workspace_host(&facts.instructions_host);
+    rudder_d1_persistence::agent_core::remove_organization_workspace_layout(&host, org_id)
+        .map_err(|_| ())
+}
+
+fn organization_workspace_host(
+    host: &host_paths::InstructionsHostContext,
+) -> rudder_d1_persistence::agent_core::OrganizationWorkspaceHost {
+    rudder_d1_persistence::agent_core::OrganizationWorkspaceHost {
+        instance_root: host.instance_root.clone(),
+        workspace_home: host.workspace_home.clone(),
+        previous_documents_root: host.previous_documents_root.clone(),
+        friendly_workspace_home: host.friendly_workspace_home,
+        hostname: host.hostname.clone(),
+    }
 }
 
 pub(super) fn project_create_state_root(org_id: &str) -> Result<String, ()> {

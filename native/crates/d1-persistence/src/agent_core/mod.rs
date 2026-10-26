@@ -21,22 +21,42 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
+/// Trusted host paths and identity used by organization workspace operations.
+/// The listener constructs these facts from its signed native host context.
+#[derive(Clone, Debug)]
+pub struct OrganizationWorkspaceHost {
+    pub instance_root: String,
+    pub workspace_home: String,
+    pub previous_documents_root: String,
+    pub friendly_workspace_home: bool,
+    pub hostname: String,
+}
+
+impl OrganizationWorkspaceHost {
+    fn instructions_host(&self) -> instructions::Host {
+        instructions::Host {
+            instance_root: self.instance_root.clone(),
+            workspace_home: self.workspace_home.clone(),
+            previous_documents_root: self.previous_documents_root.clone(),
+            friendly_workspace_home: self.friendly_workspace_home,
+            hostname: self.hostname.clone(),
+        }
+    }
+}
+
 /// Resolve the configured organization workspace display root without
 /// provisioning or migrating any filesystem state.
 pub fn resolve_organization_workspace_root(
-    instance_root: &str,
-    workspace_home: &str,
-    previous_documents_root: &str,
-    friendly_workspace_home: bool,
-    hostname: &str,
+    host: &OrganizationWorkspaceHost,
     organization_id: &str,
 ) -> std::io::Result<std::path::PathBuf> {
+    let host = host.instructions_host();
     instructions::resolve_workspace_root(
-        instance_root,
-        workspace_home,
-        previous_documents_root,
-        friendly_workspace_home,
-        hostname,
+        &host.instance_root,
+        &host.workspace_home,
+        &host.previous_documents_root,
+        host.friendly_workspace_home,
+        &host.hostname,
         organization_id,
     )
 }
@@ -45,22 +65,40 @@ pub fn resolve_organization_workspace_root(
 /// Agent instruction storage owns the map lock, identity checks, and legacy
 /// migration semantics shared with existing workspace recovery.
 pub fn ensure_organization_workspace_layout(
-    instance_root: &str,
-    workspace_home: &str,
-    previous_documents_root: &str,
-    friendly_workspace_home: bool,
-    hostname: &str,
+    host: &OrganizationWorkspaceHost,
     cwd: &std::path::Path,
     organization_id: &str,
 ) -> std::io::Result<std::path::PathBuf> {
-    let host = instructions::Host {
-        instance_root: instance_root.to_owned(),
-        workspace_home: workspace_home.to_owned(),
-        previous_documents_root: previous_documents_root.to_owned(),
-        friendly_workspace_home,
-        hostname: hostname.to_owned(),
-    };
+    let host = host.instructions_host();
     instructions::ensure_workspace_layout(&host, organization_id, cwd)
+}
+
+/// Ensure a newly created organization's workspace while preserving the
+/// friendly-name mapping used by the existing Agent workspace layout.
+pub fn ensure_named_organization_workspace_layout(
+    host: &OrganizationWorkspaceHost,
+    cwd: &std::path::Path,
+    organization_id: &str,
+    organization_name: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    let host = host.instructions_host();
+    instructions::ensure_workspace_layout_for_organization(
+        &host,
+        organization_id,
+        organization_name,
+        cwd,
+    )
+}
+
+/// Remove workspace storage owned by an organization after its database row
+/// has been deleted. The shared workspace-map lock and marker checks remain
+/// in the instruction storage implementation.
+pub fn remove_organization_workspace_layout(
+    host: &OrganizationWorkspaceHost,
+    organization_id: &str,
+) -> std::io::Result<()> {
+    let host = host.instructions_host();
+    instructions::remove_workspace_layout(&host, organization_id)
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -125,15 +125,19 @@ pub(crate) async fn resolve_goal_claude_config(
     .ok_or_else(|| invalid("Active Goal or assigned Agent is unavailable"))?;
 
     let mut config = resolve_claude_config_for_row(tx, &organization_id, row, host).await?;
-    let organization_workspace_root = crate::agent_core::resolve_organization_workspace_root(
-        &host.instance_root().to_string_lossy(),
-        &host.workspace_home().to_string_lossy(),
-        &host.previous_documents_root().to_string_lossy(),
-        host.friendly_workspace_home(),
-        host.host_id(),
-        &organization_id,
-    )
-    .map_err(|_| invalid("organization workspace context is unavailable"))?;
+    let workspace_host = crate::agent_core::OrganizationWorkspaceHost {
+        instance_root: host.instance_root().to_string_lossy().into_owned(),
+        workspace_home: host.workspace_home().to_string_lossy().into_owned(),
+        previous_documents_root: host
+            .previous_documents_root()
+            .to_string_lossy()
+            .into_owned(),
+        friendly_workspace_home: host.friendly_workspace_home(),
+        hostname: host.host_id().to_owned(),
+    };
+    let organization_workspace_root =
+        crate::agent_core::resolve_organization_workspace_root(&workspace_host, &organization_id)
+            .map_err(|_| invalid("organization workspace context is unavailable"))?;
     let claude = config
         .claude
         .as_mut()

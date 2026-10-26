@@ -462,6 +462,50 @@ pub(super) async fn revalidate_in_snapshot(
     })
 }
 
+/// Revalidate a board session and require current instance-admin authority on
+/// the same connection that will create the organization.
+pub(super) async fn revalidate_instance_admin_in_snapshot(
+    connection: &mut PgConnection,
+    identity: &NativeSessionIdentity,
+    kind: NativeSessionAuthKind,
+) -> Result<NativeSessionAccess, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT s.id, s.user_id
+        FROM session AS s
+        INNER JOIN "user" AS u ON u.id = s.user_id
+        WHERE s.id = $1
+          AND s.token = $2
+          AND CASE WHEN $3 THEN s.expires_at >= clock_timestamp()
+                   ELSE s.expires_at > clock_timestamp() END
+        LIMIT 2
+        "#,
+    )
+    .bind(&identity.session_id)
+    .bind(&identity.token)
+    .bind(kind == NativeSessionAuthKind::BetterAuth)
+    .fetch_all(&mut *connection)
+    .await?;
+    if rows.len() != 1 || rows[0].0 != identity.session_id || rows[0].1 != identity.user_id {
+        return Ok(NativeSessionAccess::Unauthorized);
+    }
+
+    let is_instance_admin = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS (
+             SELECT 1 FROM instance_user_roles
+             WHERE user_id = $1 AND role = 'instance_admin'
+           )"#,
+    )
+    .bind(&identity.user_id)
+    .fetch_one(&mut *connection)
+    .await?;
+    Ok(if is_instance_admin {
+        NativeSessionAccess::Authorized
+    } else {
+        NativeSessionAccess::Forbidden
+    })
+}
+
 pub(super) enum NativeOrganizationScope {
     Unauthorized,
     Unrestricted,

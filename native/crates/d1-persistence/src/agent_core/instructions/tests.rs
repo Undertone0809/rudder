@@ -43,6 +43,113 @@ fn project_layout_preparation_migrates_legacy_root_without_losing_files() {
 }
 
 #[test]
+fn named_organization_layout_creates_and_updates_friendly_mapping() {
+    let mut f = Fixture::new();
+    f.host.friendly_workspace_home = true;
+    let home = Path::new(&f.host.workspace_home);
+    let name = "North Star / Operations";
+
+    let prepared =
+        ensure_workspace_layout_for_organization(&f.host, ORG, name, f.root.path()).unwrap();
+
+    assert_eq!(prepared, home.join("north-star-operations"));
+    assert!(prepared.join("agents").is_dir());
+    assert!(prepared.join("skills").is_dir());
+    assert!(prepared.join("projects").is_dir());
+    assert_eq!(
+        json(&prepared.join(".rudder-workspace.json")).unwrap()["orgId"],
+        ORG
+    );
+    let map_path = home.join(".rudder-organizations.json");
+    let first_map = json(&map_path).unwrap();
+    let first_record = first_map["organizations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["orgId"] == ORG)
+        .unwrap();
+    assert_eq!(first_record["instanceId"], "default");
+    assert_eq!(first_record["folderName"], "north-star-operations");
+    assert_eq!(first_record["orgName"], name);
+    assert_eq!(first_record["createdAt"], first_record["updatedAt"]);
+
+    let same_root = ensure_workspace_layout_for_organization(
+        &f.host,
+        ORG,
+        "Renamed Organization",
+        f.root.path(),
+    )
+    .unwrap();
+    let updated_map = json(&map_path).unwrap();
+    let updated_record = updated_map["organizations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["orgId"] == ORG)
+        .unwrap();
+    assert_eq!(same_root, prepared);
+    assert_eq!(updated_record["folderName"], "north-star-operations");
+    assert_eq!(updated_record["orgName"], "Renamed Organization");
+    assert_eq!(updated_record["createdAt"], first_record["createdAt"]);
+}
+
+#[test]
+fn named_organization_layout_suffixes_collisions_and_preserves_existing_record() {
+    const OTHER: &str = "10000000-0000-4000-8000-000000000002";
+    let mut f = Fixture::new();
+    f.host.friendly_workspace_home = true;
+    let home = Path::new(&f.host.workspace_home);
+    disk::create_dir_all(home).unwrap();
+    let map_path = home.join(".rudder-organizations.json");
+    let other_record = json!({
+        "instanceId":"default",
+        "orgId":OTHER,
+        "folderName":"shared-name",
+        "orgName":"Shared Name",
+        "createdAt":"2026-01-01T00:00:00Z",
+        "updatedAt":"2026-01-01T00:00:00Z"
+    });
+    atomic_json(
+        &map_path,
+        &json!({"version":1,"organizations":[other_record.clone()]}),
+    )
+    .unwrap();
+    let existing = home.join("shared-name");
+    disk::create_dir_all(&existing).unwrap();
+    atomic_json(
+        &existing.join(".rudder-workspace.json"),
+        &json!({"version":1,"orgId":OTHER}),
+    )
+    .unwrap();
+    disk::write(existing.join("keep.txt"), "other organization data").unwrap();
+
+    let prepared =
+        ensure_workspace_layout_for_organization(&f.host, ORG, "Shared Name", f.root.path())
+            .unwrap();
+
+    assert_eq!(prepared, home.join("shared-name-2"));
+    assert_eq!(
+        disk::read_to_string(existing.join("keep.txt")).unwrap(),
+        "other organization data"
+    );
+    let map = json(&map_path).unwrap();
+    assert_eq!(map["organizations"].as_array().unwrap().len(), 2);
+    assert!(
+        map["organizations"]
+            .as_array()
+            .unwrap()
+            .contains(&other_record)
+    );
+    let created = map["organizations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["orgId"] == ORG)
+        .unwrap();
+    assert_eq!(created["folderName"], "shared-name-2");
+}
+
+#[test]
 fn canonical_workspace_tolerates_corrupt_optional_alias_probe() {
     let f = Fixture::new();
     f.run().unwrap();
@@ -550,6 +657,137 @@ fn mapped_missing_and_foreign_identity_fail_closed() {
         "other-org"
     );
 }
+
+#[test]
+fn organization_removal_deletes_target_roots_and_preserves_other_mappings() {
+    const OTHER: &str = "10000000-0000-4000-8000-000000000002";
+    let mut f = Fixture::new();
+    f.host.friendly_workspace_home = true;
+    let home = Path::new(&f.host.workspace_home);
+    disk::create_dir_all(home).unwrap();
+    let map_path = home.join(".rudder-organizations.json");
+    atomic_json(
+        &map_path,
+        &json!({
+            "version": 1,
+            "retainedMetadata": "keep",
+            "organizations": [
+                {"instanceId":"default","orgId":ORG,"folderName":"my-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"},
+                {"instanceId":"default","orgId":OTHER,"folderName":"other-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"},
+                {"instanceId":"another-instance","orgId":ORG,"folderName":"another-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}
+            ]
+        }),
+    )
+    .unwrap();
+
+    let mapped = home.join("my-org");
+    disk::create_dir_all(&mapped).unwrap();
+    atomic_json(
+        &mapped.join(".rudder-workspace.json"),
+        &json!({"version":1,"orgId":ORG}),
+    )
+    .unwrap();
+    disk::write(mapped.join("owned.txt"), "remove this").unwrap();
+    let other = home.join("other-org");
+    disk::create_dir_all(&other).unwrap();
+    atomic_json(
+        &other.join(".rudder-workspace.json"),
+        &json!({"version":1,"orgId":OTHER}),
+    )
+    .unwrap();
+    disk::write(other.join("keep.txt"), "other organization").unwrap();
+
+    let canonical = home.join("100000000000");
+    disk::create_dir_all(canonical.join("workspaces")).unwrap();
+    disk::write(canonical.join("record.txt"), "canonical root").unwrap();
+    let legacy = home.join(ORG);
+    disk::create_dir_all(legacy.join("workspaces")).unwrap();
+    disk::write(legacy.join("record.txt"), "legacy root").unwrap();
+    let previous = Path::new(&f.host.previous_documents_root);
+    disk::create_dir_all(previous).unwrap();
+    atomic_json(
+        &previous.join(".rudder-workspace.json"),
+        &json!({"version":1,"orgId":ORG}),
+    )
+    .unwrap();
+    let legacy_projects = Path::new(&f.host.instance_root).join("projects").join(ORG);
+    disk::create_dir_all(&legacy_projects).unwrap();
+    disk::write(legacy_projects.join("project.txt"), "legacy projects").unwrap();
+
+    remove_workspace_layout(&f.host, ORG).unwrap();
+
+    for removed in [
+        mapped,
+        canonical,
+        legacy,
+        previous.to_path_buf(),
+        legacy_projects,
+    ] {
+        assert!(!removed.exists(), "expected {removed:?} to be removed");
+    }
+    assert_eq!(
+        disk::read_to_string(other.join("keep.txt")).unwrap(),
+        "other organization"
+    );
+    let remaining_map = json(&map_path).unwrap();
+    assert_eq!(remaining_map["retainedMetadata"], "keep");
+    assert_eq!(
+        remaining_map["organizations"],
+        json!([
+            {"instanceId":"default","orgId":OTHER,"folderName":"other-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"},
+            {"instanceId":"another-instance","orgId":ORG,"folderName":"another-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}
+        ])
+    );
+}
+
+#[test]
+fn organization_removal_rejects_a_foreign_workspace_marker_before_deleting_roots() {
+    let mut f = Fixture::new();
+    f.host.friendly_workspace_home = true;
+    let home = Path::new(&f.host.workspace_home);
+    disk::create_dir_all(home).unwrap();
+    let map_path = home.join(".rudder-organizations.json");
+    atomic_json(
+        &map_path,
+        &json!({
+            "version": 1,
+            "organizations": [
+                {"instanceId":"default","orgId":ORG,"folderName":"my-org","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}
+            ]
+        }),
+    )
+    .unwrap();
+    let mapped = home.join("my-org");
+    disk::create_dir_all(&mapped).unwrap();
+    atomic_json(
+        &mapped.join(".rudder-workspace.json"),
+        &json!({"version":1,"orgId":"foreign-org"}),
+    )
+    .unwrap();
+    disk::write(mapped.join("keep.txt"), "foreign workspace data").unwrap();
+    let canonical = home.join("100000000000");
+    disk::create_dir_all(&canonical).unwrap();
+    disk::write(canonical.join("keep.txt"), "canonical organization data").unwrap();
+
+    assert!(remove_workspace_layout(&f.host, ORG).is_err());
+
+    assert_eq!(
+        disk::read_to_string(mapped.join("keep.txt")).unwrap(),
+        "foreign workspace data"
+    );
+    assert_eq!(
+        disk::read_to_string(canonical.join("keep.txt")).unwrap(),
+        "canonical organization data"
+    );
+    assert_eq!(
+        json(&map_path).unwrap()["organizations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn live_and_unrecognized_workspace_locks_are_preserved() {
     let f = Fixture::new();
