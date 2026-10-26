@@ -123,6 +123,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     KNOWN_INSTRUCTIONS_PATH_KEYS,
     KNOWN_INSTRUCTIONS_BUNDLE_KEYS,
   } = ctx;
+  const nativeRunReads = rustFoundationBridge?.publicIngressEnabled === true;
   const replyRustInstructions = createRustInstructionsResponder(rustFoundationBridge);
   const delegation = delegationRunService(db, { heartbeat, access });
   const findFirstAgentId = async (orgId: string) => {
@@ -1231,14 +1232,16 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/orgs/:orgId/heartbeat-runs", listRunsForRequest("heartbeat"));
-  router.get("/orgs/:orgId/agent-runs", listRunsForRequest("agent"));
+  if (!nativeRunReads) {
+    router.get("/orgs/:orgId/heartbeat-runs", listRunsForRequest("heartbeat"));
+    router.get("/orgs/:orgId/agent-runs", listRunsForRequest("agent"));
 
-  router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await sendRunRead(res, rustFoundationBridge, req.actor, orgId, { operation: "overview" });
-  });
+    router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await sendRunRead(res, rustFoundationBridge, req.actor, orgId, { operation: "overview" });
+    });
+  }
 
   router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -1267,8 +1270,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId", detailForRequest("heartbeat", "Heartbeat run not found"));
-  router.get("/agent-runs/:runId", detailForRequest("agent", "Agent run not found"));
+  if (!nativeRunReads) {
+    router.get("/heartbeat-runs/:runId", detailForRequest("heartbeat", "Heartbeat run not found"));
+    router.get("/agent-runs/:runId", detailForRequest("agent", "Agent run not found"));
+  }
 
   async function getAuthorizedRunReference(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
@@ -1386,8 +1391,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
-  router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
+  if (!nativeRunReads) {
+    router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
+    router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
+  }
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
     const result = await readRunLogForRequest(req, res, "Heartbeat run not found");
@@ -1436,8 +1443,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
-  router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
+  if (!nativeRunReads) {
+    router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
+    router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
+  }
 
   router.get("/workspace-operations/:operationId/log", async (req, res) => {
     const operationId = req.params.operationId as string;
@@ -1481,20 +1490,22 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     });
   });
 
-  router.get("/issues/:issueId/active-run", async (req, res) => {
-    const rawId = req.params.issueId as string;
-    const issueSvc = issueService(db);
-    const isIdentifier = /^[A-Z][A-Z0-9]*-\d+$/i.test(rawId);
-    const issue = isIdentifier ? await issueSvc.getByIdentifier(rawId) : await issueSvc.getById(rawId);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
+  if (!nativeRunReads) {
+    router.get("/issues/:issueId/active-run", async (req, res) => {
+      const rawId = req.params.issueId as string;
+      const issueSvc = issueService(db);
+      const isIdentifier = /^[A-Z][A-Z0-9]*-\d+$/i.test(rawId);
+      const issue = isIdentifier ? await issueSvc.getByIdentifier(rawId) : await issueSvc.getById(rawId);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.orgId);
 
-    await sendRunRead(res, rustFoundationBridge, req.actor, issue.orgId, {
-      operation: "active", issueId: issue.id,
-      redaction: getRunReadEnvironment(),
+      await sendRunRead(res, rustFoundationBridge, req.actor, issue.orgId, {
+        operation: "active", issueId: issue.id,
+        redaction: getRunReadEnvironment(),
+      });
     });
-  });
+  }
 }

@@ -1050,6 +1050,37 @@
       "installed_app_replaced": false,
       "global_migration_complete": false,
       "at_utc": "2026-10-26T09:27:46.164075+00:00"
+    },
+    "combined_issue_cost_run_public_batch_20261026": {
+      "state": "Integrated author checks PASS: strictaffectedClippy,Cursorpollregression1,D1units246,Foundation314/28ignored,standalonebuild; author3HTTPresult recorded; independentstage/frozenPAV andfullnewheadCI pending",
+      "source_parent": "e3c16bd83d6f73bb4cf94ab8db0ebb78a579a5d1",
+      "main_base": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "scope": [
+        "Previously reviewed five Issue comment operations and eleven Cost/Finance reads",
+        "Previously accepted Issue Work Product CRUD with org-reference correction",
+        "Ten public Run GET/HEAD operations reusing existing Rust projections"
+      ],
+      "reuse": "Run6files byteidentical to author7e69; globalrouter differs only by excluding Automation registrations. PriorWorkProduct8files unchanged. New integrated runtime/PAV required.",
+      "excluded": "Automation candidate7e69 preserved separately pending human historical date policy; Attachment source in E unverified and excluded.",
+      "ci_repair": "Existing Cursor cfg(test) helper treated a200ms HostError::Timeout as terminal despite5soverall deadline. Continue normal polling on Timeout, retainfatalerrors/deadline, and exercise250ms syntheticchild; no productionCursor code change.",
+      "old_ci": "4ed Macx64 failed unchanged test-only helper; source comments308Foundationunits passed. One-job rerun was refused by GitHub403 because other workflow jobs were still running. No approval bypass or check mutation.",
+      "delivery_strategy": "Update existing protected PR388 with compatible qualified cohort instead of serially waiting for stalebase CI and another complete qualification; freeze this cutline before taking Attachment work.",
+      "author_reports": [
+        "/private/tmp/rudder-issue-work-products-scope-author-r1/result.md",
+        "/private/tmp/rudder-run-public-reads-author-20261026-r1/author-evidence.md"
+      ],
+      "remaining_node_debt": [
+        "Ingress-off compatibility",
+        "Automation public reads pendingpolicy and allmutation/scheduling",
+        "Run log/live/cancel/retry/delegation/execution",
+        "Issue Attachment lifecycle under separate authorwork",
+        "Other domains and global no-Node installation"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "at_utc": "2026-10-26T10:13:17.539023+00:00",
+      "integration_author_result": "/private/tmp/rudder-issue-cost-run-combined-author-r1/three-http-result.json"
     }
   }
 }

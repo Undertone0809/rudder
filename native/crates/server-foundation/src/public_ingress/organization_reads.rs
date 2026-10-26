@@ -247,7 +247,7 @@ async fn execute(
     response
 }
 
-async fn organization_list_scope(
+pub(super) async fn organization_list_scope(
     state: &IngressState,
     identity: &NativeIngressIdentity,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

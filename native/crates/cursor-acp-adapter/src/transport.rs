@@ -1057,7 +1057,9 @@ mod tests {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(transport.request_id.clone()),
             executable: "/bin/sh".into(),
-            argv: vec!["-c".into(), "exit 0".into()],
+            // Cross one receive quantum so this fixture also exercises polling
+            // without mistaking an expected timeout for host termination.
+            argv: vec!["-c".into(), "sleep 0.25; exit 0".into()],
             cwd: cwd.to_string_lossy().into_owned(),
             env: BTreeMap::new(),
             owner_token: Some(transport.owner_token.clone()),
@@ -1073,13 +1075,9 @@ mod tests {
         let terminal = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(!remaining.is_zero(), "synthetic child reaches terminal");
-            match transport
-                .host
-                .receive(remaining.min(HOST_RECEIVE_QUANTUM))
-                .expect("owned host remains readable through terminal")
-            {
-                HostEvent::Lifecycle(value) if value["type"] == "terminal" => break value,
-                HostEvent::Lifecycle(value) => {
+            match transport.host.receive(remaining.min(HOST_RECEIVE_QUANTUM)) {
+                Ok(HostEvent::Lifecycle(value)) if value["type"] == "terminal" => break value,
+                Ok(HostEvent::Lifecycle(value)) => {
                     transport.observe_lifecycle(&value).unwrap_or_else(|error| {
                         panic!(
                             "unexpected startup lifecycle {} ({:?}): {error:?}",
@@ -1087,8 +1085,10 @@ mod tests {
                         )
                     })
                 }
-                HostEvent::Stdout(_) => {}
-                HostEvent::Failure => panic!("synthetic child host failed"),
+                Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Failure) => panic!("synthetic child host failed"),
+                Err(HostError::Timeout) => continue,
+                Err(error) => panic!("owned host remains readable through terminal: {error:?}"),
             }
         };
         (transport, terminal)

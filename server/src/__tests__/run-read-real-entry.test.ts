@@ -688,6 +688,56 @@ describe("Run reads through real public HTTP, Rust and PostgreSQL", () => {
     expect(receipts).toHaveLength(before);
   },30_000);
 
+  it("omits only the ten public Run GET/HEAD routes when direct public ingress is selected", async () => {
+    let nodeRunReads = 0;
+    let remainingLiveReads = 0;
+    const selected = {
+      publicIngressEnabled: true,
+      async runRead() {
+        nodeRunReads += 1;
+        return { status: 200, contentType: "application/json", body: Buffer.from("{}") };
+      },
+      async liveRunRead() {
+        remainingLiveReads += 1;
+        return { status: 200, contentType: "application/json", body: Buffer.from("[]") };
+      },
+    } as unknown as RustFoundationBridge;
+    const selectedServer = await startApp(selected);
+    const urls = [
+      `/api/orgs/${orgId}/heartbeat-runs`,
+      `/api/orgs/${orgId}/agent-runs`,
+      `/api/orgs/${orgId}/agent-runs/overview`,
+      ...["heartbeat-runs", "agent-runs"].flatMap((surface) => [
+        `/api/${surface}/${runningId}`,
+        `/api/${surface}/${runningId}/events`,
+        `/api/${surface}/${runningId}/workspace-operations`,
+      ]),
+      `/api/issues/${issueId}/active-run`,
+    ];
+    try {
+      expect(urls).toHaveLength(10);
+      for (const url of urls) {
+        expect((await get(url, agentToken, selectedServer)).status, url).toBe(404);
+        expect((await request(selectedServer).head(url).set("authorization", `Bearer ${agentToken}`)).status, `HEAD ${url}`).toBe(404);
+      }
+      expect(nodeRunReads).toBe(0);
+
+      expect((await get(`/api/orgs/${orgId}/live-runs`, agentToken, selectedServer)).status).toBe(200);
+      expect((await get(`/api/issues/${issueId}/live-runs`, agentToken, selectedServer)).status).toBe(200);
+      expect(remainingLiveReads).toBe(2);
+
+      const remainingWrite = await request(selectedServer)
+        .post(`/api/heartbeat-runs/${randomUUID()}/cancel`)
+        .set("authorization", `Bearer ${agentToken}`)
+        .send({});
+      expect(remainingWrite.status).toBe(404);
+      expect(remainingWrite.body).toEqual({ error: "Heartbeat run not found" });
+      expect(nodeRunReads).toBe(0);
+    } finally {
+      await closeServer(selectedServer);
+    }
+  }, 30_000);
+
   it("returns actual native startup failures as 503 while Node remains alive, with no domain fallback",async()=>{
     const bad=createRustFoundationBridge({databaseUrl:connectionString,binaryPath:path.join(home,"missing-foundation"),mode:"off",organizationBrandingMode:"off",projectGoalSetMode:"off",requestTimeoutMs:1000});
     const urls=[`/api/orgs/${orgId}/heartbeat-runs`,`/api/orgs/${orgId}/agent-runs`,`/api/orgs/${orgId}/agent-runs/overview`,...['heartbeat-runs','agent-runs'].flatMap(surface=>['','/events','/workspace-operations'].map(suffix=>`/api/${surface}/${runningId}${suffix}`)),`/api/issues/${issueId}/active-run`];
