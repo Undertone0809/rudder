@@ -89,6 +89,7 @@ export interface RustFoundationBridge {
   readonly organizationBrandingMode: RustFoundationMode;
   readonly projectGoalSetMode: RustFoundationMode;
   readonly requiresStartup: boolean;
+  readonly publicIngressEnabled?: boolean;
   readonly publicIngressBaseUrl?: string | null;
   readonly nativeChatHostEnabled?: boolean;
   waitForPublicIngressReady?(): Promise<void>;
@@ -766,6 +767,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     organizationBrandingMode,
     projectGoalSetMode,
     requiresStartup,
+    publicIngressEnabled: Boolean(options.publicIngress),
     nativeChatHostEnabled: Boolean(options.publicIngress?.nativeChatHost),
     get publicIngressBaseUrl() { return publicIngressBaseUrl; },
     async waitForPublicIngressReady() {

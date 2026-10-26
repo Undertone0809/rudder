@@ -22,6 +22,7 @@ mod agent_runs;
 mod approval_reads;
 mod browser_session;
 mod cli_auth;
+mod cost_reads;
 mod email_auth;
 mod goal_singular_reads;
 mod goal_writes;
@@ -758,6 +759,9 @@ async fn proxy_request(
     }
     if approval_reads::is_reserved_path(request.uri().path(), request.method()) {
         return approval_reads::dispatch_alias(state, request, payload).await;
+    }
+    if cost_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return cost_reads::dispatch_alias(state, request, payload).await;
     }
     if project_writes::is_reserved_path(request.uri().path()) {
         return project_writes::dispatch_alias(state, request, payload).await;
@@ -2396,6 +2400,8 @@ mod tests {
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
+    #[path = "cost_read_http_tests.rs"]
+    mod cost_read_http_tests;
     #[path = "issue_core_http_tests.rs"]
     mod issue_core_http_tests;
     #[path = "organization_reads_http_tests.rs"]
