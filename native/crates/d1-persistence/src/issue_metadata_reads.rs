@@ -118,7 +118,7 @@ pub(crate) fn projection(fields: &[(&str, &str)], dates: &[(&str, &str)]) -> Str
     );
     format!("jsonb_build_object({})::text", items.join(","))
 }
-fn attachment_projection() -> String {
+pub(crate) fn attachment_projection() -> String {
     projection(
         &[
             ("id", "t.id"),

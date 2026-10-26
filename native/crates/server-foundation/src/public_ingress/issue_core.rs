@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+mod attachments;
 mod comments;
 mod work_products;
 
@@ -83,6 +84,20 @@ enum Endpoint {
         issue_id: String,
         comment_id: String,
     },
+    AttachmentUpload {
+        organization_id: String,
+        issue_id: String,
+    },
+    AttachmentWorkspaceImport {
+        organization_id: String,
+        issue_id: String,
+    },
+    AttachmentContent {
+        attachment_id: String,
+    },
+    AttachmentDelete {
+        attachment_id: String,
+    },
 }
 
 enum IssuePathLookup {
@@ -137,6 +152,23 @@ fn endpoint_path_shape(path: &str, _method: &Method) -> bool {
                 && orgs.eq_ignore_ascii_case("orgs")
                 && issues.eq_ignore_ascii_case("issues")
                 && follows.eq_ignore_ascii_case("follows"))
+        || matches!(parts.as_slice(), [api, orgs, _org_id, issues, _issue_id, attachments]
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments"))
+        || matches!(parts.as_slice(), [api, orgs, _org_id, issues, _issue_id, attachments, workspace_file]
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && workspace_file.eq_ignore_ascii_case("workspace-file"))
+        || matches!(parts.as_slice(), [api, attachments, _attachment_id]
+            if api.eq_ignore_ascii_case("api") && attachments.eq_ignore_ascii_case("attachments"))
+        || matches!(parts.as_slice(), [api, attachments, _attachment_id, content]
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && content.eq_ignore_ascii_case("content"))
 }
 
 fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
@@ -208,6 +240,57 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
             Some(Endpoint::IssueMetadata {
                 issue_id: decode_capture(issue_id)?,
                 operation: IssueMetadataReadOperation::Attachments,
+            })
+        }
+        ([api, orgs, organization_id, issues, issue_id, attachments], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments") =>
+        {
+            Some(Endpoint::AttachmentUpload {
+                organization_id: decode_capture(organization_id)?,
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        (
+            [
+                api,
+                orgs,
+                organization_id,
+                issues,
+                issue_id,
+                attachments,
+                workspace_file,
+            ],
+            &Method::POST,
+        ) if api.eq_ignore_ascii_case("api")
+            && orgs.eq_ignore_ascii_case("orgs")
+            && issues.eq_ignore_ascii_case("issues")
+            && attachments.eq_ignore_ascii_case("attachments")
+            && workspace_file.eq_ignore_ascii_case("workspace-file") =>
+        {
+            Some(Endpoint::AttachmentWorkspaceImport {
+                organization_id: decode_capture(organization_id)?,
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, attachments, attachment_id, content], method)
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && content.eq_ignore_ascii_case("content")
+                && matches!(*method, Method::GET | Method::HEAD) =>
+        {
+            Some(Endpoint::AttachmentContent {
+                attachment_id: decode_capture(attachment_id)?,
+            })
+        }
+        ([api, attachments, attachment_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments") =>
+        {
+            Some(Endpoint::AttachmentDelete {
+                attachment_id: decode_capture(attachment_id)?,
             })
         }
         ([api, issues, issue_id, resource], method)
@@ -337,6 +420,16 @@ pub(super) async fn dispatch_alias(
     let Some(endpoint) = endpoint_for_path(request.uri().path(), request.method()) else {
         return HttpResponse::NotFound().json(json!({"error":"Not found"}));
     };
+    if let Endpoint::AttachmentUpload {
+        organization_id,
+        issue_id,
+    } = &endpoint
+    {
+        if let Some(response) = private_host_rejection(&state, &request) {
+            return response;
+        }
+        return attachments::upload(state, request, payload, organization_id, issue_id).await;
+    }
     let body = match read_body(&state, &mut payload).await {
         Ok(body) => body,
         Err(response) => return response,
@@ -426,6 +519,22 @@ pub(super) async fn dispatch_alias(
             issue_id,
             comment_id,
         } => comments::delete(state, request, &issue_id, &comment_id).await,
+        Endpoint::AttachmentUpload { .. } => {
+            unreachable!("attachment upload dispatched before body parsing")
+        }
+        Endpoint::AttachmentWorkspaceImport {
+            organization_id,
+            issue_id,
+        } => {
+            attachments::import_workspace_file(state, request, &body, &organization_id, &issue_id)
+                .await
+        }
+        Endpoint::AttachmentContent { attachment_id } => {
+            attachments::content(state, request, &attachment_id).await
+        }
+        Endpoint::AttachmentDelete { attachment_id } => {
+            attachments::delete(state, request, &attachment_id).await
+        }
     }
 }
 
@@ -1295,6 +1404,37 @@ mod tests {
         assert!(!is_reserved_path(
             "/api/orgs/org-1/issues/follows",
             &Method::POST
+        ));
+    }
+
+    #[test]
+    fn issue_attachment_write_and_content_paths_are_reserved_for_native_ingress() {
+        let org_upload = "/api/orgs/org-1/issues/issue-1/attachments";
+        let workspace_file = "/api/orgs/org-1/issues/issue-1/attachments/workspace-file";
+        let content = "/api/attachments/attachment-1/content";
+        let remove = "/api/attachments/attachment-1";
+        for (path, method) in [
+            (org_upload, Method::POST),
+            (workspace_file, Method::POST),
+            (content, Method::GET),
+            (content, Method::HEAD),
+            (remove, Method::DELETE),
+        ] {
+            assert!(is_reserved_path(path, &method), "{method} {path}");
+            assert!(is_reserved_namespace(path, &method), "{method} {path}");
+        }
+        for (path, method) in [
+            (org_upload, Method::GET),
+            (workspace_file, Method::DELETE),
+            (content, Method::POST),
+            (remove, Method::GET),
+        ] {
+            assert!(!is_reserved_path(path, &method), "{method} {path}");
+            assert!(is_reserved_namespace(path, &method), "{method} {path}");
+        }
+        assert!(is_reserved_path(
+            "/api/issues/issue-1/attachments",
+            &Method::GET
         ));
     }
 

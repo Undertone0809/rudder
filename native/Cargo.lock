@@ -68,6 +68,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-multipart"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "689ad8dca448cfbcfc32c8988dd411c564ee177d85d724982f6b0a026f382d0a"
+dependencies = [
+ "actix-utils",
+ "actix-web",
+ "derive_more",
+ "futures-core",
+ "futures-util",
+ "httparse",
+ "local-waker",
+ "log",
+ "memchr",
+ "mime",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "serde_plain",
+ "tokio",
+]
+
+[[package]]
 name = "actix-router"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2992,6 +3015,7 @@ dependencies = [
 name = "rudder-server-foundation-core"
 version = "0.7.24"
 dependencies = [
+ "actix-multipart",
  "actix-web",
  "actix-ws",
  "awc",
@@ -3282,6 +3306,15 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_plain"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce1fc6db65a611022b23a0dec6975d63fb80a302cb3388835ff02c097258d50"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

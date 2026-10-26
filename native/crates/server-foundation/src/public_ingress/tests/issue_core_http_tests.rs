@@ -319,9 +319,22 @@ async fn assert_automation_failure_chat(
 }
 
 #[actix_web::test]
-#[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+#[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL and isolated host workspace paths"]
 async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallback() {
     crate::init_tracing();
+    let workspace_home = env::var("RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME")
+        .expect("the test runner must supply an isolated organization workspace home");
+    let host_home = env::var("RUDDER_NATIVE_HOST_HOME_DIRECTORY")
+        .expect("the test runner must supply an isolated host home");
+    assert!(std::path::Path::new(&workspace_home).is_absolute());
+    assert_ne!(
+        std::path::PathBuf::from(&workspace_home),
+        std::path::PathBuf::from(&host_home).join("Documents/Rudder"),
+        "attachment imports must use the isolated host workspace, not the user's default Library"
+    );
+    assert!(env::var("RUDDER_NATIVE_HOST_RUDDER_HOME").is_ok());
+    assert!(env::var("RUDDER_NATIVE_HOST_INSTANCE_ID").is_ok());
+    assert!(env::var("RUDDER_NATIVE_HOST_HOSTNAME").is_ok());
     let pool = super::disposable_native_auth_pool().await;
     let suffix = Uuid::new_v4().simple().to_string();
     let asset_storage_directory = tempfile::tempdir().unwrap();
@@ -3168,6 +3181,520 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
+    let foreign_agent_token = format!("pcp_native_issue_attachment_foreign_{suffix}");
+    let foreign_agent_key_id: String = sqlx::query_scalar(
+        "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'foreign attachment HTTP test', $3) RETURNING id::text",
+    )
+    .bind(&foreign_agent_id)
+    .bind(&foreign_org_id)
+    .bind(crate::native_bearer_auth::hash_token(&foreign_agent_token))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let attachments_node_requests_before = node_requests.load(Ordering::SeqCst);
+    let boundary = format!("----RudderIssueAttachment{suffix}");
+    let upload_bytes = b"Issue attachment bytes";
+    let multipart_body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-note.txt\"\r\nContent-Type: text/plain\r\n\r\n{}\r\n--{boundary}--\r\n",
+        String::from_utf8_lossy(upload_bytes)
+    );
+    let uploaded = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded.status(), StatusCode::CREATED);
+    let uploaded: serde_json::Value = uploaded.json().await.unwrap();
+    let uploaded_attachment_id = uploaded["id"].as_str().unwrap().to_owned();
+    let uploaded_asset_id = uploaded["assetId"].as_str().unwrap().to_owned();
+    let uploaded_object_key = uploaded["objectKey"].as_str().unwrap().to_owned();
+    assert_eq!(uploaded["issueId"], issue_id);
+    assert_eq!(uploaded["usage"], "issue");
+    assert_eq!(uploaded["contentType"], "text/plain");
+    assert_eq!(uploaded["byteSize"], upload_bytes.len());
+    assert_eq!(uploaded["originalFilename"], "attachment-note.txt");
+    assert_eq!(
+        uploaded["contentPath"],
+        format!("/api/attachments/{uploaded_attachment_id}/content")
+    );
+    let uploaded_object_path = asset_storage_directory.path().join(&uploaded_object_key);
+    assert_eq!(std::fs::read(&uploaded_object_path).unwrap(), upload_bytes);
+
+    let attachment_metadata = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(attachment_metadata.status(), StatusCode::OK);
+    let attachment_metadata: serde_json::Value = attachment_metadata.json().await.unwrap();
+    assert_eq!(attachment_metadata.as_array().unwrap().len(), 1);
+    assert_eq!(attachment_metadata[0]["id"], uploaded_attachment_id);
+
+    let uploaded_content = client
+        .get(format!(
+            "{base}{}",
+            uploaded["contentPath"].as_str().unwrap()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded_content.status(), StatusCode::OK);
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CONTENT_TYPE],
+        "text/plain"
+    );
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CACHE_CONTROL],
+        "private, max-age=60"
+    );
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "inline; filename=\"attachment-note.txt\""
+    );
+    assert_eq!(
+        uploaded_content.bytes().await.unwrap().as_ref(),
+        upload_bytes
+    );
+    let uploaded_head = client
+        .head(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded_head.status(), StatusCode::OK);
+    assert_eq!(
+        uploaded_head
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok()),
+        Some(upload_bytes.len() as u64)
+    );
+    assert!(uploaded_head.bytes().await.unwrap().is_empty());
+    let foreign_attachment_content = client
+        .get(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&foreign_agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_attachment_content.status(), StatusCode::FORBIDDEN);
+    let foreign_attachment_delete = client
+        .delete(format!("{base}/api/attachments/{uploaded_attachment_id}"))
+        .bearer_auth(&foreign_agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_attachment_delete.status(), StatusCode::FORBIDDEN);
+    assert!(uploaded_object_path.exists());
+
+    let object_count_before_rejected_uploads =
+        local_storage_file_count(&organization_issue_object_root);
+    let unsupported_boundary = format!("----RudderIssueAttachmentUnsupported{suffix}");
+    let unsupported_body = format!(
+        "--{unsupported_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"unsupported.bin\"\r\nContent-Type: application/x-rudder-test\r\n\r\nunsupported bytes\r\n--{unsupported_boundary}--\r\n"
+    );
+    let unsupported_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={unsupported_boundary}"),
+        )
+        .body(unsupported_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unsupported_upload.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let attachment_max_bytes = env::var("RUDDER_ATTACHMENT_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10 * 1024 * 1024);
+    let oversized_boundary = format!("----RudderIssueAttachmentOversized{suffix}");
+    let mut oversized_body = format!(
+        "--{oversized_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"oversized.txt\"\r\nContent-Type: text/plain\r\n\r\n"
+    )
+    .into_bytes();
+    oversized_body.extend(std::iter::repeat_n(b'x', attachment_max_bytes + 1));
+    oversized_body.extend_from_slice(format!("\r\n--{oversized_boundary}--\r\n").as_bytes());
+    let oversized_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={oversized_boundary}"),
+        )
+        .body(oversized_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(oversized_upload.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        object_count_before_rejected_uploads,
+        "unsupported and oversized uploads must not create storage objects"
+    );
+
+    let workspace_root = std::path::PathBuf::from(
+        super::super::agent_core::ensure_organization_workspace_root(&org_id).unwrap(),
+    );
+    let workspace_relative_path = format!("attachment-fixtures/{suffix}.txt");
+    let workspace_file_path = workspace_root.join(&workspace_relative_path);
+    std::fs::create_dir_all(workspace_file_path.parent().unwrap()).unwrap();
+    let workspace_bytes = b"workspace Library attachment bytes";
+    std::fs::write(&workspace_file_path, workspace_bytes).unwrap();
+    let workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":workspace_relative_path}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(workspace_import.status(), StatusCode::CREATED);
+    let workspace_import: serde_json::Value = workspace_import.json().await.unwrap();
+    let workspace_attachment_id = workspace_import["id"].as_str().unwrap().to_owned();
+    let workspace_asset_id = workspace_import["assetId"].as_str().unwrap().to_owned();
+    let workspace_object_key = workspace_import["objectKey"].as_str().unwrap().to_owned();
+    assert_eq!(
+        workspace_import["originalFilename"],
+        format!("{}.txt", suffix)
+    );
+    assert_eq!(workspace_import["contentType"], "text/plain");
+    assert_eq!(
+        std::fs::read(asset_storage_directory.path().join(&workspace_object_key)).unwrap(),
+        workspace_bytes
+    );
+    let workspace_content = client
+        .get(format!(
+            "{base}{}",
+            workspace_import["contentPath"].as_str().unwrap()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(workspace_content.status(), StatusCode::OK);
+    assert_eq!(
+        workspace_content.bytes().await.unwrap().as_ref(),
+        workspace_bytes
+    );
+    let both_attachments = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(both_attachments.status(), StatusCode::OK);
+    let both_attachments: serde_json::Value = both_attachments.json().await.unwrap();
+    assert_eq!(both_attachments.as_array().unwrap().len(), 2);
+    assert!(
+        both_attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attachment| attachment["id"] == uploaded_attachment_id)
+    );
+    assert!(
+        both_attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attachment| attachment["id"] == workspace_attachment_id)
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let object_directory = uploaded_object_path.parent().unwrap();
+        let original_permissions = std::fs::metadata(object_directory).unwrap().permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_mode(original_permissions.mode() & !0o222);
+        std::fs::set_permissions(object_directory, read_only_permissions).unwrap();
+        let object_count_before_storage_failure =
+            local_storage_file_count(&organization_issue_object_root);
+        let activity_count_before_storage_failure: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+        )
+        .bind(&org_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let storage_failure_boundary = format!("----RudderIssueAttachmentStorageFailure{suffix}");
+        let storage_failure_body = format!(
+            "--{storage_failure_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-storage-failure.txt\"\r\nContent-Type: text/plain\r\n\r\nforce attachment storage failure\r\n--{storage_failure_boundary}--\r\n"
+        );
+        let storage_failure = client
+            .post(format!(
+                "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+            ))
+            .bearer_auth(&board_token)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={storage_failure_boundary}"),
+            )
+            .body(storage_failure_body)
+            .send()
+            .await;
+        std::fs::set_permissions(object_directory, original_permissions).unwrap();
+        let storage_failure = storage_failure.unwrap();
+        assert_eq!(storage_failure.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let storage_failure_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename='attachment-storage-failure.txt'",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let activity_count_after_storage_failure: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+        )
+        .bind(&org_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(storage_failure_rows, 0);
+        assert_eq!(
+            activity_count_after_storage_failure,
+            activity_count_before_storage_failure
+        );
+        assert_eq!(
+            local_storage_file_count(&organization_issue_object_root),
+            object_count_before_storage_failure,
+            "a storage failure must not leave a partial object"
+        );
+    }
+
+    let escaped_workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":"../outside.txt"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        escaped_workspace_import.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    #[cfg(unix)]
+    {
+        let protected_file = workspace_root.join("agents").join("fixture");
+        std::fs::create_dir_all(&protected_file).unwrap();
+        let protected_file = protected_file.join("private.txt");
+        std::fs::write(&protected_file, b"protected workspace content").unwrap();
+        let public_alias = workspace_root
+            .join("attachment-fixtures")
+            .join("protected-alias.txt");
+        std::os::unix::fs::symlink(&protected_file, &public_alias).unwrap();
+        let alias_import = client
+            .post(format!(
+                "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+            ))
+            .bearer_auth(&board_token)
+            .json(&json!({"path":"attachment-fixtures/protected-alias.txt"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias_import.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    sqlx::query(
+        "ALTER TABLE assets ADD CONSTRAINT issue_attachment_upload_rollback_test CHECK (original_filename IS DISTINCT FROM 'attachment-database-failure.txt')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let object_count_before_failed_attachment =
+        local_storage_file_count(&organization_issue_object_root);
+    let attachment_added_activity_before_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let failure_boundary = format!("----RudderIssueAttachmentFailure{suffix}");
+    let failed_upload_body = format!(
+        "--{failure_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-database-failure.txt\"\r\nContent-Type: text/plain\r\n\r\nforce attachment SQL rollback\r\n--{failure_boundary}--\r\n"
+    );
+    let failed_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={failure_boundary}"),
+        )
+        .body(failed_upload_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(failed_upload.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let failed_attachment_rows: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename='attachment-database-failure.txt'), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND asset_id IN (SELECT id FROM assets WHERE original_filename='attachment-database-failure.txt'))",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let attachment_added_activity_after_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(failed_attachment_rows, (0, 0));
+    assert_eq!(
+        attachment_added_activity_after_failure,
+        attachment_added_activity_before_failure
+    );
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        object_count_before_failed_attachment,
+        "a failed attachment transaction must remove its staged object"
+    );
+    sqlx::query("ALTER TABLE assets DROP CONSTRAINT issue_attachment_upload_rollback_test")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let foreign_org_upload = client
+        .post(format!(
+            "{base}/api/orgs/{foreign_org_id}/issues/{foreign_issue_id}/attachments"
+        ))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_org_upload.status(), StatusCode::FORBIDDEN);
+    let imported_activity_workspace_path: Option<String> = sqlx::query_scalar(
+        "SELECT details->>'workspacePath' FROM activity_log WHERE org_id=$1::uuid AND action='issue.attachment_added' AND entity_id=$2 AND details->>'attachmentId'=$3",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(&workspace_attachment_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        imported_activity_workspace_path.as_deref(),
+        Some(workspace_relative_path.as_str())
+    );
+
+    for attachment_id in [&uploaded_attachment_id, &workspace_attachment_id] {
+        let removed = client
+            .delete(format!("{base}/api/attachments/{attachment_id}"))
+            .bearer_auth(&board_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(
+            removed.json::<serde_json::Value>().await.unwrap(),
+            json!({"ok":true})
+        );
+    }
+    let remaining_issue_attachments: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id::text=ANY($3::text[])",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(vec![uploaded_attachment_id.clone(), workspace_attachment_id.clone()])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let remaining_assets: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM assets WHERE org_id=$1::uuid AND id::text=ANY($2::text[])",
+    )
+    .bind(&org_id)
+    .bind(vec![uploaded_asset_id, workspace_asset_id])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((remaining_issue_attachments, remaining_assets), (0, 0));
+    assert!(!uploaded_object_path.exists());
+    assert!(
+        !asset_storage_directory
+            .path()
+            .join(&workspace_object_key)
+            .exists()
+    );
+    let deleted_attachment_content = client
+        .get(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted_attachment_content.status(), StatusCode::NOT_FOUND);
+    let no_issue_attachments = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_issue_attachments.status(), StatusCode::OK);
+    assert_eq!(
+        no_issue_attachments
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!([])
+    );
+    std::fs::remove_dir_all(workspace_root.join("attachment-fixtures")).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_dir_all(workspace_root.join("agents/fixture")).unwrap();
+    let attachment_activity_counts: (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE action='issue.attachment_added'), count(*) FILTER (WHERE action='issue.attachment_removed') FROM activity_log WHERE org_id=$1::uuid AND entity_type='issue' AND entity_id=$2 AND details->>'attachmentId'=ANY($3::text[])",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(vec![uploaded_attachment_id, workspace_attachment_id])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attachment_activity_counts, (2, 2));
+    assert_eq!(
+        node_requests.load(Ordering::SeqCst),
+        attachments_node_requests_before,
+        "the Rust attachment workflow must not call the legacy Node routes"
+    );
+
     let foreign_run_id = Uuid::new_v4().to_string();
     insert_issue_creation_run(
         &pool,
@@ -4017,6 +4544,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&agent_key_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
+        .bind(&foreign_agent_key_id)
         .execute(&pool)
         .await
         .unwrap();

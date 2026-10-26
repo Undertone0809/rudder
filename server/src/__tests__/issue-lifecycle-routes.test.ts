@@ -3987,11 +3987,32 @@ describe("issue lifecycle routes", () => {
     const checkout = await request(server)
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+    const attachmentUpload = await request(server)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments");
+    const workspaceAttachment = await request(server)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments/workspace-file")
+      .send({ path: "notes.txt" });
+    const attachmentContent = await request(server)
+      .get("/api/attachments/attachment-id/content");
+    const attachmentDelete = await request(server)
+      .delete("/api/attachments/attachment-id");
 
-    expect([list.status, detail.status, create.status, patch.status, reorder.status, remove.status, checkout.status])
-      .toEqual([404, 404, 404, 404, 404, 404, 404]);
+    expect([
+      list.status,
+      detail.status,
+      create.status,
+      patch.status,
+      reorder.status,
+      remove.status,
+      checkout.status,
+      attachmentUpload.status,
+      workspaceAttachment.status,
+      attachmentContent.status,
+      attachmentDelete.status,
+    ]).toEqual([404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404]);
     expect(mockIssueService.getById).not.toHaveBeenCalled();
     expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockIssueService.createAttachment).not.toHaveBeenCalled();
     expect(mockIssueService.update).not.toHaveBeenCalled();
     expect(mockIssueService.reorder).not.toHaveBeenCalled();
     expect(mockIssueService.checkout).not.toHaveBeenCalled();
