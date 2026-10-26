@@ -561,7 +561,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         )
         .unwrap(),
     );
-    let runtime = PublicIngressRuntime::bind(ingress, foundation).unwrap();
+    let runtime = PublicIngressRuntime::bind(ingress, foundation.clone()).unwrap();
     let base = format!("http://{}", runtime.bound_addr());
     let control = runtime.control();
     let task = actix_web::rt::spawn(runtime.run());
@@ -580,6 +580,36 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     );
 
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+    for reference in [
+        format!("{prefix}-1"),
+        format!("iss_{}", &issue_id.replace('-', "")[..8]),
+    ] {
+        for suffix in ["attachments", "work-products"] {
+            let response = client
+                .get(format!("{base}/api/issues/{reference}/{suffix}"))
+                .bearer_auth(&agent_token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.json::<serde_json::Value>().await.unwrap(),
+                json!([])
+            );
+        }
+    }
+    for (reference, status) in [
+        ("not-a-uuid", StatusCode::NOT_FOUND),
+        ("agt_abcd", StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let response = client
+            .get(format!("{base}/api/issues/{reference}/attachments"))
+            .bearer_auth(&agent_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+    }
     let work_products = client
         .get(format!("{base}/api/issues/{issue_id}/work-products"))
         .bearer_auth(&agent_token)
@@ -2433,6 +2463,20 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .unwrap();
     assert_eq!(steer_cancel_activity_count, 1);
 
+    let DatabaseState::Configured(native_pool) = &foundation.database else {
+        panic!("the public API must have a configured database");
+    };
+    native_pool.close().await;
+    let outage = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(outage.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        outage.json::<serde_json::Value>().await.unwrap(),
+        json!({"error":"Internal server error"})
+    );
     assert_eq!(node_requests.load(Ordering::SeqCst), 1);
     control.stop(true).await;
     task.await.unwrap().unwrap();

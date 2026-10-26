@@ -752,13 +752,13 @@
     },
     "current_slice_author_validation": {
       "name": "Issue core",
-      "state": "expanded_author_validation_pass; final Node metadata binding, independent stage/PAV/final and protected PR CI pending",
+      "state": "CI failures repaired and author checks passed; new independent stage/PAV/final review and exact-head protected CI pending",
       "repository": "/Users/zeeland/.codex/worktrees/rust-pr292-rebase-20261016/rudder-oss",
       "branch": "codex/rust-issue-core-20261026",
       "source_parent_commit": "e3915d9b057516d5e135a7d3a01b563c05de0493",
       "transport_tests": "112/112 PASS after removing redundant selected-ingress Node checkout bridge; server typecheck PASS; separate 2/2 route-gating proof at /private/tmp/rudder-issue-core-E-node-checkout-review-r18/route-gating.log",
       "s3_sdk_test": "2/2 PASS: /private/tmp/rudder-issue-core-E-s3-tests-r2.log; signed loopback S3 operations, not a real AWS account acceptance",
-      "public_http_postgresql": "1/1 PASS expanded public HTTP/PostgreSQL 18.4 workflow, 187 migrations, /private/tmp/rudder-issue-core-E-pg-20261026-r18/author-run-result.json; later Node-only negative registration gates do not change this Rust source/artifact.",
+      "public_http_postgresql": "1/1 PASS expanded public HTTP/PostgreSQL including UUID/identifier/short refs and native pool failure with unchanged Node counter; /private/tmp/rudder-issue-core-E-pg-20261026-r19/author-run-result.json",
       "remaining_node_boundaries": [
         "Legacy task execution/scheduling and cancel-marker consumption",
         "Attachment content GET and other Issue sidecar APIs",
@@ -770,10 +770,11 @@
       "production_released": false,
       "installed_app_replaced": false,
       "rust_validation": {
-        "strict_clippy": "PASS D1 persistence + FoundationCore all targets, -D warnings; /private/tmp/rudder-issue-core-E-clippy-r9.log",
+        "strict_clippy": "PASS D1 persistence + FoundationCore all targets, -D warnings; /private/tmp/rudder-issue-core-E-clippy-r13.log",
         "d1_unit": "244 PASS; /private/tmp/rudder-issue-core-E-rudder_d1_persistence-unit-r2.log",
         "foundation_unit": "307 PASS, 26 explicitly ignored; /private/tmp/rudder-issue-core-E-rudder_server_foundation_core-unit-r2.log",
-        "standalone_build": "PASS; /private/tmp/rudder-issue-core-E-server-build-r10.log"
+        "standalone_build": "PASS actual E source-built server+CLI during launcher r24; /private/tmp/rudder-issue-core-E-launcher-author-r24/launcher.log",
+        "rustfmt": "PASS full Rust workspace after CI formatting repair"
       },
       "local_baseline_limits": {
         "lint": "20 import-organizing failures; all 20 source files byte-identical to current origin/main; /private/tmp/rudder-issue-core-E-lint-baseline-proof-r1.json",
@@ -781,12 +782,21 @@
         "full_test_build_desktop": "Not claimed: full repository test/build and packaged verification still pending; local free disk below packaging requirement."
       },
       "authority_boundary": {
-        "state": "PASS inventory and trusted comparison against origin/main ef5d1cc8; five independently accepted Node transport/config changes, no added/removed surfaces or stale pins",
-        "report": "/private/tmp/rudder-issue-core-E-boundary-author-r4.json",
+        "state": "PASS inventory and trusted comparison against origin/main ef5d1cc8; six independently accepted Node changes, including existing heartbeat guard relocation; no added/removed surfaces or stale pins",
+        "report": "/private/tmp/rudder-issue-core-E-boundary-author-r5.json",
         "independent_receipts": [
           "/private/tmp/rudder-issue-core-E-node-boundary-review-r1.json",
-          "/private/tmp/rudder-issue-core-E-node-boundary-review-r2.json"
+          "/private/tmp/rudder-issue-core-E-node-boundary-review-r2.json",
+          "/private/tmp/rudder-issue-core-E-heartbeat-node-guard-review-r1.md"
         ]
+      },
+      "ci_repair_author_checks": {
+        "metadata_required": "14/14 PASS; /private/tmp/rudder-issue-core-E-metadata-author-r23/result.json",
+        "auth_launcher": "7/7 PASS; /private/tmp/rudder-issue-core-E-launcher-author-r24/result.json",
+        "heartbeat": "18/18 PASS; /private/tmp/rudder-issue-core-E-heartbeat-author-r26/result.json",
+        "server_typecheck": "PASS after repairs; boundary-author-r5",
+        "source_ci_head": "c44afd6dd35f38b9af6831bd25102c90f1b0dd9e had terminal failures; those results are not green qualification",
+        "production_released": false
       }
     },
     "integrated_organization_core_writes_20261026": {
