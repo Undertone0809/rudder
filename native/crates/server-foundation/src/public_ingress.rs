@@ -34,6 +34,7 @@ mod organization_reads;
 mod organization_resources;
 mod project_reads;
 mod project_writes;
+mod request_reads;
 mod run_reads;
 mod runtime_bindings;
 
@@ -767,6 +768,9 @@ async fn proxy_request(
     }
     if automation_reads::is_reserved_path(request.uri().path(), request.method()) {
         return automation_reads::dispatch_alias(state, request, payload).await;
+    }
+    if request_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return request_reads::dispatch_alias(state, request, payload).await;
     }
     if run_reads::is_reserved_path(request.uri().path(), request.method()) {
         return run_reads::dispatch_alias(state, request, payload).await;
@@ -2416,6 +2420,8 @@ mod tests {
     mod issue_core_http_tests;
     #[path = "organization_reads_http_tests.rs"]
     mod organization_reads_http_tests;
+    #[path = "request_read_http_tests.rs"]
+    mod request_read_http_tests;
     #[path = "run_read_http_tests.rs"]
     mod run_read_http_tests;
 
