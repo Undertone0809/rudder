@@ -144,7 +144,25 @@ function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RU
   };
 }
 
-async function createApp(actor = createBoardActor(), rustFoundationBridge?: RustFoundationBridge) {
+function createMemberBoardActor() {
+  return {
+    type: "board" as const,
+    userId: "organization-member",
+    orgIds: ["organization-1"],
+    source: "session" as const,
+    isInstanceAdmin: false,
+  };
+}
+
+async function createApp(
+  actor:
+    | ReturnType<typeof createBoardActor>
+    | ReturnType<typeof createAgentActor>
+    | ReturnType<typeof createMemberBoardActor> = createBoardActor(),
+  rustFoundationBridge?: RustFoundationBridge,
+  nativeIssueCheckout = false,
+  nativeIssueCore = false,
+) {
   const app = express();
   const db = {} as { transaction: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown> };
   db.transaction = async (callback) => callback(db);
@@ -153,7 +171,7 @@ async function createApp(actor = createBoardActor(), rustFoundationBridge?: Rust
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", issueRoutes(db as any, {} as any, rustFoundationBridge));
+  app.use("/api", issueRoutes(db as any, {} as any, rustFoundationBridge, { nativeIssueCheckout, nativeIssueCore }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -3896,6 +3914,75 @@ describe("issue lifecycle routes", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
+  it("routes Board checkout through Rust in required ingress mode without Node fallback", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ orgId: "organization-1", status: "todo" }));
+    const issueCheckout = vi.fn().mockResolvedValue({
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        executionRunId: RUN_ID,
+        status: "in_progress",
+      }))),
+    });
+
+    const res = await request(await createApp(
+      createBoardActor(),
+      { issueCheckout } as unknown as RustFoundationBridge,
+      true,
+    ))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(200);
+    expect(issueCheckout).toHaveBeenCalledWith(
+      createBoardActor(),
+      "organization-1",
+      { issueId: "11111111-1111-4111-8111-111111111111", agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] },
+    );
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("fails visibly without Node fallback when required Board checkout Rust transport fails", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ orgId: "organization-1", status: "todo" }));
+    const issueCheckout = vi.fn().mockRejectedValue(new Error("native unavailable"));
+
+    const res = await request(await createApp(
+      createBoardActor(),
+      { issueCheckout } as unknown as RustFoundationBridge,
+      true,
+    ))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(503);
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("omits Node Issue row lifecycle routes when required Rust ingress owns them", async () => {
+    const server = await createApp(createBoardActor(), undefined, false, true);
+    const list = await request(server).get("/api/orgs/organization-1/issues");
+    const detail = await request(server).get("/api/issues/11111111-1111-4111-8111-111111111111");
+    const create = await request(server).post("/api/orgs/organization-1/issues").send({ title: "Must not fall back" });
+    const patch = await request(server).patch("/api/issues/11111111-1111-4111-8111-111111111111").send({ title: "Must not fall back" });
+    const reorder = await request(server).post("/api/orgs/organization-1/issues/reorder").send({
+      issueId: "11111111-1111-4111-8111-111111111111",
+      targetStatus: "todo",
+    });
+    const remove = await request(server).delete("/api/issues/11111111-1111-4111-8111-111111111111");
+
+    expect([list.status, detail.status, create.status, patch.status, reorder.status, remove.status])
+      .toEqual([404, 404, 404, 404, 404, 404]);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.reorder).not.toHaveBeenCalled();
+  });
+
   it("wakes the assignee when a board actor checks out an issue on their behalf", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
@@ -3928,5 +4015,29 @@ describe("issue lifecycle routes", () => {
         },
       }),
     );
+  });
+
+  it("allows an organization Board member to check out work on behalf of an assignee", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ orgId: "organization-1", assigneeAgentId: ASSIGNEE_AGENT_ID, status: "todo" }),
+    );
+    mockIssueService.checkout.mockResolvedValue(
+      makeIssue({ orgId: "organization-1", assigneeAgentId: ASSIGNEE_AGENT_ID, status: "in_progress" }),
+    );
+
+    const res = await request(await createApp(createMemberBoardActor()))
+      .post(`/api/issues/${issueId}/checkout`)
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.checkout).toHaveBeenCalledWith(
+      issueId,
+      ASSIGNEE_AGENT_ID,
+      ["todo"],
+      null,
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalled();
   });
 });

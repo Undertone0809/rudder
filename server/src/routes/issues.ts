@@ -85,6 +85,10 @@ function issueSortDirQuery(value: unknown): IssueSortDir | undefined {
 export interface IssueRouteOptions {
   /** Rust's public listener owns the migrated organization Labels read. */
   nativeApprovalReads?: boolean;
+  /** The Rust checkout handler is the only checkout writer in required ingress mode. */
+  nativeIssueCheckout?: boolean;
+  /** Rust's public listener owns the Issue row lifecycle in required ingress mode. */
+  nativeIssueCore?: boolean;
 }
 
 export function issueRoutes(
@@ -451,7 +455,7 @@ export function issueRoutes(
     });
   });
 
-  router.get("/orgs/:orgId/issues", async (req, res) => {
+  if (!options.nativeIssueCore) router.get("/orgs/:orgId/issues", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const assigneeUserFilterRaw = req.query.assigneeUserId as string | undefined;
@@ -538,7 +542,7 @@ export function issueRoutes(
     res.json(result);
   });
 
-  router.post("/orgs/:orgId/issues/reorder", validate(reorderIssueSchema), async (req, res) => {
+  if (!options.nativeIssueCore) router.post("/orgs/:orgId/issues/reorder", validate(reorderIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
@@ -683,7 +687,7 @@ export function issueRoutes(
     res.json(removed);
   });
 
-  router.get("/issues/:id", async (req, res) => {
+  if (!options.nativeIssueCore) router.get("/issues/:id", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -1077,6 +1081,8 @@ export function issueRoutes(
     issueApprovalsSvc,
     automationsSvc,
     executionWorkspacesSvc,
+    nativeIssueCheckout: options.nativeIssueCheckout,
+    nativeIssueCore: options.nativeIssueCore,
     assertCanAssignTasks,
     boardUserId,
     assertAgentRunCheckoutOwnership,

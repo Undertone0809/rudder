@@ -44,6 +44,7 @@ type IssueMutationRouteContext = {
   db: Db;
   storage: StorageService;
   rustFoundationBridge?: RustFoundationBridge;
+  nativeIssueCore?: boolean;
   [key: string]: any;
 };
 
@@ -216,6 +217,8 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     issueApprovalsSvc,
     automationsSvc,
     executionWorkspacesSvc,
+    nativeIssueCheckout,
+    nativeIssueCore,
     assertCanAssignTasks,
     boardUserId,
     assertAgentRunCheckoutOwnership,
@@ -337,7 +340,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     },
   );
 
-  router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
+  if (!nativeIssueCore) router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const body = normalizeIssueRunWorkspaceFields(req.body);
@@ -458,7 +461,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     res.status(201).json(issue);
   });
 
-  router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
+  if (!nativeIssueCore) router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
     const id = req.params.id as string;
     const normalizedBody = normalizeIssueRunWorkspaceFields(req.body);
     const existing = await svc.getById(id);
@@ -1069,7 +1072,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     res.json({ ...issue, comment, ...(blockAudit ? { blockAudit } : {}) });
   });
 
-  router.delete("/issues/:id", async (req, res) => {
+  if (!nativeIssueCore) router.delete("/issues/:id", async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
@@ -1113,6 +1116,33 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       req.actor.type === "agent" &&
       typeof req.actor.agentId === "string" &&
       isSelfAgentReference(req.body.agentId, req.actor.agentId);
+    if (nativeIssueCheckout) {
+      const id = req.params.id as string;
+      const orgId = req.actor.type === "agent"
+        ? req.actor.orgId
+        : await svc.getById(id).then((issue) => {
+            if (!issue) return null;
+            assertCompanyAccess(req, issue.orgId);
+            return issue.orgId;
+          });
+      if (!rustFoundationBridge?.issueCheckout || !orgId) {
+        res.status(orgId ? 503 : 404).json({
+          error: orgId ? "Rust Issue checkout is unavailable" : "Issue not found",
+        });
+        return;
+      }
+      try {
+        const response = await rustFoundationBridge.issueCheckout(req.actor, orgId, {
+          issueId: id,
+          agentId: req.body.agentId as string,
+          expectedStatuses: req.body.expectedStatuses as string[],
+        });
+        res.status(response.status).type(response.contentType).send(response.body);
+      } catch {
+        res.status(503).json({ error: "Rust Issue checkout is unavailable" });
+      }
+      return;
+    }
     if (selfAgentCheckout) {
       if (!rustFoundationBridge?.issueCheckout || !req.actor.orgId) {
         res.status(503).json({ error: "Rust Issue checkout is unavailable" });
