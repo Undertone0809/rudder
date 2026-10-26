@@ -1168,6 +1168,71 @@ async fn native_organization_create_update_branding_archive_and_delete_are_rust_
     .fetch_one(&pool)
     .await
     .unwrap();
+    for (org_id, agent_id, requester_id, key_suffix) in [
+        (
+            organization_id.as_str(),
+            primary_agent.as_str(),
+            admin_id.as_str(),
+            "target",
+        ),
+        (
+            foreign_org_id.as_str(),
+            foreign_agent.as_str(),
+            outsider_id.as_str(),
+            "foreign",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO agent_issue_creation_requests (org_id,requested_by_user_id,agent_id,instruction,idempotency_key)
+             VALUES ($1::uuid,$2,$3::uuid,'delete-order coverage',$4)",
+        )
+        .bind(org_id)
+        .bind(requester_id)
+        .bind(agent_id)
+        .bind(format!("org-delete-{key_suffix}-{suffix}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let primary_calendar_source: String = sqlx::query_scalar(
+        "INSERT INTO calendar_sources (org_id,name) VALUES ($1::uuid,$2) RETURNING id::text",
+    )
+    .bind(&organization_id)
+    .bind(format!("Target calendar source {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let foreign_calendar_source: String = sqlx::query_scalar(
+        "INSERT INTO calendar_sources (org_id,name) VALUES ($1::uuid,$2) RETURNING id::text",
+    )
+    .bind(&foreign_org_id)
+    .bind(format!("Foreign calendar source {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (org_id, source_id, title) in [
+        (
+            organization_id.as_str(),
+            primary_calendar_source.as_str(),
+            "Target calendar event",
+        ),
+        (
+            foreign_org_id.as_str(),
+            foreign_calendar_source.as_str(),
+            "Foreign calendar event",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO calendar_events (org_id,source_id,event_kind,event_status,owner_type,title,start_at,end_at)
+             VALUES ($1::uuid,$2::uuid,'event','confirmed','user',$3,now(),now()+interval '1 hour')",
+        )
+        .bind(org_id)
+        .bind(source_id)
+        .bind(format!("{title} {suffix}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let foreign_project: String = sqlx::query_scalar(
         "INSERT INTO projects (org_id,name) VALUES ($1::uuid,$2) RETURNING id::text",
     )
@@ -1256,6 +1321,9 @@ async fn native_organization_create_update_branding_archive_and_delete_are_rust_
         "heartbeat_runs",
         "runtime_source_aliases",
         "runtime_retention_claims",
+        "agent_issue_creation_requests",
+        "calendar_events",
+        "calendar_sources",
     ] {
         let count: i64 = sqlx::query_scalar(&format!(
             "SELECT count(*) FROM {table} WHERE org_id=$1::uuid"
@@ -1290,6 +1358,20 @@ async fn native_organization_create_update_branding_archive_and_delete_are_rust_
     .await
     .unwrap();
     assert_eq!(foreign_retention_rows, 2);
+    for table in [
+        "agent_issue_creation_requests",
+        "calendar_events",
+        "calendar_sources",
+    ] {
+        let count: i64 = sqlx::query_scalar(&format!(
+            "SELECT count(*) FROM {table} WHERE org_id=$1::uuid"
+        ))
+        .bind(&foreign_org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "{table} row for second organization was removed");
+    }
 
     let local_name = format!("Local Board Organization {suffix}");
     let mut local_created = client
@@ -1346,6 +1428,21 @@ async fn native_organization_create_update_branding_archive_and_delete_are_rust_
     assert_eq!(local_delete.status(), StatusCode::OK);
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
 
+    sqlx::query("DELETE FROM agent_issue_creation_requests WHERE org_id=$1::uuid")
+        .bind(&foreign_org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM calendar_events WHERE org_id=$1::uuid")
+        .bind(&foreign_org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM calendar_sources WHERE org_id=$1::uuid")
+        .bind(&foreign_org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM assets WHERE org_id=$1::uuid")
         .bind(&foreign_org_id)
         .execute(&pool)

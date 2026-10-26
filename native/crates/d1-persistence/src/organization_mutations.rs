@@ -502,6 +502,11 @@ const DELETE_BEFORE_ACTIVITY: &[&str] = &[
 ];
 
 const DELETE_AFTER_ACTIVITY: &[&str] = &[
+    // These tables use NO ACTION organization foreign keys. Delete events
+    // before their source rows, and creation requests before their agents.
+    "agent_issue_creation_requests",
+    "calendar_events",
+    "calendar_sources",
     "workspace_operations",
     "workspace_runtime_services",
     "execution_workspaces",
