@@ -440,6 +440,53 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }
     }
 
+    const activeRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.agentId, agentId),
+        or(
+          inArray(heartbeatRuns.status, ["queued", "running"]),
+          eq(heartbeatRuns.terminalEffectsPending, true),
+        ),
+      ))
+      .orderBy(desc(heartbeatRuns.createdAt));
+
+    const activeNativeGoalRun = activeRuns.find(
+      (candidate) => candidate.executionAuthority === "native_rust" && candidate.goalId !== null,
+    );
+    if (activeNativeGoalRun) {
+      // Legacy wakes, including Issue work, must wait for this Agent's native
+      // Goal owner. Do not create a second provider Run or let Node claim a
+      // native Goal wakeup through the shared Run queue.
+      const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
+      if (existingWakeupRequestId) {
+        await updateWakeupRequestRecord(db, existingWakeupRequestId, {
+          status: "deferred_goal_blocked",
+          payload: deferredPayload,
+          runId: null,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+      } else {
+        await insertWakeupRequestRecord(db, {
+          orgId: agent.orgId,
+          agentId,
+          source,
+          triggerDetail,
+          reason,
+          payload: deferredPayload,
+          status: "deferred_goal_blocked",
+          requestedByActorType: opts.requestedByActorType ?? null,
+          requestedByActorId: opts.requestedByActorId ?? null,
+          idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
+        });
+      }
+      return null;
+    }
+
     if (issueId) {
       const agentNameKey = normalizeAgentNameKey(agent.name);
 
@@ -898,53 +945,6 @@ export function createHeartbeatWakeupHandlers(context: any) {
         if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
         return newRun;
       }
-    }
-
-    const activeRuns = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(and(
-        eq(heartbeatRuns.agentId, agentId),
-        or(
-          inArray(heartbeatRuns.status, ["queued", "running"]),
-          eq(heartbeatRuns.terminalEffectsPending, true),
-        ),
-      ))
-      .orderBy(desc(heartbeatRuns.createdAt));
-
-    const activeNativeGoalRun = activeRuns.find(
-      (candidate) => candidate.executionAuthority === "native_rust" && candidate.goalId !== null,
-    );
-    if (activeNativeGoalRun) {
-      // A legacy Goal feedback/continuation wake must wait for the native owner
-      // of this Agent. Do not create a second provider Run or let Node claim a
-      // native Goal wakeup through the shared Run queue.
-      const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
-      if (existingWakeupRequestId) {
-        await updateWakeupRequestRecord(db, existingWakeupRequestId, {
-          status: "deferred_goal_blocked",
-          payload: deferredPayload,
-          runId: null,
-          claimedAt: null,
-          finishedAt: null,
-          error: null,
-        });
-      } else {
-        await insertWakeupRequestRecord(db, {
-          orgId: agent.orgId,
-          agentId,
-          source,
-          triggerDetail,
-          reason,
-          payload: deferredPayload,
-          status: "deferred_goal_blocked",
-          requestedByActorType: opts.requestedByActorType ?? null,
-          requestedByActorId: opts.requestedByActorId ?? null,
-          idempotencyKey: opts.idempotencyKey ?? null,
-          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
-        });
-      }
-      return null;
     }
 
     const isSameWakeScope = (candidate: typeof heartbeatRuns.$inferSelect) => {

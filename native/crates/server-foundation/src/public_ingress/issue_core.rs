@@ -670,32 +670,45 @@ async fn read_metadata(
     issue_id: &str,
     operation: IssueMetadataReadOperation,
 ) -> HttpResponse {
-    if Uuid::parse_str(issue_id).is_err() {
-        return not_found("Issue not found");
-    }
+    let (identity, actor, _, _) = match public_issue_actor(&state, &request).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
     let Some(pool) = configured_pool(&state) else {
         return unavailable();
     };
-    let org_id =
-        match sqlx::query_scalar::<_, String>("SELECT org_id::text FROM issues WHERE id=$1::uuid")
-            .bind(issue_id)
-            .fetch_optional(pool)
-            .await
-        {
-            Ok(Some(org_id)) => org_id,
-            Ok(None) => return not_found("Issue not found"),
-            Err(error) => {
-                tracing::warn!(error = %error, issue_id, "Issue metadata identity lookup failed");
-                return internal_error();
-            }
-        };
+    let lookup = match resolve_issue_path_reference(
+        pool,
+        issue_id,
+        actor_org_id(&identity),
+        (actor.kind == "user").then_some(actor.id.as_str()),
+        matches!(&identity, NativeIngressIdentity::LocalImplicit),
+    )
+    .await
+    {
+        Ok(lookup) => lookup,
+        Err(error) => {
+            tracing::warn!(error = %error, issue_id, "Issue metadata identity lookup failed");
+            return internal_error();
+        }
+    };
+    let (issue_id, org_id) = match lookup {
+        IssuePathLookup::Found { issue_id, org_id } => (issue_id, org_id),
+        IssuePathLookup::Missing => return not_found("Issue not found"),
+        IssuePathLookup::Ambiguous => return HttpResponse::Conflict().json(json!({
+            "error":"Issue ID short reference is ambiguous in this organization. Use a longer typed ref."
+        })),
+        IssuePathLookup::Invalid => return HttpResponse::UnprocessableEntity().json(json!({
+            "error":"Issue ID must be a UUID, issue identifier, or typed iss_<prefix> reference"
+        })),
+    };
     read_metadata_for_identity(
         state,
         request,
         &org_id,
         IssueMetadataReadInput {
             operation,
-            issue_id: Some(issue_id.to_owned()),
+            issue_id: Some(issue_id),
             board_user_context: None,
             legacy_date_timezone: None,
         },
@@ -749,6 +762,14 @@ async fn read_metadata_for_identity(
     if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
         return response;
     }
+    if actor_org_id(&identity).is_some_and(|actor_org| actor_org != org_id) {
+        return HttpResponse::Forbidden().json(json!({
+            "error":"Agent key cannot access another organization"
+        }));
+    }
+    if matches!(identity, NativeIngressIdentity::None) {
+        return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
+    }
     if matches!(input.operation, IssueMetadataReadOperation::Follows)
         && !matches!(
             identity,
@@ -787,7 +808,8 @@ async fn read_metadata_for_identity(
             HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}))
         }
         Err(IssueMetadataReadError::Store(StoreError::PublicIdentityForbidden)) => {
-            HttpResponse::Forbidden().json(json!({"error":"Forbidden"}))
+            HttpResponse::Forbidden()
+                .json(json!({"error":"User does not have access to this organization"}))
         }
         Err(IssueMetadataReadError::Store(StoreError::InvalidInput)) => {
             HttpResponse::UnprocessableEntity()

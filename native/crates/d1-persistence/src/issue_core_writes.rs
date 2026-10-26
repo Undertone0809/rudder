@@ -221,7 +221,10 @@ pub async fn apply_issue_core_write(
                 return Err(http(403, "User does not have access to this organization"));
             }
         }
-        if matches!(operation, IssueCoreWriteOperation::Create | IssueCoreWriteOperation::Update) {
+        if matches!(
+            operation,
+            IssueCoreWriteOperation::Create | IssueCoreWriteOperation::Update
+        ) {
             crate::issue_input_validation::validate_nested_fields(input)
                 .map_err(|message| http(422, message))?;
         }
