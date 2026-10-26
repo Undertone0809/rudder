@@ -1,6 +1,6 @@
-//! Private Agent-create materialization for the organization intelligence
-//! default. Runtime-chain probes stay in Node; this module only applies the
-//! already prepared result inside the Agent transaction.
+//! Agent-create materialization for the organization intelligence default.
+//! Runtime-chain probes are prepared before the Agent write transaction; the
+//! authoritative default insert remains inside the Agent transaction.
 
 use super::{AgentCreateRequest, common::*};
 use serde_json::{Map, Value, json};
@@ -100,10 +100,118 @@ pub(super) fn feature_enabled() -> bool {
 }
 
 pub(super) fn requested(request: &AgentCreateRequest) -> bool {
-    request
-        .node_owned
-        .as_ref()
-        .is_some_and(|node| node.avatar_icon.is_some() || node.intelligence_defaults.is_some())
+    request.node_owned.as_ref().is_some_and(|node| {
+        node.avatar_icon.is_some()
+            || node.intelligence_defaults.is_some()
+            || node.seed_intelligence_defaults
+    })
+}
+
+pub(super) enum PublicSeedPreparation {
+    NotNeeded,
+    Defaults(super::AgentCreateIntelligenceDefaults),
+    RuntimeTargets(Vec<super::intelligence_runtime::Target>),
+    RuntimeFailure(String),
+}
+
+pub(super) async fn prepare_public_seed(
+    tx: &mut Tx<'_>,
+    org: &str,
+    runtime_type: &str,
+    runtime_config: &Value,
+) -> Result<PublicSeedPreparation> {
+    let first_agent_exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid)")
+            .bind(org)
+            .fetch_one(&mut **tx)
+            .await?;
+    if first_agent_exists {
+        return Ok(PublicSeedPreparation::NotNeeded);
+    }
+    let default_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+           SELECT 1 FROM organization_intelligence_profiles
+           WHERE org_id=$1::uuid AND purpose IN ('default','lightweight','reasoning')
+         )",
+    )
+    .bind(org)
+    .fetch_one(&mut **tx)
+    .await?;
+    if default_exists {
+        return Ok(PublicSeedPreparation::NotNeeded);
+    }
+
+    if runtime_type != "codex_local" {
+        return Ok(PublicSeedPreparation::Defaults(
+            super::AgentCreateIntelligenceDefaults {
+                seed: true,
+                status: "disabled".to_owned(),
+                last_error: None,
+                last_verified_at: None,
+            },
+        ));
+    }
+
+    let profile_config = profile_config(runtime_type, runtime_config);
+    let targets =
+        match super::intelligence_runtime::resolve_targets(tx, org, runtime_type, &profile_config)
+            .await
+        {
+            Ok(targets) => PublicSeedPreparation::RuntimeTargets(targets),
+            Err(error) => PublicSeedPreparation::RuntimeFailure(error),
+        };
+    Ok(targets)
+}
+
+pub(super) async fn finish_public_seed(
+    preparation: PublicSeedPreparation,
+) -> Result<Option<super::AgentCreateIntelligenceDefaults>> {
+    let defaults = match preparation {
+        PublicSeedPreparation::NotNeeded => return Ok(None),
+        PublicSeedPreparation::Defaults(defaults) => defaults,
+        PublicSeedPreparation::RuntimeFailure(message) => super::AgentCreateIntelligenceDefaults {
+            seed: true,
+            status: "invalid".to_owned(),
+            last_error: Some(truncate_utf8(&message, MAX_LAST_ERROR_BYTES)),
+            last_verified_at: None,
+        },
+        PublicSeedPreparation::RuntimeTargets(targets) => {
+            let (status, last_error, last_verified_at) =
+                match super::intelligence_runtime::assert_usable(&targets).await {
+                    Ok(()) => (
+                        "configured".to_owned(),
+                        None,
+                        Some(
+                            OffsetDateTime::now_utc()
+                                .format(&Rfc3339)
+                                .map_err(|_| http(500, "Internal server error"))?,
+                        ),
+                    ),
+                    Err(message) => {
+                        let message = truncate_utf8(&message, MAX_LAST_ERROR_BYTES);
+                        ("invalid".to_owned(), Some(message), None)
+                    }
+                };
+            super::AgentCreateIntelligenceDefaults {
+                seed: true,
+                status,
+                last_error,
+                last_verified_at,
+            }
+        }
+    };
+    Ok(Some(defaults))
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 pub(super) async fn ensure_default(

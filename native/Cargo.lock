@@ -131,9 +131,12 @@ dependencies = [
  "http 1.5.0",
  "impl-more",
  "pin-project-lite",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -323,6 +326,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "rand 0.10.3",
+ "rustls",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -1981,9 +1985,11 @@ name = "rudder-agent-cli-core"
 version = "0.7.24"
 dependencies = [
  "reqwest",
+ "rudder-agent-contract-core",
  "rudder-agent-request-planner",
  "rudder-cli-mcp-contract-core",
  "serde_json",
+ "sha2 0.10.9",
  "time",
  "url",
 ]
@@ -2107,12 +2113,15 @@ dependencies = [
 name = "rudder-d1-persistence"
 version = "0.7.24"
 dependencies = [
+ "awc",
  "base64 0.22.1",
+ "futures-util",
  "getrandom 0.2.17",
  "icu_collator",
  "icu_locale_core",
  "libc",
  "regex-lite",
+ "reqwest",
  "ring",
  "rudder-auth-core",
  "rudder-claude-code",
@@ -2220,6 +2229,7 @@ name = "rudder-native"
 version = "0.7.24"
 dependencies = [
  "crc32fast",
+ "rudder-agent-cli-core",
  "rudder-archive-core",
  "rudder-plugin-archive-core",
  "rudder-run-evidence-core",

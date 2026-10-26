@@ -23,7 +23,7 @@ during Node/Rust comparisons; all other fields remain semantic.
 ## Explicit Rust CLI entry
 
 The native `rudder-cli` executable supports `auth login`, `auth whoami`,
-`auth logout`, and `org members`. Run it from `native/` with
+`auth logout`, `org members`, and `mcp-server`. Run it from `native/` with
 `cargo run -p rudder-cli -- auth login --api-base http://localhost:3100`.
 Login uses browser approval and the existing version-1 `auth.json` credentials;
 `--no-browser` prints the approval URL for manual use. `whoami` and member reads
@@ -34,6 +34,27 @@ See `native/bins/rudder-cli/README.md` for path overrides and precedence.
 This is an explicit native entry. The installed `rudder` command and MCP
 dispatch still use their existing default entry, and their remaining commands
 are migration debt. This slice does not retire those default processes.
+
+Both `rudder-native mcp-server` and `rudder-cli mcp-server` use the shared Rust
+stdio implementation for the canonical 83 core tools: 26 directly planned API
+capabilities, 56 CLI-compatible HTTP workflows, and the local Agent capability
+manifest. Library workflows and Skill request preparation are implemented in
+Rust; API-backed operations still call their current domain owner. The tools
+use the managed API URL, key, and runtime identity environment variables and
+never spawn the Node CLI. The separate 25 Browser tools and Computer server
+are excluded from this core entry.
+
+Issue reads, comments, collection queries, and run listing share the existing
+IssueTransportBudget retry state, including `runs.by-skill`. Responses retain
+the existing 1,000,000-byte cap. An oversized non-2xx response fails at that
+limit and leaves its transport reservation to expire; unlike the uncapped Node
+client, it does not classify a complete oversized 5xx body for fallback.
+
+This is CLI/MCP transport migration, not a claim that every API domain is
+Rust-authoritative. For example, Automation mutations and Approval comments
+still have Node business owners. Refer to the backend authority inventory for
+each endpoint. The installed `rudder mcp-server` default is not switched by
+these explicit commands.
 
 The server owns `/api/cli-auth/*` in Rust when
 `RUDDER_RUST_PUBLIC_INGRESS_MODE=required`. The supported standalone `off`
