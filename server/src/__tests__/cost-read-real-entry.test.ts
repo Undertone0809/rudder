@@ -218,7 +218,7 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
         VALUES (${dateOrgId}::uuid,'date','edge',1,${timestamp}::timestamptz,'2024-01-01Z',${`${"[".repeat(600)}9007199254740993${"]".repeat(600)}`}::jsonb)`);
     }
     await db.execute(sql`INSERT INTO finance_events (org_id,biller,event_kind,amount_cents,occurred_at,created_at,metadata_json)
-      VALUES (${dateOrgId}::uuid,'date','legacy-timezone-probe',1,'0012-02-01 00:00:00Z'::timestamptz,'2024-01-01Z',${JSON.stringify({ legacyTimezoneProbe: true })}::jsonb)`);
+      VALUES (${dateOrgId}::uuid,'date','legacy-timezone-probe',1,'0012-02-01 00:00:00Z'::timestamptz,'2024-01-02Z',${JSON.stringify({ legacyTimezoneProbe: true })}::jsonb)`);
     baseline = await snapshot();
     const listenPort = ingressMode === "required" ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000,

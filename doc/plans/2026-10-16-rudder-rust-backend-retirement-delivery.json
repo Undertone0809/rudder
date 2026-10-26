@@ -972,6 +972,47 @@
       "installed_app_replaced": false,
       "global_migration_complete": false,
       "recorded_at_utc": "2026-10-26T06:02:03.714113+00:00"
+    },
+    "delivered_issue_core_20261026": {
+      "pr": 387,
+      "url": "https://github.com/Undertone0809/rudder/pull/387",
+      "head": "65be73a171032090880bdba8a1b2ac731d4b2a07",
+      "tested_tree": "1823e767f84965de35910d02d0916075a5f8a07d",
+      "merge": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "normal_protected_merge": true,
+      "observed_merged_at_utc": "2026-10-26T06:08:18.991581+00:00",
+      "ci": "21success +1 expected skipped; full qualification",
+      "ci_receipt": "/private/tmp/rudder-issue-core-E-final-candidate-r2/pr387-ci-review-r1.json",
+      "ci_receipt_sha256": "92ddc6ace108adaad9b8284e76a3cf2b33e74353ab7aa46668de435d78399a6e",
+      "independent_pav": "PASS r2, receipt930cd3d8d922fb1efad32d5394b1b7c23286ae4d1f8e1fa5d280b33f090820be",
+      "final_merge_review": "ACCEPT, receipt23dfd43a289a5ea4c6ec81e3c6641dbddf5698b53772a28a8a92a4a94638937b",
+      "desktop": "Exact-head CI packaged macOS arm64 PASS; local desktop:verify not claimed for E",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false
+    },
+    "combined_issue_comments_cost_reads_20261026": {
+      "state": "Author checks passed for combined candidate; independent stage/PAV/final and exact-head protected CI pending",
+      "main_dependency": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "scope": [
+        "Native five Issue comment operations and durable transactional effects",
+        "11native Cost/Finance reads reusing existingRust projections"
+      ],
+      "unmigrated_finance_events": "Existing Node transport + signed Rust projection retained; exact server/session TimeZone recovery blocked by SQLx0.8.6 UTCstartup; no heuristic/native failure fallback added",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "author_evidence": {
+        "comments": "/private/tmp/rudder-issue-comments-C-author-r2.md",
+        "cost_reads": "/private/tmp/rudder-cost-public-read-author-r1/cost-public-read-author-evidence-r1.md",
+        "cost_raw_terminal_archive": "/private/tmp/rudder-cost-public-read-author-r1/tool-terminal-archive-receipt-r1.json",
+        "direct_http": "Comments1/1 r9 and Cost1/1 current source; final exact-candidate independent replay required",
+        "units": "D1lib244PASS; Foundation308PASS/27ignored; Costparser2PASS",
+        "node_contracts": "Comment/lifecycle115PASS; Cost57PASS",
+        "checks": "PASS strict affected alltargetClippy, fullRustfmt, server typecheck, all6candidateTSimports",
+        "node_admission": "4current reviewed Node deltas; inherited E admissions are retained in Git/frozen history, not stale active comparison records"
+      },
+      "recorded_at_utc": "2026-10-26T06:49:45.962642+00:00"
     }
   }
 }

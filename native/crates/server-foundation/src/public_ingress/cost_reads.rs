@@ -288,13 +288,14 @@ fn parse_js_date_millis(raw: &str) -> Option<i64> {
         })
         .or_else(|| parse_local_datetime(raw))
         .or_else(|| {
-            let format = time::format_description::parse("[year]-[month]-[day]").ok()?;
+            let format =
+                time::format_description::parse_borrowed::<1>("[year]-[month]-[day]").ok()?;
             Date::parse(raw, &format)
                 .ok()
                 .map(|date| date.with_time(time::Time::MIDNIGHT).assume_utc())
         })?;
     let millis = parsed.unix_timestamp_nanos().div_euclid(1_000_000);
-    (millis.unsigned_abs() <= 8_640_000_000_000_000).then(|| millis as i64)
+    (millis.unsigned_abs() <= 8_640_000_000_000_000).then_some(millis as i64)
 }
 
 fn parse_local_datetime(raw: &str) -> Option<OffsetDateTime> {
@@ -303,7 +304,7 @@ fn parse_local_datetime(raw: &str) -> Option<OffsetDateTime> {
         "[year]-[month]-[day]T[hour]:[minute]:[second]",
         "[year]-[month]-[day]T[hour]:[minute]",
     ] {
-        let format = time::format_description::parse(description).ok()?;
+        let format = time::format_description::parse_borrowed::<1>(description).ok()?;
         if let Ok(parsed) = PrimitiveDateTime::parse(raw, &format) {
             let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
             return Some(parsed.assume_offset(offset));
