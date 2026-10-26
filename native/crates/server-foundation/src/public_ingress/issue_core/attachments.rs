@@ -438,7 +438,7 @@ struct WorkspaceFile {
 async fn read_library_attachment_file(
     root: &Path,
     file_path: &str,
-) -> Result<WorkspaceFile, (StatusCode, &'static str)> {
+) -> Result<WorkspaceFile, (StatusCode, String)> {
     let requested = file_path.trim();
     if requested.contains('\\')
         || requested.starts_with('/')
@@ -448,25 +448,25 @@ async fn read_library_attachment_file(
     {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "Requested path must stay inside the organization Library root",
+            "Requested path must stay inside the organization Library root".to_owned(),
         ));
     }
     let root_metadata = tokio::fs::symlink_metadata(root).await.map_err(|_| {
         (
             StatusCode::NOT_FOUND,
-            "The shared Library root is not available on this machine yet.",
+            "The shared Library root is not available on this machine yet.".to_owned(),
         )
     })?;
     if root_metadata.file_type().is_symlink() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "The organization Library root cannot be a symbolic link",
+            "The organization Library root cannot be a symbolic link".to_owned(),
         ));
     }
     if !root_metadata.is_dir() {
         return Err((
             StatusCode::NOT_FOUND,
-            "The shared Library root is not available on this machine yet.",
+            "The shared Library root is not available on this machine yet.".to_owned(),
         ));
     }
     let normalized_root = lexical_normalize(root);
@@ -477,7 +477,7 @@ async fn read_library_attachment_file(
         .map_err(|_| {
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "Requested path must stay inside the organization Library root",
+                "Requested path must stay inside the organization Library root".to_owned(),
             )
         })?;
     let canonical_root = tokio::fs::canonicalize(&normalized_root)
@@ -485,17 +485,20 @@ async fn read_library_attachment_file(
         .map_err(|_| {
             (
                 StatusCode::NOT_FOUND,
-                "The shared Library root is not available on this machine yet.",
+                "The shared Library root is not available on this machine yet.".to_owned(),
             )
         })?;
     let canonical_target = tokio::fs::canonicalize(&candidate).await.map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             (
                 StatusCode::NOT_FOUND,
-                "File not found inside the organization Library",
+                "File not found inside the organization Library".to_owned(),
             )
         } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_owned(),
+            )
         }
     })?;
     let canonical_relative = canonical_target
@@ -504,7 +507,7 @@ async fn read_library_attachment_file(
         .map_err(|_| {
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "Requested path must stay inside the organization Library root",
+                "Requested path must stay inside the organization Library root".to_owned(),
             )
         })?;
     if is_protected_library_path(&canonical_relative)
@@ -512,28 +515,37 @@ async fn read_library_attachment_file(
     {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "Requested path cannot alias a protected organization Library root",
+            "Requested path cannot alias a protected organization Library root".to_owned(),
         ));
     }
     let metadata = tokio::fs::metadata(&canonical_target).await.map_err(|_| {
         (
             StatusCode::NOT_FOUND,
-            "File not found inside the organization Library",
+            "File not found inside the organization Library".to_owned(),
         )
     })?;
     if !metadata.is_file() {
         return Err((
             StatusCode::NOT_FOUND,
-            "File not found inside the organization Library",
+            "File not found inside the organization Library".to_owned(),
+        ));
+    }
+    if metadata.len() > attachment_max_bytes() as u64 {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Attachment exceeds {} bytes", attachment_max_bytes()),
         ));
     }
     let filename = candidate
         .file_name()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let body = tokio::fs::read(&canonical_target)
-        .await
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"))?;
+    let body = tokio::fs::read(&canonical_target).await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_owned(),
+        )
+    })?;
     let content_type = workspace_content_type(&normalized_path, &body);
     Ok(WorkspaceFile {
         normalized_path,

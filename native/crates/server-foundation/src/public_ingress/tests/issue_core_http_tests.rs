@@ -3361,6 +3361,59 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     let workspace_root = std::path::PathBuf::from(
         super::super::agent_core::ensure_organization_workspace_root(&org_id).unwrap(),
     );
+    let oversized_workspace_relative_path = format!("attachment-fixtures/oversized-{suffix}.txt");
+    let oversized_workspace_file = workspace_root.join(&oversized_workspace_relative_path);
+    std::fs::create_dir_all(oversized_workspace_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &oversized_workspace_file,
+        vec![b'x'; attachment_max_bytes + 1],
+    )
+    .unwrap();
+    let oversized_import_state = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename=$3), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid), (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added')",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(format!("oversized-{suffix}.txt"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let objects_before_oversized_import = local_storage_file_count(&organization_issue_object_root);
+    let oversized_workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":oversized_workspace_relative_path}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        oversized_workspace_import.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        oversized_workspace_import
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":format!("Attachment exceeds {} bytes", attachment_max_bytes)})
+    );
+    let oversized_import_state_after = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename=$3), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid), (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added')",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(format!("oversized-{suffix}.txt"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(oversized_import_state_after, oversized_import_state);
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        objects_before_oversized_import
+    );
+
     let workspace_relative_path = format!("attachment-fixtures/{suffix}.txt");
     let workspace_file_path = workspace_root.join(&workspace_relative_path);
     std::fs::create_dir_all(workspace_file_path.parent().unwrap()).unwrap();
