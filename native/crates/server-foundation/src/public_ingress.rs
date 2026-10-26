@@ -27,6 +27,7 @@ mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
 mod native_chat;
+mod organization_mutations;
 mod organization_reads;
 mod organization_resources;
 mod project_reads;
@@ -531,6 +532,10 @@ fn public_ingress_startup_receipt(
     better_auth_email_auth_enabled: bool,
 ) -> serde_json::Value {
     let mut direct_routes = vec![
+        "/api/orgs",
+        "/api/orgs/:org_id",
+        "/api/orgs/:org_id/branding",
+        "/api/orgs/:org_id/archive",
         "/api/orgs/:org_id/members/directory",
         "/api/orgs/:org_id/goals",
         "/api/orgs/:org_id/goals/workspace",
@@ -781,6 +786,9 @@ async fn proxy_request(
     }
     if organization_reads::is_reserved_path(request.uri().path(), request.method()) {
         return organization_reads::dispatch_alias(state, request, payload).await;
+    }
+    if organization_mutations::is_reserved_path(request.uri().path(), request.method()) {
+        return organization_mutations::dispatch_alias(state, request, payload).await;
     }
     if let Some(endpoint) =
         organization_resources::endpoint_for_path(request.uri().path(), request.method())
@@ -2535,6 +2543,10 @@ mod tests {
         assert_eq!(
             bearer_only["nativeAuthentication"]["directRoutes"],
             serde_json::json!([
+                "/api/orgs",
+                "/api/orgs/:org_id",
+                "/api/orgs/:org_id/branding",
+                "/api/orgs/:org_id/archive",
                 "/api/orgs/:org_id/members/directory",
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",
@@ -2572,6 +2584,10 @@ mod tests {
         assert_eq!(
             with_better_auth["nativeAuthentication"]["directRoutes"],
             serde_json::json!([
+                "/api/orgs",
+                "/api/orgs/:org_id",
+                "/api/orgs/:org_id/branding",
+                "/api/orgs/:org_id/archive",
                 "/api/orgs/:org_id/members/directory",
                 "/api/orgs/:org_id/goals",
                 "/api/orgs/:org_id/goals/workspace",

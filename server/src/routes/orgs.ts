@@ -1217,70 +1217,72 @@ export function organizationRoutes(
     res.json(result);
   });
 
-  router.post("/", validate(createOrganizationSchema), async (req, res) => {
-    assertBoard(req);
-    if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
-      throw forbidden("Instance admin required");
-    }
-    assertOrganizationBrandingCreateAllowed(rustFoundationBridge, req.body.brandColor);
-    const organization = await svc.create({ ...req.body, analytics: { creationPath: "manual", isUserInitiated: true } });
-    await handoffRequiredOrganizationBranding(db, rustFoundationBridge, organization.id);
-    await access.ensureMembership(organization.id, "user", req.actor.userId ?? "local-board", "owner", "active");
-    await logActivity(db, {
-      orgId: organization.id,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "organization.created",
-      entityType: "organization",
-      entityId: organization.id,
-      details: { name: organization.name },
+  if (!options.nativeOrganizationWrites) {
+    router.post("/", validate(createOrganizationSchema), async (req, res) => {
+      assertBoard(req);
+      if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
+        throw forbidden("Instance admin required");
+      }
+      assertOrganizationBrandingCreateAllowed(rustFoundationBridge, req.body.brandColor);
+      const organization = await svc.create({ ...req.body, analytics: { creationPath: "manual", isUserInitiated: true } });
+      await handoffRequiredOrganizationBranding(db, rustFoundationBridge, organization.id);
+      await access.ensureMembership(organization.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+      await logActivity(db, {
+        orgId: organization.id,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "organization.created",
+        entityType: "organization",
+        entityId: organization.id,
+        details: { name: organization.name },
+      });
+      if (organization.budgetMonthlyCents > 0) {
+        await budgets.upsertPolicy(
+          organization.id,
+          {
+            scopeType: "organization",
+            scopeId: organization.id,
+            amount: organization.budgetMonthlyCents,
+            windowKind: "calendar_month_utc",
+          },
+          req.actor.userId ?? "board",
+        );
+      }
+      res.status(201).json(organization);
     });
-    if (organization.budgetMonthlyCents > 0) {
-      await budgets.upsertPolicy(
-        organization.id,
-        {
-          scopeType: "organization",
-          scopeId: organization.id,
-          amount: organization.budgetMonthlyCents,
-          windowKind: "calendar_month_utc",
-        },
-        req.actor.userId ?? "board",
-      );
-    }
-    res.status(201).json(organization);
-  });
 
-  router.post("/:orgId/archive", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const organization = await svc.archive(orgId);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
-      return;
-    }
-    await logActivity(db, {
-      orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "organization.archived",
-      entityType: "organization",
-      entityId: orgId,
+    router.post("/:orgId/archive", async (req, res) => {
+      assertBoard(req);
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const organization = await svc.archive(orgId);
+      if (!organization) {
+        res.status(404).json({ error: "Organization not found" });
+        return;
+      }
+      await logActivity(db, {
+        orgId,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "organization.archived",
+        entityType: "organization",
+        entityId: orgId,
+      });
+      res.json(organization);
     });
-    res.json(organization);
-  });
 
-  router.delete("/:orgId", async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const organization = await svc.remove(orgId);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
-      return;
-    }
-    res.json({ ok: true });
-  });
+    router.delete("/:orgId", async (req, res) => {
+      assertBoard(req);
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const organization = await svc.remove(orgId);
+      if (!organization) {
+        res.status(404).json({ error: "Organization not found" });
+        return;
+      }
+      res.json({ ok: true });
+    });
+  }
 
   registerOrganizationRustFoundationRoutes(router, db, rustFoundationBridge, options);
   return router;

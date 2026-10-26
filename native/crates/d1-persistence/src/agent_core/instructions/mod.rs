@@ -97,6 +97,43 @@ pub fn ensure_workspace_layout(host: &Host, org: &str, cwd: &Path) -> io::Result
     storage::ensure(host, org, cwd)
 }
 
+/// Ensure a named organization's workspace, including its friendly-folder
+/// mapping when the host uses the shared friendly workspace home.
+pub fn ensure_workspace_layout_for_organization(
+    host: &Host,
+    org: &str,
+    name: &str,
+    cwd: &Path,
+) -> io::Result<PathBuf> {
+    if !host.friendly_workspace_home {
+        return ensure_workspace_layout(host, org, cwd);
+    }
+    if host.hostname.trim().is_empty()
+        || !cwd.is_absolute()
+        || [
+            &host.instance_root,
+            &host.workspace_home,
+            &host.previous_documents_root,
+        ]
+        .iter()
+        .any(|path| !Path::new(path).is_absolute())
+    {
+        return Err(invalid("Invalid organization workspace host facts"));
+    }
+
+    let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)?;
+    storage::ensure_workspace_mapping(host, org, name)?;
+    let (root, _) = storage::root(host, org)?;
+    storage::validate_readonly(host, org, &root)?;
+    storage::ensure(host, org, cwd)
+}
+
+/// Remove organization-owned filesystem roots and its workspace mapping after
+/// the authoritative database deletion has completed.
+pub fn remove_workspace_layout(host: &Host, org: &str) -> io::Result<()> {
+    storage::remove(host, org)
+}
+
 fn validate_host(host: &Host, ctx: &Context<'_>) -> Result<()> {
     if host.hostname.is_empty()
         || [

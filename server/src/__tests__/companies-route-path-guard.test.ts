@@ -94,4 +94,34 @@ describe("organization routes malformed issue path guard", () => {
       error: "Missing orgId in path. Use /api/orgs/{orgId}/issues.",
     });
   });
+
+  it("keeps organization mutations in legacy-off mode and removes only those routes for Rust ingress", () => {
+    const registered = (nativeOrganizationWrites: boolean) => {
+      const router = organizationRoutes(
+        {} as any,
+        undefined,
+        undefined,
+        undefined,
+        { nativeOrganizationWrites },
+      );
+      return (router as any).stack
+        .filter((layer: any) => layer.route)
+        .flatMap((layer: any) => Object.keys(layer.route.methods)
+          .map((method: string) => `${method.toUpperCase()} ${layer.route.path}`));
+    };
+    const legacy = registered(false);
+    const native = registered(true);
+    const writes = [
+      "POST /",
+      "PATCH /:orgId",
+      "PATCH /:orgId/branding",
+      "POST /:orgId/archive",
+      "DELETE /:orgId",
+    ];
+
+    expect(legacy).toEqual(expect.arrayContaining(writes));
+    for (const route of writes) expect(native).not.toContain(route);
+    expect(native).toContain("GET /:orgId/members/directory");
+    expect(native).toContain("GET /");
+  });
 });
