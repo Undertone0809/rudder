@@ -104,13 +104,20 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
   const agentToken = `cost-agent-${randomUUID()}`, boardToken = `cost-board-${randomUUID()}`, userId = randomUUID();
   const from = new Date("2024-02-29T00:00:00.000Z"), to = new Date("2024-03-01T00:00:00.000Z");
 
-  async function startApp(selectedBridge?: RustFoundationBridge, listenPort = 0) {
+  async function startApp(
+    selectedBridge?: RustFoundationBridge,
+    listenPort = 0,
+    publicIngressEnabled = selectedBridge?.publicIngressEnabled ?? false,
+  ) {
     const app = express();
     if (ingressMode === "required" && selectedBridge) app.use(nativeIdentity.middleware());
     app.use(express.json());
     app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
     app.use(actorMiddleware(db, { deploymentMode: "authenticated", authRequirement: "required" }));
-    app.use("/api", costRoutes(db, selectedBridge)); app.use(errorHandler);
+    const routeBridge = selectedBridge ?? (
+      publicIngressEnabled ? { publicIngressEnabled: true } as RustFoundationBridge : undefined
+    );
+    app.use("/api", costRoutes(db, routeBridge)); app.use(errorHandler);
     const result = app.listen(listenPort, "127.0.0.1"); await once(result, "listening"); return result;
   }
   function get(operation: string, org = orgId, token = agentToken, selected = target) {
@@ -210,6 +217,8 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
       await db.execute(sql`INSERT INTO finance_events (org_id,biller,event_kind,amount_cents,occurred_at,created_at,metadata_json)
         VALUES (${dateOrgId}::uuid,'date','edge',1,${timestamp}::timestamptz,'2024-01-01Z',${`${"[".repeat(600)}9007199254740993${"]".repeat(600)}`}::jsonb)`);
     }
+    await db.execute(sql`INSERT INTO finance_events (org_id,biller,event_kind,amount_cents,occurred_at,created_at,metadata_json)
+      VALUES (${dateOrgId}::uuid,'date','legacy-timezone-probe',1,'0012-02-01 00:00:00Z'::timestamptz,'2024-01-01Z',${JSON.stringify({ legacyTimezoneProbe: true })}::jsonb)`);
     baseline = await snapshot();
     const listenPort = ingressMode === "required" ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000,
@@ -284,6 +293,8 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     expect(response.body).toEqual(wire(await financeService(db).list(dateOrgId)));
     expect(response.body[0].occurredAt).toBeNull(); // PostgreSQL infinity -> invalid JS Date -> null
     expect(response.body[1].occurredAt).toBe("+010000-01-01T00:00:00.000Z");
+    const timezoneProbe = response.body.find((event: { metadataJson?: { legacyTimezoneProbe?: boolean } }) => event.metadataJson?.legacyTimezoneProbe);
+    expect(timezoneProbe?.occurredAt).toBeNull(); // Database TimeZone=Pacific/Honolulu must survive SQLx's UTC startup setting.
   });
 
   it("widens token and finance aggregation past signed 32-bit limits", async () => {
@@ -304,8 +315,13 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     for (const query of [{ from: "invalid" }, { to: "invalid" }, { from: to.toISOString(), to: from.toISOString() }]) expect((await get("summary").query(query)).status).toBe(400);
     expect((await get("trend").query({ granularity: "minute" })).status).toBe(400);
     expect((await get("finance-events").query({ limit: 501 })).status).toBe(400);
-    const unavailable = await startApp();
-    try { for (const operation of operations) expect((await get(operation, orgId, agentToken, unavailable)).status).toBe(503); }
+    const unavailable = await startApp(undefined, 0, ingressMode === "required");
+    try {
+      for (const operation of operations) {
+        expect((await get(operation, orgId, agentToken, unavailable)).status)
+          .toBe(ingressMode === "required" && operation !== "finance-events" ? 404 : 503);
+      }
+    }
     finally { await close(unavailable); }
     expect(await snapshot()).toEqual(baseline);
   });
