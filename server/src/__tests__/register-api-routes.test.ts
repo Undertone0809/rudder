@@ -87,7 +87,9 @@ describe("registerApiRoutes", () => {
     });
     expect(mocks.goalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeGoalWrites: true });
     expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: true });
-    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({ nativeApprovalReads: true });
+    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({
+      nativeApprovalReads: true,
+    });
 
     registerApiRoutes({} as never, baseOptions as never);
     expect(mocks.organizationRoutes.mock.calls.at(-1)?.[4]).toEqual({
@@ -99,7 +101,9 @@ describe("registerApiRoutes", () => {
     });
     expect(mocks.goalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeGoalWrites: false });
     expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: false });
-    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({ nativeApprovalReads: false });
+    expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({
+      nativeApprovalReads: false,
+    });
   });
 
   it("builds the API router from the current server dependencies", () => {

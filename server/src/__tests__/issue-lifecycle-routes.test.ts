@@ -25,6 +25,7 @@ const mockIssueService = vi.hoisted(() => ({
   unfollowIssue: vi.fn(),
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
+  list: vi.fn(),
   listComments: vi.fn(),
   reorder: vi.fn(),
   resolveCommentReference: vi.fn(),
@@ -144,7 +145,24 @@ function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RU
   };
 }
 
-async function createApp(actor = createBoardActor(), rustFoundationBridge?: RustFoundationBridge) {
+function createMemberBoardActor() {
+  return {
+    type: "board" as const,
+    userId: "organization-member",
+    orgIds: ["organization-1"],
+    source: "session" as const,
+    isInstanceAdmin: false,
+  };
+}
+
+async function createApp(
+  actor:
+    | ReturnType<typeof createBoardActor>
+    | ReturnType<typeof createAgentActor>
+    | ReturnType<typeof createMemberBoardActor> = createBoardActor(),
+  rustFoundationBridge?: RustFoundationBridge,
+  nativePublicIssueIngress = false,
+) {
   const app = express();
   const db = {} as { transaction: (callback: (tx: unknown) => Promise<unknown>) => Promise<unknown> };
   db.transaction = async (callback) => callback(db);
@@ -153,7 +171,7 @@ async function createApp(actor = createBoardActor(), rustFoundationBridge?: Rust
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", issueRoutes(db as any, {} as any, rustFoundationBridge));
+  app.use("/api", issueRoutes(db as any, {} as any, rustFoundationBridge, { nativeApprovalReads: nativePublicIssueIngress }));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -230,6 +248,7 @@ describe("issue lifecycle routes", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    mockIssueService.list.mockResolvedValue([]);
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
     mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
     mockHeartbeatService.cancelRun.mockImplementation(async (runId: string) => ({
@@ -3896,6 +3915,40 @@ describe("issue lifecycle routes", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
+  it("omits Node Issue Core routes when required Rust ingress owns them", async () => {
+    const server = await createApp(createBoardActor(), undefined, true);
+    const list = await request(server).get("/api/orgs/organization-1/issues");
+    const detail = await request(server).get("/api/issues/11111111-1111-4111-8111-111111111111");
+    const create = await request(server).post("/api/orgs/organization-1/issues").send({ title: "Must not fall back" });
+    const patch = await request(server).patch("/api/issues/11111111-1111-4111-8111-111111111111").send({ title: "Must not fall back" });
+    const reorder = await request(server).post("/api/orgs/organization-1/issues/reorder").send({
+      issueId: "11111111-1111-4111-8111-111111111111",
+      targetStatus: "todo",
+    });
+    const remove = await request(server).delete("/api/issues/11111111-1111-4111-8111-111111111111");
+    const checkout = await request(server)
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect([list.status, detail.status, create.status, patch.status, reorder.status, remove.status, checkout.status])
+      .toEqual([404, 404, 404, 404, 404, 404, 404]);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.reorder).not.toHaveBeenCalled();
+    expect(mockIssueService.checkout).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy Node Issue collection route active when Rust public ingress is off", async () => {
+    const server = await createApp();
+
+    const response = await request(server).get("/api/orgs/organization-1/issues");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+    expect(mockIssueService.list).toHaveBeenCalledOnce();
+  });
+
   it("wakes the assignee when a board actor checks out an issue on their behalf", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
@@ -3928,5 +3981,29 @@ describe("issue lifecycle routes", () => {
         },
       }),
     );
+  });
+
+  it("allows an organization Board member to check out work on behalf of an assignee", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ orgId: "organization-1", assigneeAgentId: ASSIGNEE_AGENT_ID, status: "todo" }),
+    );
+    mockIssueService.checkout.mockResolvedValue(
+      makeIssue({ orgId: "organization-1", assigneeAgentId: ASSIGNEE_AGENT_ID, status: "in_progress" }),
+    );
+
+    const res = await request(await createApp(createMemberBoardActor()))
+      .post(`/api/issues/${issueId}/checkout`)
+      .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.checkout).toHaveBeenCalledWith(
+      issueId,
+      ASSIGNEE_AGENT_ID,
+      ["todo"],
+      null,
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalled();
   });
 });

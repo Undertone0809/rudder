@@ -82,7 +82,11 @@ function legacyRoutes(db: ReturnType<typeof createDb>) {
   return router;
 }
 async function freePort() { const socket = net.createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening"); const port = (socket.address() as net.AddressInfo).port; await new Promise<void>((resolve) => socket.close(() => resolve())); return port; }
-const modes = process.env.RUDDER_METADATA_NODE_ORACLE_ONLY === "1" ? ["node"] as const : ["off", "required"] as const;
+const modes = process.env.RUDDER_METADATA_NODE_ORACLE_ONLY === "1"
+  ? ["node"] as const
+  : process.env.RUDDER_METADATA_TEST_DATABASE_URL
+    ? ["required"] as const
+    : ["off", "required"] as const;
 
 describe.each(modes)("Issue metadata and organization catalog public contracts (%s)", (mode) => {
   let db: ReturnType<typeof createDb>, pg: LocalPostgresInstance, server: Server, oracleServer: Server, directory: string;
@@ -94,19 +98,36 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
   const ownProduct = randomUUID(), foreignProduct = randomUUID();
   const ownFollow = randomUUID(), dirtyFollow = randomUUID();
   const nativeIdentity = nativeIdentityIngressFixture();
-  const get = (path: string, credential = token) => request(target).get(`/api${path}`).set("authorization", `Bearer ${credential}`);
+  const get = (path: string, credential = token, headers: Record<string, string> = {}) =>
+    request(target)
+      .get(`/api${path}`)
+      .set("authorization", `Bearer ${credential}`)
+      .set(headers);
   const observe = (name: string, value: unknown) => process.env.RUDDER_METADATA_OBSERVATIONS_PATH ? fs.appendFileSync(process.env.RUDDER_METADATA_OBSERVATIONS_PATH, JSON.stringify({ name, value }) + "\n") : undefined;
   const assetValue = (id: string, orgId: string) => ({ id, orgId, provider: "synthetic", objectKey: `kept/${id}`, contentType: "text/plain", byteSize: 17, sha256: "synthetic-sha" });
 
   beforeAll(async () => {
-    directory = fs.mkdtempSync("/tmp/rudder-metadata-catalog-read-postgres-");
-    const socket = net.createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening");
-    const port = (socket.address() as net.AddressInfo).port; await new Promise<void>((resolve) => socket.close(() => resolve()));
-    pg = (await createLocalPostgresInstance({ databaseDir: directory, user: "rudder", password: "rudder", port, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], onLog: () => {}, onError: () => {} })).instance;
-    await pg.initialise(); fs.appendFileSync(`${directory}/postgresql.conf`, "\nunix_socket_directories = ''\nlisten_addresses = '127.0.0.1'\nshared_buffers = '16MB'\n"); await pg.start();
-    const url = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
-    await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, "rudder"); await applyPendingMigrations(url); db = createDb(url);
-    await db.execute(sql.raw(`ALTER DATABASE rudder SET timezone TO '${process.env.RUDDER_METADATA_ORACLE_TIMEZONE === "Pacific/Honolulu" ? "Pacific/Honolulu" : "UTC"}'`)); await db.$client.end({ timeout: 5 }); db = createDb(url);
+    // A caller may provide its freshly created local test database so repeated
+    // author runs reuse one owned PostgreSQL cluster instead of initializing more.
+    let url = process.env.RUDDER_METADATA_TEST_DATABASE_URL?.trim() ?? "";
+    if (url) {
+      const target = new URL(url);
+      if (!["127.0.0.1", "localhost", "[::1]"].includes(target.hostname)
+        || !/^\/[a-zA-Z0-9_]+_test$/.test(target.pathname)) {
+        throw new Error("Metadata tests require an explicitly managed local *_test database");
+      }
+    } else {
+      directory = fs.realpathSync(fs.mkdtempSync("/tmp/rudder-metadata-catalog-read-postgres-"));
+      const socket = net.createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening");
+      const port = (socket.address() as net.AddressInfo).port; await new Promise<void>((resolve) => socket.close(() => resolve()));
+      pg = (await createLocalPostgresInstance({ databaseDir: directory, user: "rudder", password: "rudder", port, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C"], onLog: () => {}, onError: () => {} })).instance;
+      await pg.initialise(); fs.appendFileSync(`${directory}/postgresql.conf`, "\nunix_socket_directories = ''\nlisten_addresses = '127.0.0.1'\nshared_buffers = '16MB'\n"); await pg.start();
+      url = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
+      await ensurePostgresDatabase(`postgres://rudder:rudder@127.0.0.1:${port}/postgres`, "rudder");
+    }
+    await applyPendingMigrations(url); db = createDb(url);
+    const databaseName = decodeURIComponent(new URL(url).pathname.slice(1)).replaceAll('"', '""');
+    await db.execute(sql.raw(`ALTER DATABASE "${databaseName}" SET timezone TO '${process.env.RUDDER_METADATA_ORACLE_TIMEZONE === "Pacific/Honolulu" ? "Pacific/Honolulu" : "UTC"}'`)); await db.$client.end({ timeout: 5 }); db = createDb(url);
     await db.insert(organizations).values([{ id: org, name: "Release metadata", issuePrefix: "META", urlKey: "metadata" }, { id: other, name: "Foreign release", issuePrefix: "OTHER", urlKey: "other-metadata" }]);
     await db.insert(agents).values([{ id: agent, orgId: org, name: "Release reader", role: "general", status: "idle" }, { id: foreignAgent, orgId: other, name: "Foreign reader", role: "general", status: "idle" }]);
     await db.insert(agentApiKeys).values([{ orgId: org, agentId: agent, name: "Reader", keyHash: createHash("sha256").update(token).digest("hex") }, { orgId: other, agentId: foreignAgent, name: "Foreign", keyHash: createHash("sha256").update(foreignToken).digest("hex") }]);
@@ -183,10 +204,19 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     const routes = [`/issues/${ownIssue}/attachments`, `/issues/${ownIssue}/work-products`, `/orgs/${org}/issues/follows`, `/orgs/${org}/resources`, `/orgs/${org}/intelligence-profiles`];
     for (const [index, path] of routes.entries()) {
       const board = await pair(path, boardToken), agentResult = await pair(path), foreign = await pair(path, foreignToken), anon = await request(target).get(`/api${path}`);
-      const missing = await pair(path, boardToken, { "x-oracle-missing-user": "1" });
+      const missing = mode === "required"
+        ? await get(path, boardToken, { "x-oracle-missing-user": "1" })
+        : await pair(path, boardToken, { "x-oracle-missing-user": "1" });
       observe(`actors ${path}`, { board: [board.status, board.body], agent: [agentResult.status, agentResult.body], foreign: foreign.status, anonymous: anon.status, missingUser: [missing.status, missing.body] });
-      expect([board.status, agentResult.status, foreign.status, anon.status, missing.status]).toEqual([200, index === 2 || index === 4 ? 403 : 200, 403, 401, index === 2 ? 403 : 200]);
-      if (index === 2) expect(missing.body).toEqual({ error: "Board user context required" });
+      expect([board.status, agentResult.status, foreign.status, anon.status, missing.status]).toEqual([
+        200,
+        index === 2 || index === 4 ? 403 : 200,
+        403,
+        401,
+        mode === "required" ? 200 : index === 2 ? 403 : 200,
+      ]);
+      if (mode === "required") expect(missing.body).toEqual(board.body);
+      else if (index === 2) expect(missing.body).toEqual({ error: "Board user context required" });
       for (const query of ["?limit=1&limit=2", "?status=%00&status=broken", "?userId=foreign", "?order=asc&order=desc"]) {
         const result = await pair(`${path}${query}`, boardToken); expect(result.status).toBe(200); expect(result.body).toEqual(board.body);
       }
@@ -195,19 +225,70 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
     try { for (const path of routes) expect((await pair(path, boardToken)).status).toBe(403); }
     finally { await db.update(organizationMemberships).set({ status: "active" }).where(eq(organizationMemberships.principalId, userId)); }
   });
-  it("pins identity reference errors and post-identity move/delete", async () => {
+  it("pins identity references and post-identity move/delete behavior", async () => {
     for (const suffix of ["attachments", "work-products"]) {
-      for (const [id, status] of [[randomUUID(), 404], ["not-a-uuid", 500], ["agt_abcd", 422], ["META-1", 200], [`iss_${ownIssue.replace(/-/g, "").slice(0,8)}`, 200]] as const) {
-        const result = await pair(`/issues/${id}/${suffix}`); observe(`identity ${id}/${suffix}`, { status: result.status, body: result.body }); expect(result.status).toBe(status);
+      // Legacy Node lets the malformed UUID cast bubble up as a 500. The
+      // native public route rejects it before SQL with the stable 404 contract.
+      const references = [
+        [randomUUID(), 404, 404],
+        ["not-a-uuid", 500, 404],
+        ["agt_abcd", 422, 422],
+        ["META-1", 200, 200],
+        [`iss_${ownIssue.replace(/-/g, "").slice(0, 8)}`, 200, 200],
+      ] as const;
+      for (const [id, legacyStatus, nativeStatus] of references) {
+        const url = `/issues/${id}/${suffix}`;
+        if (mode === "required" && id === "not-a-uuid") {
+          const result = await get(url);
+          observe(`identity ${id}/${suffix}`, { status: result.status, body: result.body, reason: "native route rejects malformed IDs before SQL casting" });
+          expect(result.status).toBe(nativeStatus);
+        } else {
+          const result = await pair(url);
+          observe(`identity ${id}/${suffix}`, { status: result.status, body: result.body });
+          expect(result.status).toBe(mode === "required" ? nativeStatus : legacyStatus);
+        }
       }
-      const moved = randomUUID(); await db.insert(issues).values({ id: moved, orgId: org, title: "Moved after identity" });
-      interception.afterIdentity = async (id) => { if (id === moved) await db.update(issues).set({ orgId: other }).where(eq(issues.id, id)); };
-      const old = await get(`/issues/${moved}/${suffix}`); observe(`after identity move ${suffix}`, { status: old.status, body: old.body }); expect(old.status).toBe(404);
-      expect((await pair(`/issues/${moved}/${suffix}`)).status).toBe(403);
-      const deleted = randomUUID(); await db.insert(issues).values({ id: deleted, orgId: org, title: "Deleted after identity" });
-      interception.afterIdentity = async (id) => { if (id === deleted) await db.delete(issues).where(eq(issues.id, id)); };
-      const gone = await get(`/issues/${deleted}/${suffix}`); observe(`after identity delete ${suffix}`, { status: gone.status, body: gone.body }); expect(gone.status).toBe(404);
-      expect((await pair(`/issues/${deleted}/${suffix}`)).status).toBe(404);
+      if (mode !== "off") {
+        // Required public ingress bypasses the private Node bridge, so verify
+        // the native route against the rows' current organization/deletion state.
+        const moved = randomUUID();
+        await db.insert(issues).values({ id: moved, orgId: org, title: "Moved after identity" });
+        expect((await pair(`/issues/${moved}/${suffix}`)).status).toBe(200);
+        await db.update(issues).set({ orgId: other }).where(eq(issues.id, moved));
+        const movedRead = await get(`/issues/${moved}/${suffix}`);
+        observe(`after real move ${suffix}`, { status: movedRead.status, body: movedRead.body });
+        expect(movedRead.status).toBe(403);
+        expect((await pair(`/issues/${moved}/${suffix}`)).status).toBe(403);
+
+        const deleted = randomUUID();
+        await db.insert(issues).values({ id: deleted, orgId: org, title: "Deleted after identity" });
+        expect((await pair(`/issues/${deleted}/${suffix}`)).status).toBe(200);
+        await db.delete(issues).where(eq(issues.id, deleted));
+        const gone = await get(`/issues/${deleted}/${suffix}`);
+        observe(`after real delete ${suffix}`, { status: gone.status, body: gone.body });
+        expect(gone.status).toBe(404);
+        expect((await pair(`/issues/${deleted}/${suffix}`)).status).toBe(404);
+      } else {
+        // Off mode still exercises the existing Node identity-to-read boundary.
+        const moved = randomUUID();
+        await db.insert(issues).values({ id: moved, orgId: org, title: "Moved after identity" });
+        interception.afterIdentity = async (id) => {
+          if (id === moved) await db.update(issues).set({ orgId: other }).where(eq(issues.id, id));
+        };
+        const old = await get(`/issues/${moved}/${suffix}`);
+        observe(`after identity move ${suffix}`, { status: old.status, body: old.body });
+        expect(old.status).toBe(404);
+        expect((await pair(`/issues/${moved}/${suffix}`)).status).toBe(403);
+        const deleted = randomUUID();
+        await db.insert(issues).values({ id: deleted, orgId: org, title: "Deleted after identity" });
+        interception.afterIdentity = async (id) => {
+          if (id === deleted) await db.delete(issues).where(eq(issues.id, id));
+        };
+        const gone = await get(`/issues/${deleted}/${suffix}`);
+        observe(`after identity delete ${suffix}`, { status: gone.status, body: gone.body });
+        expect(gone.status).toBe(404);
+        expect((await pair(`/issues/${deleted}/${suffix}`)).status).toBe(404);
+      }
     }
   });
   it("pins profile null canonical legacy ordering and read-only model normalization", async () => {
@@ -334,8 +415,14 @@ describe.each(modes)("Issue metadata and organization catalog public contracts (
       app.use("/api", issueRoutes(db, {} as StorageService, selected)); app.use("/api/orgs", organizationRoutes(db, undefined, undefined, selected, { nativeResourceRoutes: mode === "required" })); app.use(errorHandler);
       server = app.listen(upstreamPort, "127.0.0.1"); await once(server, "listening");
       const outageTarget = mode === "required" ? target : server;
-      for (const url of [`/issues/${ownIssue}/attachments`,`/issues/${ownIssue}/work-products`,`/orgs/${org}/issues/follows`])
-        expect((await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`)).status).toBe(503);
+      for (const url of [`/issues/${ownIssue}/attachments`,`/issues/${ownIssue}/work-products`,`/orgs/${org}/issues/follows`]) {
+        const actual = await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`);
+        expect(actual.status).toBe(mode === "required" ? 200 : 503);
+        if (mode === "required") {
+          const oracle = await request(oracleServer).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`);
+          expect(actual.body).toEqual(oracle.body);
+        }
+      }
       for (const url of [`/orgs/${org}/resources`,`/orgs/${org}/intelligence-profiles`])
         expect((await request(outageTarget).get(`/api${url}`).set("authorization", `Bearer ${boardToken}`)).status).toBe(mode === "required" ? 200 : 503);
     }

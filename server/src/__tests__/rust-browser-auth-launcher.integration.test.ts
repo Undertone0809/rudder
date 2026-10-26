@@ -112,6 +112,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
   previousEnv.NODE_ENV = issuerEnvironment.NODE_ENV;
   previousEnv.TEST = issuerEnvironment.TEST;
   let temporary = "", binary = "", cliBinary = "", databaseUrl = "", rustDatabaseUrl = "";
+  let issueAssetStorageBaseDir = "";
   let databaseProxy: net.Server | undefined;
   let databasePort = 0, proxyPort = 0;
   const proxySockets = new Set<net.Socket>();
@@ -168,6 +169,8 @@ describe("constructed issuer through the real Rust application launcher", () => 
     ({ createAuthRuntime } = await import("../bootstrap/auth-runtime.js"));
     temporary = await mkdtemp(path.join(os.tmpdir(), "rudder-auth-launcher-"));
     process.env.RUDDER_HOME = path.join(temporary, "home");
+    issueAssetStorageBaseDir = path.join(temporary, "issue-assets");
+    await mkdir(issueAssetStorageBaseDir, { recursive: true });
     const args = ["build", "--locked", "--manifest-path", path.join(repositoryRoot, "native/Cargo.toml"), "--bin", "rudder-server-foundation", "--bin", "rudder-cli", "--message-format=json"];
     if (process.env.CI) args.push("--release");
     const built = await runBoundedBuild("cargo", args);
@@ -759,6 +762,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
             deploymentExposure: "private", host: "127.0.0.1", allowedHostnames: [],
             rustPublicIngressMode: "required", authBaseUrlMode: "explicit",
             authPublicBaseUrl: origin, authDisableSignUp: false,
+            storageProvider: "local_disk", storageLocalDiskBaseDir: issueAssetStorageBaseDir,
           } as Config;
           const runtime = await createAuthRuntime({
             db, config, instanceId: "auth-launcher-test", ensureLocalTrustedBoardPrincipal: async () => {},
@@ -1105,6 +1109,7 @@ describe("constructed issuer through the real Rust application launcher", () => 
       authBaseUrlMode: "explicit",
       authPublicBaseUrl: origin,
       authDisableSignUp: false,
+      storageProvider: "local_disk", storageLocalDiskBaseDir: issueAssetStorageBaseDir,
     } as Config;
     const runtime = await createAuthRuntime({
       db,

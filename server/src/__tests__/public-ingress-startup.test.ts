@@ -8,7 +8,8 @@ import type { Config } from "../config.js";
 
 vi.mock("../bootstrap/port-selection.js", () => ({ selectAvailablePort: vi.fn() }));
 const config = (overrides: Partial<Config> = {}) => ({
-  host: "127.0.0.1", deploymentMode: "local_trusted", deploymentExposure: "private", allowedHostnames: [], rustPublicIngressMode: "required", ...overrides,
+  host: "127.0.0.1", deploymentMode: "local_trusted", deploymentExposure: "private", allowedHostnames: [], rustPublicIngressMode: "required",
+  storageProvider: "local_disk", storageLocalDiskBaseDir: "/tmp/rudder-test-storage", ...overrides,
 }) as Config;
 beforeEach(() => vi.mocked(selectAvailablePort).mockReset());
 afterEach(() => vi.unstubAllEnvs());
@@ -23,6 +24,32 @@ describe("explicit public ingress startup", () => {
     await ingress.onListening({} as RudderAppHandle, reject, ready)();
     expect(ready).toHaveBeenCalledOnce();
     expect(reject).not.toHaveBeenCalled();
+  });
+
+  it("passes the configured Issue asset provider to Rust public ingress", async () => {
+    vi.mocked(selectAvailablePort).mockResolvedValue(3101);
+    const localIngress = await preparePublicIngressStartup(config(), 3100);
+    expect(localIngress.appOptions.rustPublicIngress?.issueAssetStorage).toEqual({
+      provider: "local_disk",
+      localDiskBaseDir: "/tmp/rudder-test-storage",
+    });
+
+    const s3Ingress = await preparePublicIngressStartup(config({
+      storageProvider: "s3",
+      storageS3Bucket: "rudder-test",
+      storageS3Region: "us-east-2",
+      storageS3Endpoint: "https://objects.example.test",
+      storageS3Prefix: "rudder-assets",
+      storageS3ForcePathStyle: true,
+    }), 3100);
+    expect(s3Ingress.appOptions.rustPublicIngress?.issueAssetStorage).toEqual({
+      provider: "s3",
+      bucket: "rudder-test",
+      region: "us-east-2",
+      endpoint: "https://objects.example.test",
+      prefix: "rudder-assets",
+      forcePathStyle: true,
+    });
   });
 
   it("does not enable local implicit identity when Desktop explicitly disables native ingress", async () => {

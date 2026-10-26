@@ -1,4 +1,4 @@
-//! Signed internal transport for the Agent self-checkout mutation.
+//! Signed internal transport for Issue checkout mutations.
 
 use crate::{ActorEnvelopeVerificationError, AppState, DatabaseState};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
@@ -22,9 +22,12 @@ impl AppState {
     async fn issue_checkout(&self, request: &HttpRequest, org: &str, body: &[u8]) -> HttpResponse {
         let actor =
             match self.verify_actor_envelope(request, org, ISSUE_CHECKOUT_ACTION, None, body) {
-                Ok(actor) if actor.actor().kind == "agent" => actor,
+                Ok(actor) if matches!(actor.actor().kind.as_str(), "agent" | "user") => actor,
                 Ok(_) => {
-                    return issue_error(StatusCode::FORBIDDEN, "Agent authentication required");
+                    return issue_error(
+                        StatusCode::FORBIDDEN,
+                        "Agent or Board authentication required",
+                    );
                 }
                 Err(ActorEnvelopeVerificationError::Unconfigured) => {
                     return issue_error(

@@ -1,6 +1,10 @@
 //! Read-only issue metadata. Authorization is bound to the existing public actor
 //! decision; issue identity and every disclosed linked row are rechecked here.
-use crate::{StoreError, legacy_read_json::normalize_legacy_read_json};
+use crate::{
+    StoreError,
+    agent_core::{NativeAgentAccess, NativeAgentAuthorizer},
+    legacy_read_json::normalize_legacy_read_json,
+};
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
@@ -194,11 +198,44 @@ pub async fn read_issue_metadata(
     input: &IssueMetadataReadInput,
     user_id: Option<&str>,
 ) -> Result<String, IssueMetadataReadError> {
+    read_issue_metadata_inner(pool, org, input, user_id, None).await
+}
+
+/// Public ingress variant. It revalidates the established native credential
+/// on the same read-only snapshot used to resolve and project Issue metadata.
+pub async fn read_issue_metadata_with_native_auth(
+    pool: &PgPool,
+    org: &str,
+    input: &IssueMetadataReadInput,
+    user_id: Option<&str>,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<String, IssueMetadataReadError> {
+    read_issue_metadata_inner(pool, org, input, user_id, Some(authorizer)).await
+}
+
+async fn read_issue_metadata_inner(
+    pool: &PgPool,
+    org: &str,
+    input: &IssueMetadataReadInput,
+    user_id: Option<&str>,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<String, IssueMetadataReadError> {
     input.validate()?;
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
+    if let Some(authorizer) = authorizer {
+        match authorizer.revalidate(&mut tx, org).await? {
+            NativeAgentAccess::Authorized => (),
+            NativeAgentAccess::Unauthorized => {
+                return Err(StoreError::PublicIdentityUnauthorized.into());
+            }
+            NativeAgentAccess::Forbidden => {
+                return Err(StoreError::PublicIdentityForbidden.into());
+            }
+        }
+    }
     if let Some(zone) = &input.legacy_date_timezone {
         sqlx::query("SELECT set_config('TimeZone',$1,true)")
             .bind(zone)

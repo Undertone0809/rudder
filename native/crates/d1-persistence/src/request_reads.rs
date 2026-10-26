@@ -88,7 +88,7 @@ pub(crate) fn timestamp(column: &str) -> String {
     )
 }
 
-fn projection(table: &str) -> String {
+pub(crate) fn projection(table: &str) -> String {
     let fields: &[(&str, &str)] = match table {
         "requests" => &[
             ("id", "id"),

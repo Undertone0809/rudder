@@ -25,6 +25,7 @@ mod cli_auth;
 mod email_auth;
 mod goal_singular_reads;
 mod goal_writes;
+mod issue_core;
 mod native_chat;
 mod organization_mutations;
 mod organization_reads;
@@ -752,6 +753,9 @@ async fn proxy_request(
     if project_reads::is_reserved_path(request.uri().path(), request.method()) {
         return project_reads::dispatch_alias(state, request, payload).await;
     }
+    if issue_core::is_reserved_path(request.uri().path(), request.method()) {
+        return issue_core::dispatch_alias(state, proxy, request, payload).await;
+    }
     if approval_reads::is_reserved_path(request.uri().path(), request.method()) {
         return approval_reads::dispatch_alias(state, request, payload).await;
     }
@@ -839,6 +843,7 @@ async fn proxy_request(
         || cli_auth::reserved_path(request.uri().path())
         || organization_resources::reserved_path(request.uri().path())
         || project_writes::is_reserved_path(request.uri().path())
+        || issue_core::is_reserved_namespace(request.uri().path(), request.method())
         || goal_writes::is_reserved_path(request.uri().path(), request.method())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())
@@ -2391,6 +2396,8 @@ mod tests {
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
+    #[path = "issue_core_http_tests.rs"]
+    mod issue_core_http_tests;
     #[path = "organization_reads_http_tests.rs"]
     mod organization_reads_http_tests;
 

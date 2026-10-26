@@ -122,6 +122,19 @@ export async function preparePublicIngressStartup(
       ...(localAccountLifecycle ? { localAccountLifecycle } : {}),
       ...(nativeChatHost ? { nativeChatHost } : {}),
       ...(effectiveBrowserSessionAuth ? { browserSessionAuth: effectiveBrowserSessionAuth } : {}),
+      issueAssetStorage: config.storageProvider === "local_disk"
+        ? {
+            provider: "local_disk" as const,
+            localDiskBaseDir: config.storageLocalDiskBaseDir,
+          }
+        : {
+            provider: "s3" as const,
+            bucket: config.storageS3Bucket,
+            region: config.storageS3Region,
+            ...(config.storageS3Endpoint ? { endpoint: config.storageS3Endpoint } : {}),
+            prefix: config.storageS3Prefix,
+            forcePathStyle: config.storageS3ForcePathStyle,
+          },
     };
   }
   return {

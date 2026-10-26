@@ -3,9 +3,10 @@
 
 use rudder_d1_persistence::native_chat::config::LocalHostContext;
 use rudder_native_chat_executor::HostPaths;
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use thiserror::Error;
 
+use crate::issue_asset_storage::{IssueAssetStorageConfig, NativeIssueAssetStorage};
 use crate::local_account_auth::{
     LocalAccountAuthError, LocalAccountAuthService, NativeLocalAccountAuthConfig,
 };
@@ -26,6 +27,7 @@ pub struct PublicIngressConfig {
     pub(crate) identity_auth: Option<NativeIdentityAuthConfig>,
     pub(crate) websocket_cookie_fallback: NativeWebSocketCookieFallback,
     pub(crate) private_host_gate: Option<crate::private_host_gate::NativePrivateHostGate>,
+    pub(crate) issue_asset_storage: Option<Arc<NativeIssueAssetStorage>>,
 }
 
 /// Trusted installation context required by the explicitly enabled public
@@ -199,6 +201,8 @@ impl PublicIngressConfig {
             ));
         }
         let private_host_gate_raw = crate::optional_env("RUDDER_NATIVE_PRIVATE_HOST_GATE")?;
+        let issue_asset_storage_raw =
+            crate::optional_env("RUDDER_NATIVE_ISSUE_ASSET_STORAGE_CONFIG")?;
         match (listen, upstream, key) {
             (None, None, None) => {
                 if local_account_auth_raw.is_some() {
@@ -217,6 +221,7 @@ impl PublicIngressConfig {
                     || local_implicit.is_some()
                     || websocket_cookie_fallback.is_some()
                     || private_host_gate_raw.is_some()
+                    || issue_asset_storage_raw.is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_SECRET").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_ISSUER").is_some()
                     || std::env::var_os("RUDDER_NATIVE_AGENT_JWT_AUDIENCE").is_some()
@@ -421,26 +426,36 @@ impl PublicIngressConfig {
                     ));
                 }
                 let browser_auth = crate::browser_auth::BrowserAuthConfig::from_env()?;
-                Self::new(listen, &upstream, &key)
-                    .map(|mut config| {
-                        config.deployment_mode = deployment_mode;
-                        config.forwarding_policy = policy;
-                        config.session_auth = session_auth;
-                        config.local_account_auth = local_account_auth;
-                        config.identity_auth = identity_auth;
-                        config.websocket_cookie_fallback = websocket_cookie_fallback;
-                        config.private_host_gate = private_host_gate;
-                        config.browser_auth = browser_auth;
-                        config
+                let issue_asset_storage = issue_asset_storage_raw
+                    .map(|storage_raw| {
+                        let storage_config: IssueAssetStorageConfig =
+                            serde_json::from_str(&storage_raw).map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_ISSUE_ASSET_STORAGE_CONFIG",
+                                    "invalid storage configuration JSON",
+                                )
+                            })?;
+                        NativeIssueAssetStorage::from_config(storage_config).map_err(|_| {
+                            crate::ConfigError::invalid(
+                                "RUDDER_NATIVE_ISSUE_ASSET_STORAGE_CONFIG",
+                                "invalid storage provider settings",
+                            )
+                        })
                     })
-                    .map_err(|error| {
-                        crate::ConfigError::invalid(
-                            "RUDDER_NATIVE_PUBLIC_INGRESS",
-                            &error.to_string(),
-                        )
-                    })
-                    .and_then(crate::native_chat_startup::configure)
-                    .map(Some)
+                    .transpose()?;
+                let mut config = Self::new(listen, &upstream, &key).map_err(|error| {
+                    crate::ConfigError::invalid("RUDDER_NATIVE_PUBLIC_INGRESS", &error.to_string())
+                })?;
+                config.deployment_mode = deployment_mode;
+                config.forwarding_policy = policy;
+                config.session_auth = session_auth;
+                config.local_account_auth = local_account_auth;
+                config.identity_auth = identity_auth;
+                config.websocket_cookie_fallback = websocket_cookie_fallback;
+                config.private_host_gate = private_host_gate;
+                config.browser_auth = browser_auth;
+                config.issue_asset_storage = issue_asset_storage;
+                crate::native_chat_startup::configure(config).map(Some)
             }
             _ => Err(crate::ConfigError::invalid(
                 "RUDDER_NATIVE_PUBLIC_INGRESS",
@@ -494,6 +509,7 @@ impl PublicIngressConfig {
             identity_auth: None,
             websocket_cookie_fallback: NativeWebSocketCookieFallback::SessionCookie,
             private_host_gate: None,
+            issue_asset_storage: None,
         })
     }
 

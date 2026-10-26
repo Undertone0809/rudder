@@ -88,6 +88,7 @@ use public_ingress_config::NativeSessionAuthKind;
 mod goal_run_worker;
 pub mod native_chat_worker;
 
+mod issue_asset_storage;
 mod native_chat_startup;
 #[cfg(all(test, unix))]
 #[allow(unused_imports)]

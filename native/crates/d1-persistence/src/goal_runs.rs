@@ -951,17 +951,17 @@ async fn defer_unclaimed_wakeup(
     Ok(())
 }
 
-async fn goal_invocation_budget_blocked(
+pub(crate) async fn goal_invocation_budget_blocked(
     tx: &mut Transaction<'_, Postgres>,
     organization_id: &str,
     agent_id: &str,
     agent_status: &str,
     pause_reason: Option<&str>,
-) -> Result<bool, GoalRunError> {
+) -> std::result::Result<bool, sqlx::Error> {
     let blocked: bool = sqlx::query_scalar(
         "SELECT (
            o.status='paused'
-           OR ($3='paused' AND $4='budget')
+           OR ($3='paused' AND $4 IS NOT DISTINCT FROM 'budget')
            OR EXISTS (
              SELECT 1 FROM budget_policies p
              WHERE p.org_id=o.id AND p.is_active=true AND p.metric='billed_cents'
