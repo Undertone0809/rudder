@@ -397,7 +397,11 @@ pub async fn apply_issue_comment_write_with_native_auth(
                         sqlx::query("RELEASE SAVEPOINT issue_comment_steer_admission")
                             .execute(&mut *tx)
                             .await?;
-                        steer_failure = Some(error);
+                        if is_saved_comment_steer_conflict(&error) {
+                            steer_failure = Some(error);
+                        } else {
+                            return Err(error);
+                        }
                     } else {
                         sqlx::query("RELEASE SAVEPOINT issue_comment_steer_admission")
                             .execute(&mut *tx)

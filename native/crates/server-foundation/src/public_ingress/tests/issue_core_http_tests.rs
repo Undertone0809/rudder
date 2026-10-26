@@ -905,6 +905,292 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .unwrap();
     assert_eq!(failed_wakeup_state, (0, 0, 0));
 
+    let normal_steer_failure_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Normal Steer Failure Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_issue_id = Uuid::new_v4().to_string();
+    let normal_steer_failure_run_id = Uuid::new_v4().to_string();
+    let normal_steer_failure_prior_work: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(normal_steer_failure_prior_work, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&normal_steer_failure_run_id)
+    .bind(&org_id)
+    .bind(&normal_steer_failure_agent_id)
+    .bind(json!({"issueId":normal_steer_failure_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id, execution_run_id) VALUES ($1::uuid, $2::uuid, 'Normal Steer wake admission failure', 'in_progress', 'medium', 900007, $3, $4::uuid, $5::uuid)",
+    )
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900007"))
+    .bind(&normal_steer_failure_agent_id)
+    .bind(&normal_steer_failure_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_row_before: (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,i.updated_at::text,r.status,r.error_code FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_counts_before: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.comment_added'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.updated'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($3::uuid)::text AND action='heartbeat.cancelled' AND details->>'source'='issue_comment_steer'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$4::uuid AND payload->>'issueId'=($2::uuid)::text)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(normal_steer_failure_counts_before, (0, 0, 0, 0, 0));
+    let normal_steer_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let normal_steer_trigger_function =
+        format!("test_reject_normal_issue_steer_{normal_steer_trigger_suffix}");
+    let normal_steer_trigger_name =
+        format!("test_reject_normal_issue_steer_{normal_steer_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {normal_steer_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.agent_id='{normal_steer_failure_agent_id}'::uuid
+              AND NEW.payload->>'issueId'='{normal_steer_failure_issue_id}' THEN
+             RAISE EXCEPTION 'forced normal Issue Steer wake admission failure (attempted reason=%)', NEW.reason;
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {normal_steer_trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {normal_steer_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_normal_steer = client
+        .post(format!(
+            "{base}/api/issues/{normal_steer_failure_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"A wake admission error must roll back this normal Steer comment.",
+            "steer":{"expectedRunId":normal_steer_failure_run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_normal_steer.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {normal_steer_trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {normal_steer_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let normal_steer_failure_row_after: (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,i.updated_at::text,r.status,r.error_code FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_counts_after: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.comment_added'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.updated'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($3::uuid)::text AND action='heartbeat.cancelled' AND details->>'source'='issue_comment_steer'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$4::uuid AND payload->>'issueId'=($2::uuid)::text)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        normal_steer_failure_row_after,
+        normal_steer_failure_row_before
+    );
+    assert_eq!(
+        normal_steer_failure_counts_after,
+        normal_steer_failure_counts_before
+    );
+
+    let paused_steer_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'paused') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Paused Steer Admission Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let paused_steer_issue_id = Uuid::new_v4().to_string();
+    let paused_steer_run_id = Uuid::new_v4().to_string();
+    let paused_steer_prior_work: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&paused_steer_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(paused_steer_prior_work, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&paused_steer_run_id)
+    .bind(&org_id)
+    .bind(&paused_steer_agent_id)
+    .bind(json!({"issueId":paused_steer_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id, execution_run_id) VALUES ($1::uuid, $2::uuid, 'Paused Steer policy conflict', 'in_progress', 'medium', 900008, $3, $4::uuid, $5::uuid)",
+    )
+    .bind(&paused_steer_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900008"))
+    .bind(&paused_steer_agent_id)
+    .bind(&paused_steer_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let saved_steer_conflict = client
+        .post(format!(
+            "{base}/api/issues/{paused_steer_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"Keep this comment when the paused Agent cannot accept a continuation.",
+            "steer":{"expectedRunId":paused_steer_run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved_steer_conflict.status(), StatusCode::CONFLICT);
+    let saved_steer_conflict: serde_json::Value = saved_steer_conflict.json().await.unwrap();
+    assert_eq!(
+        saved_steer_conflict["error"],
+        "Steer could not reserve a continuation; feedback was saved as a comment"
+    );
+    assert_eq!(
+        saved_steer_conflict["comment"]["body"],
+        "Keep this comment when the paused Agent cannot accept a continuation."
+    );
+    let saved_steer_comment_id = saved_steer_conflict["comment"]["id"]
+        .as_str()
+        .expect("saved Steer conflict returns its persisted comment ID");
+    let saved_steer_comment_body: String = sqlx::query_scalar(
+        "SELECT body FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(&org_id)
+    .bind(&paused_steer_issue_id)
+    .bind(saved_steer_comment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved_steer_comment_body,
+        "Keep this comment when the paused Agent cannot accept a continuation."
+    );
+    let saved_steer_state: (String, Option<String>, Option<String>, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,
+               (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=i.id::text AND a.action='issue.comment_added'),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_steer'),
+               (SELECT count(*) FROM agent_wakeup_requests w WHERE w.org_id=i.org_id AND w.agent_id=i.assignee_agent_id AND w.payload->>'issueId'=i.id::text)
+             FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+             WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+        )
+        .bind(&org_id)
+        .bind(&paused_steer_issue_id)
+        .bind(&paused_steer_run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        saved_steer_state,
+        (
+            "in_progress".to_owned(),
+            Some(paused_steer_run_id.clone()),
+            None,
+            1,
+            1,
+            0,
+            0,
+        )
+    );
+    let paused_steer_agent_status: String =
+        sqlx::query_scalar("SELECT status FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
+            .bind(&org_id)
+            .bind(&paused_steer_agent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(paused_steer_agent_status, "paused");
+
     let admitted_wakeup_comment = client
         .post(format!(
             "{base}/api/issues/{comment_wakeup_issue_id}/comments"
@@ -2975,6 +3261,66 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE issues SET execution_run_id=NULL WHERE org_id=$1::uuid AND id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_issue_id.clone(),
+        paused_steer_issue_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_run_id.clone(),
+        paused_steer_run_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_run_id.clone(),
+            paused_steer_run_id.clone(),
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_agent_id.clone(),
+        paused_steer_agent_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_issue_id.clone(),
+            paused_steer_issue_id.clone(),
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_issue_id.clone(),
+            paused_steer_issue_id.clone(),
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
         .bind(&org_id)
         .bind(&issue_id)
@@ -3186,6 +3532,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&reopen_agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=ANY($1::uuid[])")
+        .bind(vec![normal_steer_failure_agent_id, paused_steer_agent_id])
         .execute(&pool)
         .await
         .unwrap();

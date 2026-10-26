@@ -1012,7 +1012,18 @@
         "checks": "PASS strict affected alltargetClippy, fullRustfmt, server typecheck, all6candidateTSimports",
         "node_admission": "4current reviewed Node deltas; inherited E admissions are retained in Git/frozen history, not stale active comparison records"
       },
-      "recorded_at_utc": "2026-10-26T06:49:45.962642+00:00"
+      "recorded_at_utc": "2026-10-26T07:25:47.135090+00:00",
+      "stage_correction": {
+        "rejected_candidate": "0bc5906c8fc866cd5bcd47f867a79c31ec589cc1",
+        "stage_receipt": "/private/tmp/rudder-comments-cost-final-candidate-r1/independent-stage-review-r1.md",
+        "finding": "Normal Steer admission errors could commit a comment before returning500 or an unrelated409",
+        "fix": "Reuse exact saved-comment Steer409 classifier; every other admission error rolls back the outer transaction",
+        "regression": "Fresh normal Steer queue INSERT failure returns500 with no persisted mutation; paused-Agent deliberate409 returns and persists comment without wake/cancel",
+        "author_result": "/private/tmp/rudder-issue-comments-C-author-steer-r1/author-result.json",
+        "author_result_sha256": "4e8dab298c6159664308384734bf299f6e21667323c0dc8826c2cbff1edb4ab3",
+        "result": "PASS current realHTTP1/1, D1units244, Foundation308/27ignored, fullfmt/strictClippy; final wrapper rebuilt",
+        "state": "New independent stage/PAV pending"
+      }
     }
   }
 }
