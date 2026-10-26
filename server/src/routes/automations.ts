@@ -27,6 +27,7 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = automationService(db);
   const access = accessService(db);
+  const nativeAutomationReads = rustBridge?.publicIngressEnabled === true;
 
   async function assertBoardCanAssignTasks(req: Request, orgId: string) {
     assertCompanyAccess(req, orgId);
@@ -59,11 +60,13 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     return automation;
   }
 
-  router.get("/orgs/:orgId/automations", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await sendAutomationRead(res, rustBridge, req.actor, orgId, { operation: "list" }, db);
-  });
+  if (!nativeAutomationReads) {
+    router.get("/orgs/:orgId/automations", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await sendAutomationRead(res, rustBridge, req.actor, orgId, { operation: "list" });
+    });
+  }
 
   router.post("/orgs/:orgId/automations", validate(createAutomationSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -88,15 +91,17 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     res.status(201).json(created);
   });
 
-  router.get("/automations/:id", async (req, res) => {
-    const detail = await svc.get(req.params.id as string);
-    if (!detail || detail.status === "archived") {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    assertCompanyAccess(req, detail.orgId);
-    await sendAutomationRead(res, rustBridge, req.actor, detail.orgId, { operation: "detail", automationId: detail.id }, db);
-  });
+  if (!nativeAutomationReads) {
+    router.get("/automations/:id", async (req, res) => {
+      const detail = await svc.get(req.params.id as string);
+      if (!detail || detail.status === "archived") {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      assertCompanyAccess(req, detail.orgId);
+      await sendAutomationRead(res, rustBridge, req.actor, detail.orgId, { operation: "detail", automationId: detail.id });
+    });
+  }
 
   router.patch("/automations/:id", validate(updateAutomationSchema), async (req, res) => {
     const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
@@ -153,18 +158,20 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     res.status(204).end();
   });
 
-  router.get("/automations/:id/runs", async (req, res) => {
-    const automation = await svc.get(req.params.id as string);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    assertCompanyAccess(req, automation.orgId);
-    const limit = Number(req.query.limit ?? 50);
-    await sendAutomationRead(res, rustBridge, req.actor, automation.orgId, {
-      operation: "runs", automationId: automation.id, limit: Number.isFinite(limit) ? limit : 50,
-    }, db);
-  });
+  if (!nativeAutomationReads) {
+    router.get("/automations/:id/runs", async (req, res) => {
+      const automation = await svc.get(req.params.id as string);
+      if (!automation) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      assertCompanyAccess(req, automation.orgId);
+      const limit = Number(req.query.limit ?? 50);
+      await sendAutomationRead(res, rustBridge, req.actor, automation.orgId, {
+        operation: "runs", automationId: automation.id, limit: Number.isFinite(limit) ? limit : 50,
+      });
+    });
+  }
 
   router.post("/automations/:id/triggers", validate(createAutomationTriggerSchema), async (req, res) => {
     const automation = await assertCanManageExistingAutomation(req, req.params.id as string);

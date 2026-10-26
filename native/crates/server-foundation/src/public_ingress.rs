@@ -20,6 +20,7 @@ use uuid::Uuid;
 mod agent_core;
 mod agent_runs;
 mod approval_reads;
+mod automation_reads;
 mod browser_session;
 mod cli_auth;
 mod cost_reads;
@@ -763,6 +764,9 @@ async fn proxy_request(
     }
     if cost_reads::is_reserved_path(request.uri().path(), request.method()) {
         return cost_reads::dispatch_alias(state, request, payload).await;
+    }
+    if automation_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return automation_reads::dispatch_alias(state, request, payload).await;
     }
     if run_reads::is_reserved_path(request.uri().path(), request.method()) {
         return run_reads::dispatch_alias(state, request, payload).await;
@@ -2404,6 +2408,8 @@ mod tests {
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
+    #[path = "automation_read_http_tests.rs"]
+    mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]
     mod cost_read_http_tests;
     #[path = "issue_core_http_tests.rs"]

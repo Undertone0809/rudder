@@ -1,6 +1,6 @@
 //! Fixed per-source ledger queries preserve raw timestamp ordering and source caps.
 use super::ledger::{Cursor, Source};
-use crate::activity_reads::{legacy_date_text, legacy_stamp};
+use crate::activity_reads::{utc_date_text, utc_stamp};
 
 fn approval_issue(parameter: usize) -> String {
     format!(
@@ -58,8 +58,8 @@ pub(super) fn query(
     } else {
         "TRUE".into()
     };
-    let stamp = legacy_stamp(&format!("{alias}.created_at"));
-    let occurred = legacy_date_text("parsed.stamp");
+    let stamp = utc_stamp(&format!("{alias}.created_at"));
+    let occurred = utc_date_text("parsed.stamp");
     format!(
         "SELECT jsonb_build_object({fields})::text payload, {occurred} occurred_at, (extract(epoch FROM date_trunc('milliseconds',parsed.stamp))*1000)::bigint millis FROM {from} CROSS JOIN (SELECT $8::text AS owner) viewer CROSS JOIN LATERAL (SELECT {stamp} stamp) parsed WHERE {conditions} AND ($3::text IS NULL OR {alias}.created_at>=$3::timestamptz) AND ($4::text IS NULL OR {alias}.created_at<=$4::timestamptz) AND {cursor_condition} ORDER BY {alias}.created_at DESC,{alias}.id ASC LIMIT ${limit_parameter}"
     )

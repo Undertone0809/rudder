@@ -141,10 +141,10 @@ describe.each(["off","required"] as const)("Overview public reads (%s ingress)",
       expect(response.body.policies[0].remainingAmount).toBeGreaterThan(2147483647);expect(Object.is(response.body.policies[0].utilizationPercent,-0)).toBe(false);
     }finally{await fixture.db.delete(costEvents).where(eq(costEvents.id,cost!.id));await fixture.db.update(budgetPolicies).set({amount:333}).where(eq(budgetPolicies.id,policyId));}
   });
-  it("projects incident TimeClip and historical dates through legacy Date behavior",async()=>{
+  it("projects incident timestamps as canonical UTC and preserves TimeClip",async()=>{
     const [original]=await fixture.db.select().from(budgetIncidents).where(eq(budgetIncidents.id,incidentId));
     await fixture.db.execute(sql`UPDATE budget_incidents SET window_start='0032-01-01T00:00:00.000900Z'::timestamptz,window_end='275760-09-13T00:00:00.000999Z'::timestamptz,resolved_at='infinity'::timestamptz WHERE id=${incidentId}::uuid`);
-    try{const response=await get("budgets/overview");expect(response.status,response.text).toBe(200);expect(response.body).toEqual(wire(await budgetService(fixture.db).overview(ids.orgId)));}
+    try{const response=await get("budgets/overview");expect(response.status,response.text).toBe(200);const expected=wire(await budgetService(fixture.db).overview(ids.orgId));expected.activeIncidents.find((row:{id:string})=>row.id===incidentId)!.windowStart="0032-01-01T00:00:00.000Z";expect(response.body).toEqual(expected);}
     finally{await fixture.db.update(budgetIncidents).set({windowStart:original!.windowStart,windowEnd:original!.windowEnd,resolvedAt:original!.resolvedAt}).where(eq(budgetIncidents.id,incidentId));}
   });
   it("rejects fresh signatures carrying stale, future or malformed clocks before any row read",async()=>{

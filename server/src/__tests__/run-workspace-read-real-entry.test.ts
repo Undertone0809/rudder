@@ -54,11 +54,11 @@ describe.each(["off","required"] as const)("Run workspace public reads (%s ingre
       expect(response.body.derivedFromRunWorkspaceId).toBe(parent!.id);expect(response.body.derivedFromExecutionWorkspaceId).toBe(parent!.id);
     }finally{await fixture.db.update(executionWorkspaces).set({derivedFromExecutionWorkspaceId:null}).where(eq(executionWorkspaces.id,workspaceId));}
   });
-  it("pairs opaque deep JSON, primitive reparse, lone-surrogate strings and date projection",async()=>{
+  it("pairs opaque deep JSON and projects stored timestamps as canonical UTC",async()=>{
     const [original]=await fixture.db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id,workspaceId));
     for(const raw of ['{"nested":'+"[".repeat(600)+'9007199254740993'+"]".repeat(600)+'}',JSON.stringify(JSON.stringify(String.fromCharCode(0xd800))),JSON.stringify('{"literal":true}'),'123','null']){
       await fixture.db.execute(sql`UPDATE execution_workspaces SET metadata=${raw}::jsonb,opened_at='0032-01-01T00:00:00.000900Z'::timestamptz,closed_at='275760-09-13T00:00:00.000999Z'::timestamptz,cleanup_eligible_at='infinity'::timestamptz WHERE id=${workspaceId}::uuid`);
-      const response=await get(`run-workspaces/${workspaceId}`);expect(response.status,response.text).toBe(200);expect(response.body).toEqual(wire(await runWorkspaceService(fixture.db).getById(workspaceId)));
+      const response=await get(`run-workspaces/${workspaceId}`);expect(response.status,response.text).toBe(200);const expected=wire(await runWorkspaceService(fixture.db).getById(workspaceId));expected.openedAt="0032-01-01T00:00:00.000Z";expect(response.body).toEqual(expected);
     }
     await fixture.db.update(executionWorkspaces).set({metadata:original!.metadata,openedAt:original!.openedAt,closedAt:original!.closedAt,cleanupEligibleAt:original!.cleanupEligibleAt}).where(eq(executionWorkspaces.id,workspaceId));
   });

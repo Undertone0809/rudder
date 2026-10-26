@@ -2,7 +2,7 @@
 mod projection;
 use crate::{
     StoreError,
-    activity_reads::{JsString, legacy_date_text, legacy_stamp},
+    activity_reads::{JsString, utc_date_text, utc_stamp},
     legacy_read_json::normalize_legacy_read_json,
 };
 use projection::{Object, array, encode, projection, record, text};
@@ -23,15 +23,11 @@ pub struct AutomationReadInput {
     pub operation: AutomationReadOperation,
     pub automation_id: Option<String>,
     pub limit: Option<f64>,
-    pub legacy_date_timezone: Option<String>,
 }
 impl AutomationReadInput {
     pub fn validate(&self) -> Result<(), StoreError> {
         if (self.operation != AutomationReadOperation::List && self.automation_id.is_none())
             || self.limit.is_some_and(|value| !value.is_finite())
-            || self.legacy_date_timezone.as_ref().is_some_and(|zone| {
-                zone.is_empty() || zone.len() > 256 || zone.chars().any(char::is_control)
-            })
         {
             return Err(StoreError::InvalidInput);
         }
@@ -61,8 +57,8 @@ fn retain(row: &Object, fields: &[&str]) -> Object {
 }
 fn run_projection() -> String {
     let base = projection("automationRuns", "r");
-    let updated = legacy_date_text(&legacy_stamp("coalesce(i.updated_at,r.updated_at)"));
-    let chat_date = legacy_date_text(&legacy_stamp("c.last_message_at"));
+    let updated = utc_date_text(&utc_stamp("coalesce(i.updated_at,r.updated_at)"));
+    let chat_date = utc_date_text(&utc_stamp("c.last_message_at"));
     format!(
         r#"({base}) || jsonb_build_object(
       'linkedIssue',CASE WHEN r.linked_issue_id IS NULL THEN NULL ELSE jsonb_build_object('id',r.linked_issue_id,
@@ -254,12 +250,6 @@ pub async fn read_automations(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    if let Some(zone) = &input.legacy_date_timezone {
-        sqlx::query("SELECT set_config('TimeZone',$1,true)")
-            .bind(zone)
-            .execute(&mut *tx)
-            .await?;
-    }
     let result = if input.operation == AutomationReadOperation::List {
         list(&mut tx, org, owner).await?
     } else {

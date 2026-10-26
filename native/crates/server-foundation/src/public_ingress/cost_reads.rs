@@ -55,6 +55,7 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
         "finance-summary" => CostReadOperation::FinanceSummary,
         "finance-by-biller" => CostReadOperation::FinanceByBiller,
         "finance-by-kind" => CostReadOperation::FinanceByKind,
+        "finance-events" => CostReadOperation::FinanceEvents,
         _ => return None,
     };
     let organization_id = percent_encoding::percent_decode_str(raw_org_id)
@@ -217,9 +218,6 @@ fn cost_read_input(
         agent_id: None,
         project_id: None,
         limit: None,
-        // FinanceEvents is deliberately not reserved here until native ingress
-        // can reproduce the legacy connection's timestamp decoding context.
-        legacy_date_timezone: None,
     };
     if operation != CostReadOperation::WindowSpend {
         let from = date_query_value(request, "from")?;
@@ -231,6 +229,9 @@ fn cost_read_input(
         }
         input.from_ms = from;
         input.to_ms = to;
+    }
+    if operation == CostReadOperation::FinanceEvents {
+        input.limit = Some(limit_query_value(request)?);
     }
     if operation == CostReadOperation::Trend {
         let granularity = first_query_value(request, "granularity");
@@ -258,6 +259,38 @@ fn first_query_value(request: &HttpRequest, name: &str) -> Option<String> {
         .next()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn limit_query_value(request: &HttpRequest) -> Result<i64, &'static str> {
+    let Some(raw) = query_values(request, "limit").into_iter().next() else {
+        return Ok(100);
+    };
+    if raw.is_empty() {
+        return Ok(100);
+    }
+    let value = raw.trim_start();
+    let bytes = value.as_bytes();
+    let has_sign = matches!(bytes.first(), Some(&b'+') | Some(&b'-'));
+    let mut index = if has_sign { 1 } else { 0 };
+    let negative = bytes.first() == Some(&b'-');
+    let digits_start = index;
+    let mut magnitude = 0u16;
+    while let Some(byte) = bytes.get(index).filter(|byte| byte.is_ascii_digit()) {
+        magnitude = (magnitude * 10 + u16::from(*byte - b'0')).min(501);
+        index += 1;
+    }
+    if index == digits_start {
+        return Err("invalid 'limit' value");
+    }
+    let parsed = if negative {
+        -i64::from(magnitude)
+    } else {
+        i64::from(magnitude)
+    };
+    if !(1..=500).contains(&parsed) {
+        return Err("invalid 'limit' value");
+    }
+    Ok(parsed)
 }
 
 fn date_query_value(request: &HttpRequest, name: &str) -> Result<Option<i64>, &'static str> {

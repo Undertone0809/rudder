@@ -2,7 +2,7 @@
 //! signed clock and its trusted host-local month constructor.
 use crate::{
     StoreError,
-    activity_reads::{legacy_date_text, legacy_stamp},
+    activity_reads::{utc_date_text, utc_stamp},
     cost_reads::fixed_two,
     legacy_read_json::normalize_legacy_read_json,
 };
@@ -204,12 +204,12 @@ async fn budget_overview(
     ];
     let parsed = fields
         .iter()
-        .map(|(_, column)| format!("{} AS {column}", legacy_stamp(&format!("r.{column}"))))
+        .map(|(_, column)| format!("{} AS {column}", utc_stamp(&format!("r.{column}"))))
         .collect::<Vec<_>>()
         .join(",");
     let dates = fields
         .iter()
-        .map(|(key, column)| format!("'{key}',{}", legacy_date_text(&format!("d.{column}"))))
+        .map(|(key, column)| format!("'{key}',{}", utc_date_text(&format!("d.{column}"))))
         .collect::<Vec<_>>()
         .join(",");
     let rows=sqlx::query(&format!(r#"SELECT jsonb_build_object('id',r.id,'orgId',r.org_id,'policyId',r.policy_id,

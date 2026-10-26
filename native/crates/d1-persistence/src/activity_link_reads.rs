@@ -3,7 +3,7 @@ mod ledger;
 mod ledger_query;
 use crate::{
     StoreError,
-    activity_reads::{JsString, details, encode_object, legacy_date_text, legacy_stamp, object},
+    activity_reads::{JsString, details, encode_object, object, utc_date_text, utc_stamp},
     legacy_read_json::normalize_legacy_read_json,
     run_visibility,
 };
@@ -90,7 +90,7 @@ fn json_text(value: &str) -> String {
     serde_json::to_string(value).expect("string")
 }
 fn date(column: &str) -> String {
-    legacy_date_text(&legacy_stamp(column))
+    utc_date_text(&utc_stamp(column))
 }
 fn js_string(raw: &str) -> Result<JsString, StoreError> {
     serde_json::from_str(raw).map_err(|_| StoreError::InvalidReceipt)

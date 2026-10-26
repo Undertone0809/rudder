@@ -8,7 +8,7 @@ use std::{
 
 #[actix_web::test]
 #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
-async fn native_cost_reads_revalidate_scope_and_keep_finance_events_transport_explicit() {
+async fn native_cost_reads_revalidate_scope_and_keep_finance_events_in_rust() {
     let database_url = env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL")
         .expect("set RUDDER_NATIVE_AUTH_TEST_DATABASE_URL to a migrated disposable DB");
     let pool = super::disposable_native_auth_pool().await;
@@ -62,7 +62,9 @@ INSERT INTO cost_events (org_id,agent_id,provider,biller,billing_type,model,cost
 INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,estimated,occurred_at,created_at,metadata_json) VALUES
  ('{org_id}','february','debit','test',1,false,'2024-02-29T00:00:00Z','2024-02-29T00:00:00Z',NULL),
  ('{org_id}','march','debit','test',2,false,'2024-03-01T00:00:00Z','2024-03-01T00:00:00Z',NULL),
- ('{org_id}','latest','debit','test',3,false,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,NULL);
+ ('{org_id}','latest','debit','test',3,false,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,NULL),
+ ('{org_id}','year-0044','debit','test',4,false,'0044-01-02T03:04:05.123456Z','0044-01-03T04:05:06.654321Z',NULL),
+ ('{org_id}','year-2026','debit','test',5,false,'2026-01-02T03:04:05.123456Z','2026-01-02T03:04:05Z',NULL);
 "#
     ))
     .execute(&pool)
@@ -136,6 +138,7 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
         "finance-by-kind",
         "window-spend",
         "by-project",
+        "finance-events",
     ];
     for path in migrated_paths {
         let (status, body) = get_json(
@@ -151,9 +154,28 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
         );
     }
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
-    let (finance_events_status, finance_events_passthrough) = get_json(
+    let (finance_events_status, finance_events) = get_json(
         &client,
-        &format!("{base}/api/orgs/{org_id}/costs/finance-events?limit=1"),
+        &format!("{base}/api/orgs/{org_id}/costs/finance-events?limit=10"),
+        Some(&board_token),
+    )
+    .await;
+    let (finance_events_limit_status, finance_events_limit) = get_json(
+        &client,
+        &format!("{base}/api/orgs/{org_id}/costs/finance-events?limit=2&limit=3"),
+        Some(&board_token),
+    )
+    .await;
+    let finance_events_head_status = client
+        .head(format!("{base}/api/orgs/{org_id}/costs/finance-events"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {board_token}")))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    let (finance_events_bad_limit_status, finance_events_bad_limit) = get_json(
+        &client,
+        &format!("{base}/api/orgs/{org_id}/costs/finance-events?limit=501"),
         Some(&board_token),
     )
     .await;
@@ -187,6 +209,12 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
         Some(&board_token),
     )
     .await;
+    let (finance_database_failure_status, _) = get_json(
+        &client,
+        &format!("{base}/api/orgs/{org_id}/costs/finance-events"),
+        Some(&board_token),
+    )
+    .await;
     control.stop(true).await;
     task.await.unwrap().unwrap();
     node_handle.stop(true).await;
@@ -206,16 +234,28 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
             .iter()
             .all(|window| window["costCents"] == 50)
     );
-    assert_eq!(
-        finance_events_status,
-        StatusCode::OK,
-        "FinanceEvents deliberately remains on the Node transport"
-    );
-    assert_eq!(
-        finance_events_passthrough["nodePath"],
-        format!("/api/orgs/{org_id}/costs/finance-events")
-    );
-    assert_eq!(node_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(finance_events_status, StatusCode::OK);
+    assert_eq!(finance_events.as_array().unwrap().len(), 5);
+    let ancient = finance_events
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["eventKind"] == "year-0044")
+        .unwrap();
+    assert_eq!(ancient["occurredAt"], "0044-01-02T03:04:05.123Z");
+    assert_eq!(ancient["createdAt"], "0044-01-03T04:05:06.654Z");
+    let modern = finance_events
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["eventKind"] == "year-2026")
+        .unwrap();
+    assert_eq!(modern["occurredAt"], "2026-01-02T03:04:05.123Z");
+    assert_eq!(finance_events_limit_status, StatusCode::OK);
+    assert_eq!(finance_events_limit.as_array().unwrap().len(), 2);
+    assert_eq!(finance_events_head_status, StatusCode::OK);
+    assert_eq!(finance_events_bad_limit_status, StatusCode::BAD_REQUEST);
+    assert_eq!(finance_events_bad_limit["error"], "invalid 'limit' value");
     assert_eq!(foreign_board_status, StatusCode::FORBIDDEN);
     assert_eq!(
         foreign_board["error"],
@@ -229,8 +269,9 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
     assert_eq!(anonymous_status, StatusCode::UNAUTHORIZED);
     assert_eq!(anonymous["error"], "Unauthorized");
     assert!(database_failure_status.is_server_error());
-    assert_eq!(node_requests_before_native_failure, 1);
-    assert_eq!(node_requests.load(Ordering::SeqCst), 1);
+    assert!(finance_database_failure_status.is_server_error());
+    assert_eq!(node_requests_before_native_failure, 0);
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
 
     sqlx::query("DELETE FROM cost_events WHERE org_id IN ($1::uuid, $2::uuid)")
         .bind(&org_id)

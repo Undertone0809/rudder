@@ -2,6 +2,7 @@
 //! project attribution and response projection execute here, never in Node.
 use crate::{
     StoreError,
+    activity_reads::{utc_date_text, utc_stamp},
     legacy_read_json::{normalize_legacy_read_json, parse_legacy_read_json},
     transaction,
 };
@@ -45,7 +46,6 @@ pub struct CostReadInput {
     pub agent_id: Option<String>,
     pub project_id: Option<String>,
     pub limit: Option<i64>,
-    pub legacy_date_timezone: Option<String>,
 }
 
 impl CostReadInput {
@@ -60,11 +60,6 @@ impl CostReadInput {
                 .flatten()
                 .any(|ms| ms.unsigned_abs() > 8_640_000_000_000_000)
         {
-            return Err(StoreError::InvalidInput);
-        }
-        if self.legacy_date_timezone.as_ref().is_some_and(|zone| {
-            zone.is_empty() || zone.len() > 256 || zone.chars().any(char::is_control)
-        }) {
             return Err(StoreError::InvalidInput);
         }
         Ok(())
@@ -112,29 +107,9 @@ const FINANCE_TOTALS: &str = r#"coalesce(sum(CASE WHEN direction='debit' THEN am
  count(*) AS "eventCount",
  coalesce(sum(CASE WHEN direction='debit' THEN amount_cents WHEN direction='credit' THEN -amount_cents::bigint ELSE 0 END),0)::double precision AS "netCents""#;
 
-// postgres-js/Drizzle parsed the PostgreSQL text with JavaScript Date. Preserve
-// its legacy small-year interpretation as well as extended ISO years, invalid
-// BC/nonfinite dates and historical offsets containing unsupported seconds.
+// FinanceEvents shares the UTC timestamp projection used by other read models.
 fn finance_timestamp(column: &str) -> String {
-    format!(
-        r#"(SELECT CASE WHEN stamp IS NULL OR extract(epoch FROM stamp)>8640000000000 THEN NULL
- ELSE CASE WHEN extract(year FROM stamp)>=10000 THEN '+' || to_char(extract(year FROM stamp),'FM000000')
- ELSE to_char(stamp,'YYYY') END || to_char(stamp,'-MM-DD"T"HH24:MI:SS.MS"Z"') END
- FROM (SELECT CASE WHEN NOT isfinite({column}) THEN NULL
- WHEN extract(year FROM {column})<1 OR extract(year FROM {column}) BETWEEN 13 AND 31
-   OR mod(extract(timezone FROM {column}),60)<>0 THEN NULL
- WHEN extract(year FROM {column}) BETWEEN 1 AND 12 THEN
-   make_timestamp(2000+extract(day FROM {column})::int,extract(year FROM {column})::int,
-     extract(month FROM {column})::int,extract(hour FROM {column})::int,
-     extract(minute FROM {column})::int,extract(second FROM {column})::double precision)
-     - extract(timezone FROM {column})::double precision * INTERVAL '1 second'
- WHEN extract(year FROM {column}) BETWEEN 32 AND 99 THEN
-   make_timestamp((CASE WHEN extract(year FROM {column})<50 THEN 2000 ELSE 1900 END)+extract(year FROM {column})::int,
-     extract(month FROM {column})::int,extract(day FROM {column})::int,extract(hour FROM {column})::int,
-     extract(minute FROM {column})::int,extract(second FROM {column})::double precision)
-     - extract(timezone FROM {column})::double precision * INTERVAL '1 second'
- ELSE {column} AT TIME ZONE 'UTC' END AS stamp) legacy_date)"#
-    )
+    utc_date_text(&utc_stamp(column))
 }
 
 fn query(input: &CostReadInput) -> String {
@@ -299,18 +274,6 @@ pub async fn read_costs(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    if input.operation == CostReadOperation::FinanceEvents
-        && let Some(zone) = &input.legacy_date_timezone
-    {
-        // SQLx starts sessions in UTC; postgres-js used the host connection's
-        // timezone when parsing historical timestamp text. The signed host
-        // context preserves that parsing behavior. Parameter binding prevents
-        // SQL interpolation, and LOCAL configuration ends with this read-only tx.
-        sqlx::query("SELECT set_config('TimeZone', $1, true)")
-            .bind(zone)
-            .execute(&mut *tx)
-            .await?;
-    }
     let rows: Vec<String> = sqlx::query_scalar(&query(input))
         .bind(&org)
         .bind(input.from_ms)

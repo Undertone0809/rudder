@@ -6,7 +6,6 @@ import {
   updateBudgetSchema,
   upsertBudgetPolicySchema,
 } from "@rudderhq/shared";
-import { sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { badRequest } from "../errors.js";
 import { validate } from "../middleware/validate.js";
@@ -47,14 +46,6 @@ export function costRoutes(
     }
     let response: RustFoundationResponse;
     try {
-      if (input.operation === "finance-events") {
-        // Date-parsing context only: SQLx defaults to UTC while this legacy
-        // connection may use a database/role/connection-specific timezone.
-        // Rust still owns finance table reads, filtering, sorting and projection.
-        const [context] = await db.execute(sql<{ timezone: string }>`SELECT current_setting('TimeZone') AS timezone`);
-        if (typeof context?.timezone !== "string") throw new Error("Missing database date context");
-        input = { ...input, legacyDateTimezone: context.timezone };
-      }
       response = await rustFoundationBridge.costRead(req.actor, orgId, input);
     } catch {
       res.status(503).json({ error: "Rust Cost reads are unavailable", code: "rust_foundation_cost_read_request_failed" });
@@ -241,16 +232,15 @@ export function costRoutes(
     });
   }
 
-  // Finance event Date decoding still needs Node's actual connection timezone
-  // in its signed private bridge context; keep that transport available until
-  // native ingress can reproduce SQLx's legacy timestamp behavior.
-  router.get("/orgs/:orgId/costs/finance-events", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const range = parseDateRange(req.query);
-    const limit = parseLimit(req.query);
-    await forwardCostRead(req, res, orgId, { operation: "finance-events", ...rangeInput(range), limit });
-  });
+  if (!nativeCostReads) {
+    router.get("/orgs/:orgId/costs/finance-events", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const range = parseDateRange(req.query);
+      const limit = parseLimit(req.query);
+      await forwardCostRead(req, res, orgId, { operation: "finance-events", ...rangeInput(range), limit });
+    });
+  }
 
   router.get("/orgs/:orgId/costs/quota-windows", async (req, res) => {
     const orgId = req.params.orgId as string;

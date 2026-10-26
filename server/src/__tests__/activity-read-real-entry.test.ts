@@ -34,6 +34,12 @@ vi.mock("../services/activity.js", async (importOriginal) => {
 
 const execFile = promisify(execFileCallback);
 const wire = (value: unknown) => JSON.parse(JSON.stringify(value));
+const canonicalHistoricalActivityDates = new Map<string, string | null>();
+function canonicalizeHistoricalActivityDates(rows: Array<{ id: string; createdAt: unknown; [key: string]: unknown }>) {
+  return rows.map((row) => canonicalHistoricalActivityDates.has(row.id)
+    ? { ...row, createdAt: canonicalHistoricalActivityDates.get(row.id) }
+    : row);
+}
 async function port() {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -368,6 +374,8 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
       const id = await event(db, orgId, { entityType: source ? "chat" : "issue", entityId: source ? dateChat : dateIssue,
         action: source ? "chat.issue_converted" : "issue.created", details: { issueId: dateIssue, position: `${source}:${index}` } });
       await db.execute(sql`UPDATE activity_log SET created_at=${timestamp}::timestamptz WHERE id=${id}::uuid`);
+      const millis = String(Math.floor((900000-index)/1000)).padStart(3,"0");
+      canonicalHistoricalActivityDates.set(id, year === "BC" ? null : `${year}-01-01T00:00:00.${millis}Z`);
     }
     baseline = await snapshot();
     const repo = fileURLToPath(new URL("../../../", import.meta.url));
@@ -425,22 +433,28 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect(await snapshot()).toEqual(before);
   });
 
-  it("gives the former 21-row comparator panic a deterministic total order", async () => {
+  it("orders historical activity by canonical UTC milliseconds and stable source rank", async () => {
     const legacy = await legacyIssueActivity(fixture.db, dateIssue);
     expect(legacy).toHaveLength(21);
-    const expectedPositions = process.env.RUDDER_ACTIVITY_TEST_TIMEZONE === "Pacific/Honolulu"
-      ? ["0:0", "1:0", "0:1", "1:1", ...Array.from({ length: 12 }, (_, i) => `0:${i + 2}`), ...Array.from({ length: 5 }, (_, i) => `1:${i + 2}`)]
-      : ["0:5", "0:6", "1:3", "1:4", "0:7", "0:8", "0:9", "1:5", "0:0", "1:0", "0:1", "1:1", "0:11", "0:12", "0:13", "0:2", "0:3", "0:4", "1:2", "0:10", "1:6"];
-    const byPosition = new Map(legacy.map((row) => [(row.details as { position: string }).position, row]));
-    const expected = expectedPositions.map((position) => byPosition.get(position));
+    const expectedPositions = ["0:0", "1:0", "0:1", "1:1", "0:2", "0:3", "0:4", "1:2", "0:5", "0:6", "1:3", "1:4", "0:7", "0:8", "0:9", "1:5", "0:10", "0:11", "0:12", "0:13", "1:6"];
+    const years = [
+      ["2027", "2027", "0099", "0099", "0099", "0049", "0049", "0032", "0032", "0032", "0031", "0001", "0001", "0001"],
+      ["2027", "2027", "0099", "0049", "0049", "0032", "BC"],
+    ];
     for (let repeat = 0; repeat < 3; repeat++) {
       const response = await get(`issues/${dateIssue}/activity`);
       expect(response.status, response.text).toBe(200);
-      expect(response.body).toEqual(wire(expected));
+      expect(response.body.map((row: { details: { position: string } }) => row.details.position)).toEqual(expectedPositions);
+      for (const row of response.body as Array<{ details: { position: string }; createdAt: string | null }>) {
+        const [source, index] = row.details.position.split(":").map(Number) as [number, number];
+        const year = years[source]![index]!;
+        const millis = String(Math.floor((900000 - index) / 1000)).padStart(3, "0");
+        expect(row.createdAt).toBe(year === "BC" ? null : `${year}-01-01T00:00:00.${millis}Z`);
+      }
     }
   });
 
-  it("retains full raw historical timestamps and source precedence for parsed millisecond ties", async () => {
+  it("retains canonical historical timestamps and source precedence for millisecond ties", async () => {
     await orderingFixture([
       { source: "issue", stamp: "2032-01-01T00:00:00.000100Z", label: "modern" },
       { source: "issue", stamp: "0032-01-01T00:00:00.000900Z", label: "ancient" },
@@ -449,23 +463,31 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
       const old = await legacyIssueActivity(fixture.db, issue);
       const response = await get(`issues/${issue}/activity`);
       expect(response.status, response.text).toBe(200);
-      const expected = process.env.RUDDER_ACTIVITY_TEST_TIMEZONE === "Pacific/Honolulu"
-        ? ["modern", "chat", "ancient"] : ["modern", "ancient", "chat"];
+      const expected = ["modern", "chat", "ancient"];
       expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual(expected);
       const byLabel = new Map(old.map((row) => [(row.details as { label: string }).label, row]));
-      expect(response.body).toEqual(wire(expected.map((label) => byLabel.get(label))));
+      const canonicalDates: Record<string, string> = {
+        modern: "2032-01-01T00:00:00.000Z",
+        chat: "2032-01-01T00:00:00.000Z",
+        ancient: "0032-01-01T00:00:00.000Z",
+      };
+      expect(response.body).toEqual(wire(expected.map((label) => ({ ...byLabel.get(label), createdAt: canonicalDates[label] }))));
     });
   });
 
-  it("orders all-invalid dates by source, full raw timestamp and UUID without dropping rows", async () => {
+  it("keeps invalid dates after canonical finite years without dropping rows", async () => {
     const stamps = ["infinity", "294276-01-01T00:00:00Z", "0031-01-01T00:00:00Z", "0001-01-01 00:00:00+00 BC", "-infinity"];
     const rows = (["issue", "chat"] as const).flatMap((source) => stamps.map((stamp, index) => ({ source, stamp, label: `${source}:${index}` })));
     await orderingFixture(rows, async (issue) => {
       for (let repeat = 0; repeat < 3; repeat++) {
         const response = await get(`issues/${issue}/activity`);
         expect(response.status, response.text).toBe(200);
-        expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual(rows.map((row) => row.label));
-        expect(response.body.every((row: { createdAt: null }) => row.createdAt === null)).toBe(true);
+        expect(response.body.map((row: { details: { label: string } }) => row.details.label)).toEqual([
+          "issue:2", "chat:2", "issue:0", "issue:1", "issue:3", "issue:4", "chat:0", "chat:1", "chat:3", "chat:4",
+        ]);
+        expect(response.body.map((row: { createdAt: string | null }) => row.createdAt)).toEqual([
+          "0031-01-01T00:00:00.000Z", "0031-01-01T00:00:00.000Z", null, null, null, null, null, null, null, null,
+        ]);
       }
     });
   });
@@ -501,14 +523,15 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     for (const filter of [{}, { agentId }, { userId: " reader " }, { actorType: "system" as const }, { actorId: " reader " }, { entityType: "issue" }, { entityId: issueId }, { agentId, userId: " reader " }, { actorType: "system" as const, actorId: "associated", agentId }]) {
       const response = await get(`orgs/${orgId}/activity`).query(filter);
       expect(response.status, response.text).toBe(200);
-      expect(response.body).toEqual(wire(await svc.list({ orgId, ...filter })));
+      expect(response.body).toEqual(canonicalizeHistoricalActivityDates(wire(await svc.list({ orgId, ...filter }))));
     }
     let cursor: string | null = null;
     for (let index=0; index<50; index++) {
       const query = { limit: "2", ...(cursor ? { cursor } : {}) };
       const response = await get(`orgs/${orgId}/activity`).query(query);
       expect(response.status, response.text).toBe(200);
-      const expected = await svc.listPage({ orgId, limit: 2, cursor });
+      const expected = wire(await svc.listPage({ orgId, limit: 2, cursor }));
+      expected.items = canonicalizeHistoricalActivityDates(expected.items);
       expect(response.body).toEqual(wire(expected));
       cursor = response.body.nextCursor;
       if (!cursor) break;

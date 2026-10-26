@@ -213,12 +213,24 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     await db.insert(financeEvents).values({ orgId: foreignOrgId, biller: "foreign", eventKind: "secret", amountCents: 99999, occurredAt: from });
     await db.insert(costEvents).values(Array.from({ length: 3 }, () => ({ orgId: volumeOrgId, agentId: volumeAgentId, provider: "anthropic", biller: "anthropic", model: "big", inputTokens: 2_000_000_000, cachedInputTokens: 2_000_000_000, outputTokens: 2_000_000_000, costCents: 2_000_000_000, occurredAt: from })));
     await db.insert(financeEvents).values(Array.from({ length: 3 }, () => ({ orgId: volumeOrgId, biller: "big", eventKind: "usage", amountCents: 2_000_000_000, occurredAt: from })));
-    for (const timestamp of ["10000-01-01 00:00:00Z", "0001-01-01 00:00:00Z", "0012-02-01 00:00:00Z", "0032-01-01 00:00:00Z", "0099-01-01 00:00:00Z", "0001-01-01 00:00:00Z BC", "1969-12-31 23:59:59.999999Z", "infinity"]) {
+    const timestampEdges = [
+      ["10000-01-01 00:00:00Z", "year-10000"],
+      ["0001-01-01 00:00:00Z", "year-0001"],
+      ["0012-02-01 00:00:00Z", "year-0012"],
+      ["0032-01-01 00:00:00Z", "year-0032"],
+      ["0044-01-02 03:04:05.123456Z", "year-0044"],
+      ["0099-01-01 00:00:00Z", "year-0099"],
+      ["0001-01-01 00:00:00Z BC", "year-bc"],
+      ["1969-12-31 23:59:59.999999Z", "year-1969"],
+      ["infinity", "year-infinity"],
+      ["2026-01-02 03:04:05.123456Z", "year-2026"],
+    ] as const;
+    for (const [timestamp, eventKind] of timestampEdges) {
       await db.execute(sql`INSERT INTO finance_events (org_id,biller,event_kind,amount_cents,occurred_at,created_at,metadata_json)
-        VALUES (${dateOrgId}::uuid,'date','edge',1,${timestamp}::timestamptz,'2024-01-01Z',${`${"[".repeat(600)}9007199254740993${"]".repeat(600)}`}::jsonb)`);
+        VALUES (${dateOrgId}::uuid,'date',${eventKind},1,${timestamp}::timestamptz,${eventKind === "year-0044" ? "0044-01-03 04:05:06.654321Z" : "2024-01-01Z"}::timestamptz,${`${"[".repeat(600)}9007199254740993${"]".repeat(600)}`}::jsonb)`);
     }
     await db.execute(sql`INSERT INTO finance_events (org_id,biller,event_kind,amount_cents,occurred_at,created_at,metadata_json)
-      VALUES (${dateOrgId}::uuid,'date','legacy-timezone-probe',1,'0012-02-01 00:00:00Z'::timestamptz,'2024-01-02Z',${JSON.stringify({ legacyTimezoneProbe: true })}::jsonb)`);
+      VALUES (${dateOrgId}::uuid,'date','utc-projection-probe',1,'0012-02-01 00:00:00Z'::timestamptz,'2024-01-02Z',${JSON.stringify({ utcProjectionProbe: true })}::jsonb)`);
     baseline = await snapshot();
     const listenPort = ingressMode === "required" ? await port() : 0;
     bridge = createRustFoundationBridge({ databaseUrl, binaryPath: binary, mode: "off", organizationBrandingMode: "off", projectGoalSetMode: "off", requestTimeoutMs: 10000,
@@ -287,14 +299,32 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     }
   });
 
-  it("preserves extended dates, historical offsets, invalid dates and deep metadata", async () => {
+  it("serializes historical finance timestamps as UTC, independent of the database timezone", async () => {
     const response = await get("finance-events", dateOrgId, boardToken);
     expect(response.status, response.text).toBe(200);
-    expect(response.body).toEqual(wire(await financeService(db).list(dateOrgId)));
+    const expected = wire(await financeService(db).list(dateOrgId));
+    const canonicalDates: Record<string, string | null> = {
+      "year-10000": "+010000-01-01T00:00:00.000Z",
+      "year-0001": "0001-01-01T00:00:00.000Z",
+      "year-0012": "0012-02-01T00:00:00.000Z",
+      "year-0032": "0032-01-01T00:00:00.000Z",
+      "year-0044": "0044-01-02T03:04:05.123Z",
+      "year-0099": "0099-01-01T00:00:00.000Z",
+      "year-bc": null,
+      "year-1969": "1969-12-31T23:59:59.999Z",
+      "year-infinity": null,
+      "year-2026": "2026-01-02T03:04:05.123Z",
+      "utc-projection-probe": "0012-02-01T00:00:00.000Z",
+    };
+    for (const event of expected) {
+      if (event.eventKind in canonicalDates) event.occurredAt = canonicalDates[event.eventKind]!;
+      if (event.eventKind === "year-0044") event.createdAt = "0044-01-03T04:05:06.654Z";
+    }
+    expect(response.body).toEqual(expected);
     expect(response.body[0].occurredAt).toBeNull(); // PostgreSQL infinity -> invalid JS Date -> null
     expect(response.body[1].occurredAt).toBe("+010000-01-01T00:00:00.000Z");
-    const timezoneProbe = response.body.find((event: { metadataJson?: { legacyTimezoneProbe?: boolean } }) => event.metadataJson?.legacyTimezoneProbe);
-    expect(timezoneProbe?.occurredAt).toBeNull(); // Database TimeZone=Pacific/Honolulu must survive SQLx's UTC startup setting.
+    const utcProbe = response.body.find((event: { metadataJson?: { utcProjectionProbe?: boolean } }) => event.metadataJson?.utcProjectionProbe);
+    expect(utcProbe?.occurredAt).toBe("0012-02-01T00:00:00.000Z");
   });
 
   it("widens token and finance aggregation past signed 32-bit limits", async () => {
@@ -319,7 +349,7 @@ describe.each(["off", "required"] as const)("Cost read real public workflow (ing
     try {
       for (const operation of operations) {
         expect((await get(operation, orgId, agentToken, unavailable)).status)
-          .toBe(ingressMode === "required" && operation !== "finance-events" ? 404 : 503);
+          .toBe(ingressMode === "required" ? 404 : 503);
       }
     }
     finally { await close(unavailable); }

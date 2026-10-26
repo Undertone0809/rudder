@@ -1,7 +1,7 @@
 //! Fixed legacy projections used only by Automation GETs.
 use crate::{
     StoreError,
-    activity_reads::{JsString, details, encode_object, legacy_date_text, legacy_stamp, object},
+    activity_reads::{JsString, details, encode_object, object, utc_date_text, utc_stamp},
 };
 use std::collections::BTreeMap;
 pub(super) type Object = BTreeMap<JsString, String>;
@@ -208,7 +208,7 @@ pub(super) fn projection(table: &str, alias: &str) -> String {
         .map(|(key, column, date)| {
             let column = format!("{alias}.{column}");
             let value = if *date {
-                legacy_date_text(&legacy_stamp(&column))
+                utc_date_text(&utc_stamp(&column))
             } else {
                 column
             };

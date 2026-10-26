@@ -282,20 +282,21 @@ fn hydrate(raw: &str, identifier: Option<&str>, title: Option<&str>) -> Result<S
     Ok(encode_object(value))
 }
 
-// The legacy driver parsed PG's connection-local timestamp text with JS Date.
-// Match Cost reads' established small-year/BC/offset behavior and millisecond
-// truncation, while retaining untouched PG timestamps for org cursor ordering.
-pub(crate) fn legacy_stamp(column: &str) -> String {
+// Serialize the stored instant as canonical UTC. The old driver parsed
+// PostgreSQL's connection-local timestamp text with JavaScript Date, which
+// remapped AD years 1-99 and depended on session TimeZone. BC, non-finite,
+// and out-of-range values remain unrepresentable by the existing API contract;
+// millisecond truncation and JavaScript's TimeClip boundary are preserved.
+pub(crate) fn utc_stamp(column: &str) -> String {
     format!(
-        r#"CASE WHEN NOT isfinite({column}) OR extract(epoch FROM date_trunc('milliseconds',{column}))>8640000000000 THEN NULL
- WHEN extract(year FROM {column})<1 OR extract(year FROM {column}) BETWEEN 13 AND 31 OR mod(extract(timezone FROM {column}),60)<>0 THEN NULL
- WHEN extract(year FROM {column}) BETWEEN 1 AND 12 THEN make_timestamp(2000+extract(day FROM {column})::int,extract(year FROM {column})::int,extract(month FROM {column})::int,extract(hour FROM {column})::int,extract(minute FROM {column})::int,extract(second FROM {column})::double precision)-extract(timezone FROM {column})::double precision*INTERVAL '1 second'
- WHEN extract(year FROM {column}) BETWEEN 32 AND 99 THEN make_timestamp((CASE WHEN extract(year FROM {column})<50 THEN 2000 ELSE 1900 END)+extract(year FROM {column})::int,extract(month FROM {column})::int,extract(day FROM {column})::int,extract(hour FROM {column})::int,extract(minute FROM {column})::int,extract(second FROM {column})::double precision)-extract(timezone FROM {column})::double precision*INTERVAL '1 second'
- ELSE {column} AT TIME ZONE 'UTC' END"#
+        r#"CASE WHEN NOT isfinite({column}) THEN NULL
+ WHEN extract(year FROM ({column} AT TIME ZONE 'UTC'))<1
+   OR extract(epoch FROM date_trunc('milliseconds',{column} AT TIME ZONE 'UTC')) NOT BETWEEN -8640000000000 AND 8640000000000 THEN NULL
+ ELSE date_trunc('milliseconds',{column} AT TIME ZONE 'UTC') END"#
     )
 }
 
-pub(crate) fn legacy_date_text(stamp: &str) -> String {
+pub(crate) fn utc_date_text(stamp: &str) -> String {
     format!(
         r#"CASE WHEN {stamp} IS NULL THEN NULL ELSE (CASE WHEN extract(year FROM {stamp})>=10000 THEN '+'||to_char(extract(year FROM {stamp}),'FM000000') ELSE to_char({stamp},'YYYY') END)||to_char({stamp},'-MM-DD"T"HH24:MI:SS.MS"Z"') END"#
     )
@@ -337,7 +338,7 @@ fn organization_sql(page: bool) -> String {
  AND ($8::text IS NULL OR a.created_at<$8::timestamptz OR (a.created_at=$8::timestamptz AND a.id<$9::uuid))
  ORDER BY a.created_at DESC,a.id DESC {limit}"#,
         projection(),
-        legacy_stamp("a.created_at"),
+        utc_stamp("a.created_at"),
         low_signal_sql()
     )
 }
@@ -379,7 +380,7 @@ fn issue_sql(chat: bool) -> String {
  WHERE i.id=$2::uuid AND i.org_id=$1::uuid AND ({filter})
  ORDER BY a.created_at DESC,a.id DESC"#,
         projection(),
-        legacy_stamp("a.created_at")
+        utc_stamp("a.created_at")
     )
 }
 
@@ -444,7 +445,7 @@ type IssueOrderKey = (bool, Reverse<i64>, usize, usize);
 fn ordered_issue_json(mut merged: Vec<(IssueOrderKey, String)>) -> String {
     // Finite Dates precede invalid Dates. Within each source, raw_order retains
     // the entire original PG timestamp DESC plus UUID DESC, including ancient
-    // years that the legacy Date parser maps onto modern millisecond ties.
+    // years that remain distinct under canonical UTC serialization.
     // Invalid rows use that same source/raw order. No row is deduplicated.
     merged.sort_by_key(|(key, _)| *key);
     format!(
