@@ -103,8 +103,16 @@ jobs:
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
           RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
           RUDDER_NATIVE_MIGRATION_APPLY_PATH: ${{ github.workspace }}/native/target/debug/migration-apply
+          RUDDER_HOME: ${{ runner.temp }}/rudder-public-workflow/instance-home
+          RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: ${{ runner.temp }}/rudder-public-workflow/workspaces
+          RUDDER_NATIVE_HOST_HOME_DIRECTORY: ${{ runner.temp }}/rudder-public-workflow/host-home
+          RUDDER_NATIVE_HOST_RUDDER_HOME: ${{ runner.temp }}/rudder-public-workflow/instance-home
+          RUDDER_NATIVE_HOST_INSTANCE_ID: ci-public-workflow
+          RUDDER_NATIVE_HOST_HOSTNAME: ci-public-workflow-host
         run: |
           set -euo pipefail
+          mkdir -p "$RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME" \
+            "$RUDDER_NATIVE_HOST_HOME_DIRECTORY" "$RUDDER_NATIVE_HOST_RUDDER_HOME"
           pnpm --filter @rudderhq/db migrate \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           cargo test --locked --manifest-path native/Cargo.toml \

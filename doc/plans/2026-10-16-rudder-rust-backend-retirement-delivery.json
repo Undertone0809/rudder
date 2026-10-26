@@ -259,7 +259,7 @@
   },
   "current_execution": {
     "updated_at": "2026-10-26T12:22:37.271531+00:00",
-    "observed_main": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
+    "observed_main": "08820a2df8272bfaee6c675ac00b36682dc765bd",
     "branch": "codex/rust-issue-attachments-20261026",
     "status": "Attachment/UTC/Automation/FinanceEvents combined source-stage accepted; author qualification and frozen acceptance pending",
     "scope": "Four attachment operations, three Automation reads and FinanceEvents GET/HEAD, plus approved canonical UTC serialization; reuse existing Rust projections and storage.",
@@ -1150,7 +1150,8 @@
           "node_skipped": 10
         },
         "standalone_sha256": "cbdf21068dbf030049a5c8d12354aa734641e791c997801aacfdc450f901c643"
-      }
+      },
+      "ci_isolation": "Public workflow CI explicitly supplies the five host-fact environment inputs required by the attachment fixture, isolated under RUNNER_TEMP; it preserves inherited HOME/CODEX_HOME. Fixed before publication after verifier fixture preflight exposed the missing prerequisite."
     }
   }
 }
