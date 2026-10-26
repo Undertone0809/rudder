@@ -1081,6 +1081,32 @@
       "global_migration_complete": false,
       "at_utc": "2026-10-26T10:13:17.539023+00:00",
       "integration_author_result": "/private/tmp/rudder-issue-cost-run-combined-author-r1/three-http-result.json"
+    },
+    "ci_packaging_exception_20261026": {
+      "approved": true,
+      "human_answer": "\u672c\u8f6e\u7a7a\u95f4\u4e0d\u8db3\u65f6\u7edf\u4e00\u7528 CI\uff08\u63a8\u8350\uff09",
+      "source_question_id": "call_c3400e7f34a9451eb0e4dd148220afcd",
+      "scope": "This Rust migration episode: when local disk is insufficient, the corresponding protected PR full CI replaces local pnpm desktop:verify, including full repository tests/build, cross-platform Rust and packaged Desktop smoke.",
+      "retained_gates": [
+        "Independent real-environment acceptance for every batch",
+        "All necessary exact-head CI",
+        "Final independent review before protected merge"
+      ],
+      "not_authorized": [
+        "Bypassing branch protection",
+        "Replacing independent real acceptance with unit tests",
+        "Automatic release or installed-app replacement"
+      ],
+      "at_utc": "2026-10-26T11:11:21.242969+00:00"
+    },
+    "architecture_preflight_iteration_20261026": {
+      "problem": "The new Node Run route registration blocks grew agents.management-routes.ts from1500 to1511lines and failed the general architecture comparison. Rust authority-inventory checks had passed, but the author preflight omitted this separate cheap check.",
+      "smallest_correction": "Use strict inline existing-bridge configuration guards at the ten registrations; remove redundant localflag andfivewrapperblocks. No body/query/permission call expression changed.",
+      "proof": "TypeScript parse+printed call-expression AST identical; currentfrozenRustbinary reused; realNodeHTTP/Rust/PG Run suite19/19 andserverTC passed; architectureaudit comparisonregressionsnone anddebtgovernancevalid.",
+      "prevention": "Backend Architecture now requires both general architecture and Rust authority source comparisons against a fresh base before expensive qualification; no audit baseline/threshold/exception weakened.",
+      "evidence": "/private/tmp/rudder-pr388-integrated-final-candidate-r1/node-gate-inline-equivalence-r1.json",
+      "remaining": "Fresh exactNodeboundary review/hashadmission andpublicationidentityrebind; allnewheadCI required",
+      "at_utc": "2026-10-26T11:13:02.781031+00:00"
     }
   }
 }
