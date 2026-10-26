@@ -224,7 +224,7 @@ INSERT INTO finance_events (org_id,event_kind,direction,biller,amount_cents,esti
     assert_eq!(board_summary["spendCents"], 300);
     assert_eq!(board_head_status, StatusCode::OK);
     assert_eq!(agent_finance_status, StatusCode::OK);
-    assert_eq!(agent_finance["eventCount"], 3);
+    assert_eq!(agent_finance["eventCount"], 5);
     assert_eq!(window_status, StatusCode::OK);
     assert_eq!(windows.as_array().unwrap().len(), 3);
     assert!(

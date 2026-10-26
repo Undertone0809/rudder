@@ -98,7 +98,7 @@ jobs:
           test -x native/target/debug/migration-apply
           test -x native/target/debug/rudder-postgres-owner
 
-      - name: Verify public Rust Issue, Cost and Run workflows against PostgreSQL
+      - name: Verify public Rust Issue, Cost, Run and Automation workflows against PostgreSQL
         env:
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
           RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
@@ -114,12 +114,17 @@ jobs:
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           cargo test --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation-core --lib \
-            public_ingress::tests::cost_read_http_tests::native_cost_reads_revalidate_scope_and_keep_finance_events_transport_explicit \
+            public_ingress::tests::cost_read_http_tests::native_cost_reads_revalidate_scope_and_keep_finance_events_in_rust \
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           cargo test --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation-core --lib \
             public_ingress::tests::run_read_http_tests::public_run_reads_revalidate_scope_owner_and_never_fall_back \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::tests::automation_read_http_tests::native_automation_reads_revalidate_scope_and_keep_writes_on_node \
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 

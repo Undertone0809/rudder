@@ -258,11 +258,11 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-26T02:38:49.543476+00:00",
+    "updated_at": "2026-10-26T12:22:37.271531+00:00",
     "observed_main": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
-    "branch": "codex/rust-issue-core-20261026",
-    "status": "issue_core_author_validation_in_progress; no E publication or independent acceptance claimed",
-    "scope": "Issue list/detail/create/update/delete/reorder and self/Board checkout at selected native ingress, including actual validation, audit, wake/cancel requests, creation-request/automation finalization, description-image copy and lifecycle analytics. Legacy execution workers, attachment content reads, sidecar APIs and ingress-off/default cutover remain explicit debt.",
+    "branch": "codex/rust-issue-attachments-20261026",
+    "status": "Attachment/UTC/Automation/FinanceEvents combined source-stage accepted; author qualification and frozen acceptance pending",
+    "scope": "Four attachment operations, three Automation reads and FinanceEvents GET/HEAD, plus approved canonical UTC serialization; reuse existing Rust projections and storage.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -362,7 +362,14 @@
         "Per-worktree Cargo target and physical frozen acceptance artifacts",
         "Focused failure preflights before repeating broad baseline"
       ],
-      "claim": "These are bounded implemented corrections; no measured project-wide throughput improvement claimed."
+      "claim": "These are bounded implemented corrections; no measured project-wide throughput improvement claimed.",
+      "native_ci_cache_20261026": {
+        "problem": "native-foundations four-platform jobs do not restore Rust dependencies; exact-head CI observed repeated cold compile in Clippy, tests and release staging.",
+        "change": "Add one standard Rust cache step after toolchain selection, native -> target, separate matrix-target key, default dependency-only retention. No tests, thresholds, deadlines or branch protection weakened.",
+        "evidence": "/private/tmp/rudder-native-ci-cache-review-r1.md; sha256=f8c94958be5128d430e0f30512790ee12fcc7e41abc6000823e1d26bb4733cf3",
+        "observed_clippy_runner_seconds": 765,
+        "exact_runtime_savings": "Not yet measured; first cache-populating run may not improve. Full test step times include compilation and runtime."
+      }
     },
     "deployment": "not performed",
     "global_completion": false,
@@ -1107,6 +1114,43 @@
       "evidence": "/private/tmp/rudder-pr388-integrated-final-candidate-r1/node-gate-inline-equivalence-r1.json",
       "remaining": "Fresh exactNodeboundary review/hashadmission andpublicationidentityrebind; allnewheadCI required",
       "at_utc": "2026-10-26T11:13:02.781031+00:00"
+    },
+    "attachment_automation_utc_batch_20261026": {
+      "state": "Combined author qualification PASS; frozen independent PAV, final publication review and exact-head CI pending",
+      "source_checkpoint": "3087bda6c69aaf0c57aa3dd425b345ddb1ebaed2",
+      "base_candidate": "c31520c373f8e8809cd790b067a136f707f276ec",
+      "current_main": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "included_operations": 8,
+      "attachment_author_checkpoint": "c72b0f551d32f3220d668d8de7fc8e8f4a17f513",
+      "utc_author_checkpoint": "d54bf28786c9d70a4d7ba2b2da4fdc69b156b292",
+      "human_date_policy": "Use actual canonical UTC dates while preserving stored data; do not reproduce legacy AD44-to2044/null driver errors. Approved in this chat.",
+      "source_stage_review": "/private/tmp/rudder-issue-attachments-author-r1/independent-stage-review-r1.md (sha256=b8e79cb8225de2c0a55e7e08c0ac0df67e90ac80398af62e24b30c1a5cfd8c92; verdict=accept; exact c315-to-3087 five-file Node boundary)",
+      "source_only_utc_review": "/private/tmp/rudder-automation-utc-source-r1/validation-plan.md",
+      "author_attachment_evidence": "/private/tmp/rudder-issue-attachments-author-r1/author-source-result-r1.json",
+      "qualification_strategy": "One combined build and fresh-database four-selector public HTTP workflow; independent stage/frozen PAV/final publication review and exact-head full CI required. Local desktop verification may use the already-approved episode-wide CI exception when disk is insufficient.",
+      "remaining_node_debt": [
+        "Ingress-off compatibility and proxy",
+        "Automation writes, trigger management and scheduling",
+        "Run execution, logs/live and remaining cancellation/retry consumers",
+        "Other domain ownership and default no-Node installation"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_complete": false,
+      "author_result": {
+        "path": "/private/tmp/rudder-attachments-automation-combined-r1/author-result.json",
+        "sha256": "4c44c32d27f332ca70122c875a9ee6344aae556a40064b02781f539596a744e7",
+        "counts": {
+          "d1_units": 248,
+          "foundation_units": 317,
+          "foundation_ignored": 29,
+          "cost_postgres": 4,
+          "public_http_selectors": 4,
+          "node_passed": 328,
+          "node_skipped": 10
+        },
+        "standalone_sha256": "cbdf21068dbf030049a5c8d12354aa734641e791c997801aacfdc450f901c643"
+      }
     }
   }
 }

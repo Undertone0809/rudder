@@ -213,10 +213,12 @@ async fn finance_timestamps_use_canonical_utc_without_legacy_date_context() {
         serde_json::from_str(&read_costs(&db.pool, ORG, &selection).await.unwrap()).unwrap();
     assert_eq!(utc[0]["occurredAt"], "0012-02-01T00:00:00.000Z");
     assert_eq!(utc[0]["createdAt"], "0032-01-01T00:00:00.000Z");
-    assert!(serde_json::from_str::<CostReadInput>(
-        r#"{"operation":"finance-events","legacyDateTimezone":"Pacific/Honolulu"}"#
-    )
-    .is_err());
+    assert!(
+        serde_json::from_str::<CostReadInput>(
+            r#"{"operation":"finance-events","legacyDateTimezone":"Pacific/Honolulu"}"#
+        )
+        .is_err()
+    );
     let zone: String = sqlx::query_scalar("SHOW TimeZone")
         .fetch_one(&db.pool)
         .await
