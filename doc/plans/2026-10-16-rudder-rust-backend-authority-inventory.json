@@ -5012,7 +5012,7 @@
     },
     {
       "path": "server/src/routes/issues.ts",
-      "sha256": "175415141d353f68c7c070f9a010e8e1a3144ab0b38bd08d63d2c7e13ea978db",
+      "sha256": "511624fb7c5c909dcca065322bcc6501ad006e635dd5b8d24dd7ce160a425d34",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -59115,15 +59115,15 @@
     {
       "path": "server/src/routes/issues.ts",
       "base_sha256": "f1fc2c1a642a470b25c0b7e52e5ccfb1bc5e97e9aa2d849a4387417c6dadc199",
-      "head_sha256": "175415141d353f68c7c070f9a010e8e1a3144ab0b38bd08d63d2c7e13ea978db",
+      "head_sha256": "511624fb7c5c909dcca065322bcc6501ad006e635dd5b8d24dd7ce160a425d34",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/issue_core.rs; native/crates/server-foundation/src/public_ingress/issue_core/comments.rs; native/crates/d1-persistence/src/issue_core_reads.rs; native/crates/d1-persistence/src/issue_metadata_reads.rs; native/crates/d1-persistence/src/issue_comments.rs",
-      "scope": "When Rust public ingress is selected, omit Node Issue collection/detail/reorder and five comment handlers, and pass the existing ingress-wide option to mutation registration so Node row and checkout writes are omitted; preserve default-off legacy Node behavior.",
-      "compatibility_boundary": "Required ingress serves Issue list/detail/reorder and comment list/read/create/update/delete from Rust; the Node router registers no handlers for those selected operations and has no request fallback. Default off retains the existing Node handlers. Attachment/work-product metadata reads do not remove Node binary attachment CRUD or work-product writes. Issue labels, heartbeat context, follows/follow mutations, approvals outside existing Rust owners, retired document routes, and the debug-issue writer remain separate operations. Rust comment wake admission does not transfer legacy_ts worker/executor ownership.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/issue_core.rs; native/crates/server-foundation/src/public_ingress/issue_core/comments.rs; native/crates/d1-persistence/src/issue_core_reads.rs; native/crates/d1-persistence/src/issue_metadata_reads.rs; native/crates/d1-persistence/src/issue_comments.rs; native/crates/server-foundation/src/public_ingress/issue_core/work_products.rs; native/crates/d1-persistence/src/issue_work_products.rs",
+      "scope": "When Rust public ingress is selected, omit Node Issue collection/detail/reorder and five comment handlers, and pass the existing ingress-wide option to mutation registration so Node row and checkout writes are omitted; preserve default-off legacy Node behavior. Also omit the three Work Product create/PATCH/delete handlers in selected ingress.",
+      "compatibility_boundary": "Required ingress serves Issue list/detail/reorder and comment list/read/create/update/delete from Rust; the Node router registers no handlers for those selected operations and has no request fallback. Default off retains the existing Node handlers. Work Product CRUD is also Rust-owned in selected ingress; Node binary attachment CRUD remains separate debt. Issue labels, heartbeat context, follows/follow mutations, approvals outside existing Rust owners, retired document routes, and the debug-issue writer remain separate operations. Rust comment wake admission does not transfer legacy_ts worker/executor ownership.",
       "retirement_criterion": "Retire the conditional Issue route gates and compatibility paths only after every listed Issue operation has an explicit Rust public owner, the legacy_ts wake consumer/executor is migrated, and the ingress-off compatibility path is retired.",
-      "reviewer": "/root/rust_delivery_review_r15/org_write_stage_review",
-      "review_reference": "/private/tmp/rudder-issue-core-E-node-boundary-review-r2.json (sha256=9f6db68096500bb300d46051a285a7c0171e426ac1f3f391cc344af4f7e2d2a6; verdict=accept; Issue Core boundary review); /private/tmp/rudder-issue-comments-C-node-boundary-review-r1.json (sha256=8336cb99b5092d15b837196a45a66195294a618cf4db03df82d336865c0f1e5f; verdict=accept; scoped comments route admission review)",
+      "reviewer": "/root/rust_delivery_review_r15/org_write_stage_review; /root/comments_automation_review",
+      "review_reference": "/private/tmp/rudder-issue-core-E-node-boundary-review-r2.json (sha256=9f6db68096500bb300d46051a285a7c0171e426ac1f3f391cc344af4f7e2d2a6; verdict=accept; Issue Core boundary review); /private/tmp/rudder-issue-comments-C-node-boundary-review-r1.json (sha256=8336cb99b5092d15b837196a45a66195294a618cf4db03df82d336865c0f1e5f; verdict=accept; scoped comments route admission review); /private/tmp/rudder-issue-work-products-node-boundary-review-r1.md (sha256=0efccbc6b67c16700b9057b4ab9200a42c96ad2de76ea7c6d4bb2a5e2cca9abd; verdict=accept; exact175415-to-511624 guarded Work Product route delta)",
       "review_status": "reviewed"
     },
     {

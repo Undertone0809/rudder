@@ -1435,6 +1435,53 @@ describe("issue lifecycle routes", () => {
     expect(mockWorkProductService.createForIssue.mock.calls[0]?.[2]).not.toHaveProperty("runWorkspaceId");
   });
 
+  it("omits Work Product write handlers when Rust Issue ingress is selected", async () => {
+    const client = request(await createApp(createBoardActor(), undefined, true));
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const productId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const create = await client
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({ type: "preview_url", provider: "custom", title: "Preview" });
+    const update = await client.patch(`/api/work-products/${productId}`).send({ title: "Renamed" });
+    const remove = await client.delete(`/api/work-products/${productId}`);
+
+    expect(create.status).toBe(404);
+    expect(update.status).toBe(404);
+    expect(remove.status).toBe(404);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
+    expect(mockWorkProductService.getById).not.toHaveBeenCalled();
+    expect(mockWorkProductService.update).not.toHaveBeenCalled();
+    expect(mockWorkProductService.remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps Work Product PATCH and DELETE handlers available in the default Node mode", async () => {
+    const product = {
+      id: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      orgId: "organization-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      type: "preview_url",
+      provider: "custom",
+      title: "Preview",
+    };
+    mockWorkProductService.getById.mockResolvedValue(product);
+    mockWorkProductService.update.mockResolvedValue({ ...product, title: "Renamed" });
+    mockWorkProductService.remove.mockResolvedValue(product);
+
+    const client = request(await createApp());
+    const update = await client
+      .patch(`/api/work-products/${product.id}`)
+      .send({ title: "Renamed" });
+    const remove = await client.delete(`/api/work-products/${product.id}`);
+
+    expect(update.status).toBe(200);
+    expect(update.body.title).toBe("Renamed");
+    expect(remove.status).toBe(200);
+    expect(remove.body.id).toBe(product.id);
+    expect(mockWorkProductService.update).toHaveBeenCalledWith(product.id, { title: "Renamed" });
+    expect(mockWorkProductService.remove).toHaveBeenCalledWith(product.id);
+  });
+
   it("logs activity details from the final persisted issue changes", async () => {
     const oldProjectId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     const newProjectId = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";

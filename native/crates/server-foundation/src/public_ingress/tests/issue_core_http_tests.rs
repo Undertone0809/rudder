@@ -334,6 +334,66 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
+    let related_org_id: String = sqlx::query_scalar(
+        "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+    )
+    .bind(format!("native-issue-work-products-related-{suffix}"))
+    .bind(format!("Native Issue Work Products Related {suffix}"))
+    .bind(format!("WR{}", suffix[..8].to_ascii_uppercase()))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let related_project_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO projects (id, org_id, name, status) VALUES ($1::uuid, $2::uuid, $3, 'backlog')",
+    )
+    .bind(&related_project_id)
+    .bind(&related_org_id)
+    .bind(format!("Related foreign project {suffix}"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_execution_workspace_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO execution_workspaces (id,org_id,project_id,mode,strategy_type,name) VALUES ($1::uuid,$2::uuid,$3::uuid,'local','worktree',$4)",
+    )
+    .bind(&related_execution_workspace_id)
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(format!("Related foreign workspace {suffix}"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&related_org_id)
+    .bind(format!("Related foreign agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let related_run_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id,org_id,agent_id,status,started_at,invocation_source,execution_authority,context_snapshot) VALUES ($1::uuid,$2::uuid,$3::uuid,'completed',now(),'manual','legacy_ts','{}'::jsonb)",
+    )
+    .bind(&related_run_id)
+    .bind(&related_org_id)
+    .bind(&related_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_runtime_service_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO workspace_runtime_services (id,org_id,project_id,execution_workspace_id,scope_type,scope_id,service_name,status,lifecycle,provider) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,'execution_workspace',$5,'api','running','active','custom')",
+    )
+    .bind(&related_runtime_service_id)
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(&related_execution_workspace_id)
+    .bind(&related_execution_workspace_id)
+    .execute(&pool)
+    .await
+    .unwrap();
     let title_project_id = Uuid::new_v4().to_string();
     let description_project_id = Uuid::new_v4().to_string();
     let comment_project_id = Uuid::new_v4().to_string();
@@ -424,6 +484,8 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .await
     .unwrap();
     let issue_id = Uuid::new_v4().to_string();
+    let work_product_issue_id = Uuid::new_v4().to_string();
+    let seeded_nonprimary_work_product_id = Uuid::new_v4().to_string();
     let board_issue_id = Uuid::new_v4().to_string();
     let member_issue_id = Uuid::new_v4().to_string();
     let paused_issue_id = Uuid::new_v4().to_string();
@@ -468,6 +530,25 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .bind(&board_issue_id)
     .bind(&org_id)
     .bind(format!("{prefix}-2"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id,org_id,project_id,title,status,priority,issue_number,identifier) VALUES ($1::uuid,$2::uuid,$3::uuid,'Work Product CRUD target','todo','medium',900009,$4)",
+    )
+    .bind(&work_product_issue_id)
+    .bind(&org_id)
+    .bind(&title_project_id)
+    .bind(format!("{prefix}-900009"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issue_work_products (id,org_id,issue_id,type,provider,title,status,is_primary,created_at,updated_at) VALUES ($1::uuid,$2::uuid,$3::uuid,'preview_url','custom','Older non-primary preview','active',false,now()-interval '2 days',now()-interval '2 days')",
+    )
+    .bind(&seeded_nonprimary_work_product_id)
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -630,19 +711,405 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     assert_eq!(work_products.status(), StatusCode::OK);
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+    let seeded_nonprimary_timestamp: String = sqlx::query_scalar(
+        "SELECT updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&seeded_nonprimary_work_product_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
-    let node_owned_work_product = client
-        .post(format!("{base}/api/issues/{issue_id}/work-products"))
-        .bearer_auth(&agent_token)
-        .json(&json!({"probe":"node-owned write"}))
+    let first_work_product = client
+        .post(format!("{base}/api/issues/{prefix}-900009/work-products"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Preview first",
+            "isPrimary":true,
+            "projectId":null,
+            "runWorkspaceId":null,
+            "metadata":{"revision":1}
+        }))
         .send()
         .await
         .unwrap();
-    assert_eq!(node_owned_work_product.status(), StatusCode::OK);
-    let node_owned_work_product: serde_json::Value = node_owned_work_product.json().await.unwrap();
+    assert_eq!(first_work_product.status(), StatusCode::CREATED);
+    let first_work_product: serde_json::Value = first_work_product.json().await.unwrap();
+    let first_work_product_id = first_work_product["id"].as_str().unwrap().to_owned();
+    assert_eq!(first_work_product["issueId"], work_product_issue_id);
+    assert_eq!(first_work_product["projectId"], title_project_id);
     assert_eq!(
-        node_owned_work_product,
-        json!({"nodePath":format!("/api/issues/{issue_id}/work-products"),"nodeMethod":"POST"})
+        first_work_product["runWorkspaceId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        first_work_product["executionWorkspaceId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(first_work_product["isPrimary"], true);
+    assert_eq!(first_work_product["metadata"]["revision"], 1);
+    let seeded_nonprimary_refreshed: bool = sqlx::query_scalar(
+        "SELECT updated_at > $3::timestamptz FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&seeded_nonprimary_work_product_id)
+    .bind(&seeded_nonprimary_timestamp)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(seeded_nonprimary_refreshed);
+
+    let second_work_product = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Preview second",
+            "isPrimary":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second_work_product.status(), StatusCode::CREATED);
+    let second_work_product: serde_json::Value = second_work_product.json().await.unwrap();
+    let second_work_product_id = second_work_product["id"].as_str().unwrap().to_owned();
+    assert_eq!(second_work_product["projectId"], title_project_id);
+
+    let work_product_state_before_failed_create: Vec<(String, bool, String)> = sqlx::query_as(
+        "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let work_product_created_activity_before_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (field, foreign_id) in [
+        ("projectId", related_project_id.as_str()),
+        (
+            "executionWorkspaceId",
+            related_execution_workspace_id.as_str(),
+        ),
+        ("runtimeServiceId", related_runtime_service_id.as_str()),
+        ("createdByRunId", related_run_id.as_str()),
+    ] {
+        let mut create_input = json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Reject cross-organization Work Product reference",
+            "isPrimary":true
+        });
+        create_input
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(foreign_id));
+        let foreign_reference_create = client
+            .post(format!(
+                "{base}/api/issues/{work_product_issue_id}/work-products"
+            ))
+            .bearer_auth(&board_token)
+            .json(&create_input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            foreign_reference_create.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "POST must reject foreign {field}"
+        );
+        assert_eq!(
+            foreign_reference_create
+                .json::<serde_json::Value>()
+                .await
+                .unwrap(),
+            json!({
+                "error":"Invalid work product reference",
+                "code":"field_reference_error",
+                "field":field
+            })
+        );
+
+        let mut update_input = json!({
+            "title":"Must not update through foreign reference",
+            "isPrimary":true
+        });
+        update_input
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(foreign_id));
+        let foreign_reference_update = client
+            .patch(format!("{base}/api/work-products/{first_work_product_id}"))
+            .bearer_auth(&board_token)
+            .json(&update_input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            foreign_reference_update.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "PATCH must reject foreign {field}"
+        );
+        assert_eq!(
+            foreign_reference_update
+                .json::<serde_json::Value>()
+                .await
+                .unwrap(),
+            json!({
+                "error":"Invalid work product reference",
+                "code":"field_reference_error",
+                "field":field
+            })
+        );
+    }
+    let missing_reference = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Reject missing Work Product reference",
+            "isPrimary":true,
+            "projectId":"99999999-9999-4999-8999-999999999999"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_reference.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        missing_reference.json::<serde_json::Value>().await.unwrap(),
+        json!({
+            "error":"Invalid work product reference",
+            "code":"field_reference_error",
+            "field":"projectId"
+        })
+    );
+    let foreign_related_reference_counts: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM projects WHERE org_id=$1::uuid AND id=$2::uuid), (SELECT count(*) FROM execution_workspaces WHERE org_id=$1::uuid AND id=$3::uuid), (SELECT count(*) FROM workspace_runtime_services WHERE org_id=$1::uuid AND id=$4::uuid), (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$5::uuid)",
+    )
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(&related_execution_workspace_id)
+    .bind(&related_runtime_service_id)
+    .bind(&related_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_related_reference_counts, (1, 1, 1, 1));
+    let work_product_state_after_reference_rejections: Vec<(String, bool, String)> =
+        sqlx::query_as(
+            "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+        )
+        .bind(&org_id)
+        .bind(&work_product_issue_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        work_product_state_after_reference_rejections,
+        work_product_state_before_failed_create
+    );
+    let work_product_created_activity_after_reference_rejections: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_created_activity_after_reference_rejections,
+        work_product_created_activity_before_failure
+    );
+    sqlx::query(
+        "ALTER TABLE issue_work_products ADD CONSTRAINT issue_work_products_author_failure_check CHECK (title <> 'Force SQL failure after primary demotion')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_primary_create = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Force SQL failure after primary demotion",
+            "isPrimary":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_primary_create.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let work_product_state_after_failed_create: Vec<(String, bool, String)> = sqlx::query_as(
+        "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_state_after_failed_create,
+        work_product_state_before_failed_create
+    );
+    let work_product_created_activity_after_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_created_activity_after_failure,
+        work_product_created_activity_before_failure
+    );
+    sqlx::query(
+        "ALTER TABLE issue_work_products DROP CONSTRAINT issue_work_products_author_failure_check",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let conflicting_workspace_aliases = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Invalid alias conflict",
+            "runWorkspaceId":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+            "executionWorkspaceId":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        conflicting_workspace_aliases.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        conflicting_workspace_aliases
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":"runWorkspaceId conflicts with deprecated executionWorkspaceId"})
+    );
+
+    let patched_work_product = client
+        .patch(format!("{base}/api/work-products/{second_work_product_id}"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "title":"Preview polished",
+            "status":"ready_for_review",
+            "summary":null,
+            "metadata":{"revision":2}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patched_work_product.status(), StatusCode::OK);
+    let patched_work_product: serde_json::Value = patched_work_product.json().await.unwrap();
+    assert_eq!(patched_work_product["title"], "Preview polished");
+    assert_eq!(patched_work_product["status"], "ready_for_review");
+    assert_eq!(patched_work_product["summary"], serde_json::Value::Null);
+    assert_eq!(patched_work_product["metadata"]["revision"], 2);
+
+    let work_product_readback = client
+        .get(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(work_product_readback.status(), StatusCode::OK);
+    let work_product_readback: serde_json::Value = work_product_readback.json().await.unwrap();
+    assert_eq!(work_product_readback.as_array().unwrap().len(), 3);
+    let primary_product = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["isPrimary"] == true)
+        .unwrap();
+    assert_eq!(primary_product["id"], second_work_product_id);
+    let demoted_product = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["id"] == first_work_product_id)
+        .unwrap();
+    assert_eq!(demoted_product["isPrimary"], false);
+    let seeded_nonprimary = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["id"] == seeded_nonprimary_work_product_id)
+        .unwrap();
+    assert_eq!(seeded_nonprimary["isPrimary"], false);
+
+    let removed_work_product = client
+        .delete(format!("{base}/api/work-products/{first_work_product_id}"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed_work_product.status(), StatusCode::OK);
+    let removed_work_product: serde_json::Value = removed_work_product.json().await.unwrap();
+    assert_eq!(removed_work_product["id"], first_work_product_id);
+    assert_eq!(removed_work_product["isPrimary"], false);
+    let remaining_work_products: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining_work_products, 2);
+    let work_product_activity: (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE action='issue.work_product_created'), count(*) FILTER (WHERE action='issue.work_product_updated'), count(*) FILTER (WHERE action='issue.work_product_deleted') FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(work_product_activity, (2, 1, 1));
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+
+    let node_owned_retired_document = client
+        .get(format!("{base}/api/issues/{issue_id}/documents"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(node_owned_retired_document.status(), StatusCode::OK);
+    let node_owned_retired_document: serde_json::Value =
+        node_owned_retired_document.json().await.unwrap();
+    assert_eq!(
+        node_owned_retired_document,
+        json!({"nodePath":format!("/api/issues/{issue_id}/documents"),"nodeMethod":"GET"})
     );
     assert_eq!(node_requests.load(Ordering::SeqCst), 1);
 
@@ -2433,6 +2900,45 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .execute(&pool)
     .await
     .unwrap();
+    let foreign_work_product_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO issue_work_products (id,org_id,issue_id,type,provider,title,status) VALUES ($1::uuid,$2::uuid,$3::uuid,'preview_url','custom','Foreign preview','active')",
+    )
+    .bind(&foreign_work_product_id)
+    .bind(&foreign_org_id)
+    .bind(&foreign_issue_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let agent_foreign_work_product_update = client
+        .patch(format!(
+            "{base}/api/work-products/{foreign_work_product_id}"
+        ))
+        .bearer_auth(&agent_token)
+        .json(&json!({"title":"Must remain foreign"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        agent_foreign_work_product_update.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        agent_foreign_work_product_update
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":"Agent key cannot access another organization"})
+    );
+    let foreign_work_product_title: String = sqlx::query_scalar(
+        "SELECT title FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&foreign_org_id)
+    .bind(&foreign_work_product_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_work_product_title, "Foreign preview");
     let foreign_comment_read = client
         .get(format!("{base}/api/issues/{foreign_issue_id}/comments"))
         .bearer_auth(&board_token)
@@ -3206,6 +3712,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&work_product_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
         .bind(&org_id)
         .bind(&comment_wakeup_run_id)
@@ -3479,6 +3990,31 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM workspace_runtime_services WHERE id=$1::uuid")
+        .bind(&related_runtime_service_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM execution_workspaces WHERE id=$1::uuid")
+        .bind(&related_execution_workspace_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&related_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
+        .bind(&related_agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(&related_project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&agent_key_id)
         .execute(&pool)
@@ -3567,6 +4103,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&foreign_org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
+        .bind(&related_org_id)
         .execute(&pool)
         .await
         .unwrap();

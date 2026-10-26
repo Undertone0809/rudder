@@ -34,6 +34,7 @@ mod issue_input_validation;
 pub mod issue_lifecycle_analytics;
 pub(crate) mod issue_messenger_cleanup;
 pub mod issue_metadata_reads;
+pub mod issue_work_products;
 pub mod legacy_read_json;
 mod links;
 pub mod native_chat;

@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 mod comments;
+mod work_products;
 
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
@@ -48,6 +49,15 @@ enum Endpoint {
     IssueMetadata {
         issue_id: String,
         operation: IssueMetadataReadOperation,
+    },
+    WorkProductCreate {
+        issue_ref: String,
+    },
+    WorkProductUpdate {
+        work_product_id: String,
+    },
+    WorkProductDelete {
+        work_product_id: String,
     },
     Follows {
         organization_id: String,
@@ -97,23 +107,13 @@ pub(super) fn is_reserved_namespace(path: &str, method: &Method) -> bool {
     endpoint_path_shape(path, method)
 }
 
-fn endpoint_path_shape(path: &str, method: &Method) -> bool {
+fn endpoint_path_shape(path: &str, _method: &Method) -> bool {
     let Some(path) = path.strip_prefix('/') else {
         return false;
     };
     let path = path.strip_suffix('/').unwrap_or(path);
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.iter().any(|part| part.is_empty()) {
-        return false;
-    }
-    // Work-product creation remains a Node-owned operation. Its GET/HEAD
-    // metadata routes are dispatched above, and other methods stay reserved.
-    if *method == Method::POST
-        && matches!(parts.as_slice(), [api, issues, _id, leaf]
-            if api.eq_ignore_ascii_case("api")
-                && issues.eq_ignore_ascii_case("issues")
-                && leaf.eq_ignore_ascii_case("work-products"))
-    {
         return false;
     }
     matches!(parts.as_slice(), [api, orgs, _org_id, issues]
@@ -130,6 +130,8 @@ fn endpoint_path_shape(path: &str, method: &Method) -> bool {
             if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
         || matches!(parts.as_slice(), [api, issues, _id, comments, _comment_id]
             if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
+        || matches!(parts.as_slice(), [api, work_products, _id]
+            if api.eq_ignore_ascii_case("api") && work_products.eq_ignore_ascii_case("work-products"))
         || matches!(parts.as_slice(), [api, orgs, _org_id, issues, follows]
             if api.eq_ignore_ascii_case("api")
                 && orgs.eq_ignore_ascii_case("orgs")
@@ -217,6 +219,31 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
             Some(Endpoint::IssueMetadata {
                 issue_id: decode_capture(issue_id)?,
                 operation: IssueMetadataReadOperation::WorkProducts,
+            })
+        }
+        ([api, issues, issue_id, resource], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && resource.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductCreate {
+                issue_ref: decode_capture(issue_id)?,
+            })
+        }
+        ([api, work_products, work_product_id], &Method::PATCH)
+            if api.eq_ignore_ascii_case("api")
+                && work_products.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductUpdate {
+                work_product_id: decode_capture(work_product_id)?,
+            })
+        }
+        ([api, work_products, work_product_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && work_products.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductDelete {
+                work_product_id: decode_capture(work_product_id)?,
             })
         }
         ([api, orgs, organization_id, issues, follows], method)
@@ -370,6 +397,15 @@ pub(super) async fn dispatch_alias(
             issue_id,
             operation,
         } => read_metadata(state, request, &issue_id, operation).await,
+        Endpoint::WorkProductCreate { issue_ref } => {
+            work_products::create(state, request, &body, &issue_ref).await
+        }
+        Endpoint::WorkProductUpdate { work_product_id } => {
+            work_products::update(state, request, &body, &work_product_id).await
+        }
+        Endpoint::WorkProductDelete { work_product_id } => {
+            work_products::delete(state, request, &body, &work_product_id).await
+        }
         Endpoint::Follows { organization_id } => {
             read_follows(state, request, &organization_id).await
         }
@@ -1215,13 +1251,19 @@ mod tests {
             "/api/issues/abc/work-products/",
             &Method::HEAD
         ));
-        assert!(!is_reserved_path(
+        assert!(is_reserved_path(
             "/api/issues/abc/work-products",
             &Method::POST
         ));
-        assert!(!is_reserved_namespace(
+        assert!(is_reserved_namespace(
             "/api/issues/abc/work-products",
             &Method::POST
+        ));
+        assert!(is_reserved_path("/api/work-products/wp-1", &Method::PATCH));
+        assert!(is_reserved_path("/api/work-products/wp-1", &Method::DELETE));
+        assert!(is_reserved_namespace(
+            "/api/work-products/wp-1",
+            &Method::PATCH
         ));
         assert!(is_reserved_namespace(
             "/api/issues/abc/work-products",
