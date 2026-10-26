@@ -15,7 +15,12 @@ use regex_lite::Regex;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    future::Future,
+    path::Path,
+    pin::Pin,
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
@@ -34,6 +39,39 @@ const STATUSES: [&str; 7] = [
 const PRIORITIES: [&str; 5] = ["urgent", "high", "medium", "low", "none"];
 const BOARD_ORDER_STEP: i32 = 1000;
 const BLOCK_AUDIT_REQUIRED_ATTEMPTS: i32 = 3;
+
+pub struct IssueAssetObject {
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+}
+
+pub type IssueAssetStorageFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Object I/O used by Issue creation and deletion. Implementations own no
+/// Issue metadata or authorization decisions; those remain in this crate.
+pub trait IssueAssetStorage: Send + Sync {
+    fn provider(&self) -> &'static str;
+
+    fn get_object<'a>(
+        &'a self,
+        org_id: &'a str,
+        object_key: &'a str,
+    ) -> IssueAssetStorageFuture<'a, std::result::Result<IssueAssetObject, String>>;
+
+    fn put_object<'a>(
+        &'a self,
+        org_id: &'a str,
+        object_key: &'a str,
+        content_type: &'a str,
+        body: &'a [u8],
+    ) -> IssueAssetStorageFuture<'a, std::result::Result<(), String>>;
+
+    fn delete_object<'a>(
+        &'a self,
+        org_id: &'a str,
+        object_key: &'a str,
+    ) -> IssueAssetStorageFuture<'a, std::result::Result<(), String>>;
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IssueCoreWriteOperation {
@@ -80,12 +118,77 @@ struct IssueMutationActor<'a> {
     run_id: Option<&'a str>,
 }
 
+struct IssueUpdatePostCommit {
+    org_id: String,
+    issue_id: String,
+    actor_kind: String,
+    actor_id: String,
+    actor_run_id: Option<String>,
+    status: String,
+    created_by_user_id: Option<String>,
+    has_reviewer: bool,
+    review_decision: Option<String>,
+    review_activity_id: Option<String>,
+    comment_created_at: Option<String>,
+    reopened: bool,
+}
+
+struct StagedIssueDescriptionAssets {
+    description: Option<String>,
+    attachments: Vec<(String, String)>,
+}
+
+struct IssueCreateContext<'a> {
+    org: &'a str,
+    actor_kind: &'a str,
+    actor_id: &'a str,
+    actor_agent_id: Option<&'a str>,
+    run_id: Option<&'a str>,
+    input: &'a Value,
+    asset_storage: Option<&'a dyn IssueAssetStorage>,
+    staged_asset_objects: &'a mut Vec<String>,
+}
+
+struct IssueDescriptionAssetStageInput<'a> {
+    org: &'a str,
+    issue_id: &'a str,
+    description: Option<&'a str>,
+    created_by_agent_id: Option<&'a str>,
+    created_by_user_id: Option<&'a str>,
+    storage: Option<&'a dyn IssueAssetStorage>,
+    staged_objects: &'a mut Vec<String>,
+}
+
+impl IssueUpdatePostCommit {
+    async fn apply(&self, pool: &PgPool) -> std::result::Result<(), StoreError> {
+        crate::issue_lifecycle_analytics::after_issue_update(
+            pool,
+            crate::issue_lifecycle_analytics::IssueUpdateAnalytics {
+                org_id: &self.org_id,
+                issue_id: &self.issue_id,
+                actor_kind: &self.actor_kind,
+                actor_id: &self.actor_id,
+                actor_run_id: self.actor_run_id.as_deref(),
+                status: &self.status,
+                created_by_user_id: self.created_by_user_id.as_deref(),
+                has_reviewer: self.has_reviewer,
+                review_decision: self.review_decision.as_deref(),
+                review_activity_id: self.review_activity_id.as_deref(),
+                comment_created_at: self.comment_created_at.as_deref(),
+                reopened: self.reopened,
+            },
+        )
+        .await
+    }
+}
+
 /// Apply a public Issue mutation after revalidating its native credential.
 /// `input` is untrusted JSON: every SQL field and reference is validated here.
 pub async fn apply_issue_core_write(
     pool: &PgPool,
     actor: &IssueCoreWriteActor<'_>,
     request: &IssueCoreWriteRequest<'_>,
+    asset_storage: Option<&dyn IssueAssetStorage>,
 ) -> Result<(u16, Value)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
@@ -97,6 +200,7 @@ pub async fn apply_issue_core_write(
     let issue_id = request.issue_id;
     let input = request.input;
     let org = canonical_uuid(org_id)?;
+    let mut staged_asset_objects = Vec::new();
     if !matches!(actor_kind, "user" | "agent") || actor_id.trim().is_empty() {
         return Err(http(401, "Unauthorized"));
     }
@@ -117,20 +221,28 @@ pub async fn apply_issue_core_write(
                 return Err(http(403, "User does not have access to this organization"));
             }
         }
+        if matches!(operation, IssueCoreWriteOperation::Create | IssueCoreWriteOperation::Update) {
+            crate::issue_input_validation::validate_nested_fields(input)
+                .map_err(|message| http(422, message))?;
+        }
 
-        let (status, body) = match operation {
+        let (status, body, post_commit, deleted_asset_objects) = match operation {
             IssueCoreWriteOperation::Create => {
                 let value = create_issue(
                     &mut tx,
-                    &org,
-                    actor_kind,
-                    actor_id,
-                    actor_agent_id,
-                    run_id,
-                    input,
+                    IssueCreateContext {
+                        org: &org,
+                        actor_kind,
+                        actor_id,
+                        actor_agent_id,
+                        run_id,
+                        input,
+                        asset_storage,
+                        staged_asset_objects: &mut staged_asset_objects,
+                    },
                 )
                 .await?;
-                (201, value)
+                (201, value, None, Vec::new())
             }
             IssueCoreWriteOperation::Update => {
                 let id = required_issue_id(issue_id)?;
@@ -140,12 +252,13 @@ pub async fn apply_issue_core_write(
                     agent_id: actor_agent_id,
                     run_id,
                 };
-                let value = update_issue(&mut tx, &org, &mutation_actor, &id, input).await?;
-                (200, value)
+                let (value, post_commit) =
+                    update_issue(&mut tx, &org, &mutation_actor, &id, input).await?;
+                (200, value, post_commit, Vec::new())
             }
             IssueCoreWriteOperation::Delete => {
                 let id = required_issue_id(issue_id)?;
-                let value = delete_issue(
+                let (value, deleted_asset_objects) = delete_issue(
                     &mut tx,
                     &org,
                     actor_kind,
@@ -155,41 +268,78 @@ pub async fn apply_issue_core_write(
                     &id,
                 )
                 .await?;
-                (200, value)
+                (200, value, None, deleted_asset_objects)
             }
             IssueCoreWriteOperation::Reorder => {
                 if actor_kind != "user" {
                     return Err(http(403, "Board authentication required"));
                 }
                 let value = reorder_issue(&mut tx, &org, actor_id, input).await?;
-                (200, value)
+                (200, value, None, Vec::new())
             }
         };
-        Ok((status, body))
+        Ok((status, body, post_commit, deleted_asset_objects))
     }
     .await;
 
     match result {
-        Ok(value) => {
+        Ok((status, body, post_commit, deleted_asset_objects)) => {
+            // A lost COMMIT response does not prove a rollback. Keep the copied
+            // objects when the database outcome is unknown.
             tx.commit().await?;
-            Ok(value)
+            if let Some(post_commit) = post_commit {
+                post_commit.apply(pool).await?;
+            }
+            if let Some(storage) = asset_storage {
+                for object_key in deleted_asset_objects {
+                    if let Err(error) = storage.delete_object(&org, &object_key).await {
+                        tracing::warn!(%error, org_id = org, object_key, "failed to delete Issue asset object after Issue deletion");
+                    }
+                }
+            } else if !deleted_asset_objects.is_empty() {
+                tracing::warn!(
+                    org_id = org,
+                    issue_id,
+                    "Issue asset objects could not be deleted because storage is unavailable"
+                );
+            }
+            Ok((status, body))
         }
         Err(error) => {
-            tx.rollback().await?;
+            if let Err(rollback_error) = tx.rollback().await {
+                tracing::warn!(%rollback_error, org_id = org, "failed to roll back a public Issue mutation");
+            }
+            if let Some(storage) = asset_storage {
+                cleanup_staged_issue_asset_objects(storage, &org, &staged_asset_objects).await;
+            }
             Err(error)
         }
     }
 }
 
-async fn create_issue(
-    tx: &mut Tx<'_>,
-    org: &str,
-    actor_kind: &str,
-    actor_id: &str,
-    actor_agent_id: Option<&str>,
-    run_id: Option<&str>,
-    input: &Value,
-) -> Result<Value> {
+async fn cleanup_staged_issue_asset_objects(
+    storage: &dyn IssueAssetStorage,
+    org_id: &str,
+    object_keys: &[String],
+) {
+    for object_key in object_keys {
+        if let Err(error) = storage.delete_object(org_id, object_key).await {
+            tracing::warn!(%error, org_id, object_key, "failed to clean up a staged Issue asset object");
+        }
+    }
+}
+
+async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Result<Value> {
+    let IssueCreateContext {
+        org,
+        actor_kind,
+        actor_id,
+        actor_agent_id,
+        run_id,
+        input,
+        asset_storage,
+        staged_asset_objects,
+    } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
             (Some(agent_id), Some(run_id)) => {
@@ -518,17 +668,41 @@ async fn create_issue(
     let id = Uuid::new_v4().to_string();
     let created_by_user_id = (actor_kind == "user").then_some(actor_id);
     let created_by_agent_id = actor_agent_id;
+    let staged_description_assets = stage_issue_description_assets(
+        tx,
+        IssueDescriptionAssetStageInput {
+            org,
+            issue_id: &id,
+            description: description.as_deref(),
+            created_by_agent_id,
+            created_by_user_id,
+            storage: asset_storage,
+            staged_objects: staged_asset_objects,
+        },
+    )
+    .await?;
     let row = sqlx::query_scalar::<_, String>(
         "INSERT INTO issues (id,org_id,project_id,project_workspace_id,goal_id,parent_id,title,description,status,priority,board_order,assignee_agent_id,assignee_user_id,reviewer_agent_id,reviewer_user_id,created_by_agent_id,created_by_user_id,issue_number,identifier,request_depth,billing_code,assignee_agent_runtime_overrides,execution_workspace_id,execution_workspace_preference,execution_workspace_settings,origin_kind,origin_id,origin_run_id,started_at,completed_at,cancelled_at,execution_cancellation_at) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9,$10,$11,$12::uuid,$13,$14::uuid,$15,$16::uuid,$17,$18,$19,$20,$21,$22::jsonb,$23::uuid,$24,$25::jsonb,$26,$27,$28,CASE WHEN $9='in_progress' THEN clock_timestamp() ELSE NULL END,CASE WHEN $9='done' THEN clock_timestamp() ELSE NULL END,CASE WHEN $9='cancelled' THEN clock_timestamp() ELSE NULL END,CASE WHEN $9='cancelled' THEN clock_timestamp() ELSE NULL END) RETURNING to_jsonb(issues)::text",
     )
     .bind(&id).bind(org).bind(project_id).bind(project_workspace_id).bind(goal_id).bind(parent_id)
-    .bind(&title).bind(description).bind(status).bind(priority).bind(board_order)
+    .bind(&title).bind(staged_description_assets.description).bind(status).bind(priority).bind(board_order)
     .bind(assignee_agent_id).bind(assignee_user_id).bind(reviewer_agent_id).bind(reviewer_user_id)
     .bind(created_by_agent_id).bind(created_by_user_id).bind(issue_number).bind(&identifier)
     .bind(request_depth as i32).bind(billing_code).bind(runtime_overrides.map(|value| value.to_string()))
     .bind(execution_workspace_id).bind(execution_workspace_preference).bind(execution_workspace_settings.map(|value| value.to_string()))
     .bind(origin_kind).bind(origin_id).bind(origin_run_id)
     .fetch_one(&mut **tx).await?;
+    for (attachment_id, asset_id) in staged_description_assets.attachments {
+        sqlx::query(
+            "INSERT INTO issue_attachments (id,org_id,issue_id,asset_id,usage) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,'description_inline')",
+        )
+        .bind(attachment_id)
+        .bind(org)
+        .bind(&id)
+        .bind(asset_id)
+        .execute(&mut **tx)
+        .await?;
+    }
     if !label_ids.is_empty() {
         let mut query =
             QueryBuilder::<Postgres>::new("INSERT INTO issue_labels (org_id,issue_id,label_id) ");
@@ -549,11 +723,6 @@ async fn create_issue(
         crate::issue_checkout::IssueCheckoutError::Json(error) => IssueCoreWriteError::Json(error),
         crate::issue_checkout::IssueCheckoutError::Http(_, message, _) => http(422, &message),
     })?;
-    let created_actor = if actor_kind == "user" {
-        "human"
-    } else {
-        "agent"
-    };
     let audit = ActivityActor {
         actor_type: activity_actor_type(actor_kind),
         actor_id: actor_id.to_owned(),
@@ -576,12 +745,7 @@ async fn create_issue(
         },
     )
     .await?;
-    sqlx::query("INSERT INTO product_analytics_events (org_id,event_name,occurred_at,source_transition,confidence,actor_type,actor_id,entity_type,entity_id,work_surface,work_id,origin,dedupe_key,properties) VALUES ($1::uuid,'issue_created',clock_timestamp(),'issue.create','exact',$2,$3,'issue',$4::uuid,'issue',$4::uuid,$5,$6,$7::jsonb) ON CONFLICT (dedupe_key) DO NOTHING")
-        .bind(org).bind(created_actor).bind(actor_id).bind(&id)
-        .bind(if actor_kind == "user" { "human" } else { "system" })
-        .bind(format!("issue_created:{id}"))
-        .bind(json!({"origin":if actor_kind=="user" {"human"} else {"system"}}).to_string())
-        .execute(&mut **tx).await?;
+    crate::issue_lifecycle_analytics::record_issue_created(tx, org, &issue).await?;
     let mut wakeups = Vec::new();
     if let Some(agent_id) = issue["assigneeAgentId"].as_str()
         && is_assignment_wakeup_status(issue["status"].as_str())
@@ -623,13 +787,270 @@ async fn create_issue(
     Ok(issue)
 }
 
+async fn stage_issue_description_assets(
+    tx: &mut Tx<'_>,
+    input: IssueDescriptionAssetStageInput<'_>,
+) -> Result<StagedIssueDescriptionAssets> {
+    let IssueDescriptionAssetStageInput {
+        org,
+        issue_id,
+        description,
+        created_by_agent_id,
+        created_by_user_id,
+        storage,
+        staged_objects,
+    } = input;
+    let Some(description) = description else {
+        return Ok(StagedIssueDescriptionAssets {
+            description: None,
+            attachments: Vec::new(),
+        });
+    };
+    let asset_path_regex = Regex::new(r"/api/assets/([^/?#\s)]+)/content")
+        .expect("Issue description asset path expression is valid");
+    let mut source_asset_ids = Vec::new();
+    let mut unique_ids = HashSet::new();
+    for captures in asset_path_regex.captures_iter(description) {
+        let Some(raw_id) = captures.get(1).map(|value| value.as_str().trim()) else {
+            continue;
+        };
+        if is_uuid_like(raw_id) {
+            let id = raw_id.to_ascii_lowercase();
+            if unique_ids.insert(id.clone()) {
+                source_asset_ids.push(id);
+            }
+        }
+    }
+    if source_asset_ids.is_empty() {
+        return Ok(StagedIssueDescriptionAssets {
+            description: Some(description.to_owned()),
+            attachments: Vec::new(),
+        });
+    }
+    let storage = storage.ok_or_else(|| {
+        http(
+            422,
+            "Issue description image storage is unavailable; please retry the Issue creation",
+        )
+    })?;
+
+    let source_rows = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+        "SELECT id::text,provider,object_key,content_type,original_filename FROM assets WHERE org_id=$1::uuid AND id=ANY($2::uuid[])",
+    )
+    .bind(org)
+    .bind(&source_asset_ids)
+    .fetch_all(&mut **tx)
+    .await?;
+    let source_assets = source_rows
+        .into_iter()
+        .map(
+            |(id, provider, object_key, content_type, original_filename)| {
+                (
+                    id.to_ascii_lowercase(),
+                    (provider, object_key, content_type, original_filename),
+                )
+            },
+        )
+        .collect::<HashMap<_, _>>();
+
+    let mut replacements = HashMap::new();
+    let mut attachments = Vec::with_capacity(source_asset_ids.len());
+    for source_id in source_asset_ids {
+        let Some((_, object_key, source_content_type, original_filename)) =
+            source_assets.get(&source_id)
+        else {
+            return Err(http(
+                422,
+                "Issue description image asset is missing or outside the organization",
+            ));
+        };
+        if !object_key.starts_with(&format!("{org}/")) || object_key.contains("..") {
+            return Err(http(
+                422,
+                "Issue description image could not be saved; please retry the Issue creation",
+            ));
+        }
+        let object = storage.get_object(org, object_key).await.map_err(|_| {
+            http(
+                422,
+                "Issue description image could not be saved; please retry the Issue creation",
+            )
+        })?;
+        if object.body.is_empty() {
+            return Err(http(
+                422,
+                "Issue description image could not be saved; please retry the Issue creation",
+            ));
+        }
+        let content_type = if source_content_type.trim().is_empty() {
+            object
+                .content_type
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("application/octet-stream")
+        } else {
+            source_content_type
+        }
+        .trim()
+        .to_ascii_lowercase();
+        let copied_object_key =
+            issue_description_object_key(org, issue_id, original_filename.as_deref());
+        storage
+            .put_object(org, &copied_object_key, &content_type, &object.body)
+            .await
+            .map_err(|_| {
+                http(
+                    422,
+                    "Issue description image could not be saved; please retry the Issue creation",
+                )
+            })?;
+        staged_objects.push(copied_object_key.clone());
+
+        let byte_size = i32::try_from(object.body.len()).map_err(|_| {
+            http(
+                422,
+                "Issue description image could not be saved; please retry the Issue creation",
+            )
+        })?;
+        let sha256 = format!("{:x}", Sha256::digest(&object.body));
+        let copied_asset_id = sqlx::query_scalar::<_, String>(
+            "INSERT INTO assets (org_id,provider,object_key,content_type,byte_size,sha256,original_filename,created_by_agent_id,created_by_user_id) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::uuid,$9) RETURNING id::text",
+        )
+        .bind(org)
+        .bind(storage.provider())
+        .bind(&copied_object_key)
+        .bind(&content_type)
+        .bind(byte_size)
+        .bind(sha256)
+        .bind(original_filename)
+        .bind(created_by_agent_id)
+        .bind(created_by_user_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let attachment_id = Uuid::new_v4().to_string();
+        replacements.insert(
+            source_id,
+            format!("/api/attachments/{attachment_id}/content"),
+        );
+        attachments.push((attachment_id, copied_asset_id));
+    }
+
+    let rewritten =
+        asset_path_regex.replace_all(description, |captures: &regex_lite::Captures<'_>| {
+            let Some(asset_id) = captures
+                .get(1)
+                .map(|value| value.as_str().to_ascii_lowercase())
+            else {
+                return captures
+                    .get(0)
+                    .map(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+            };
+            replacements.get(&asset_id).cloned().unwrap_or_else(|| {
+                captures
+                    .get(0)
+                    .map(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        });
+    Ok(StagedIssueDescriptionAssets {
+        description: Some(rewritten.into_owned()),
+        attachments,
+    })
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && [8, 13, 18, 23].iter().all(|index| bytes[*index] == b'-')
+        && matches!(bytes[14], b'1'..=b'5')
+        && matches!(bytes[19].to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| [8, 13, 18, 23].contains(&index) || byte.is_ascii_hexdigit())
+}
+
+fn issue_description_object_key(
+    org: &str,
+    issue_id: &str,
+    original_filename: Option<&str>,
+) -> String {
+    let namespace = format!("issues/{issue_id}/description");
+    let now = OffsetDateTime::now_utc();
+    let date = format!(
+        "{:04}/{:02}/{:02}",
+        now.year(),
+        now.month() as u8,
+        now.day()
+    );
+    let (stem, extension) = split_storage_filename(original_filename);
+    format!(
+        "{org}/{namespace}/{date}/{}-{stem}{extension}",
+        Uuid::new_v4()
+    )
+}
+
+fn split_storage_filename(filename: Option<&str>) -> (String, String) {
+    let Some(filename) = filename else {
+        return ("file".to_owned(), String::new());
+    };
+    let base = Path::new(filename)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .trim();
+    if base.is_empty() {
+        return ("file".to_owned(), String::new());
+    }
+    let extension = Path::new(base)
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || *character == '.'
+        })
+        .take(16)
+        .collect::<String>();
+    let stem_source = if extension.is_empty() {
+        base
+    } else {
+        base.strip_suffix(&format!(
+            ".{}",
+            Path::new(base).extension().unwrap().to_string_lossy()
+        ))
+        .unwrap_or(base)
+    };
+    (sanitize_storage_segment(stem_source), extension)
+}
+
+fn sanitize_storage_segment(value: &str) -> String {
+    let mut cleaned = String::new();
+    for character in value.trim().chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            cleaned.push(character);
+        } else if !cleaned.ends_with('_') {
+            cleaned.push('_');
+        }
+    }
+    let cleaned = cleaned.trim_matches('_');
+    if cleaned.is_empty() {
+        return "file".to_owned();
+    }
+    cleaned.chars().take(120).collect()
+}
+
 async fn update_issue(
     tx: &mut Tx<'_>,
     org: &str,
     actor: &IssueMutationActor<'_>,
     id: &str,
     input: &Value,
-) -> Result<Value> {
+) -> Result<(Value, Option<IssueUpdatePostCommit>)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
     let actor_agent_id = actor.agent_id;
@@ -1033,7 +1454,7 @@ async fn update_issue(
             let mut response = current_issue.clone();
             response["comment"] = Value::Null;
             response["blockAudit"] = audit;
-            return Ok(response);
+            return Ok((response, None));
         }
         if audit["blocked"] != true {
             next_status = Some(current_status.to_owned());
@@ -1279,6 +1700,14 @@ async fn update_issue(
         .await
         .map_err(project_error)?;
     crate::automation_issue_finalization::sync_issue_status(tx, org, &issue).await?;
+    crate::issue_lifecycle_analytics::record_issue_update_work_started(
+        tx,
+        org,
+        actor_kind,
+        &current_issue,
+        &issue,
+    )
+    .await?;
     if supersede_assistance {
         supersede_open_assistance(
             tx,
@@ -1394,7 +1823,7 @@ async fn update_issue(
         )
         .await?;
     }
-    if let Some(decision) = review_decision {
+    let review_activity_id = if let Some(decision) = review_decision {
         let review_details = json!({
             "decision": decision,
             "outcome": "review_closed",
@@ -1402,24 +1831,28 @@ async fn update_issue(
             "identifier": issue["identifier"],
             "commentId": comment.as_ref().map(|value| value["id"].clone()).unwrap_or(Value::Null),
         });
-        write_activity_options(
-            tx,
-            ActivityWrite {
-                org,
-                audit: &audit,
-                action: "issue.review_decision_recorded",
-                entity_type: "issue",
-                entity_id: id,
-                details: Some(&review_details),
-                options: ActivityOptions {
-                    agent_id: actor_agent_id,
-                    effects: None,
-                    bind_run: true,
+        Some(
+            write_activity_options(
+                tx,
+                ActivityWrite {
+                    org,
+                    audit: &audit,
+                    action: "issue.review_decision_recorded",
+                    entity_type: "issue",
+                    entity_id: id,
+                    details: Some(&review_details),
+                    options: ActivityOptions {
+                        agent_id: actor_agent_id,
+                        effects: None,
+                        bind_run: true,
+                    },
                 },
-            },
+            )
+            .await?,
         )
-        .await?;
-    }
+    } else {
+        None
+    };
     let mut wakeups = Vec::new();
     if let Some(agent_id) = issue["assigneeAgentId"].as_str() {
         if assignment_changed && is_assignment_wakeup_status(issue["status"].as_str()) {
@@ -1500,7 +1933,24 @@ async fn update_issue(
     if let Some(block_audit) = block_audit {
         response["blockAudit"] = block_audit;
     }
-    Ok(response)
+    let post_commit = Some(IssueUpdatePostCommit {
+        org_id: org.to_owned(),
+        issue_id: id.to_owned(),
+        actor_kind: actor_kind.to_owned(),
+        actor_id: actor_id.to_owned(),
+        actor_run_id: run_id.map(ToOwned::to_owned),
+        status: response["status"].as_str().unwrap_or("backlog").to_owned(),
+        created_by_user_id: response["createdByUserId"].as_str().map(ToOwned::to_owned),
+        has_reviewer: response["reviewerAgentId"].as_str().is_some()
+            || response["reviewerUserId"].as_str().is_some(),
+        review_decision: review_decision.map(ToOwned::to_owned),
+        review_activity_id,
+        comment_created_at: response["comment"]["createdAt"]
+            .as_str()
+            .map(ToOwned::to_owned),
+        reopened,
+    });
+    Ok((response, post_commit))
 }
 
 fn is_assignee_agent_block_claim(
@@ -2319,11 +2769,18 @@ async fn delete_issue(
     actor_agent_id: Option<&str>,
     run_id: Option<&str>,
     id: &str,
-) -> Result<Value> {
+) -> Result<(Value, Vec<String>)> {
     let raw=sqlx::query_scalar::<_,String>("SELECT to_jsonb(i)::text FROM issues i WHERE i.org_id=$1::uuid AND i.id=$2::uuid FOR UPDATE").bind(org).bind(id).fetch_optional(&mut **tx).await?.ok_or_else(||http(404,"Issue not found"))?;
     let issue = project_issue(tx, &raw).await.map_err(project_error)?;
     let asset_ids = sqlx::query_scalar::<_, String>(
         "SELECT asset_id::text FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(org)
+    .bind(id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let asset_object_keys = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT assets.object_key FROM issue_attachments JOIN assets ON assets.org_id=issue_attachments.org_id AND assets.id=issue_attachments.asset_id WHERE issue_attachments.org_id=$1::uuid AND issue_attachments.issue_id=$2::uuid",
     )
     .bind(org)
     .bind(id)
@@ -2351,6 +2808,7 @@ async fn delete_issue(
         .bind(id)
         .execute(&mut **tx)
         .await?;
+    crate::issue_messenger_cleanup::remove_issue_group_entries(tx, org, id).await?;
     if !asset_ids.is_empty() {
         sqlx::query("DELETE FROM assets WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
             .bind(org)
@@ -2386,7 +2844,7 @@ async fn delete_issue(
         },
     )
     .await?;
-    Ok(issue)
+    Ok((issue, asset_object_keys))
 }
 
 async fn reorder_issue(tx: &mut Tx<'_>, org: &str, actor_id: &str, input: &Value) -> Result<Value> {

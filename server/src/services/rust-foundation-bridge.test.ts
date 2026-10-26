@@ -569,6 +569,10 @@ describe("rust foundation bridge lifecycle", () => {
         secureCookie: true,
         assertionKey: "0123456789abcdef0123456789abcdef",
       },
+      issueAssetStorage: {
+        provider: "local_disk" as const,
+        localDiskBaseDir: "/tmp/rudder-issue-assets",
+      },
     };
     const bridge = createBridge(fixture, { mode: "off", publicIngress });
     expect(bridge.requiresStartup).toBe(true);
@@ -585,6 +589,7 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_NATIVE_SESSION_AUTH_SECRET: publicIngress.sessionAuth.secret,
       RUDDER_NATIVE_SESSION_COOKIE_SECURE: "true",
       RUDDER_NATIVE_SESSION_ASSERTION_KEY: publicIngress.sessionAuth.assertionKey,
+      RUDDER_NATIVE_ISSUE_ASSET_STORAGE_CONFIG: JSON.stringify(publicIngress.issueAssetStorage),
     });
     await bridge.close();
     expect(bridge.publicIngressBaseUrl).toBeNull();

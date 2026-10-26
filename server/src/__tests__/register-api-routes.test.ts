@@ -89,8 +89,6 @@ describe("registerApiRoutes", () => {
     expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: true });
     expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({
       nativeApprovalReads: true,
-      nativeIssueCheckout: true,
-      nativeIssueCore: true,
     });
 
     registerApiRoutes({} as never, baseOptions as never);
@@ -105,8 +103,6 @@ describe("registerApiRoutes", () => {
     expect(mocks.approvalRoutes.mock.calls.at(-1)?.[2]).toEqual({ nativeApprovalReads: false });
     expect(mocks.issueRoutes.mock.calls.at(-1)?.[3]).toEqual({
       nativeApprovalReads: false,
-      nativeIssueCheckout: false,
-      nativeIssueCore: false,
     });
   });
 

@@ -843,7 +843,7 @@ async fn proxy_request(
         || cli_auth::reserved_path(request.uri().path())
         || organization_resources::reserved_path(request.uri().path())
         || project_writes::is_reserved_path(request.uri().path())
-        || issue_core::is_reserved_namespace(request.uri().path())
+        || issue_core::is_reserved_namespace(request.uri().path(), request.method())
         || goal_writes::is_reserved_path(request.uri().path(), request.method())
         || native_chat::capability_path(request.uri().path())
         || native_chat::runtime_check_path(request.uri().path())

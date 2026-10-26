@@ -111,8 +111,6 @@ export function registerApiRoutes(
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService, rustFoundationBridge, {
     nativeApprovalReads: Boolean(opts.rustPublicIngress),
-    nativeIssueCheckout: Boolean(opts.rustPublicIngress),
-    nativeIssueCore: Boolean(opts.rustPublicIngress),
   }));
   api.use(messengerRoutes(db, rustFoundationBridge));
   api.use(chatRoutes(

@@ -42,6 +42,7 @@ import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-works
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
 import {
   nativeIdentityAuthEnvironment,
+  nativeIssueAssetStorageEnvironment,
   nativeLocalAccountLifecycleEnvironment,
   nativeSessionAuthEnvironment,
   type RustPublicIngressOptions,
@@ -399,6 +400,7 @@ function createFoundationChildEnvironment(input: {
         ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }
         : {}),
       ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
+      ...nativeIssueAssetStorageEnvironment(input.publicIngress.issueAssetStorage),
       ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
       ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
       ...(input.publicIngress.nativeChatHost

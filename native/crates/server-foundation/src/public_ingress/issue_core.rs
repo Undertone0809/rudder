@@ -9,8 +9,8 @@ use rudder_d1_persistence::{
     issue_checkout::{IssueCheckoutError, IssueCheckoutRequest, execute_with_native_auth},
     issue_core_reads::{IssueCoreReadError, read_issue_core_with_native_auth},
     issue_core_writes::{
-        IssueCoreWriteActor, IssueCoreWriteError, IssueCoreWriteOperation, IssueCoreWriteRequest,
-        apply_issue_core_write,
+        IssueAssetStorage, IssueCoreWriteActor, IssueCoreWriteError, IssueCoreWriteOperation,
+        IssueCoreWriteRequest, apply_issue_core_write,
     },
     issue_metadata_reads::{
         IssueMetadataReadError, IssueMetadataReadInput, IssueMetadataReadOperation,
@@ -73,17 +73,27 @@ pub(super) fn is_reserved_path(path: &str, method: &Method) -> bool {
     endpoint_for_path(path, method).is_some()
 }
 
-pub(super) fn is_reserved_namespace(path: &str) -> bool {
-    endpoint_path_shape(path)
+pub(super) fn is_reserved_namespace(path: &str, method: &Method) -> bool {
+    endpoint_path_shape(path, method)
 }
 
-fn endpoint_path_shape(path: &str) -> bool {
+fn endpoint_path_shape(path: &str, method: &Method) -> bool {
     let Some(path) = path.strip_prefix('/') else {
         return false;
     };
     let path = path.strip_suffix('/').unwrap_or(path);
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.iter().any(|part| part.is_empty()) {
+        return false;
+    }
+    // Work-product creation remains a Node-owned operation. Its GET/HEAD
+    // metadata routes are dispatched above, and other methods stay reserved.
+    if *method == Method::POST
+        && matches!(parts.as_slice(), [api, issues, _id, leaf]
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && leaf.eq_ignore_ascii_case("work-products"))
+    {
         return false;
     }
     matches!(parts.as_slice(), [api, orgs, _org_id, issues]
@@ -530,7 +540,12 @@ async fn execute_issue_write(
         issue_id: resolved_issue_id.as_deref(),
         input: &input,
     };
-    match apply_issue_core_write(pool, &write_actor, &write_request).await {
+    let asset_storage: Option<&dyn IssueAssetStorage> = state
+        .config
+        .issue_asset_storage
+        .as_deref()
+        .map(|storage| storage as &dyn IssueAssetStorage);
+    match apply_issue_core_write(pool, &write_actor, &write_request, asset_storage).await {
         Ok((status, value)) => HttpResponse::build(
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         )
@@ -1070,8 +1085,34 @@ mod tests {
         ] {
             assert!(is_reserved_path(path, &method), "{method} {path}");
         }
-        assert!(!is_reserved_namespace("/api/issues/abc/comments"));
-        assert!(!is_reserved_namespace("/api/issues/abc/documents/key"));
+        assert!(!is_reserved_namespace(
+            "/api/issues/abc/comments",
+            &Method::GET
+        ));
+        assert!(!is_reserved_namespace(
+            "/api/issues/abc/documents/key",
+            &Method::GET
+        ));
+        assert!(is_reserved_namespace(
+            "/api/issues/abc/work-products",
+            &Method::GET
+        ));
+        assert!(is_reserved_namespace(
+            "/api/issues/abc/work-products/",
+            &Method::HEAD
+        ));
+        assert!(!is_reserved_path(
+            "/api/issues/abc/work-products",
+            &Method::POST
+        ));
+        assert!(!is_reserved_namespace(
+            "/api/issues/abc/work-products",
+            &Method::POST
+        ));
+        assert!(is_reserved_namespace(
+            "/api/issues/abc/work-products",
+            &Method::DELETE
+        ));
     }
 
     #[test]
@@ -1086,8 +1127,11 @@ mod tests {
         ] {
             assert!(is_reserved_path(path, &method), "{method} {path}");
         }
-        assert!(is_reserved_namespace("/api/orgs/org-1/issues"));
-        assert!(is_reserved_namespace("/api/issues/issue-1"));
+        assert!(is_reserved_namespace(
+            "/api/orgs/org-1/issues",
+            &Method::GET
+        ));
+        assert!(is_reserved_namespace("/api/issues/issue-1", &Method::GET));
         assert!(!is_reserved_path(
             "/api/issues/issue-1/comments",
             &Method::GET

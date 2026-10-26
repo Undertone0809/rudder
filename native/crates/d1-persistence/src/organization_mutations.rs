@@ -1172,81 +1172,42 @@ async fn write_organization_created_analytics(
             .bind(org)
             .fetch_one(&mut **tx)
             .await?;
-    let row = sqlx::query("SELECT installation_id, mode, state FROM product_analytics_installations ORDER BY created_at ASC LIMIT 1")
-        .fetch_optional(&mut **tx).await?;
-    let (installation_id, mode, installation_state) = match row {
-        Some(row) => (
-            Some(row.try_get::<String, _>("installation_id")?),
-            Some(row.try_get::<String, _>("mode")?),
-            Some(row.try_get::<Value, _>("state")?),
-        ),
-        None => (None, None, None),
-    };
-    let environment = if std::env::var("NODE_ENV").is_ok_and(|value| value == "production") {
-        "production"
-    } else {
-        "development"
-    };
-    let event_id = sqlx::query_scalar::<_, String>(
-        "INSERT INTO product_analytics_events
-           (org_id,installation_id,event_name,occurred_at,source_transition,confidence,actor_type,
-            actor_id,local_user_id,environment,app_version,release_channel,deployment_mode,origin,
-            work_surface,work_id,work_cycle_id,root_run_id,run_id,completion_revision,entity_type,entity_id,
-            dedupe_key,properties)
-         VALUES ($1::uuid,$2,'organization_created',
-            (SELECT created_at FROM organizations WHERE id=$1::uuid),
-            'organization.create','exact','system',
-            NULL,NULL,$3,'unknown','stable','self_hosted','system',
-            NULL,$1,NULL,NULL,NULL,NULL,'organization',$1,
-            'organization_created:'||$1,
-            jsonb_build_object('creation_path','manual','template_kind','custom',
-              'is_first_organization',NOT $4,'is_user_initiated',true))
-         ON CONFLICT (dedupe_key) DO NOTHING RETURNING id::text",
-    ).bind(org).bind(&installation_id).bind(environment).bind(prior).fetch_optional(&mut **tx).await?;
-    let (Some(event_id), Some(installation_id), Some(mode)) = (event_id, installation_id, mode)
-    else {
-        return Ok(());
-    };
-    if environment != "production" || mode == "off" {
-        return Ok(());
-    }
-    let backlog = sqlx::query(
-        "SELECT count(*)::bigint AS count,
-                COALESCE(sum(length(events.properties::text)), 0)::bigint AS bytes
-         FROM product_analytics_outbox outbox
-         JOIN product_analytics_events events ON events.id=outbox.event_id
-         WHERE outbox.installation_id=$1
-           AND outbox.state IN ('pending','claimed','retry_wait')",
+    let created_at: String =
+        sqlx::query_scalar("SELECT created_at::text FROM organizations WHERE id=$1::uuid")
+            .bind(org)
+            .fetch_one(&mut **tx)
+            .await?;
+    let properties = json!({
+        "creation_path":"manual",
+        "template_kind":"custom",
+        "is_first_organization":!prior,
+        "is_user_initiated":true,
+    });
+    let dedupe_key = format!("organization_created:{org}");
+    crate::product_analytics::write_product_analytics_event(
+        tx,
+        crate::product_analytics::ProductAnalyticsEvent {
+            org_id: Some(org),
+            event_name: "organization_created",
+            occurred_at: Some(&created_at),
+            source_transition: "organization.create",
+            confidence: "exact",
+            actor_type: "system",
+            actor_id: None,
+            entity_type: Some("organization"),
+            entity_id: Some(org),
+            work_surface: None,
+            work_id: Some(org),
+            work_cycle_id: None,
+            root_run_id: None,
+            run_id: None,
+            completion_revision: None,
+            origin: "system",
+            dedupe_key: &dedupe_key,
+            properties: &properties,
+        },
     )
-    .bind(&installation_id)
-    .fetch_one(&mut **tx)
     .await?;
-    let backlog_count: i64 = backlog.try_get("count")?;
-    let backlog_bytes: i64 = backlog.try_get("bytes")?;
-    if backlog_count >= 10_000 || backlog_bytes >= 32 * 1024 * 1024 {
-        let mut state = installation_state.unwrap_or_else(|| json!({}));
-        if !state.is_object() {
-            state = json!({});
-        }
-        state["coverageGap"] = json!(true);
-        sqlx::query("UPDATE product_analytics_installations SET state=$2::jsonb, updated_at=now() WHERE installation_id=$1")
-            .bind(&installation_id).bind(state).execute(&mut **tx).await?;
-        return Ok(());
-    }
-    let scope = if mode == "account_linked" {
-        "account_linked_user"
-    } else {
-        "anonymous_installation"
-    };
-    let consent = sqlx::query("SELECT policy_version, consent_epoch FROM product_analytics_consent_ledger WHERE installation_id=$1 AND scope=$2 AND decision='granted' AND local_user_id IS NULL ORDER BY consent_epoch DESC LIMIT 1")
-        .bind(&installation_id).bind(scope).fetch_optional(&mut **tx).await?;
-    if let Some(consent) = consent {
-        sqlx::query("INSERT INTO product_analytics_outbox (event_id,installation_id,delivery_mode,consent_scope,consented_local_user_id,consent_version,consent_epoch) VALUES ($1::uuid,$2,$3,$4,NULL,$5,$6) ON CONFLICT DO NOTHING")
-            .bind(event_id).bind(installation_id).bind(mode).bind(scope)
-            .bind(consent.try_get::<String,_>("policy_version")?)
-            .bind(consent.try_get::<i32,_>("consent_epoch")?)
-            .execute(&mut **tx).await?;
-    }
     Ok(())
 }
 

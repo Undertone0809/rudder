@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
 
@@ -72,6 +73,19 @@ export type RustNativeChatHost = Readonly<{
   trustedOrigins: readonly string[];
 }>;
 
+export type RustIssueAssetStorage =
+  | {
+      provider: "local_disk";
+      localDiskBaseDir: string;
+    }
+  | {
+      provider: "s3";
+      bucket: string;
+      region: string;
+      endpoint?: string;
+      prefix: string;
+      forcePathStyle: boolean;
+    };
 
 /** Resolve optional provider installation facts from trusted process configuration. */
 export function resolveNativeChatProviderHostFields(): Readonly<Record<string, string>> {
@@ -118,7 +132,61 @@ export type RustPublicIngressOptions = {
   localAccountLifecycle?: RustLocalAccountLifecycleOptions;
   /** Native public identity authority for sessions, API keys, Agent JWTs and local implicit. */
   identityAuth?: RustNativeIdentityAuthOptions;
+  /** Object I/O configuration for Rust-owned Issue description attachment writes. */
+  issueAssetStorage?: RustIssueAssetStorage;
 };
+
+const AWS_ISSUE_STORAGE_ENVIRONMENT_KEYS = [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_PROFILE",
+  "AWS_DEFAULT_PROFILE",
+  "AWS_SDK_LOAD_CONFIG",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_REGION",
+  "AWS_DEFAULT_REGION",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AWS_ROLE_ARN",
+  "AWS_ROLE_SESSION_NAME",
+  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+  "AWS_EC2_METADATA_DISABLED",
+  "AWS_EC2_METADATA_V1_DISABLED",
+  "AWS_EC2_METADATA_SERVICE_ENDPOINT",
+  "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
+  "AWS_ENDPOINT_URL",
+  "AWS_ENDPOINT_URL_S3",
+  "AWS_CA_BUNDLE",
+  "AWS_RETRY_MODE",
+  "AWS_MAX_ATTEMPTS",
+  "PATH",
+] as const;
+
+export function nativeIssueAssetStorageEnvironment(
+  storage?: RustIssueAssetStorage,
+): Record<string, string> {
+  if (!storage) return {};
+  const environment: Record<string, string> = {
+    RUDDER_NATIVE_ISSUE_ASSET_STORAGE_CONFIG: JSON.stringify(storage),
+  };
+  if (storage.provider !== "s3") return environment;
+
+  // Forward only the AWS SDK's configured credential/profile settings when S3
+  // is selected. Keep credentials out of the JSON config payload and logs.
+  environment.HOME = process.env.HOME?.trim() || homedir();
+  if (process.platform === "win32") {
+    environment.USERPROFILE = process.env.USERPROFILE?.trim() || homedir();
+  }
+  for (const key of AWS_ISSUE_STORAGE_ENVIRONMENT_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined && value !== "") environment[key] = value;
+  }
+  return environment;
+}
 
 export function nativeSessionAuthEnvironment(
   sessionAuth?: RustNativeSessionAuthOptions,

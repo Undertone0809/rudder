@@ -80,7 +80,9 @@ pub async fn resolve_for_run(
     let persisted: Option<String> = sqlx::query_scalar(
         "SELECT id::text FROM agent_issue_creation_requests
          WHERE org_id=$1::uuid AND agent_id=$2::uuid AND run_id=$3::uuid
-           AND status IN ('queued','running','deferred') LIMIT 1 FOR UPDATE",
+           AND (status IN ('queued','running','deferred')
+             OR (status='succeeded' AND created_issue_id IS NOT NULL))
+         LIMIT 1 FOR UPDATE",
     )
     .bind(org_id)
     .bind(agent_id)

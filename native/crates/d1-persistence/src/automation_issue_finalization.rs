@@ -452,110 +452,35 @@ async fn write_product_analytics_chat_created(
     conversation_id: &str,
     occurred_at: &str,
 ) -> Result<(), StoreError> {
-    let installation = sqlx::query(
-        "SELECT installation_id,mode,state FROM product_analytics_installations
-         ORDER BY created_at ASC LIMIT 1",
+    let properties = json!({
+        "creation_path": "automation",
+        "initial_role": "user",
+        "plan_mode": false,
+    });
+    let dedupe_key = format!("chat_created:{conversation_id}");
+    crate::product_analytics::write_product_analytics_event(
+        tx,
+        crate::product_analytics::ProductAnalyticsEvent {
+            org_id: Some(org_id),
+            event_name: "chat_created",
+            occurred_at: Some(occurred_at),
+            source_transition: "chat.automation.create",
+            confidence: "exact",
+            actor_type: "automation",
+            actor_id: Some("automation-chat-output"),
+            entity_type: Some("chat"),
+            entity_id: Some(conversation_id),
+            work_surface: Some("chat"),
+            work_id: Some(conversation_id),
+            work_cycle_id: None,
+            root_run_id: None,
+            run_id: None,
+            completion_revision: None,
+            origin: "automation",
+            dedupe_key: &dedupe_key,
+            properties: &properties,
+        },
     )
-    .fetch_optional(&mut **tx)
     .await?;
-    let installation = installation
-        .map(|row| {
-            Ok::<_, sqlx::Error>((
-                row.try_get::<String, _>("installation_id")?,
-                row.try_get::<String, _>("mode")?,
-                row.try_get::<Value, _>("state")?,
-            ))
-        })
-        .transpose()?;
-    let installation_id = installation.as_ref().map(|(id, _, _)| id.as_str());
-    let environment = if std::env::var("NODE_ENV").is_ok_and(|value| value == "production") {
-        "production"
-    } else {
-        "development"
-    };
-    let event_id = sqlx::query_scalar::<_, String>(
-        "INSERT INTO product_analytics_events
-           (org_id,installation_id,event_name,occurred_at,source_transition,confidence,
-            actor_type,actor_id,local_user_id,environment,app_version,release_channel,
-            deployment_mode,origin,work_surface,work_id,entity_type,entity_id,dedupe_key,properties)
-         VALUES ($1::uuid,$2,'chat_created',$3::timestamptz,'chat.automation.create','exact',
-            'automation','automation-chat-output',NULL,$4,'unknown','stable','self_hosted',
-            'automation','chat',$5,'chat',$5,'chat_created:'||$5,
-            jsonb_build_object('creation_path','automation','initial_role','user','plan_mode',false))
-         ON CONFLICT (dedupe_key) DO NOTHING RETURNING id::text",
-    )
-    .bind(org_id)
-    .bind(installation_id)
-    .bind(occurred_at)
-    .bind(environment)
-    .bind(conversation_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    let (Some(event_id), Some((installation_id, mode, state))) = (event_id, installation) else {
-        return Ok(());
-    };
-    if environment != "production" || mode == "off" {
-        return Ok(());
-    }
-
-    let backlog = sqlx::query(
-        "SELECT count(*)::bigint AS count,
-                COALESCE(sum(length(events.properties::text)),0)::bigint AS bytes
-         FROM product_analytics_outbox outbox
-         JOIN product_analytics_events events ON events.id=outbox.event_id
-         WHERE outbox.installation_id=$1
-           AND outbox.state IN ('pending','claimed','retry_wait')",
-    )
-    .bind(&installation_id)
-    .fetch_one(&mut **tx)
-    .await?;
-    let backlog_count: i64 = backlog.try_get("count")?;
-    let backlog_bytes: i64 = backlog.try_get("bytes")?;
-    if backlog_count >= 10_000 || backlog_bytes >= 32 * 1024 * 1024 {
-        let mut state = state;
-        if !state.is_object() {
-            state = json!({});
-        }
-        state["coverageGap"] = json!(true);
-        sqlx::query(
-            "UPDATE product_analytics_installations SET state=$2::jsonb,updated_at=now()
-             WHERE installation_id=$1",
-        )
-        .bind(&installation_id)
-        .bind(state)
-        .execute(&mut **tx)
-        .await?;
-        return Ok(());
-    }
-    let scope = if mode == "account_linked" {
-        "account_linked_user"
-    } else {
-        "anonymous_installation"
-    };
-    let consent = sqlx::query(
-        "SELECT policy_version,consent_epoch FROM product_analytics_consent_ledger
-         WHERE installation_id=$1 AND scope=$2 AND decision='granted' AND local_user_id IS NULL
-         ORDER BY consent_epoch DESC LIMIT 1",
-    )
-    .bind(&installation_id)
-    .bind(scope)
-    .fetch_optional(&mut **tx)
-    .await?;
-    if let Some(consent) = consent {
-        sqlx::query(
-            "INSERT INTO product_analytics_outbox
-               (event_id,installation_id,delivery_mode,consent_scope,consented_local_user_id,
-                consent_version,consent_epoch)
-             VALUES ($1::uuid,$2,$3,$4,NULL,$5,$6) ON CONFLICT DO NOTHING",
-        )
-        .bind(event_id)
-        .bind(installation_id)
-        .bind(mode)
-        .bind(scope)
-        .bind(consent.try_get::<String, _>("policy_version")?)
-        .bind(consent.try_get::<i32, _>("consent_epoch")?)
-        .execute(&mut **tx)
-        .await?;
-    }
     Ok(())
 }

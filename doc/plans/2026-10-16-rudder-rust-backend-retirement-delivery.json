@@ -258,11 +258,11 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-25T23:53:41+00:00",
-    "observed_main": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
-    "branch": "codex/rust-organization-core-writes-20261026",
-    "status": "organization_core_writes_author_validation_pass; independent final stage review, independent PAV, and protected PR CI pending",
-    "scope": "The current G slice adds Rust-owned organization write routes when native public ingress is selected; ingress-off/default development and standalone modes keep the Node compatibility handlers. The inherited Rust organization-read and Agent/MCP/Create slices remain separately scoped. Overall first-party backend retirement is incomplete.",
+    "updated_at": "2026-10-26T02:38:49.543476+00:00",
+    "observed_main": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
+    "branch": "codex/rust-issue-core-20261026",
+    "status": "issue_core_author_validation_in_progress; no E publication or independent acceptance claimed",
+    "scope": "Issue list/detail/create/update/delete/reorder and self/Board checkout at selected native ingress, including actual validation, audit, wake/cancel requests, creation-request/automation finalization, description-image copy and lifecycle analytics. Legacy execution workers, attachment content reads, sidecar APIs and ingress-off/default cutover remain explicit debt.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -304,10 +304,34 @@
         "head_sha": "923e412c4edc475cee0eb9e792f73b4e018266b0",
         "merge_sha": "23d0524d098dc0bb6f2f220d64a552f67c062c97",
         "merged_at": "2026-10-25T23:35:29Z",
-        "scope": "Windows PostgreSQL owned-process port-closure timeout correction; source-only delivery, not organization-write or global-backend completion",
+        "scope": "Remaining Agent Create cohorts and the 83 core MCP transport tools moved to Rust, plus the Windows PostgreSQL owned-process port-closure timeout correction. Underlying API ownership, Browser/CLI-only MCP tools, default global CLI cutover and global Node retirement remain separately tracked.",
         "ci": "21 required checks succeeded; 1 expected skip",
         "final_review": "/private/tmp/c384-final-review-20261026/final-handoff-review.md",
         "packaged_verification": "/private/tmp/c384v-7ty1t579/desktop-qualification-resumed-r2.json; resumed stages passed on unchanged artifact; original command exit 1 retained",
+        "production_or_installed_release": false
+      },
+      {
+        "pr": 385,
+        "state": "merged_protected_pr",
+        "head_sha": "62a1c196684a9e346891420bb107c97c74446977",
+        "merge_sha": "1e0b8abea776b399a278bfd07ea8729077966419",
+        "scope": "Selected public organization list/detail GET/HEAD routes with native authentication and anonymous 401 compatibility; static route forwarding remains debt.",
+        "ci": "21 checks succeeded; 1 expected skip on exact reviewed head",
+        "independent_acceptance": "PASS",
+        "final_review": "/private/tmp/c384-final-review-20261026/d385-final-merge-r3.md",
+        "evidence": "/private/tmp/rudder-rust-migration-authority-20261025/organization-reads-20261026/fix401-r1/pr385-merge-delivery-r1.json",
+        "production_or_installed_release": false
+      },
+      {
+        "pr": 386,
+        "state": "merged_protected_pr",
+        "head_sha": "520163a24af36baaddd01288d901019a9ee775c8",
+        "merge_sha": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
+        "scope": "Selected public organization create/PATCH/branding/archive/delete writes, including ordinary populated-delete FK cleanup. Ingress-off Node handlers and default-mode cutover remain debt.",
+        "ci": "21 checks succeeded; 1 expected skip on exact reviewed head",
+        "independent_acceptance": "PASS",
+        "final_review": "/private/tmp/rudder-org-write-20261026/combined-final-r1/p1-delete-fix-r1/final-merge-review-r1.md",
+        "evidence": "/private/tmp/rudder-org-write-20261026/combined-final-r1/p1-delete-fix-r1/pr386-merge-delivery-r1.json",
         "production_or_installed_release": false
       }
     ],
@@ -727,24 +751,43 @@
       "installed_app_replaced": false
     },
     "current_slice_author_validation": {
-      "name": "Organization core writes",
-      "state": "author_validation_pass; local source checkpoint created; independent overall stage review, PAV, protected PR/CI and production delivery pending",
-      "repository": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
-      "branch": "codex/rust-organization-core-writes-20261026",
-      "base_commit": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
-      "source_parent_commit": "77f6879c4e8d7d4abb74bd1847928f934f9fe97d",
-      "source_parent_tree": "753c47405e4651fee5fc6b492543bae53fce7af1",
-      "local_checkpoint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
-      "rust_ingress_selected": "Rust owns POST /api/orgs, PATCH /api/orgs/:orgId, PATCH /api/orgs/:orgId/branding, POST /api/orgs/:orgId/archive, and DELETE /api/orgs/:orgId; selected Rust errors do not fall back to Node.",
-      "ingress_off": "The five existing Node handlers remain registered for default development/standalone compatibility; removing that mode and handlers remains migration debt.",
-      "author_checks": "Exact compile/workflow and current typecheck, route-gate, inventory/trusted-base, import-lint evidence is recorded in author-validation-r7.json.",
-      "not_claimed": [
-        "full organization API retirement",
-        "global Rust-backend completion",
-        "independent PAV",
-        "protected CI",
-        "production release or installed-artifact acceptance"
-      ]
+      "name": "Issue core",
+      "state": "expanded_author_validation_pass; final Node metadata binding, independent stage/PAV/final and protected PR CI pending",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-pr292-rebase-20261016/rudder-oss",
+      "branch": "codex/rust-issue-core-20261026",
+      "source_parent_commit": "e3915d9b057516d5e135a7d3a01b563c05de0493",
+      "transport_tests": "112/112 PASS after removing redundant selected-ingress Node checkout bridge; server typecheck PASS; separate 2/2 route-gating proof at /private/tmp/rudder-issue-core-E-node-checkout-review-r18/route-gating.log",
+      "s3_sdk_test": "2/2 PASS: /private/tmp/rudder-issue-core-E-s3-tests-r2.log; signed loopback S3 operations, not a real AWS account acceptance",
+      "public_http_postgresql": "1/1 PASS expanded public HTTP/PostgreSQL 18.4 workflow, 187 migrations, /private/tmp/rudder-issue-core-E-pg-20261026-r18/author-run-result.json; later Node-only negative registration gates do not change this Rust source/artifact.",
+      "remaining_node_boundaries": [
+        "Legacy task execution/scheduling and cancel-marker consumption",
+        "Attachment content GET and other Issue sidecar APIs",
+        "Ingress-off/default standalone mode and final no-Node installed workflow",
+        "POST /api/orgs/:orgId/agent-runs/:runId/debug-issue: separate debug Issue creator, audit and wakeup remain Node-owned",
+        "POST /api/issues/:id/comments: comment and reopen orchestration includes a Node-owned todo status transition, interrupt and wakeup effects"
+      ],
+      "global_migration_complete": false,
+      "production_released": false,
+      "installed_app_replaced": false,
+      "rust_validation": {
+        "strict_clippy": "PASS D1 persistence + FoundationCore all targets, -D warnings; /private/tmp/rudder-issue-core-E-clippy-r9.log",
+        "d1_unit": "244 PASS; /private/tmp/rudder-issue-core-E-rudder_d1_persistence-unit-r2.log",
+        "foundation_unit": "307 PASS, 26 explicitly ignored; /private/tmp/rudder-issue-core-E-rudder_server_foundation_core-unit-r2.log",
+        "standalone_build": "PASS; /private/tmp/rudder-issue-core-E-server-build-r10.log"
+      },
+      "local_baseline_limits": {
+        "lint": "20 import-organizing failures; all 20 source files byte-identical to current origin/main; /private/tmp/rudder-issue-core-E-lint-baseline-proof-r1.json",
+        "typecheck": "PASS across all 19 workspace packages by resumed checks: initial recursive predecessor packages, affected server after removing redundant Node branch, and CLI/Desktop downstream. Logs /private/tmp/rudder-issue-core-E-typecheck-r1.log and /private/tmp/rudder-issue-core-E-typecheck-downstream-r2.log; server confirmation in boundary-author-r4.",
+        "full_test_build_desktop": "Not claimed: full repository test/build and packaged verification still pending; local free disk below packaging requirement."
+      },
+      "authority_boundary": {
+        "state": "PASS inventory and trusted comparison against origin/main ef5d1cc8; five independently accepted Node transport/config changes, no added/removed surfaces or stale pins",
+        "report": "/private/tmp/rudder-issue-core-E-boundary-author-r4.json",
+        "independent_receipts": [
+          "/private/tmp/rudder-issue-core-E-node-boundary-review-r1.json",
+          "/private/tmp/rudder-issue-core-E-node-boundary-review-r2.json"
+        ]
+      }
     },
     "integrated_organization_core_writes_20261026": {
       "supersedes_prior_author_snapshot": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
@@ -866,7 +909,34 @@
       ],
       "production_released": false,
       "installed_app_replaced": false,
-      "global_migration_complete": false
+      "global_migration_complete": false,
+      "latest_delivery_closure": {
+        "pr": 386,
+        "state": "merged",
+        "merge": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
+        "receipt": "/private/tmp/rudder-org-write-20261026/combined-final-r1/p1-delete-fix-r1/pr386-merge-delivery-r1.json",
+        "note": "Historical author snapshot above retained; its pending gates were subsequently completed for head520163a."
+      }
+    },
+    "previous_organization_slice_author_validation": {
+      "name": "Organization core writes",
+      "state": "author_validation_pass; local source checkpoint created; independent overall stage review, PAV, protected PR/CI and production delivery pending",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-pr264-integration-20261016/rudder-oss",
+      "branch": "codex/rust-organization-core-writes-20261026",
+      "base_commit": "f56fa7fba8b95bdd4f22a036044181e08ba076e5",
+      "source_parent_commit": "77f6879c4e8d7d4abb74bd1847928f934f9fe97d",
+      "source_parent_tree": "753c47405e4651fee5fc6b492543bae53fce7af1",
+      "local_checkpoint_receipt": "/private/tmp/rudder-org-write-20261026/author-validation-r7.json",
+      "rust_ingress_selected": "Rust owns POST /api/orgs, PATCH /api/orgs/:orgId, PATCH /api/orgs/:orgId/branding, POST /api/orgs/:orgId/archive, and DELETE /api/orgs/:orgId; selected Rust errors do not fall back to Node.",
+      "ingress_off": "The five existing Node handlers remain registered for default development/standalone compatibility; removing that mode and handlers remains migration debt.",
+      "author_checks": "Exact compile/workflow and current typecheck, route-gate, inventory/trusted-base, import-lint evidence is recorded in author-validation-r7.json.",
+      "not_claimed": [
+        "full organization API retirement",
+        "global Rust-backend completion",
+        "independent PAV",
+        "protected CI",
+        "production release or installed-artifact acceptance"
+      ]
     }
   }
 }
