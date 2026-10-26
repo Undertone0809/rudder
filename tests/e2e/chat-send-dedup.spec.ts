@@ -97,11 +97,12 @@ async function exerciseOptimisticFirstTurn(page: Page, viewport: { width: number
 
     await expect.poll(() => streamRouteReached).toBe(true);
     await expect(page.getByTestId("chat-pending-first-turn")).toContainText(body);
-    await expect(page.getByTestId("chat-pending-first-turn-status")).toContainText("Sending message...");
+    await expect(page.getByTestId("chat-pending-first-turn-status")).toHaveCount(0);
     await expect(page.getByTestId("chat-pending-first-turn")).toContainText(fileName);
     await expect(composer).toHaveText("");
     await expect(composer).toHaveAttribute("contenteditable", "false");
     await expect(page.getByRole("button", { name: "Sending" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sending", exact: true }).locator(".animate-spin")).toBeVisible();
 
     releaseStream();
     releaseStream = () => undefined;

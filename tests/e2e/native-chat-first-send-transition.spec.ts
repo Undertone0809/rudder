@@ -154,9 +154,13 @@ async function runDelayedFirstSend(
     )), { timeout: 10_000 }).toBeGreaterThan(20);
     await expect(page.getByTestId("chat-pending-first-turn")).toBeVisible();
     await expect(page.getByRole("button", { name: "Sending", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sending", exact: true }).locator(".animate-spin")).toBeVisible();
+    await expect(page.getByTestId("chat-pending-first-turn-status")).toHaveCount(0);
+    await expect(page.getByText("Sending message...", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("chat-pending-first-turn").getByTestId("chat-user-message-bubble").filter({ hasText: BODY }))
       .toHaveCount(1);
     await expect(composer).toHaveText("");
+    await page.screenshot({ path: testInfo.outputPath(`native-first-send-${options.label}-pending.png`), fullPage: true });
     await page.waitForTimeout(500);
 
     const heldSamples = await page.evaluate(() => (
