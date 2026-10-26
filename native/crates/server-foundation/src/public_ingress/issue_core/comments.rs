@@ -1,29 +1,82 @@
 use super::*;
 use rudder_d1_persistence::issue_comments::{
     IssueCommentActor, IssueCommentError, IssueCommentWrite,
-    apply_issue_comment_write_with_native_auth, organization_for_issue,
-    read_issue_comment_with_native_auth, read_issue_comments_with_native_auth,
+    apply_issue_comment_write_with_native_auth, read_issue_comment_with_native_auth,
+    read_issue_comments_with_native_auth,
 };
+
+struct CommentRequestContext {
+    pool: sqlx::PgPool,
+    identity: NativeIngressIdentity,
+    actor: ActorIdentity,
+    session_id: String,
+    run_id: Option<String>,
+    issue_id: String,
+    org_id: String,
+}
+
+#[allow(clippy::result_large_err)]
+async fn comment_request_context(
+    state: &IngressState,
+    request: &HttpRequest,
+    issue_ref: &str,
+) -> Result<CommentRequestContext, HttpResponse> {
+    let (identity, actor, session_id, run_id) = public_issue_actor(state, request).await?;
+    let Some(pool) = super::configured_pool(state).cloned() else {
+        return Err(unavailable());
+    };
+    let lookup = super::resolve_issue_path_reference(
+        &pool,
+        issue_ref,
+        super::actor_org_id(&identity),
+        (actor.kind == "user").then_some(actor.id.as_str()),
+        matches!(&identity, NativeIngressIdentity::LocalImplicit),
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, issue_ref, "Issue comment identity lookup failed");
+        internal_error()
+    })?;
+    let (issue_id, org_id) = match lookup {
+        super::IssuePathLookup::Found { issue_id, org_id } => (issue_id, org_id),
+        super::IssuePathLookup::Missing => return Err(not_found("Issue not found")),
+        super::IssuePathLookup::Ambiguous => {
+            return Err(HttpResponse::Conflict().json(json!({
+                "error":"Issue ID short reference is ambiguous in this organization. Use a longer typed ref."
+            })));
+        }
+        super::IssuePathLookup::Invalid => {
+            return Err(HttpResponse::UnprocessableEntity().json(json!({
+                "error":"Issue ID must be a UUID, issue identifier, or typed iss_<prefix> reference"
+            })));
+        }
+    };
+    Ok(CommentRequestContext {
+        pool,
+        identity,
+        actor,
+        session_id,
+        run_id,
+        issue_id,
+        org_id,
+    })
+}
 
 pub(super) async fn list(
     state: web::Data<IngressState>,
     request: HttpRequest,
     issue_ref: &str,
 ) -> HttpResponse {
-    let Some(pool) = configured_pool(&state) else {
-        return unavailable();
-    };
-    let org_id = match organization_for_issue(pool, issue_ref).await {
-        Ok(Some(org_id)) => org_id,
-        Ok(None) => return not_found("Issue not found"),
-        Err(error) => return comment_error(error),
-    };
-    let (identity, actor, session_id, _) = match public_issue_actor(&state, &request).await {
-        Ok(actor) => actor,
+    let context = match comment_request_context(&state, &request, issue_ref).await {
+        Ok(context) => context,
         Err(response) => return response,
     };
-    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, &state)
-    else {
+    let Some(authorizer) = agent_core::native_authorizer(
+        &context.identity,
+        &context.actor,
+        &context.session_id,
+        &state,
+    ) else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
     let after = query_string_value(request.query_string(), "after")
@@ -39,9 +92,9 @@ pub(super) async fn list(
         .filter(|value| value.is_finite() && *value > 0.0)
         .map(|value| value.floor().min(500.0) as i64);
     match read_issue_comments_with_native_auth(
-        pool,
-        &org_id,
-        issue_ref,
+        &context.pool,
+        &context.org_id,
+        &context.issue_id,
         after.as_deref(),
         &order,
         limit,
@@ -60,24 +113,26 @@ pub(super) async fn get(
     issue_ref: &str,
     comment_ref: &str,
 ) -> HttpResponse {
-    let Some(pool) = configured_pool(&state) else {
-        return unavailable();
-    };
-    let org_id = match organization_for_issue(pool, issue_ref).await {
-        Ok(Some(org_id)) => org_id,
-        Ok(None) => return not_found("Issue not found"),
-        Err(error) => return comment_error(error),
-    };
-    let (identity, actor, session_id, _) = match public_issue_actor(&state, &request).await {
-        Ok(actor) => actor,
+    let context = match comment_request_context(&state, &request, issue_ref).await {
+        Ok(context) => context,
         Err(response) => return response,
     };
-    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, &state)
-    else {
+    let Some(authorizer) = agent_core::native_authorizer(
+        &context.identity,
+        &context.actor,
+        &context.session_id,
+        &state,
+    ) else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
-    match read_issue_comment_with_native_auth(pool, &org_id, issue_ref, comment_ref, &authorizer)
-        .await
+    match read_issue_comment_with_native_auth(
+        &context.pool,
+        &context.org_id,
+        &context.issue_id,
+        comment_ref,
+        &authorizer,
+    )
+    .await
     {
         Ok(comment) => HttpResponse::Ok().json(comment),
         Err(error) => comment_error(error),
@@ -90,28 +145,24 @@ pub(super) async fn create(
     body: &web::Bytes,
     issue_ref: &str,
 ) -> HttpResponse {
-    let Some(pool) = configured_pool(&state) else {
-        return unavailable();
-    };
-    let org_id = match organization_for_issue(pool, issue_ref).await {
-        Ok(Some(org_id)) => org_id,
-        Ok(None) => return not_found("Issue not found"),
-        Err(error) => return comment_error(error),
-    };
-    let (identity, actor, session_id, run_id) = match public_issue_actor(&state, &request).await {
-        Ok(actor) => actor,
+    let context = match comment_request_context(&state, &request, issue_ref).await {
+        Ok(context) => context,
         Err(response) => return response,
     };
-    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, &state)
-    else {
+    let Some(authorizer) = agent_core::native_authorizer(
+        &context.identity,
+        &context.actor,
+        &context.session_id,
+        &state,
+    ) else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
     let Some(mut input) = parse_json_object(body) else {
         return HttpResponse::UnprocessableEntity().json(json!({"error":"Invalid comment body"}));
     };
-    if actor.kind == "agent"
+    if context.actor.kind == "agent"
         && let Some(comment_body) = input.get("body").and_then(Value::as_str)
-        && let Ok(workspace_root) = agent_core::organization_workspace_root(&org_id)
+        && let Ok(workspace_root) = agent_core::organization_workspace_root(&context.org_id)
     {
         input["body"] = Value::String(normalize_local_library_path_markdown(
             comment_body,
@@ -119,17 +170,17 @@ pub(super) async fn create(
         ));
     }
     let comment_actor = IssueCommentActor {
-        kind: &actor.kind,
-        id: &actor.id,
-        agent_id: (actor.kind == "agent").then_some(actor.id.as_str()),
-        run_id: (actor.kind == "agent")
-            .then_some(run_id.as_deref())
+        kind: &context.actor.kind,
+        id: &context.actor.id,
+        agent_id: (context.actor.kind == "agent").then_some(context.actor.id.as_str()),
+        run_id: (context.actor.kind == "agent")
+            .then_some(context.run_id.as_deref())
             .flatten(),
     };
     match apply_issue_comment_write_with_native_auth(
-        pool,
-        &org_id,
-        issue_ref,
+        &context.pool,
+        &context.org_id,
+        &context.issue_id,
         None,
         IssueCommentWrite::Create,
         comment_actor,
@@ -150,37 +201,33 @@ pub(super) async fn update(
     issue_ref: &str,
     comment_ref: &str,
 ) -> HttpResponse {
-    let Some(pool) = configured_pool(&state) else {
-        return unavailable();
-    };
-    let org_id = match organization_for_issue(pool, issue_ref).await {
-        Ok(Some(org_id)) => org_id,
-        Ok(None) => return not_found("Issue not found"),
-        Err(error) => return comment_error(error),
-    };
-    let (identity, actor, session_id, _) = match public_issue_actor(&state, &request).await {
-        Ok(actor) => actor,
+    let context = match comment_request_context(&state, &request, issue_ref).await {
+        Ok(context) => context,
         Err(response) => return response,
     };
-    if actor.kind != "user" {
+    if context.actor.kind != "user" {
         return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
     }
-    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, &state)
-    else {
+    let Some(authorizer) = agent_core::native_authorizer(
+        &context.identity,
+        &context.actor,
+        &context.session_id,
+        &state,
+    ) else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
     let Some(input) = parse_json_object(body) else {
         return HttpResponse::UnprocessableEntity().json(json!({"error":"Invalid comment body"}));
     };
     match apply_issue_comment_write_with_native_auth(
-        pool,
-        &org_id,
-        issue_ref,
+        &context.pool,
+        &context.org_id,
+        &context.issue_id,
         Some(comment_ref),
         IssueCommentWrite::Update,
         IssueCommentActor {
-            kind: &actor.kind,
-            id: &actor.id,
+            kind: &context.actor.kind,
+            id: &context.actor.id,
             agent_id: None,
             run_id: None,
         },
@@ -200,34 +247,30 @@ pub(super) async fn delete(
     issue_ref: &str,
     comment_ref: &str,
 ) -> HttpResponse {
-    let Some(pool) = configured_pool(&state) else {
-        return unavailable();
-    };
-    let org_id = match organization_for_issue(pool, issue_ref).await {
-        Ok(Some(org_id)) => org_id,
-        Ok(None) => return not_found("Issue not found"),
-        Err(error) => return comment_error(error),
-    };
-    let (identity, actor, session_id, _) = match public_issue_actor(&state, &request).await {
-        Ok(actor) => actor,
+    let context = match comment_request_context(&state, &request, issue_ref).await {
+        Ok(context) => context,
         Err(response) => return response,
     };
-    if actor.kind != "user" {
+    if context.actor.kind != "user" {
         return HttpResponse::Forbidden().json(json!({"error":"Board access required"}));
     }
-    let Some(authorizer) = agent_core::native_authorizer(&identity, &actor, &session_id, &state)
-    else {
+    let Some(authorizer) = agent_core::native_authorizer(
+        &context.identity,
+        &context.actor,
+        &context.session_id,
+        &state,
+    ) else {
         return HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"}));
     };
     match apply_issue_comment_write_with_native_auth(
-        pool,
-        &org_id,
-        issue_ref,
+        &context.pool,
+        &context.org_id,
+        &context.issue_id,
         Some(comment_ref),
         IssueCommentWrite::Delete,
         IssueCommentActor {
-            kind: &actor.kind,
-            id: &actor.id,
+            kind: &context.actor.kind,
+            id: &context.actor.id,
             agent_id: None,
             run_id: None,
         },
@@ -534,13 +577,15 @@ mod tests {
         let report = root.path().join("docs/product brief.md");
         std::fs::create_dir_all(report.parent().unwrap()).unwrap();
         std::fs::write(&report, "report").unwrap();
+        let bare = root.path().join("bare.md");
+        std::fs::write(&bare, "bare").unwrap();
         let image = root.path().join("image.png");
         std::fs::write(&image, "image").unwrap();
 
         let markdown = format!(
             "[report]({}) {} `{} ` and ``{}``\n\n```text\n{}\n```\n![image]({})",
             report.display(),
-            report.display(),
+            bare.display(),
             report.display(),
             report.display(),
             report.display(),
@@ -550,7 +595,7 @@ mod tests {
         let expected_report = "library-file://file?p=docs%2Fproduct+brief.md";
 
         assert!(normalized.contains(&format!("[report]({expected_report})")));
-        assert!(normalized.contains(&format!("[product brief.md]({expected_report})")));
+        assert!(normalized.contains("[bare.md](library-file://file?p=bare.md)"));
         assert!(normalized.contains(&format!("`{} `", report.display())));
         assert!(normalized.contains(&format!("``{}``", report.display())));
         assert!(normalized.contains(&format!("```text\n{}\n```", report.display())));

@@ -947,6 +947,31 @@
         "protected CI",
         "production release or installed-artifact acceptance"
       ]
+    },
+    "issue_comments_author_candidate_20261026": {
+      "state": "Author checks passed; independent overall stage/PAV/final and protected CI pending",
+      "dependency": "65be73a171032090880bdba8a1b2ac731d4b2a07",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-maintenance-guardrails-305/rudder-oss",
+      "branch": "codex/rust-issue-comments-20261026",
+      "scope": "Five native public comment operations, aliases/cursors, comment reopening/interrupt/Steer, transactional audit and durable wake admission",
+      "author_report": "/private/tmp/rudder-issue-comments-C-author-r2.md",
+      "author_report_sha256": "3d27e72cf91a40a5b0a4d8828dbc6c8d899436d10f610ab29f0b2de48481ac48",
+      "public_http_postgresql": "PASS1/1 r9; later behavior-preserving lint and test-only corrections; final independent PAV still required",
+      "foundation_unit": "308PASS/0FAIL/26explicitlyignored",
+      "node_route_tests": "110PASS plus5comment/markdown contract tests",
+      "strict_clippy": "PASS affected D1/Foundation alltargets -Dwarnings",
+      "server_typecheck": "PASS",
+      "node_boundary_review": "/private/tmp/rudder-issue-comments-C-node-boundary-review-r1.json",
+      "remaining_debt": [
+        "ingress-off Node compatibility",
+        "attachment binary/upload/write paths",
+        "legacy_ts worker/executor and cancel consumer",
+        "other Issue sidecars and debug Issue writer"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "recorded_at_utc": "2026-10-26T06:02:03.714113+00:00"
     }
   }
 }

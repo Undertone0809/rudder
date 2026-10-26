@@ -630,6 +630,7 @@ async fn execute_issue_write(
         issue_id: resolved_issue_id.as_deref(),
         input: &input,
         comment_activity_details: None,
+        comment_reopen_wakeup: None,
     };
     let asset_storage: Option<&dyn IssueAssetStorage> = state
         .config
@@ -637,7 +638,7 @@ async fn execute_issue_write(
         .as_deref()
         .map(|storage| storage as &dyn IssueAssetStorage);
     match apply_issue_core_write(pool, &write_actor, &write_request, asset_storage).await {
-        Ok((status, value)) => HttpResponse::build(
+        Ok((status, value, _comment_wakeup_error)) => HttpResponse::build(
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         )
         .json(value),
@@ -1198,7 +1199,7 @@ mod tests {
         ] {
             assert!(is_reserved_path(path, &method), "{method} {path}");
         }
-        assert!(!is_reserved_namespace(
+        assert!(is_reserved_namespace(
             "/api/issues/abc/comments",
             &Method::GET
         ));
@@ -1245,7 +1246,7 @@ mod tests {
             &Method::GET
         ));
         assert!(is_reserved_namespace("/api/issues/issue-1", &Method::GET));
-        assert!(!is_reserved_path(
+        assert!(is_reserved_path(
             "/api/issues/issue-1/comments",
             &Method::GET
         ));

@@ -427,6 +427,8 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     let board_issue_id = Uuid::new_v4().to_string();
     let member_issue_id = Uuid::new_v4().to_string();
     let paused_issue_id = Uuid::new_v4().to_string();
+    let comment_wakeup_issue_id = Uuid::new_v4().to_string();
+    let reopen_wakeup_issue_id = Uuid::new_v4().to_string();
     let prefix: String =
         sqlx::query_scalar("SELECT issue_prefix FROM organizations WHERE id=$1::uuid")
             .bind(&org_id)
@@ -466,6 +468,16 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .bind(&board_issue_id)
     .bind(&org_id)
     .bind(format!("{prefix}-2"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id) VALUES ($1::uuid, $2::uuid, 'Comment wake admission through Rust', 'todo', 'medium', 900005, $3, $4::uuid)",
+    )
+    .bind(&comment_wakeup_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900005"))
+    .bind(&other_agent_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -681,7 +693,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     let agent_comment_short_ref = agent_comment["shortRef"].as_str().unwrap().to_owned();
     assert_eq!(agent_comment["authorAgentId"], agent_id);
     let board_comment = client
-        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .post(format!("{base}/api/issues/{issue_short_ref}/comments"))
         .bearer_auth(&board_token)
         .json(&json!({"body":"Board response."}))
         .send()
@@ -718,7 +730,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     assert_eq!(invalid_reopen.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let listed_comments = client
         .get(format!(
-            "{base}/api/issues/{issue_id}/comments?order=asc&limit=10"
+            "{base}/api/issues/{issue_short_ref}/comments?order=asc&limit=10"
         ))
         .bearer_auth(&board_token)
         .send()
@@ -730,7 +742,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     assert_eq!(listed_comments[0]["id"], agent_comment_id);
     let read_by_short_ref = client
         .get(format!(
-            "{base}/api/issues/{issue_id}/comments/{agent_comment_short_ref}"
+            "{base}/api/issues/{issue_short_ref}/comments/{agent_comment_short_ref}"
         ))
         .bearer_auth(&board_token)
         .send()
@@ -750,9 +762,26 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .await
         .unwrap();
     assert_eq!(missing_cursor.status(), StatusCode::NOT_FOUND);
+    let missing_uuid_cursor = client
+        .get(format!(
+            "{base}/api/issues/{issue_short_ref}/comments?after={}",
+            Uuid::new_v4()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_uuid_cursor.status(), StatusCode::OK);
+    assert_eq!(
+        missing_uuid_cursor
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!([])
+    );
     let edited_board_comment = client
         .patch(format!(
-            "{base}/api/issues/{issue_id}/comments/{board_comment_id}"
+            "{base}/api/issues/{issue_short_ref}/comments/{board_comment_id}"
         ))
         .bearer_auth(&board_token)
         .json(&json!({"body":"Board response edited."}))
@@ -769,7 +798,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     );
     let deleted_board_comment = client
         .delete(format!(
-            "{base}/api/issues/{issue_id}/comments/{board_comment_id}"
+            "{base}/api/issues/{issue_short_ref}/comments/{board_comment_id}"
         ))
         .bearer_auth(&board_token)
         .send()
@@ -814,6 +843,100 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     assert!(forged_comment_activity_details.get("reopened").is_none());
     let node_fallback_comments = node_requests.load(Ordering::SeqCst);
     assert_eq!(node_fallback_comments, 1);
+
+    let trigger_suffix = Uuid::new_v4().simple().to_string();
+    let trigger_function = format!("test_reject_issue_comment_wakeup_{trigger_suffix}");
+    let trigger_name = format!("test_reject_issue_comment_wakeup_{trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.reason='issue_comment_mentioned'
+              AND NEW.payload->>'issueId'='{comment_wakeup_issue_id}' THEN
+             RAISE EXCEPTION 'forced Issue comment wake admission failure';
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let wake_comment_body =
+        format!("[Other agent](agent://{other_agent_id}?intent=wake) please review this Issue.");
+    let failed_wakeup_comment = client
+        .post(format!(
+            "{base}/api/issues/{comment_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":wake_comment_body}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_wakeup_comment.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_wakeup_state: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.comment_added'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND reason='issue_comment_mentioned' AND payload->>'issueId'=$2)",
+    )
+    .bind(&org_id)
+    .bind(&comment_wakeup_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(failed_wakeup_state, (0, 0, 0));
+
+    let admitted_wakeup_comment = client
+        .post(format!(
+            "{base}/api/issues/{comment_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":wake_comment_body}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(admitted_wakeup_comment.status(), StatusCode::CREATED);
+    let admitted_wakeup_comment: serde_json::Value = admitted_wakeup_comment.json().await.unwrap();
+    let admitted_comment_id = admitted_wakeup_comment["id"].as_str().unwrap();
+    let admitted_wakeup: (String, String, String, String, serde_json::Value, String) =
+        sqlx::query_as(
+            "SELECT w.id::text,w.status,w.reason,w.run_id::text,w.payload,r.execution_authority
+             FROM agent_wakeup_requests w JOIN heartbeat_runs r
+               ON r.org_id=w.org_id AND r.wakeup_request_id=w.id AND r.id=w.run_id
+             WHERE w.org_id=$1::uuid AND w.agent_id=$2::uuid AND w.payload->>'issueId'=$3",
+        )
+        .bind(&org_id)
+        .bind(&other_agent_id)
+        .bind(&comment_wakeup_issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(admitted_wakeup.1, "queued");
+    assert_eq!(admitted_wakeup.2, "issue_comment_mentioned");
+    assert_eq!(admitted_wakeup.4["issueId"], comment_wakeup_issue_id);
+    assert_eq!(admitted_wakeup.4["commentId"], admitted_comment_id);
+    assert_eq!(admitted_wakeup.5, "legacy_ts");
+    let comment_wakeup_request_id = admitted_wakeup.0;
+    let comment_wakeup_run_id = admitted_wakeup.3;
 
     let block_claim = client
         .patch(format!("{base}/api/issues/{issue_id}"))
@@ -2008,6 +2131,39 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
+    let foreign_issue_id = Uuid::new_v4().to_string();
+    let foreign_issue_prefix: String =
+        sqlx::query_scalar("SELECT issue_prefix FROM organizations WHERE id=$1::uuid")
+            .bind(&foreign_org_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier) VALUES ($1::uuid, $2::uuid, 'Foreign organization comment isolation', 'todo', 'medium', 1, $3)",
+    )
+    .bind(&foreign_issue_id)
+    .bind(&foreign_org_id)
+    .bind(format!("{foreign_issue_prefix}-1"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let foreign_comment_read = client
+        .get(format!("{base}/api/issues/{foreign_issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_comment_read.status(), StatusCode::FORBIDDEN);
+    let foreign_issue_short_ref = format!("iss_{}", &foreign_issue_id.replace('-', "")[..8]);
+    let agent_foreign_comment_read = client
+        .get(format!(
+            "{base}/api/issues/{foreign_issue_short_ref}/comments"
+        ))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_foreign_comment_read.status(), StatusCode::NOT_FOUND);
     let messenger_issue_id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier) VALUES ($1::uuid, $2::uuid, 'Messenger cleanup target', 'todo', 'medium', 950001, $3)",
@@ -2384,6 +2540,230 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    let reopen_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Reopen Wake Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let reopen_agent_prior_ownership: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reopen_agent_prior_ownership, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id) VALUES ($1::uuid, $2::uuid, 'Reopen wake admission through Rust', 'todo', 'medium', 900006, $3, $4::uuid)",
+    )
+    .bind(&reopen_wakeup_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900006"))
+    .bind(&reopen_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reopen_interrupt_run_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&reopen_interrupt_run_id)
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .bind(json!({"issueId":reopen_wakeup_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let unrelated_active_reopen_agent_runs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid AND status='running' AND id<>$3::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .bind(&reopen_interrupt_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(unrelated_active_reopen_agent_runs, 0);
+    sqlx::query(
+        "UPDATE issues SET status='done',execution_run_id=$3::uuid WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_wakeup_issue_id)
+    .bind(&reopen_interrupt_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let comments_before_reopen_wakeup: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_wakeup_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let comments_before_reopen_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let wake_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let wake_trigger_function = format!("test_reject_issue_reopen_wakeup_{wake_trigger_suffix}");
+    let wake_trigger_name = format!("test_reject_issue_reopen_wakeup_{wake_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {wake_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.agent_id='{reopen_agent_id}'::uuid
+              AND NEW.payload->>'issueId'='{reopen_wakeup_issue_id}' THEN
+             RAISE EXCEPTION 'forced Issue reopen wake admission failure (attempted reason=%)', NEW.reason;
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {wake_trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {wake_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_reopen_wakeup = client
+        .post(format!(
+            "{base}/api/issues/{reopen_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"This wake failure must roll back the reopen and interruption.",
+            "reopen":true,
+            "interrupt":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_wakeup.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {wake_trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {wake_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_reopen_wakeup_state: (String, Option<String>, Option<String>, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT i.status,i.execution_cancellation_at::text,r.error_code,
+               (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_interrupt'),
+               (SELECT count(*) FROM agent_wakeup_requests w WHERE w.org_id=i.org_id AND w.agent_id=i.assignee_agent_id AND w.payload->>'issueId'=i.id::text)
+             FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+             WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+        )
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .bind(&reopen_interrupt_run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_wakeup_state,
+        (
+            "done".to_owned(),
+            None,
+            None,
+            comments_before_reopen_wakeup,
+            0,
+            0,
+        )
+    );
+    let interrupt_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let interrupt_trigger_function = format!("test_reject_issue_reopen_{interrupt_trigger_suffix}");
+    let interrupt_trigger_name = format!("test_reject_issue_reopen_{interrupt_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {interrupt_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.action='issue.updated' AND NEW.entity_id='{issue_id}'
+              AND NEW.details->>'reopened'='true' THEN
+             RAISE EXCEPTION 'forced Issue reopen activity failure';
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {interrupt_trigger_name} BEFORE INSERT ON activity_log
+         FOR EACH ROW EXECUTE FUNCTION {interrupt_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_reopen_interrupt = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"This reopen and interruption must roll back together.",
+            "reopen":true,
+            "interrupt":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_interrupt.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {interrupt_trigger_name} ON activity_log"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {interrupt_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_reopen_state: (String, Option<String>, Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT i.status,i.execution_cancellation_at::text,r.error_code,
+           (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+           (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_interrupt')
+         FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+         WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        failed_reopen_state,
+        (
+            "done".to_owned(),
+            None,
+            None,
+            comments_before_reopen_failure,
+            0,
+        )
+    );
     let steered_comment = client
         .post(format!("{base}/api/issues/{issue_id}/comments"))
         .bearer_auth(&board_token)
@@ -2537,6 +2917,61 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&board_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&comment_wakeup_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&comment_wakeup_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
+        .bind(&comment_wakeup_request_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE issues SET execution_run_id=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_interrupt_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&reopen_interrupt_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&comment_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&comment_wakeup_issue_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -2750,6 +3185,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
+        .bind(&reopen_agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&foreign_agent_id)
         .execute(&pool)
         .await
@@ -2761,6 +3201,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM assets WHERE id=$1::uuid")
         .bind(&foreign_asset_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&foreign_issue_id)
         .execute(&pool)
         .await
         .unwrap();

@@ -59,24 +59,21 @@ struct CommentControl {
 }
 
 #[derive(Clone, Debug)]
-struct ActiveCommentRun {
+pub struct ActiveCommentRun {
     id: String,
     agent_id: String,
 }
 
-/// Resolve the organization before public identity revalidation. The caller
-/// uses the returned scope to construct the same native authorizer used by the
-/// other Issue handlers; a missing Issue remains a 404 as in the Node route.
-pub async fn organization_for_issue(pool: &PgPool, issue_id: &str) -> Result<Option<String>> {
-    let Ok(issue_id) = Uuid::parse_str(issue_id) else {
-        return Ok(None);
-    };
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT org_id::text FROM issues WHERE id=$1::uuid")
-            .bind(issue_id.to_string())
-            .fetch_optional(pool)
-            .await?,
-    )
+#[derive(Clone)]
+pub struct ReopenCommentWakeup<'a> {
+    pub actor: IssueCommentActor<'a>,
+    pub reopened_from: &'a str,
+    pub assignee_id: Option<&'a str>,
+    pub self_comment: bool,
+    pub mentioned: &'a [String],
+    pub steer: Option<&'a ActiveCommentRun>,
+    pub interrupt_run: Option<&'a ActiveCommentRun>,
+    pub interrupted_run_id: Option<String>,
 }
 
 pub async fn read_issue_comments_with_native_auth(
@@ -104,28 +101,31 @@ pub async fn read_issue_comments_with_native_auth(
     };
     let cursor = if let Some(cursor) = after_comment_id.map(str::trim).filter(|s| !s.is_empty()) {
         let resolved = if Uuid::parse_str(cursor).is_ok() {
-            Some(cursor.to_owned())
+            cursor.to_owned()
         } else {
-            resolve_comment_reference(&mut tx, &org, &issue, cursor).await?
+            resolve_comment_reference(&mut tx, &org, &issue, cursor)
+                .await?
+                .ok_or_else(|| http(404, "Comment not found"))?
         };
-        if let Some(resolved) = resolved {
-            sqlx::query_as::<_, (String, String)>(
-                "SELECT id::text, created_at::text FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id=$3::uuid AND deleted_at IS NULL",
-            )
-            .bind(&org)
-            .bind(&issue)
-            .bind(resolved)
-            .fetch_optional(&mut *tx)
-            .await?
-        } else {
+        let anchor = sqlx::query_as::<_, (String, String)>(
+            "SELECT id::text, created_at::text FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id=$3::uuid AND deleted_at IS NULL",
+        )
+        .bind(&org)
+        .bind(&issue)
+        .bind(resolved)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if anchor.is_none() {
+            if Uuid::parse_str(cursor).is_ok() {
+                tx.commit().await?;
+                return Ok(Value::Array(Vec::new()));
+            }
             return Err(http(404, "Comment not found"));
         }
+        anchor
     } else {
         None
     };
-    if after_comment_id.is_some_and(|value| !value.trim().is_empty()) && cursor.is_none() {
-        return Err(http(404, "Comment not found"));
-    }
     let censor_username = censor_username(&mut tx).await?;
     let rows = if let Some((cursor_id, cursor_created_at)) = cursor {
         let direction = if order == "asc" { ">" } else { "<" };
@@ -208,6 +208,7 @@ pub async fn read_issue_comment_with_native_auth(
     serialize_comment(&raw, censor_username)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_issue_comment_write_with_native_auth(
     pool: &PgPool,
     org_id: &str,
@@ -239,10 +240,9 @@ pub async fn apply_issue_comment_write_with_native_auth(
         return Err(http(401, "Unauthorized"));
     }
     let mut tx = pool.begin().await?;
-    let mut pending_mention_ids = Vec::new();
-    let mut pending_mention_mutation = None;
     let mut pending_steer = None;
     let mut interrupted_run_id = None;
+    let mut steer_failure = None;
     let result = async {
         lock_organization(&mut tx, &org).await?;
         revalidate(&mut tx, &org, authorizer).await?;
@@ -369,13 +369,53 @@ pub async fn apply_issue_comment_write_with_native_auth(
                     },
                 )
                 .await?;
-                pending_mention_ids = mentioned_agent_ids(
+                let mentioned = mentioned_agent_ids(
                     &mut tx,
                     &org,
                     comment["body"].as_str().unwrap_or_default(),
                 )
                 .await?;
-                pending_mention_mutation = Some("comment");
+                if let Some(steer) = pending_steer.as_ref() {
+                    sqlx::query("SAVEPOINT issue_comment_steer_admission")
+                        .execute(&mut *tx)
+                        .await?;
+                    let admission = enqueue_comment_steer(
+                        &mut tx,
+                        &org,
+                        &issue,
+                        actor,
+                        &issue_row,
+                        &comment,
+                        steer,
+                        &mentioned,
+                    )
+                    .await;
+                    if let Err(error) = admission {
+                        sqlx::query("ROLLBACK TO SAVEPOINT issue_comment_steer_admission")
+                            .execute(&mut *tx)
+                            .await?;
+                        sqlx::query("RELEASE SAVEPOINT issue_comment_steer_admission")
+                            .execute(&mut *tx)
+                            .await?;
+                        steer_failure = Some(error);
+                    } else {
+                        sqlx::query("RELEASE SAVEPOINT issue_comment_steer_admission")
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                } else {
+                    enqueue_comment_mentions(
+                        &mut tx,
+                        &org,
+                        &issue,
+                        actor,
+                        &issue_row,
+                        &comment,
+                        "comment",
+                        Some(&mentioned),
+                    )
+                    .await?;
+                }
                 comment
             }
             IssueCommentWrite::Update => {
@@ -408,8 +448,9 @@ pub async fn apply_issue_comment_write_with_native_auth(
                 }
                 let canonical_body = canonicalize_agent_wake_mentions(&mut tx, &org, body).await?;
                 let previous_body: String = current.try_get("body")?;
-                let previous_mentions = mentioned_agent_ids(&previous_body)?;
-                let updated_mentions = mentioned_agent_ids(&canonical_body)?;
+                let previous_mentions = mentioned_agent_ids(&mut tx, &org, &previous_body).await?;
+                let updated_mentions =
+                    mentioned_agent_ids(&mut tx, &org, &canonical_body).await?;
                 let newly_mentioned = updated_mentions
                     .into_iter()
                     .filter(|agent_id| !previous_mentions.contains(agent_id))
@@ -453,8 +494,17 @@ pub async fn apply_issue_comment_write_with_native_auth(
                     },
                 )
                 .await?;
-                pending_mention_ids = newly_mentioned;
-                pending_mention_mutation = Some("comment_edit");
+                enqueue_comment_mentions(
+                    &mut tx,
+                    &org,
+                    &issue,
+                    actor,
+                    &issue_row,
+                    &comment,
+                    "comment_edit",
+                    Some(&newly_mentioned),
+                )
+                .await?;
                 comment
             }
             IssueCommentWrite::Delete => {
@@ -516,12 +566,12 @@ pub async fn apply_issue_comment_write_with_native_auth(
                 comment
             }
         };
-        Ok(comment)
+        Ok((comment, steer_failure))
     }
     .await;
 
     match result {
-        Ok(comment) => {
+        Ok((comment, steer_failure)) => {
             tx.commit().await?;
             if operation == IssueCommentWrite::Create
                 && let Some(run_id) = actor.run_id
@@ -533,36 +583,7 @@ pub async fn apply_issue_comment_write_with_native_auth(
             {
                 tracing::warn!(%error, run_id, issue_id = issue, "failed to clear detached warning after Issue comment");
             }
-            if let Some(mutation) = pending_mention_mutation
-                && !pending_mention_ids.is_empty()
-                && pending_steer.is_none()
-                && let Err(error) = enqueue_comment_mentions_after_commit(
-                    pool,
-                    &org,
-                    &issue,
-                    actor,
-                    &comment,
-                    mutation,
-                    &pending_mention_ids,
-                    authorizer,
-                )
-                .await
-            {
-                tracing::warn!(%error, org_id = org, issue_id = issue, "failed to enqueue Issue comment mention wakeups");
-            }
-            if let Some(steer) = pending_steer
-                && let Err(error) = enqueue_comment_steer_after_commit(
-                    pool,
-                    &org,
-                    &issue,
-                    actor,
-                    &comment,
-                    &steer,
-                    &pending_mention_ids,
-                    authorizer,
-                )
-                .await
-            {
+            if let Some(error) = steer_failure {
                 return Err(match error {
                     IssueCommentError::Http(status, message) if status == 409 => {
                         IssueCommentError::HttpDetails(status, message, comment)
@@ -649,17 +670,16 @@ async fn active_issue_run_for_comment(
             });
     }
     let execution_run_id = issue_row.try_get::<Option<String>, _>("execution_run_id")?;
-    if let Some(run_id) = execution_run_id {
-        if let Some((id, agent_id)) = sqlx::query_as::<_, (String, String)>(
+    if let Some(run_id) = execution_run_id
+        && let Some((id, agent_id)) = sqlx::query_as::<_, (String, String)>(
             "SELECT id::text,agent_id::text FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND status='running'",
         )
         .bind(org)
         .bind(run_id)
         .fetch_optional(&mut **tx)
         .await?
-        {
-            return Ok(Some(ActiveCommentRun { id, agent_id }));
-        }
+    {
+        return Ok(Some(ActiveCommentRun { id, agent_id }));
     }
     let assignee = issue_row.try_get::<Option<String>, _>("assignee_agent_id")?;
     let Some(assignee) = assignee else {
@@ -767,6 +787,26 @@ async fn request_comment_run_cancellation(
     )
     .await?;
     Ok(true)
+}
+
+pub(crate) async fn cancel_reopened_comment_interrupt(
+    tx: &mut Tx<'_>,
+    org: &str,
+    issue: &str,
+    run: &ActiveCommentRun,
+    actor: IssueCommentActor<'_>,
+) -> Result<Option<String>> {
+    Ok(request_comment_run_cancellation(
+        tx,
+        org,
+        issue,
+        run,
+        actor,
+        "issue_comment_interrupt",
+        None,
+    )
+    .await?
+    .then(|| run.id.clone()))
 }
 
 async fn validate_agent_comment_access(
@@ -1193,6 +1233,7 @@ fn replace_outside_markdown_code(markdown: &str, replace: impl Fn(&str) -> Strin
     output
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn enqueue_comment_mentions(
     tx: &mut Tx<'_>,
     org: &str,
@@ -1255,175 +1296,94 @@ async fn enqueue_comment_mentions(
     Ok(())
 }
 
-async fn enqueue_comment_mentions_after_commit(
-    pool: &PgPool,
+#[allow(clippy::too_many_arguments)]
+async fn enqueue_comment_steer(
+    tx: &mut Tx<'_>,
     org: &str,
     issue: &str,
     actor: IssueCommentActor<'_>,
-    comment: &Value,
-    mutation: &str,
-    selected_agent_ids: &[String],
-    authorizer: &dyn NativeAgentAuthorizer,
-) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    let result = async {
-        lock_organization(&mut tx, org).await?;
-        revalidate(&mut tx, org, authorizer).await?;
-        let issue_row = sqlx::query(
-            "SELECT assignee_agent_id::text,reviewer_agent_id::text FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR UPDATE",
-        )
-        .bind(org)
-        .bind(issue)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| http(404, "Issue not found"))?;
-        enqueue_comment_mentions(
-            &mut tx,
-            org,
-            issue,
-            actor,
-            &issue_row,
-            comment,
-            mutation,
-            Some(selected_agent_ids),
-        )
-        .await?;
-        Ok(())
-    }
-    .await;
-    match result {
-        Ok(()) => {
-            tx.commit().await?;
-            Ok(())
-        }
-        Err(error) => {
-            if let IssueCommentError::OwnershipRejected(status, message, reason) = &error {
-                record_comment_ownership_rejection(&mut tx, org, issue, actor, reason).await?;
-                tx.commit().await?;
-                return Err(http(*status, message));
-            }
-            if let Err(rollback_error) = tx.rollback().await {
-                tracing::warn!(%rollback_error, org_id = org, "failed to roll back Issue comment mention admission");
-            }
-            Err(error)
-        }
-    }
-}
-
-async fn enqueue_comment_steer_after_commit(
-    pool: &PgPool,
-    org: &str,
-    issue: &str,
-    actor: IssueCommentActor<'_>,
+    issue_row: &sqlx::postgres::PgRow,
     comment: &Value,
     steer: &ActiveCommentRun,
     mentioned: &[String],
-    authorizer: &dyn NativeAgentAuthorizer,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    let result = async {
-        lock_organization(&mut tx, org).await?;
-        revalidate(&mut tx, org, authorizer).await?;
-        let issue_row = sqlx::query(
-            "SELECT assignee_agent_id::text,reviewer_agent_id::text FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR UPDATE",
-        )
-        .bind(org)
-        .bind(issue)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| http(404, "Issue not found"))?;
-        let relationship = if issue_row
-            .try_get::<Option<String>, _>("assignee_agent_id")?
-            .as_deref()
-            == Some(steer.agent_id.as_str())
-        {
-            "assignee"
-        } else if issue_row
-            .try_get::<Option<String>, _>("reviewer_agent_id")?
-            .as_deref()
-            == Some(steer.agent_id.as_str())
-        {
-            "reviewer"
-        } else {
-            return Err(http(
-                409,
-                "The active issue relationship changed before Steer was accepted",
-            ));
-        };
-        let requested_by = IssueWakeupActor {
-            kind: actor.kind,
-            id: actor.id,
-        };
-        let wakeup = IssueWakeupIntent {
-            agent_id: steer.agent_id.clone(),
-            source: "automation",
-            reason: "issue_comment_steer",
-            mutation: "steer".to_owned(),
-            context_source: "issue.comment.steer",
-            wake_source: "issue.comment.steer",
-            role: None,
-            comment: Some(comment_context(comment)),
-            relationship: Some(relationship),
-            expected_issue_execution_run_id: Some(steer.id.clone()),
-            payload_extra: Some(json!({"steerRunId":steer.id,"mutation":"steer"})),
-            context_extra: Some(json!({
-                "wakeReason":"issue_comment_steer",
-                "wakeSource":"issue.comment.steer",
-                "source":"issue.comment.steer",
-                "steerRunId":steer.id,
-                "steerDisposition":"interrupt_continue",
-            })),
-        };
-        let admitted = enqueue_issue_core_wakeup(&mut tx, org, issue, &wakeup, &requested_by)
-            .await
-            .map_err(map_issue_checkout_error)?;
-        if admitted.as_deref() != Some(steer.id.as_str()) {
-            return Err(http(
-                409,
-                "Steer could not reserve a continuation; feedback was saved as a comment",
-            ));
-        }
-        request_comment_run_cancellation(
-            &mut tx,
-            org,
-            issue,
-            steer,
-            actor,
-            "issue_comment_steer",
-            comment.get("id").and_then(Value::as_str),
-        )
-        .await?;
-        let others = mentioned
-            .iter()
-            .filter(|agent_id| agent_id.as_str() != steer.agent_id)
-            .cloned()
-            .collect::<Vec<_>>();
-        enqueue_comment_mentions(
-            &mut tx,
-            org,
-            issue,
-            actor,
-            &issue_row,
-            comment,
-            "comment",
-            Some(&others),
-        )
-        .await?;
-        Ok(())
+    let relationship = if issue_row
+        .try_get::<Option<String>, _>("assignee_agent_id")?
+        .as_deref()
+        == Some(steer.agent_id.as_str())
+    {
+        "assignee"
+    } else if issue_row
+        .try_get::<Option<String>, _>("reviewer_agent_id")?
+        .as_deref()
+        == Some(steer.agent_id.as_str())
+    {
+        "reviewer"
+    } else {
+        return Err(http(
+            409,
+            "The active issue relationship changed before Steer was accepted",
+        ));
+    };
+    let requested_by = IssueWakeupActor {
+        kind: actor.kind,
+        id: actor.id,
+    };
+    let wakeup = IssueWakeupIntent {
+        agent_id: steer.agent_id.clone(),
+        source: "automation",
+        reason: "issue_comment_steer",
+        mutation: "steer".to_owned(),
+        context_source: "issue.comment.steer",
+        wake_source: "issue.comment.steer",
+        role: None,
+        comment: Some(comment_context(comment)),
+        relationship: Some(relationship),
+        expected_issue_execution_run_id: Some(steer.id.clone()),
+        payload_extra: Some(json!({"steerRunId":steer.id,"mutation":"steer"})),
+        context_extra: Some(json!({
+            "wakeReason":"issue_comment_steer",
+            "wakeSource":"issue.comment.steer",
+            "source":"issue.comment.steer",
+            "steerRunId":steer.id,
+            "steerDisposition":"interrupt_continue",
+        })),
+    };
+    let admitted = enqueue_issue_core_wakeup(tx, org, issue, &wakeup, &requested_by)
+        .await
+        .map_err(map_issue_checkout_error)?;
+    if admitted.as_deref() != Some(steer.id.as_str()) {
+        return Err(http(
+            409,
+            "Steer could not reserve a continuation; feedback was saved as a comment",
+        ));
     }
-    .await;
-    match result {
-        Ok(()) => {
-            tx.commit().await?;
-            Ok(())
-        }
-        Err(error) => {
-            if let Err(rollback_error) = tx.rollback().await {
-                tracing::warn!(%rollback_error, org_id = org, "failed to roll back Issue comment steer admission");
-            }
-            Err(error)
-        }
-    }
+    request_comment_run_cancellation(
+        tx,
+        org,
+        issue,
+        steer,
+        actor,
+        "issue_comment_steer",
+        comment.get("id").and_then(Value::as_str),
+    )
+    .await?;
+    let others = mentioned
+        .iter()
+        .filter(|agent_id| agent_id.as_str() != steer.agent_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    enqueue_comment_mentions(
+        tx,
+        org,
+        issue,
+        actor,
+        issue_row,
+        comment,
+        "comment",
+        Some(&others),
+    )
+    .await
 }
 
 async fn reopen_with_comment(
@@ -1466,7 +1426,7 @@ async fn reopen_with_comment(
         {
             return Err(http(403, "Only the current assignee or reviewer can reopen an issue"));
         }
-        let mut interrupted_run_id = None;
+        let mut interrupt_run = None;
         let mut steer = None;
         if control.interrupt || control.steer_expected_run_id.is_some() {
             if actor.kind != "user" {
@@ -1485,20 +1445,8 @@ async fn reopen_with_comment(
             .await?;
             if control.steer_expected_run_id.is_some() {
                 steer = active;
-            } else if control.interrupt
-                && let Some(active) = active
-                && request_comment_run_cancellation(
-                    &mut tx,
-                    org,
-                    issue,
-                    &active,
-                    actor,
-                    "issue_comment_interrupt",
-                    None,
-                )
-                .await?
-            {
-                interrupted_run_id = Some(active.id);
+            } else if control.interrupt {
+                interrupt_run = active;
             }
         }
         let mut body = canonicalize_agent_wake_mentions(&mut tx, org, body).await?;
@@ -1525,7 +1473,7 @@ async fn reopen_with_comment(
             self_comment,
             mentioned,
             steer,
-            interrupted_run_id,
+            interrupt_run,
         )))
     }
     .await;
@@ -1550,8 +1498,9 @@ async fn reopen_with_comment(
             return Err(error);
         }
     };
-    let (body, reopened_from, assignee_id, self_comment, mentioned, steer, interrupted_run_id) =
+    let (body, reopened_from, assignee_id, self_comment, mentioned, steer, interrupt_run) =
         prepared;
+    let interrupted_run_id = interrupt_run.as_ref().map(|run| run.id.clone());
     let mut comment_activity_details = json!({});
     if let Some(run_id) = interrupted_run_id.as_deref() {
         comment_activity_details["interruptedRunId"] = Value::String(run_id.to_owned());
@@ -1572,17 +1521,34 @@ async fn reopen_with_comment(
         run_id: actor.run_id,
         authorizer,
     };
+    let comment_wakeup = ReopenCommentWakeup {
+        actor,
+        reopened_from: &reopened_from,
+        assignee_id: assignee_id.as_deref(),
+        self_comment,
+        mentioned: &mentioned,
+        steer: steer.as_ref(),
+        interrupt_run: interrupt_run.as_ref(),
+        interrupted_run_id,
+    };
     let write_request = crate::issue_core_writes::IssueCoreWriteRequest {
         org_id: org,
         operation: crate::issue_core_writes::IssueCoreWriteOperation::Update,
         issue_id: Some(issue),
         input: &update,
         comment_activity_details: Some(&comment_activity_details),
+        comment_reopen_wakeup: Some(&comment_wakeup),
     };
-    let (_, response) =
+    let (_, response, wakeup_error) =
         crate::issue_core_writes::apply_issue_core_write(pool, &write_actor, &write_request, None)
             .await
             .map_err(map_issue_core_write_error)?;
+    if let Some(run_id) = actor.run_id
+        && let Err(error) =
+            crate::issue_lifecycle_analytics::clear_comment_run_detached_warning(pool, run_id).await
+    {
+        tracing::warn!(%error, run_id, issue_id = issue, "failed to clear detached warning after reopened Issue comment");
+    }
     let Some(comment_id) = response["comment"]["id"].as_str() else {
         return Err(http(500, "Failed to persist reopened Issue comment"));
     };
@@ -1597,63 +1563,81 @@ async fn reopen_with_comment(
     .await?
     .ok_or_else(|| http(404, "Comment not found"))?;
     let comment = serialize_comment(&raw, censor_username)?;
-    if let Err(error) = enqueue_reopened_comment_effects(
-        pool,
-        org,
-        issue,
-        actor,
-        &comment,
-        &reopened_from,
-        assignee_id.as_deref(),
-        self_comment,
-        &mentioned,
-        steer.as_ref(),
-        interrupted_run_id.as_deref(),
-        authorizer,
-    )
-    .await
-    {
-        if steer.is_some() {
-            return Err(match error {
-                IssueCommentError::Http(status, message) if status == 409 => {
-                    IssueCommentError::HttpDetails(status, message, comment)
-                }
-                other => other,
-            });
-        }
-        tracing::warn!(%error, org_id = org, issue_id = issue, "failed to enqueue reopened Issue comment wakeups");
+    if let Some(error) = wakeup_error {
+        return Err(match error {
+            IssueCommentError::Http(status, message) if status == 409 => {
+                IssueCommentError::HttpDetails(status, message, comment)
+            }
+            IssueCommentError::HttpDetails(status, message, _) if status == 409 => {
+                IssueCommentError::HttpDetails(status, message, comment)
+            }
+            other => other,
+        });
     }
     Ok(Some(comment))
 }
 
-async fn enqueue_reopened_comment_effects(
-    pool: &PgPool,
+pub(crate) async fn try_enqueue_reopened_comment_effects(
+    tx: &mut Tx<'_>,
     org: &str,
     issue: &str,
-    actor: IssueCommentActor<'_>,
     comment: &Value,
-    reopened_from: &str,
-    assignee_id: Option<&str>,
-    self_comment: bool,
-    mentioned: &[String],
-    steer: Option<&ActiveCommentRun>,
-    interrupted_run_id: Option<&str>,
-    authorizer: &dyn NativeAgentAuthorizer,
+    effects: &ReopenCommentWakeup<'_>,
+) -> Result<Option<IssueCommentError>> {
+    sqlx::query("SAVEPOINT issue_comment_reopen_effects")
+        .execute(&mut **tx)
+        .await?;
+    match enqueue_reopened_comment_effects_in_transaction(tx, org, issue, comment, effects).await {
+        Ok(()) => {
+            sqlx::query("RELEASE SAVEPOINT issue_comment_reopen_effects")
+                .execute(&mut **tx)
+                .await?;
+            Ok(None)
+        }
+        Err(error) => {
+            sqlx::query("ROLLBACK TO SAVEPOINT issue_comment_reopen_effects")
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query("RELEASE SAVEPOINT issue_comment_reopen_effects")
+                .execute(&mut **tx)
+                .await?;
+            if is_saved_comment_steer_conflict(&error) {
+                Ok(Some(error))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn is_saved_comment_steer_conflict(error: &IssueCommentError) -> bool {
+    const MESSAGE: &str = "Steer could not reserve a continuation; feedback was saved as a comment";
+    matches!(
+        error,
+        IssueCommentError::Http(409, message)
+            | IssueCommentError::HttpDetails(409, message, _)
+            if message == MESSAGE
+    )
+}
+
+async fn enqueue_reopened_comment_effects_in_transaction(
+    tx: &mut Tx<'_>,
+    org: &str,
+    issue: &str,
+    comment: &Value,
+    effects: &ReopenCommentWakeup<'_>,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    let result = async {
-        lock_organization(&mut tx, org).await?;
-        revalidate(&mut tx, org, authorizer).await?;
-        let issue_row = sqlx::query(
-            "SELECT assignee_agent_id::text,reviewer_agent_id::text,execution_run_id::text FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR UPDATE",
-        )
-        .bind(org)
-        .bind(issue)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| http(404, "Issue not found"))?;
-        let steer_relationship = if let Some(steer) = steer {
-            Some(if issue_row
+    let issue_row = sqlx::query(
+        "SELECT assignee_agent_id::text,reviewer_agent_id::text,execution_run_id::text FROM issues WHERE org_id=$1::uuid AND id=$2::uuid FOR UPDATE",
+    )
+    .bind(org)
+    .bind(issue)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(404, "Issue not found"))?;
+    let steer_relationship = if let Some(steer) = effects.steer {
+        Some(
+            if issue_row
                 .try_get::<Option<String>, _>("assignee_agent_id")?
                 .as_deref()
                 == Some(steer.agent_id.as_str())
@@ -1670,120 +1654,108 @@ async fn enqueue_reopened_comment_effects(
                     409,
                     "The active issue relationship changed before Steer was accepted",
                 ));
-            })
-        } else {
-            None
+            },
+        )
+    } else {
+        None
+    };
+    let reopen_wakeup = effects.assignee_id.filter(|id| {
+        !effects.self_comment && effects.mentioned.iter().any(|mentioned| mentioned == id)
+    });
+    if let Some(agent_id) = reopen_wakeup {
+        let requested_by = IssueWakeupActor {
+            kind: effects.actor.kind,
+            id: effects.actor.id,
         };
-        let reopen_wakeup = assignee_id
-            .filter(|id| !self_comment && mentioned.iter().any(|mentioned| mentioned == id));
-        if let Some(agent_id) = reopen_wakeup {
-            let requested_by = IssueWakeupActor {
-                kind: actor.kind,
-                id: actor.id,
-            };
-            let mut reopen_payload_extra = json!({"reopenedFrom":reopened_from});
-            let mut reopen_context_extra = json!({"reopenedFrom":reopened_from});
-            if let Some(interrupted_run_id) = interrupted_run_id {
-                reopen_payload_extra["interruptedRunId"] = Value::String(interrupted_run_id.to_owned());
-                reopen_context_extra["interruptedRunId"] = Value::String(interrupted_run_id.to_owned());
-            }
-            let wakeup = IssueWakeupIntent {
-                agent_id: agent_id.to_owned(),
-                source: "automation",
-                reason: "issue_reopened_via_comment",
-                mutation: "comment".to_owned(),
-                context_source: "issue.comment.reopen",
-                wake_source: "automation",
-                role: None,
-                comment: Some(comment_context(comment)),
-                relationship: None,
-                expected_issue_execution_run_id: None,
-                payload_extra: Some(reopen_payload_extra),
-                context_extra: Some(reopen_context_extra),
-            };
-            enqueue_issue_core_wakeup(&mut tx, org, issue, &wakeup, &requested_by)
-                .await
-                .map_err(map_issue_checkout_error)?;
+        let mut reopen_payload_extra = json!({"reopenedFrom":effects.reopened_from});
+        let mut reopen_context_extra = json!({"reopenedFrom":effects.reopened_from});
+        if let Some(interrupted_run_id) = effects.interrupted_run_id.as_deref() {
+            reopen_payload_extra["interruptedRunId"] = Value::String(interrupted_run_id.to_owned());
+            reopen_context_extra["interruptedRunId"] = Value::String(interrupted_run_id.to_owned());
         }
-        if let Some(steer) = steer {
-            let requested_by = IssueWakeupActor {
-                kind: actor.kind,
-                id: actor.id,
-            };
-            let wakeup = IssueWakeupIntent {
-                agent_id: steer.agent_id.clone(),
-                source: "automation",
-                reason: "issue_comment_steer",
-                mutation: "steer".to_owned(),
-                context_source: "issue.comment.steer",
-                wake_source: "issue.comment.steer",
-                role: None,
-                comment: Some(comment_context(comment)),
-                relationship: steer_relationship,
-                expected_issue_execution_run_id: Some(steer.id.clone()),
-                payload_extra: Some(json!({"steerRunId":steer.id,"mutation":"steer"})),
-                context_extra: Some(json!({
-                    "wakeReason":"issue_comment_steer",
-                    "wakeSource":"issue.comment.steer",
-                    "source":"issue.comment.steer",
-                    "steerRunId":steer.id,
-                    "steerDisposition":"interrupt_continue",
-                })),
-            };
-            let admitted = enqueue_issue_core_wakeup(&mut tx, org, issue, &wakeup, &requested_by)
-                .await
-                .map_err(map_issue_checkout_error)?;
-            if admitted.as_deref() != Some(steer.id.as_str()) {
-                return Err(http(
-                    409,
-                    "Steer could not reserve a continuation; feedback was saved as a comment",
-                ));
-            }
-            request_comment_run_cancellation(
-                &mut tx,
-                org,
-                issue,
-                steer,
-                actor,
-                "issue_comment_steer",
-                comment.get("id").and_then(Value::as_str),
-            )
-            .await?;
+        let wakeup = IssueWakeupIntent {
+            agent_id: agent_id.to_owned(),
+            source: "automation",
+            reason: "issue_reopened_via_comment",
+            mutation: "comment".to_owned(),
+            context_source: "issue.comment.reopen",
+            wake_source: "automation",
+            role: None,
+            comment: Some(comment_context(comment)),
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: Some(reopen_payload_extra),
+            context_extra: Some(reopen_context_extra),
+        };
+        enqueue_issue_core_wakeup(tx, org, issue, &wakeup, &requested_by)
+            .await
+            .map_err(map_issue_checkout_error)?;
+    }
+    if let Some(steer) = effects.steer {
+        let requested_by = IssueWakeupActor {
+            kind: effects.actor.kind,
+            id: effects.actor.id,
+        };
+        let wakeup = IssueWakeupIntent {
+            agent_id: steer.agent_id.clone(),
+            source: "automation",
+            reason: "issue_comment_steer",
+            mutation: "steer".to_owned(),
+            context_source: "issue.comment.steer",
+            wake_source: "issue.comment.steer",
+            role: None,
+            comment: Some(comment_context(comment)),
+            relationship: steer_relationship,
+            expected_issue_execution_run_id: Some(steer.id.clone()),
+            payload_extra: Some(json!({"steerRunId":steer.id,"mutation":"steer"})),
+            context_extra: Some(json!({
+                "wakeReason":"issue_comment_steer",
+                "wakeSource":"issue.comment.steer",
+                "source":"issue.comment.steer",
+                "steerRunId":steer.id,
+                "steerDisposition":"interrupt_continue",
+            })),
+        };
+        let admitted = enqueue_issue_core_wakeup(tx, org, issue, &wakeup, &requested_by)
+            .await
+            .map_err(map_issue_checkout_error)?;
+        if admitted.as_deref() != Some(steer.id.as_str()) {
+            return Err(http(
+                409,
+                "Steer could not reserve a continuation; feedback was saved as a comment",
+            ));
         }
-        let other_mentions = mentioned
-            .iter()
-            .filter(|id| {
-                reopen_wakeup != Some(id.as_str())
-                    && steer.is_none_or(|steer| steer.agent_id != **id)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        enqueue_comment_mentions(
-            &mut tx,
+        request_comment_run_cancellation(
+            tx,
             org,
             issue,
-            actor,
-            &issue_row,
-            comment,
-            "comment",
-            Some(&other_mentions),
+            steer,
+            effects.actor,
+            "issue_comment_steer",
+            comment.get("id").and_then(Value::as_str),
         )
         .await?;
-        Ok(())
     }
-    .await;
-    match result {
-        Ok(()) => {
-            tx.commit().await?;
-            Ok(())
-        }
-        Err(error) => {
-            if let Err(rollback_error) = tx.rollback().await {
-                tracing::warn!(%rollback_error, org_id = org, "failed to roll back reopened comment wake admission");
-            }
-            Err(error)
-        }
-    }
+    let other_mentions = effects
+        .mentioned
+        .iter()
+        .filter(|id| {
+            reopen_wakeup != Some(id.as_str())
+                && effects.steer.is_none_or(|steer| steer.agent_id != **id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    enqueue_comment_mentions(
+        tx,
+        org,
+        issue,
+        effects.actor,
+        &issue_row,
+        comment,
+        "comment",
+        Some(&other_mentions),
+    )
+    .await
 }
 
 fn comment_context(comment: &Value) -> Value {
