@@ -1125,6 +1125,8 @@ impl ClaudeTransport {
             self.flush_pending()?;
         }
         match self.host.receive(timeout).map_err(map_host_error)? {
+            HostEvent::Stderr(_) if !flush_pending => Err(ClaudeError::Timeout),
+            HostEvent::Stderr(_) => self.receive_one(timeout, flush_pending),
             HostEvent::Failure => Err(ClaudeError::Closed),
             HostEvent::Lifecycle(value) => {
                 if value.get("type").and_then(Value::as_str) == Some("terminal") {

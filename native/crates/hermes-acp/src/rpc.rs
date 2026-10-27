@@ -1588,6 +1588,7 @@ impl HermesAcpTransport {
                     }
                 }
                 Ok(HostEvent::Stdout(data)) => self.decode(&data)?,
+                Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => return Err(HermesTransportError::Closed),
                 Err(HostError::Timeout) => return Err(HermesTransportError::WriteIndeterminate),
                 Err(err) => return Err(map_host_error(err)),
@@ -1614,6 +1615,7 @@ impl HermesAcpTransport {
         }) {
             Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value)?,
             Ok(HostEvent::Stdout(data)) => self.decode(&data)?,
+            Ok(HostEvent::Stderr(_)) => {}
             Ok(HostEvent::Failure) => return Err(HermesTransportError::Closed),
             Err(HostError::Timeout) if cancelable => return Ok(None),
             Err(err) => return Err(map_host_error(err)),
@@ -1629,6 +1631,7 @@ impl HermesAcpTransport {
         match self.host.receive(remaining) {
             Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
             Ok(HostEvent::Stdout(data)) => self.decode(&data),
+            Ok(HostEvent::Stderr(_)) => Ok(()),
             Ok(HostEvent::Failure) => Err(HermesTransportError::Closed),
             Err(err) => Err(map_host_error(err)),
         }
