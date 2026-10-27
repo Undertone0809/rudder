@@ -121,7 +121,7 @@ fn scope(
         row.try_get("scope_pause_reason")?,
     ))
 }
-async fn budget_overview(
+pub(crate) async fn budget_overview(
     tx: &mut Transaction<'_, Postgres>,
     org_id: &str,
     start: i64,

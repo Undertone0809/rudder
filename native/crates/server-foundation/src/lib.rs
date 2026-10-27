@@ -2367,6 +2367,10 @@ impl AppState {
     }
 
     async fn workspace_backups_authorized(&self, org_id: &str) -> HttpResponse {
+        self.workspace_backups_response(org_id, false).await
+    }
+
+    async fn workspace_backups_response(&self, org_id: &str, public: bool) -> HttpResponse {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
@@ -2416,6 +2420,10 @@ impl AppState {
                 );
             }
         };
+
+        if public {
+            return HttpResponse::Ok().json(backups);
+        }
 
         // The public API remains an unpaginated full-list JSON response. Frame
         // the private bridge reply so Node can reject incomplete or corrupted

@@ -38,6 +38,7 @@ pub mod issue_metadata_reads;
 pub mod issue_work_products;
 pub mod legacy_read_json;
 mod links;
+pub mod messenger_reads;
 pub mod native_chat;
 pub mod organization_catalog_reads;
 pub mod organization_mutations;

@@ -913,7 +913,7 @@ export function organizationRoutes(
     res.json(result);
   });
 
-  router.get("/:orgId/workspace/backups", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/:orgId/workspace/backups", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
@@ -975,7 +975,7 @@ export function organizationRoutes(
     res.status(201).json(result);
   });
 
-  router.get("/:orgId/workspace/backups/:backupId/files", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/:orgId/workspace/backups/:backupId/files", async (req, res) => {
     const orgId = req.params.orgId as string;
     const backupId = req.params.backupId as string;
     assertCompanyAccess(req, orgId);
@@ -984,7 +984,7 @@ export function organizationRoutes(
     await sendWorkspaceBackupRead(req, res, rustFoundationBridge, orgId, { backupId, operation: "files", path: directoryPath });
   });
 
-  router.get("/:orgId/workspace/backups/:backupId/file", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/:orgId/workspace/backups/:backupId/file", async (req, res) => {
     const orgId = req.params.orgId as string;
     const backupId = req.params.backupId as string;
     assertCompanyAccess(req, orgId);
@@ -993,7 +993,7 @@ export function organizationRoutes(
     await sendWorkspaceBackupRead(req, res, rustFoundationBridge, orgId, { backupId, operation: "file", path: filePath });
   });
 
-  router.get("/:orgId/workspace/backups/:backupId/download", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/:orgId/workspace/backups/:backupId/download", async (req, res) => {
     const orgId = req.params.orgId as string;
     const backupId = req.params.backupId as string;
     assertCompanyAccess(req, orgId);

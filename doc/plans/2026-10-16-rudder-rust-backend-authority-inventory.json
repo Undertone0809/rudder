@@ -4651,7 +4651,7 @@
     },
     {
       "path": "server/src/routes/agents.management-routes.ts",
-      "sha256": "8a9fac08a8c958e383ff68a8c73facb07e5e7581a30a277cdc348cef014a1d78",
+      "sha256": "3f3b6e1a6e2f862d13e54b4b9514465a8994a6dec21e3b009fe17bbe872c6df3",
       "families": [
         "database_queries_and_writers",
         "identity_and_sessions",
@@ -4746,7 +4746,7 @@
     },
     {
       "path": "server/src/routes/calendar.ts",
-      "sha256": "b60842db6f1ed06bfc50d28845b62cd71c3bd61fad3867fc412a9a20b93b174f",
+      "sha256": "4f68b3d2327fe35645caef2458aa7f3b2261e40c8afb0cd933e4cf9313984546",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5078,7 +5078,7 @@
     },
     {
       "path": "server/src/routes/messenger.ts",
-      "sha256": "87e0a4703918d28082fc62a1ced7efbc0cb9cb23ec72bb9d1f5580afc5bda96e",
+      "sha256": "035e1ede79e3b2fff6ec30173db3d3e92571afc7485352e722950458fb6ed2a5",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5129,7 +5129,7 @@
     },
     {
       "path": "server/src/routes/orgs.ts",
-      "sha256": "63663cc8d5e59093a3fe96f8e74f9382581384100c6d6f85776aefeeb8c85590",
+      "sha256": "2228a0d20dbacb517b0a1f9cbf4f034ba42654da5c24c7b6bb469e3b500a60de",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5221,7 +5221,7 @@
     },
     {
       "path": "server/src/routes/secrets.ts",
-      "sha256": "6e18c3ba14fae7e09e6604f5add5e02084039b52873e8326e72b37f33e308fb0",
+      "sha256": "180b2f9f9b7029cb36ae511cd9f48c33fc2c589d6c1d4871ea3b765753be70f2",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5516,7 +5516,7 @@
     },
     {
       "path": "server/src/services/calendar-native-bridge.ts",
-      "sha256": "060c9a40b6bfd6f0b3ad385ed8b720c9b5ec4cea5c38944a964add6367713d0f",
+      "sha256": "7f9e7d50d5973ef7a51940283f4e5201d4ae9977f6d0a5f77aee1f2207b71aac",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -6952,14 +6952,14 @@
     },
     {
       "path": "server/src/services/rust-foundation-bridge.ts",
-      "sha256": "ed79a22d018190a753f117b152b65e40b5087af2cf7abdd2689266893682b5c4",
+      "sha256": "240463ace3fbacbae13e13a8fb6c0beb82fce3e4b10c637711d1f2bf21b00a95",
       "families": [
         "server_lifecycle_and_workers"
       ]
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "efd0256878db4c5627c4b8e1f8c37c895e208e9e21ee69773e0a9a10db8e1750",
+      "sha256": "da31945877f9e70ff08ac380828c7f30b84847b6bdd76d1adcf1d7cbf596a230",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -57051,7 +57051,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 458,
+      "line": 395,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => finish(false)",
       "receiver": null,
       "method": "setTimeout",
@@ -57061,7 +57061,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/services/rust-foundation-bridge.ts",
-      "line": 1273,
+      "line": 1210,
       "signature": "server/src/services/rust-foundation-bridge.ts|worker-schedule-candidate|setTimeout|() => headerDeadline.abort()",
       "receiver": null,
       "method": "setTimeout",
@@ -59044,87 +59044,115 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/routes/costs.ts",
-      "base_sha256": "20fdab453b197ee4acce95551ec5ac690e252c579cda40a14ec2a6ce968cd98f",
-      "head_sha256": "557aa23ab180f7b5dbde0dfb86d12ad9b9be1254f669e4a9c73fd12d13958a89",
+      "path": "server/src/routes/agents.management-routes.ts",
+      "base_sha256": "8a9fac08a8c958e383ff68a8c73facb07e5e7581a30a277cdc348cef014a1d78",
+      "head_sha256": "3f3b6e1a6e2f862d13e54b4b9514465a8994a6dec21e3b009fe17bbe872c6df3",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/cost_reads.rs; native/crates/d1-persistence/src/cost_reads.rs; native/crates/server-foundation/src/public_ingress/cost_reads.rs; native/crates/d1-persistence/src/cost_reads.rs; native/crates/server-foundation/src/public_ingress/observational_reads; existing native/crates/d1-persistence read modules",
-      "scope": "Omit selected Cost/Finance GET/HEAD reads plus Budget overview in native public mode; preserve quota, writes and mutation handlers. Rust owns budget overview read decisions.",
-      "compatibility_boundary": "Omit selected Cost/Finance GET/HEAD reads plus Budget overview in native public mode; preserve quota, writes and mutation handlers. Rust owns budget overview read decisions. Selected native failures are returned directly; no Node fallback. Ingress-off remains legacy compatibility debt.",
-      "retirement_criterion": "Remove ingress-off adapters when all default deployments use Rust and no-Node installation acceptance passes.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/live.rs; native/crates/server-foundation/src/public_ingress/run_reads/logs.rs",
+      "scope": "Omit two LiveRun and three RunLog GET/HEAD operations; preserve retry/execution and other legacy operations.",
+      "compatibility_boundary": "Omit two LiveRun and three RunLog GET/HEAD operations; preserve retry/execution and other legacy operations. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
       "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/private/tmp/rudder-cost-public-node-boundary-review-r1.json (sha256=e5923776e0d3c71767890c9d0342989d9778a5a63a328f6f5a3ddcf610e7a1ed; verdict=accept; scoped Node transport admission); /private/tmp/rudder-issue-attachments-author-r1/independent-stage-review-r1.md (sha256=b8e79cb8225de2c0a55e7e08c0ac0df67e90ac80398af62e24b30c1a5cfd8c92; verdict=accept; exact c315-to-3087 five-file Node boundary); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/remaining-read-source-r1/node-boundary-review.md (sha256=76e90836f72b4e80aa2f65d79f1ce545f201f2708527e22c84b249976cf17d4b; verdict=accept; four Node boundaries at ea0ff482)",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
       "review_status": "reviewed"
     },
     {
-      "path": "server/src/routes/requests.ts",
-      "base_sha256": "55afcc75d6bd77d0d838b1d9d5180f898055f3ddec2b8d80e73af612b208c65d",
-      "head_sha256": "3e498453f94e9391d634e903781b1c3b7797ef8e241a62a29daa2f5959594c11",
+      "path": "server/src/routes/calendar.ts",
+      "base_sha256": "b60842db6f1ed06bfc50d28845b62cd71c3bd61fad3867fc412a9a20b93b174f",
+      "head_sha256": "4f68b3d2327fe35645caef2458aa7f3b2261e40c8afb0cd933e4cf9313984546",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/request_reads.rs; native/crates/d1-persistence/src/request_reads.rs",
-      "scope": "Omit exactly the Request list/detail/block-audit-attempts GET/HEAD handlers when publicIngressEnabled is true; retain unchanged POST resolution/cancellation handlers as separate Node migration debt.",
-      "compatibility_boundary": "Omit exactly the Request list/detail/block-audit-attempts GET/HEAD handlers when publicIngressEnabled is true; retain unchanged POST resolution/cancellation handlers as separate Node migration debt. Public Rust revalidates identity/organization, Request-before-Approval identity precedence, filters and redaction; native failures do not call Node handlers.",
-      "retirement_criterion": "Remove this ingress-off compatibility adapter after default Request workflows are Rust-owned in all supported deployment modes and global no-Node installation acceptance passes.",
-      "reviewer": "/root/cost_public_reads/utc_date_review",
-      "review_reference": "/private/tmp/rudder-request-public-reads-source-r1/independent-stage-review-r1.md (sha256=5f612595b0a616398c0e472443a6b2ac3d5e902206c7f3164e19ca4ccc2b4626; verdict=accept; exact d54-to-ed16 Request source and Node boundaries)",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/services/request-read-bridge.ts",
-      "base_sha256": "94cab49aef5fce6eccd9ae2972316a442dd64e277cf7886a2ea169b31783ed8a",
-      "head_sha256": "88a4e954ae7a576ef6794ec544a21bc68daedffc8f99061d1901da55e53bf77d",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/request_reads.rs; native/crates/d1-persistence/src/request_reads.rs",
-      "scope": "Remove Node TimeZone lookup/context from the signed Rust Request read adapter; Rust owns canonical UTC projection under the approved date policy. No Node projection or fallback added.",
-      "compatibility_boundary": "Remove Node TimeZone lookup/context from the signed Rust Request read adapter; Rust owns canonical UTC projection under the approved date policy. No Node projection or fallback added. Public Rust revalidates identity/organization, Request-before-Approval identity precedence, filters and redaction; native failures do not call Node handlers.",
-      "retirement_criterion": "Remove this ingress-off compatibility adapter after default Request workflows are Rust-owned in all supported deployment modes and global no-Node installation acceptance passes.",
-      "reviewer": "/root/cost_public_reads/utc_date_review",
-      "review_reference": "/private/tmp/rudder-request-public-reads-source-r1/independent-stage-review-r1.md (sha256=5f612595b0a616398c0e472443a6b2ac3d5e902206c7f3164e19ca4ccc2b4626; verdict=accept; exact d54-to-ed16 Request source and Node boundaries)",
-      "review_status": "reviewed"
-    },
-    {
-      "path": "server/src/routes/activity.ts",
-      "base_sha256": "21b249f2f9ddd15be071402c8d2dee4e16d17a1a52a1f52b310f0b1b2aa3cd65",
-      "head_sha256": "db0c9521cb95a82c0e305f3bcd47875abfe9255ae17d2be18fe56e3125bd0276",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/observational_reads; existing native/crates/d1-persistence read modules",
-      "scope": "Omit selected Activity and ActivityLink GET/HEAD handlers in native public mode; preserve POST writes. Native Rust owns org/user/issue/run scope, privacy, pagination, filters and projection.",
-      "compatibility_boundary": "Omit selected Activity and ActivityLink GET/HEAD handlers in native public mode; preserve POST writes. Native Rust owns org/user/issue/run scope, privacy, pagination, filters and projection. Selected native failures are returned directly; no Node fallback. Ingress-off remains legacy compatibility debt.",
-      "retirement_criterion": "Remove ingress-off adapters when all default deployments use Rust and no-Node installation acceptance passes.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/board.rs; native/crates/d1-persistence/src/calendar",
+      "scope": "Omit three Calendar read operations only; retain local writes, Google OAuth/config/sync as existing debt.",
+      "compatibility_boundary": "Omit three Calendar read operations only; retain local writes, Google OAuth/config/sync as existing debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
       "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/remaining-read-source-r1/node-boundary-review.md (sha256=76e90836f72b4e80aa2f65d79f1ce545f201f2708527e22c84b249976cf17d4b; verdict=accept; four Node boundaries at ea0ff482)",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
       "review_status": "reviewed"
     },
     {
-      "path": "server/src/routes/dashboard.ts",
-      "base_sha256": "547a026b165169e19fd6cd43565bd760d562e82f5a63d7014601c824e5c0112a",
-      "head_sha256": "930219a5a505601ebc4c5ed2b2e72e9194ba64e5bd70841962b394f445151efe",
+      "path": "server/src/routes/messenger.ts",
+      "base_sha256": "87e0a4703918d28082fc62a1ced7efbc0cb9cb23ec72bb9d1f5580afc5bda96e",
+      "head_sha256": "035e1ede79e3b2fff6ec30173db3d3e92571afc7485352e722950458fb6ed2a5",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/observational_reads; existing native/crates/d1-persistence read modules",
-      "scope": "Omit Dashboard summary GET/HEAD only in native public mode; keep skill analytics as explicit Node debt. Rust preserves host-local month boundary.",
-      "compatibility_boundary": "Omit Dashboard summary GET/HEAD only in native public mode; keep skill analytics as explicit Node debt. Rust preserves host-local month boundary. Selected native failures are returned directly; no Node fallback. Ingress-off remains legacy compatibility debt.",
-      "retirement_criterion": "Remove ingress-off adapters when all default deployments use Rust and no-Node installation acceptance passes.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/messenger_reads.rs; native/crates/d1-persistence/src/messenger_reads; native/crates/server-foundation/src/public_ingress/existing_reads/board/saved.rs",
+      "scope": "Omit two Saved View and six Messenger GET/HEAD operations; Rust owns aggregation, scope, GET state initialization and group cleanup. Node writes remain existing debt.",
+      "compatibility_boundary": "Omit two Saved View and six Messenger GET/HEAD operations; Rust owns aggregation, scope, GET state initialization and group cleanup. Node writes remain existing debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
       "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/remaining-read-source-r1/node-boundary-review.md (sha256=76e90836f72b4e80aa2f65d79f1ce545f201f2708527e22c84b249976cf17d4b; verdict=accept; four Node boundaries at ea0ff482)",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
       "review_status": "reviewed"
     },
     {
-      "path": "server/src/routes/execution-workspaces.ts",
-      "base_sha256": "6e8079f008fc884cdf92bcea36a89dc0a6148a7707541152c4dd1bda974a74e2",
-      "head_sha256": "8a025f03cb3c247c49467c100df9cb56e12403c716e8addb20dc21bf94961193",
+      "path": "server/src/routes/orgs.ts",
+      "base_sha256": "63663cc8d5e59093a3fe96f8e74f9382581384100c6d6f85776aefeeb8c85590",
+      "head_sha256": "2228a0d20dbacb517b0a1f9cbf4f034ba42654da5c24c7b6bb469e3b500a60de",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/observational_reads; existing native/crates/d1-persistence read modules",
-      "scope": "Omit RunWorkspace/ExecutionWorkspace list/detail GET/HEAD including aliases in native public mode. Preserve PATCH writes as Node debt.",
-      "compatibility_boundary": "Omit RunWorkspace/ExecutionWorkspace list/detail GET/HEAD including aliases in native public mode. Preserve PATCH writes as Node debt. Selected native failures are returned directly; no Node fallback. Ingress-off remains legacy compatibility debt.",
-      "retirement_criterion": "Remove ingress-off adapters when all default deployments use Rust and no-Node installation acceptance passes.",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/mod.rs; native/crates/server-foundation/src/workspace_backup_reads.rs",
+      "scope": "Omit four Workspace Backup GET/HEAD operations; preserve backup creation and restore ownership as existing debt.",
+      "compatibility_boundary": "Omit four Workspace Backup GET/HEAD operations; preserve backup creation and restore ownership as existing debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
       "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/remaining-read-source-r1/node-boundary-review.md (sha256=76e90836f72b4e80aa2f65d79f1ce545f201f2708527e22c84b249976cf17d4b; verdict=accept; four Node boundaries at ea0ff482)",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/secrets.ts",
+      "base_sha256": "6e18c3ba14fae7e09e6604f5add5e02084039b52873e8326e72b37f33e308fb0",
+      "head_sha256": "180b2f9f9b7029cb36ae511cd9f48c33fc2c589d6c1d4871ea3b765753be70f2",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/board.rs; native/crates/d1-persistence/src/secrets.rs",
+      "scope": "Omit Secret provider/list GET/HEAD only; mutation ingress and legacy runtime secret consumers remain debt.",
+      "compatibility_boundary": "Omit Secret provider/list GET/HEAD only; mutation ingress and legacy runtime secret consumers remain debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
+      "reviewer": "/root/ci_unblock_review_luna",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/calendar-native-bridge.ts",
+      "base_sha256": "060c9a40b6bfd6f0b3ad385ed8b720c9b5ec4cea5c38944a964add6367713d0f",
+      "head_sha256": "7f9e7d50d5973ef7a51940283f4e5201d4ae9977f6d0a5f77aee1f2207b71aac",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/board.rs; native/crates/d1-persistence/src/calendar",
+      "scope": "Expose the existing ingress-enabled transport flag; no new SQL or business behavior in this protocol adapter.",
+      "compatibility_boundary": "Expose the existing ingress-enabled transport flag; no new SQL or business behavior in this protocol adapter. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
+      "reviewer": "/root/ci_unblock_review_luna",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins)",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-foundation-bridge.ts",
+      "base_sha256": "ed79a22d018190a753f117b152b65e40b5087af2cf7abdd2689266893682b5c4",
+      "head_sha256": "240463ace3fbacbae13e13a8fb6c0beb82fce3e4b10c637711d1f2bf21b00a95",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/run_reads/logs.rs; native/crates/server-foundation/src/public_ingress/messenger_reads.rs",
+      "scope": "Pass explicit host locale/username/home facts and existing log-root overrides; resolve only these two paths in parent cwd. Rust owns file reading, masking, ordering and access. No ambient environment spread or Node fallback.",
+      "compatibility_boundary": "Pass explicit host locale/username/home facts and existing log-root overrides; resolve only these two paths in parent cwd. Rust owns file reading, masking, ordering and access. No ambient environment spread or Node fallback. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
+      "reviewer": "/root/ci_unblock_review_luna",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined22-ci-repair-r1/stage-review.md (sha256=79fe22444acf9b0f490ea4e47c445068461cc6406b85b745d258a369a5ad2e1f; verdict=accept; five-file POSIX CI repair and exact transport-only environment move)",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/rust-public-ingress-config.ts",
+      "base_sha256": "efd0256878db4c5627c4b8e1f8c37c895e208e9e21ee69773e0a9a10db8e1750",
+      "head_sha256": "da31945877f9e70ff08ac380828c7f30b84847b6bdd76d1adcf1d7cbf596a230",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/run_reads/logs.rs; native/crates/server-foundation/src/public_ingress/messenger_reads.rs",
+      "scope": "Move existing curated child-process environment assembly from bridge to the existing ingress config module unchanged; preserve Rust auth/domain/log/locale ownership.",
+      "compatibility_boundary": "Configuration transport only, byte-for-byte equivalent existing function; bridge import/re-export preserves all callers. No new business decision or fallback.",
+      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
+      "reviewer": "/root/ci_unblock_review_luna",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined22-ci-repair-r1/stage-review.md (sha256=79fe22444acf9b0f490ea4e47c445068461cc6406b85b745d258a369a5ad2e1f; verdict=accept; five-file POSIX CI repair and exact transport-only environment move)",
       "review_status": "reviewed"
     }
   ],

@@ -688,7 +688,7 @@ describe("Run reads through real public HTTP, Rust and PostgreSQL", () => {
     expect(receipts).toHaveLength(before);
   },30_000);
 
-  it("omits only the ten public Run GET/HEAD routes when direct public ingress is selected", async () => {
+  it("omits all fifteen migrated Run, LiveRun and log GET/HEAD routes when direct public ingress is selected", async () => {
     let nodeRunReads = 0;
     let remainingLiveReads = 0;
     const selected = {
@@ -711,20 +711,22 @@ describe("Run reads through real public HTTP, Rust and PostgreSQL", () => {
         `/api/${surface}/${runningId}`,
         `/api/${surface}/${runningId}/events`,
         `/api/${surface}/${runningId}/workspace-operations`,
+        `/api/${surface}/${runningId}/log`,
       ]),
       `/api/issues/${issueId}/active-run`,
+      `/api/orgs/${orgId}/live-runs`,
+      `/api/issues/${issueId}/live-runs`,
+      `/api/workspace-operations/${randomUUID()}/log`,
     ];
     try {
-      expect(urls).toHaveLength(10);
+      expect(urls).toHaveLength(15);
       for (const url of urls) {
         expect((await get(url, agentToken, selectedServer)).status, url).toBe(404);
         expect((await request(selectedServer).head(url).set("authorization", `Bearer ${agentToken}`)).status, `HEAD ${url}`).toBe(404);
       }
       expect(nodeRunReads).toBe(0);
 
-      expect((await get(`/api/orgs/${orgId}/live-runs`, agentToken, selectedServer)).status).toBe(200);
-      expect((await get(`/api/issues/${issueId}/live-runs`, agentToken, selectedServer)).status).toBe(200);
-      expect(remainingLiveReads).toBe(2);
+      expect(remainingLiveReads).toBe(0);
 
       const remainingWrite = await request(selectedServer)
         .post(`/api/heartbeat-runs/${randomUUID()}/cancel`)

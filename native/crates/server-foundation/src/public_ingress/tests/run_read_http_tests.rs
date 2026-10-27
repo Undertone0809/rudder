@@ -6,7 +6,7 @@ use actix_web::{
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{net::TcpListener, sync::Arc};
+use std::{net::TcpListener, path::PathBuf, sync::Arc};
 
 #[actix_web::test]
 #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
@@ -187,6 +187,46 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
     .await
     .unwrap();
 
+    // The caller isolates host facts; create only unique fixture-owned log directories.
+    let instance_root = PathBuf::from(agent_core::instance_root(&org_id).unwrap());
+    let run_log_base = env::var_os("RUN_LOG_BASE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| instance_root.join("data/run-logs"));
+    let operation_log_base = env::var_os("WORKSPACE_OPERATION_LOG_BASE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| instance_root.join("data/workspace-operation-logs"));
+    std::fs::create_dir_all(&run_log_base).unwrap();
+    std::fs::create_dir_all(&operation_log_base).unwrap();
+    let run_logs = tempfile::tempdir_in(&run_log_base).unwrap();
+    let operation_logs = tempfile::tempdir_in(&operation_log_base).unwrap();
+    std::fs::write(
+        run_logs.path().join("private.ndjson"),
+        "😀OWNER_PRIVATE_LOG",
+    )
+    .unwrap();
+    std::fs::write(
+        operation_logs.path().join("private.ndjson"),
+        "😀OWNER_PRIVATE_OPERATION_LOG",
+    )
+    .unwrap();
+    let run_log_ref = format!(
+        "{}/private.ndjson",
+        run_logs.path().file_name().unwrap().to_string_lossy()
+    );
+    let operation_log_ref = format!(
+        "{}/private.ndjson",
+        operation_logs.path().file_name().unwrap().to_string_lossy()
+    );
+    sqlx::query("UPDATE heartbeat_runs SET log_store='local_file',log_ref=$2 WHERE id=$1::uuid")
+        .bind(&private_run_id)
+        .bind(&run_log_ref)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let private_operation_id: String = sqlx::query_scalar(
+        "UPDATE workspace_operations SET log_store='local_file',log_ref=$2 WHERE heartbeat_run_id=$1::uuid RETURNING id::text")
+        .bind(&private_run_id).bind(&operation_log_ref).fetch_one(&pool).await.unwrap();
+
     let node_requests = Arc::new(AtomicUsize::new(0));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let upstream = format!("http://{}", listener.local_addr().unwrap());
@@ -319,6 +359,79 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
             .status();
         head_statuses.push(status);
     }
+    let mut log_observations = Vec::new();
+    for (path, token, status, content) in [
+        (
+            format!("/api/heartbeat-runs/{private_run_id}/log?limitBytes=1"),
+            Some(owner_token.as_str()),
+            StatusCode::OK,
+            Some("😀"),
+        ),
+        (
+            format!("/api/agent-runs/{private_run_id}/log?offset=1&limitBytes=1"),
+            Some(owner_token.as_str()),
+            StatusCode::OK,
+            Some("O"),
+        ),
+        (
+            format!("/api/workspace-operations/{private_operation_id}/log?limitBytes=1"),
+            Some(owner_token.as_str()),
+            StatusCode::OK,
+            Some("�"),
+        ),
+        (
+            format!("/api/agent-runs/{private_run_id}/log"),
+            Some(other_token.as_str()),
+            StatusCode::NOT_FOUND,
+            None,
+        ),
+        (
+            format!("/api/agent-runs/{private_run_id}/log"),
+            Some(agent_token.as_str()),
+            StatusCode::NOT_FOUND,
+            None,
+        ),
+        (
+            format!("/api/workspace-operations/{private_operation_id}/log"),
+            Some(other_token.as_str()),
+            StatusCode::NOT_FOUND,
+            None,
+        ),
+        (
+            format!("/api/agent-runs/{foreign_run_id}/log"),
+            Some(owner_token.as_str()),
+            StatusCode::FORBIDDEN,
+            None,
+        ),
+        (
+            format!("/api/agent-runs/{normal_run_id}/log"),
+            Some(owner_token.as_str()),
+            StatusCode::NOT_FOUND,
+            None,
+        ),
+        (
+            format!("/api/agent-runs/{private_run_id}/log"),
+            None,
+            StatusCode::UNAUTHORIZED,
+            None,
+        ),
+    ] {
+        let (actual_status, body) = get_json(&client, &format!("{base}{path}"), token).await;
+        log_observations.push((path, actual_status, status, body, content));
+    }
+    for path in [
+        format!("/api/heartbeat-runs/{private_run_id}/log"),
+        format!("/api/agent-runs/{private_run_id}/log"),
+        format!("/api/workspace-operations/{private_operation_id}/log"),
+    ] {
+        let response = client
+            .head(format!("{base}{path}"))
+            .insert_header((header::AUTHORIZATION, format!("Bearer {owner_token}")))
+            .send()
+            .await
+            .unwrap();
+        head_statuses.push(response.status());
+    }
     let before_passthrough = node_requests.load(Ordering::SeqCst);
     let (live_status, live_body) = get_json(
         &client,
@@ -348,6 +461,12 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
     native_pool.close().await;
     let (database_failure_status, database_failure) =
         get_json(&client, &list_agent, Some(&owner_token)).await;
+    let (log_database_failure_status, _) = get_json(
+        &client,
+        &format!("{base}/api/agent-runs/{private_run_id}/log"),
+        Some(&owner_token),
+    )
+    .await;
     let after_database_failure = node_requests.load(Ordering::SeqCst);
 
     control.stop(true).await;
@@ -550,21 +669,24 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
     assert!(head_statuses.iter().all(|status| *status == StatusCode::OK));
     assert_eq!(before_passthrough, 0);
     assert_eq!(live_status, StatusCode::OK);
-    assert_eq!(
-        live_body["nodePath"],
-        format!("/api/orgs/{org_id}/live-runs")
-    );
+    assert!(live_body.is_array());
     assert_eq!(issue_live_status, StatusCode::OK);
-    assert_eq!(
-        issue_live_body["nodePath"],
-        format!("/api/issues/{issue_id}/live-runs")
-    );
+    assert!(issue_live_body.is_array());
     assert_eq!(write_status, StatusCode::OK);
     assert_eq!(
         write_body["nodePath"],
         format!("/api/heartbeat-runs/{private_run_id}/retry")
     );
-    assert_eq!(after_passthrough, 3);
+    assert_eq!(after_passthrough, 1);
+    for (path, actual, expected, body, content) in log_observations {
+        assert_eq!(actual, expected, "{path}: {body}");
+        if let Some(content) = content {
+            assert_eq!(body["content"], content, "{path}");
+        } else {
+            assert!(!body.to_string().contains("OWNER_PRIVATE_LOG"), "{path}");
+        }
+    }
+    assert!(log_database_failure_status.is_server_error());
     assert!(database_failure_status.is_server_error());
     assert!(database_failure.get("error").is_some());
     assert_eq!(after_database_failure, after_passthrough);

@@ -2,6 +2,7 @@ import type { RustFoundationActor, RustFoundationResponse } from "./rust-foundat
 
 /** Node transports authenticated public requests; Rust owns calendar data and domain rules. */
 export interface CalendarNativeBridge {
+  readonly publicIngressEnabled?: boolean;
   calendar?(
     actor: RustFoundationActor,
     orgId: string,

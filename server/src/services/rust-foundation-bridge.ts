@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, existsSync, constants as fsConstants, statSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
@@ -41,12 +41,11 @@ import { encodeRunWorkspaceOrdinaryUpdate } from "./run-workspace-ordinary-wire.
 import { requestRunWorkspaceRead, type RunWorkspaceReadInput } from "./run-workspace-read-bridge.js";
 import { requestRuntimeBinding, type RuntimeBindingInput } from "./runtime-binding-bridge.js";
 import {
-  nativeIdentityAuthEnvironment,
-  nativeIssueAssetStorageEnvironment,
-  nativeLocalAccountLifecycleEnvironment,
-  nativeSessionAuthEnvironment,
+  createFoundationChildEnvironment,
   type RustPublicIngressOptions,
 } from "./rust-public-ingress-config.js";
+
+export { createFoundationChildEnvironment } from "./rust-public-ingress-config.js";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -355,68 +354,6 @@ function candidateBinaryPaths(configured: string | undefined) {
   return candidates;
 }
 
-function createFoundationChildEnvironment(input: {
-  databaseUrl: string;
-  actorEnvelopeKey: string;
-  publicIngress?: RustPublicIngressOptions;
-  secretsMasterKey?: string;
-  secretsMasterKeyFile: string;
-}): Record<string, string> {
-  return {
-    // ZIP DOS timestamps follow the Node host's local Date semantics. Keep
-    // this explicit non-secret locale setting without inheriting other env.
-    ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
-    RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
-    RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
-    RUDDER_NATIVE_DATABASE_REQUIRED: "true",
-    RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
-    // These existing feature gates must reach the native authority as well as
-    // the public transport. Do not inherit the rest of the ambient environment.
-    ...Object.fromEntries([
-      "RUDDER_AGENT_CREATE_RUST_ENABLED",
-      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
-      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
-      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
-    ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
-    RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
-    RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
-    RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
-    ...(process.env.RUDDER_HOME !== undefined
-      ? { RUDDER_NATIVE_HOST_RUDDER_HOME: process.env.RUDDER_HOME }
-      : {}),
-    ...(process.env.RUDDER_INSTANCE_ID !== undefined
-      ? { RUDDER_NATIVE_HOST_INSTANCE_ID: process.env.RUDDER_INSTANCE_ID }
-      : {}),
-    ...(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME !== undefined
-      ? { RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME }
-      : {}),
-    ...(input.secretsMasterKey ? { RUDDER_SECRETS_MASTER_KEY: input.secretsMasterKey } : {}),
-    RUDDER_SECRETS_MASTER_KEY_FILE: input.secretsMasterKeyFile,
-    ...(input.publicIngress ? {
-      RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
-      RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
-      RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
-      RUDDER_NATIVE_DEPLOYMENT_MODE: input.publicIngress.deploymentMode ?? "authenticated",
-      ...(input.publicIngress.privateHostGate
-        ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }
-        : {}),
-      ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
-      ...nativeIssueAssetStorageEnvironment(input.publicIngress.issueAssetStorage),
-      ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
-      ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
-      ...(input.publicIngress.nativeChatHost
-        ? {
-            RUDDER_NATIVE_CHAT_HOST: JSON.stringify(input.publicIngress.nativeChatHost),
-            PATH: input.publicIngress.nativeChatHost.executableSearchPath,
-          }
-        : {}),
-      ...(input.publicIngress.browserSessionAuth
-        ? { RUDDER_NATIVE_BROWSER_AUTH_ISSUER: JSON.stringify(input.publicIngress.browserSessionAuth) }
-        : {}),
-      ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
-    } : {}),
-  };
-}
 
 function resolveBinaryPath(configured: string | undefined) {
   const candidate = candidateBinaryPaths(configured).find((value) => {

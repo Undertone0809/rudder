@@ -146,6 +146,17 @@ jobs:
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::tests::existing_read_http_tests::native_existing_reads_keep_scope_owners_filters_artifact_streams_and_no_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::tests::messenger_read_http_tests::native_messenger_reads_cover_journey_paging_privacy_effects_and_no_node_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify API-wide Rust Project reads against legacy data
         run: |
           set -o pipefail
