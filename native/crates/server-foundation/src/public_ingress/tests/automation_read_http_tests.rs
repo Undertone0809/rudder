@@ -250,8 +250,18 @@ async fn native_automation_reads_revalidate_scope_and_keep_writes_on_node() {
         .unwrap()
         .status();
     let node_requests_before_write = node_requests.load(Ordering::SeqCst);
-    let mut write = client
+    let mut invalid_trigger = client
         .post(format!("{base}/api/automations/{automation_id}/triggers"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {board_token}")))
+        .send_json(&serde_json::json!({}))
+        .await
+        .unwrap();
+    let invalid_trigger_status = invalid_trigger.status();
+    let invalid_trigger_body: serde_json::Value = invalid_trigger.json().await.unwrap();
+    let node_requests_after_invalid_trigger = node_requests.load(Ordering::SeqCst);
+    // Management writes are native now; execution still belongs to Node.
+    let mut write = client
+        .post(format!("{base}/api/automations/{automation_id}/run"))
         .insert_header((header::AUTHORIZATION, format!("Bearer {board_token}")))
         .send_json(&serde_json::json!({}))
         .await
@@ -414,10 +424,27 @@ async fn native_automation_reads_revalidate_scope_and_keep_writes_on_node() {
     assert_eq!(anonymous["error"], "Unauthorized");
     assert!(fractional_status.is_server_error());
     assert_eq!(head_status, StatusCode::OK);
+    assert_eq!(invalid_trigger_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_trigger_body,
+        json!({
+            "error": "Validation error",
+            "details": [{
+                "code": "invalid_union_discriminator",
+                "options": ["schedule", "webhook", "api"],
+                "path": ["kind"],
+                "message": "Invalid discriminator value. Expected 'schedule' | 'webhook' | 'api'"
+            }]
+        })
+    );
+    assert_eq!(
+        node_requests_after_invalid_trigger, 0,
+        "native management validation must not fall back to Node"
+    );
     assert_eq!(write_status, StatusCode::OK);
     assert_eq!(
         write_body["nodePath"],
-        format!("/api/automations/{automation_id}/triggers")
+        format!("/api/automations/{automation_id}/run")
     );
     assert_eq!(node_requests_before_write, 0);
     assert_eq!(node_requests_after_write, 1);

@@ -13,6 +13,7 @@ pub mod agent_core;
 pub mod agent_issue_creation;
 pub mod approval_reads;
 pub mod automation_issue_finalization;
+pub mod automation_management;
 pub mod automation_reads;
 mod branding;
 pub mod calendar;
