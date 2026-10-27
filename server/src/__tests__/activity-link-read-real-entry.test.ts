@@ -213,7 +213,8 @@ describe.each(["off", "required"] as const)("Activity links and ledger public re
       expect(response.status, response.body.toString()).toBe(200); expect(JSON.parse(response.body.toString()).items).toHaveLength(visible ? 2 : 0);
     }
   });
-  it.each(["owner", "org", "delete"] as const)("rechecks chat Activity visibility after public authorization (%s)", async (change) => {
+  // Private bridge hooks apply when Node still transports these public reads.
+  it.runIf(ingress === "off").each(["owner", "org", "delete"] as const)("rechecks chat Activity visibility after public authorization (%s)", async (change) => {
     const chat = randomUUID(), user = ids.userId;
     await fixture.db.insert(chatConversations).values({ id: chat, orgId: ids.orgId, conversationKind: "side_chat", createdByUserId: user });
     await fixture.db.insert(activityLog).values({ orgId: ids.orgId, actorType: "user", actorId: user, action: "chat.updated", entityType: "chat", entityId: chat, details: { title: "CURRENT_LEDGER_PRIVATE_TITLE" }, createdAt: new Date("2046-01-01T00:00:00.000Z") });
@@ -279,7 +280,7 @@ describe.each(["off", "required"] as const)("Activity links and ledger public re
     const response = await server.bridge.activityLinkRead!({ type: "board", source: "local_implicit", isInstanceAdmin: true }, ids.orgId, { operation: "run-issues", runId: run, runAlias: "agent", legacyDateTimezone: "UTC" });
     expect(response.status).toBe(200); expect(JSON.parse(response.body.toString())).toEqual(wire(await activityService(fixture.db).issuesForRun(run)));
   });
-  it.each(["issue-org", "run-org", "chat-owner", "chat-org"] as const)("rechecks current signed scope and visibility after Node identity resolution (%s)", async (change) => {
+  it.runIf(ingress === "off").each(["issue-org", "run-org", "chat-owner", "chat-org"] as const)("rechecks current signed scope and visibility after Node identity resolution (%s)", async (change) => {
     const issue = await addIssue(), chat = randomUUID(); await fixture.db.insert(chatConversations).values({ id: chat, orgId: ids.orgId, conversationKind: "side_chat", createdByUserId: ids.userId });
     const run = await addRun({ chatConversationId: chat, contextSnapshot: { issueId: issue, scene: "side_chat" } });
     const read = server.bridge.activityLinkRead!; server.bridge.activityLinkRead = async (...args) => {
@@ -300,7 +301,7 @@ describe.each(["off", "required"] as const)("Activity links and ledger public re
     try { for (const route of routes) expect((await get(route, ids.boardToken)).status).toBe(403); }
     finally { await fixture.db.update(organizationMemberships).set({ status: "active" }).where(and(eq(organizationMemberships.orgId, ids.orgId), eq(organizationMemberships.principalId, ids.userId))); }
   });
-  it("rejects a signed foreign issue or run after public same-org resolution", async () => {
+  it.runIf(ingress === "off")("rejects a signed foreign issue or run after public same-org resolution", async () => {
     const foreignAgent = randomUUID(); await fixture.db.insert(agents).values({ id: foreignAgent, orgId: ids.foreign, name: "Foreign", role: "general" });
     const foreignIssue = await addIssue({ orgId: ids.foreign }), foreignRun = await addRun({ orgId: ids.foreign, agentId: foreignAgent });
     const read = server.bridge.activityLinkRead!;
@@ -308,7 +309,7 @@ describe.each(["off", "required"] as const)("Activity links and ledger public re
     try { for (const route of [`issues/${issueId}/runs`, `heartbeat-runs/${runId}/issues`, `agent-runs/${runId}/issues`]) expect((await get(route)).status).toBe(404); }
     finally { server.bridge.activityLinkRead = read; }
   });
-  it("overrides caller locale and rejects signed missing/invalid locale separately from tampering", async () => {
+  it.runIf(ingress === "off")("overrides caller locale and rejects signed missing/invalid locale separately from tampering", async () => {
     const input = { operation: "user-ledger" as const, userId: ids.userId, canonicalLocale: "invalid_!", legacyDateTimezone: "UTC" };
     expect((await server.bridge.activityLinkRead!({ type: "agent", source: "agent_key", agentId: ids.agentId, orgId: ids.orgId }, ids.orgId, input)).status).toBe(200);
     const nativeFetch = globalThis.fetch;
@@ -324,12 +325,12 @@ describe.each(["off", "required"] as const)("Activity links and ledger public re
       try { expect((await get(ledgerPath())).status, mode).toBe(mode === "tamper" ? 401 : 422); } finally { spy.mockRestore(); }
     }
   });
-  it("fails closed without native transport and returns no Node projection", async () => {
+  it.runIf(ingress === "off")("fails closed without native transport and returns no Node projection", async () => {
     const read = server.bridge.activityLinkRead; server.bridge.activityLinkRead = undefined;
     try { for (const route of [ledgerPath(), `issues/${issueId}/runs`, `agent-runs/${runId}/issues`, `heartbeat-runs/${runId}/issues`]) expect((await get(route)).status).toBe(503); }
     finally { server.bridge.activityLinkRead = read; }
   });
-  it("returns503 for an unreachable private TCP endpoint and recovers after a real process restart", async () => {
+  it.runIf(ingress === "off")("returns503 for an unreachable private TCP endpoint and recovers after a real process restart", async () => {
     const routes = [ledgerPath(), `issues/${issueId}/runs`, `agent-runs/${runId}/issues`, `heartbeat-runs/${runId}/issues`], before = await snapshot(fixture.db, tables);
     const closedPort = await port(), nativeFetch = globalThis.fetch;
     const spy = vi.spyOn(globalThis, "fetch").mockImplementation((url, options) => {

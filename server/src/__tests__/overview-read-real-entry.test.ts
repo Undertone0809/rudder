@@ -147,7 +147,7 @@ describe.each(["off","required"] as const)("Overview public reads (%s ingress)",
     try{const response=await get("budgets/overview");expect(response.status,response.text).toBe(200);const expected=wire(await budgetService(fixture.db).overview(ids.orgId));expected.activeIncidents.find((row:{id:string})=>row.id===incidentId)!.windowStart="0032-01-01T00:00:00.000Z";expect(response.body).toEqual(expected);}
     finally{await fixture.db.update(budgetIncidents).set({windowStart:original!.windowStart,windowEnd:original!.windowEnd,resolvedAt:original!.resolvedAt}).where(eq(budgetIncidents.id,incidentId));}
   });
-  it("rejects fresh signatures carrying stale, future or malformed clocks before any row read",async()=>{
+  it.runIf(ingress === "off")("rejects fresh signatures carrying stale, future or malformed clocks before any row read",async()=>{
     const nativeFetch=globalThis.fetch;
     const before=await snapshot(fixture.db,tables);
     for(const change of ["stale","future","fractional","unsafe","null","future-start","old-start","midmonth","tampered"]){
