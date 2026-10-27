@@ -1,3 +1,4 @@
+pub mod desktop_contract;
 //! Request planning for native direct and explicitly mapped CLI HTTP MCP capabilities.
 //!
 //! Authentication and HTTP execution deliberately live outside this crate. The

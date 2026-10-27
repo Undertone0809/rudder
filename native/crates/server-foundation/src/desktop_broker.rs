@@ -9,31 +9,7 @@ use std::{
 };
 use tokio::sync::watch;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Kind {
-    Browser,
-    Computer,
-}
-impl Kind {
-    fn prefix(self) -> &'static str {
-        match self {
-            Self::Browser => "browser",
-            Self::Computer => "computer",
-        }
-    }
-    fn title(self) -> &'static str {
-        match self {
-            Self::Browser => "Browser",
-            Self::Computer => "Computer",
-        }
-    }
-    fn max_response(self) -> usize {
-        match self {
-            Self::Browser => 16 * 1024 * 1024,
-            Self::Computer => 18 * 1024 * 1024,
-        }
-    }
-}
+pub(crate) use rudder_agent_request_planner::desktop_contract::DesktopSurface as Kind;
 #[derive(Debug)]
 pub(crate) struct BrokerError {
     pub code: String,
