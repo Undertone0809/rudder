@@ -58,6 +58,28 @@ pub async fn admit(
         request.trigger_detail.as_deref(),
         request.reason.as_deref(),
     );
+    if request.source == "timer" && context::nonempty(snapshot.get("issueId")).is_none() {
+        let mut preflight = pool.begin().await?;
+        authorize(&mut preflight, authorizer, &org).await?;
+        let runtime: Option<Value> = sqlx::query_scalar(
+            "SELECT runtime_config FROM agents WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(&org)
+        .bind(&agent_id)
+        .fetch_optional(&mut *preflight)
+        .await?;
+        preflight.commit().await?;
+        if runtime
+            .as_ref()
+            .is_some_and(super::timer_preflight::enabled)
+        {
+            if let Some(admission) =
+                super::pending::recover_for_timer(pool, &org, &agent_id).await?
+            {
+                return Ok(admission);
+            }
+        }
+    }
     let mut tx = pool.begin().await?;
     let runtime_type: Option<String> = sqlx::query_scalar(
         "SELECT agent_runtime_type FROM agents WHERE org_id=$1::uuid AND id=$2::uuid",
@@ -208,10 +230,13 @@ pub(crate) async fn admit_in_transaction(
         return Ok(admission);
     }
     let mut skip_reason = None;
-    if request.source == "timer" && runtime_config["heartbeat"]["enabled"] == false {
+    if status != "paused"
+        && request.source == "timer"
+        && runtime_config["heartbeat"]["enabled"] == false
+    {
         skip_reason = Some("heartbeat.disabled");
     }
-    if request.source != "timer" && !wake_on_demand_enabled(&runtime_config) {
+    if status != "paused" && request.source != "timer" && !wake_on_demand_enabled(&runtime_config) {
         skip_reason = Some("heartbeat.wakeOnDemand.disabled");
     }
     if let Some(issue_id) = issue_id {
@@ -311,6 +336,30 @@ pub(crate) async fn admit_in_transaction(
         )
         .await;
     }
+    if request.source == "timer" && super::timer_preflight::enabled(&runtime_config) {
+        let preflight =
+            super::timer_preflight::evaluate(tx, org, agent_id, &runtime_config).await?;
+        if !preflight.should_run {
+            let mut payload = payload.clone();
+            if !preflight.diagnostics.is_null() {
+                payload["preflight"] = preflight.diagnostics;
+            }
+            let admission = insert_wakeup_only(
+                tx,
+                org,
+                agent_id,
+                actor,
+                request,
+                &payload,
+                "skipped",
+                preflight.skip_reason.as_deref(),
+                true,
+            )
+            .await?;
+            sqlx::query("UPDATE agents SET last_heartbeat_at=statement_timestamp(),updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid").bind(org).bind(agent_id).execute(&mut **tx).await?;
+            return Ok(admission);
+        }
+    }
     let active = sqlx::query("SELECT id::text AS id,status,goal_id::text AS goal_id,context_snapshot,invocation_source FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid AND status IN ('queued','running') ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,created_at DESC")
         .bind(org).bind(agent_id).fetch_all(&mut **tx).await?;
     let task_key = context::task_key(&snapshot, payload);
@@ -378,9 +427,9 @@ pub(crate) async fn admit_in_transaction(
             .as_ref()
             .and_then(|value| context::nonempty(value.get("sessionId")))
     });
-    let intent = json!({"kind":if session.reuse_scope=="none" {"fresh"} else {"resume"},"reuseScope":session.reuse_scope,"sourceRunId":context::nonempty(snapshot.get("resumeFromRunId")),"sessionId":session_id,"sessionParams":session.params});
+    let intent = json!({"kind":if session.reuse_scope=="none" {"fresh"} else {"resume"},"reuseScope":session.reuse_scope,"sourceRunId":if session.reuse_scope=="none"{None}else{context::nonempty(snapshot.get("resumeFromRunId"))},"sessionId":session_id,"sessionParams":session.params});
     let run_id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,execution_authority,goal_id,context_snapshot,session_reuse_scope,session_id_before,session_params_before_json,scene,target_type,target_id,session_intent_json) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,'queued',$6::uuid,'native_rust',$7::uuid,$8::jsonb,$9,$10,$11::jsonb,'heartbeat','wakeup_request',$6::text,$12::jsonb)")
+    sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,execution_authority,goal_id,context_snapshot,session_reuse_scope,session_id_before,session_params_before_json,scene,target_type,target_id,idempotency_key,session_intent_json) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,'queued',$6::uuid,'native_rust',$7::uuid,$8::jsonb,$9,$10,$11::jsonb,'heartbeat','wakeup_request',$6::text,'agent-wakeup:'||$6::text,$12::jsonb)")
         .bind(&run_id).bind(org).bind(agent_id).bind(&request.source).bind(&request.trigger_detail).bind(&result.wakeup_request_id).bind(goal_id.as_deref()).bind(snapshot).bind(session.reuse_scope).bind(session_id).bind(session.params).bind(intent).execute(&mut **tx).await?;
     sqlx::query("UPDATE agent_wakeup_requests SET run_id=$3::uuid,updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(org).bind(&result.wakeup_request_id).bind(&run_id).execute(&mut **tx).await?;
@@ -400,6 +449,35 @@ async fn insert_wakeup_only(
     reason: Option<&str>,
     finished: bool,
 ) -> Result<AgentRunAdmission, AgentExecutionError> {
+    if status == "deferred_agent_paused" {
+        let incoming = payload.get("_paperclipWakeContext").unwrap_or(&Value::Null);
+        let task = context::task_key(incoming, payload);
+        let candidates=sqlx::query("SELECT id::text AS id,payload FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid AND execution_authority='native_rust' AND run_id IS NULL AND status='deferred_agent_paused' ORDER BY requested_at,id FOR UPDATE").bind(org).bind(agent_id).fetch_all(&mut **tx).await?;
+        for candidate in candidates {
+            let old = candidate
+                .try_get::<Option<Value>, _>("payload")?
+                .unwrap_or_else(|| json!({}));
+            let old_context = old.get("_paperclipWakeContext").unwrap_or(&Value::Null);
+            if context::task_key(old_context, &old) != task {
+                continue;
+            }
+            let mut merged = old.as_object().cloned().unwrap_or_default();
+            merged.extend(payload.as_object().cloned().unwrap_or_default());
+            merged.insert(
+                "_paperclipWakeContext".into(),
+                context::merge_coalesced_context(old_context, incoming),
+            );
+            let id: String = candidate.try_get("id")?;
+            sqlx::query("UPDATE agent_wakeup_requests SET payload=$3::jsonb,coalesced_count=coalesced_count+1,error=NULL,finished_at=NULL,claimed_at=NULL,updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid AND run_id IS NULL").bind(org).bind(&id).bind(Value::Object(merged)).execute(&mut **tx).await?;
+            return Ok(AgentRunAdmission {
+                wakeup_request_id: id,
+                run_id: None,
+                status: status.into(),
+                replayed: false,
+                invocation_block: None,
+            });
+        }
+    }
     let id: String=sqlx::query_scalar("INSERT INTO agent_wakeup_requests(org_id,agent_id,source,trigger_detail,reason,payload,status,execution_authority,requested_by_actor_type,requested_by_actor_id,idempotency_key,finished_at) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,'native_rust',$8,$9,$10,CASE WHEN $11 THEN statement_timestamp() ELSE NULL END) RETURNING id::text")
         .bind(org).bind(agent_id).bind(&request.source).bind(&request.trigger_detail).bind(reason).bind(payload).bind(status).bind(actor.actor_type).bind(&actor.actor_id).bind(&request.idempotency_key).bind(finished).fetch_one(&mut **tx).await?;
     Ok(AgentRunAdmission {

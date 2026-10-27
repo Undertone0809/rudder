@@ -5,10 +5,16 @@
 //! terminal-effect consumer are installed together.
 
 mod admission;
+mod analytics;
+mod approvals;
 pub use admission::{AgentExecutionActor, AgentRunAdmission, AgentWakeRequest, admit};
+pub use approvals::{RuntimeApproval, create_runtime_approval, read_runtime_approval};
+pub mod attempts;
 mod budget;
 mod claim;
 mod context;
+mod followups;
+pub mod settlement;
 pub(crate) use context::merge_coalesced_context;
 mod controls;
 pub(crate) mod costs;
@@ -16,13 +22,21 @@ pub(crate) use controls::cancel_heartbeat_in_transaction;
 pub use controls::{cancel, retry};
 pub mod lifecycle;
 pub(crate) use claim::select_claim_session;
-pub use claim::{AgentRunClaim, DueAgentRun, claim_queued_run, list_due_runs};
+pub use claim::{AgentRunClaim, DueAgentRun, claim_queued_run, claim_network_waiting_run, list_due_runs};
+pub mod model_attempts;
+pub mod network;
 mod owner;
+pub mod output;
+mod pending;
+pub use pending::resume_pending;
 mod request;
+pub mod recovery;
 mod resume;
-pub use owner::OwnedAgentRun;
+mod usage;
+mod timer_preflight;
 pub(crate) use owner::Settlement;
-pub use request::{OwnedRequestExecution, SettledRequestProof};
+pub use owner::{AgentRunObserver, OwnedAgentRun};
+pub use request::{OwnedRequestExecution, SettledRequestProof, record_request_started};
 
 use sqlx::{Postgres, Transaction};
 
@@ -43,6 +57,10 @@ pub enum AgentExecutionError {
     Database(#[from] sqlx::Error),
     #[error(transparent)]
     Goal(#[from] crate::goal_runs::GoalRunError),
+    #[error(transparent)]
+    Cost(#[from] crate::goal_costs::GoalCostError),
+    #[error(transparent)]
+    Budget(#[from] crate::goal_budget::GoalBudgetError),
 }
 
 pub(crate) fn http(status: u16, message: &str) -> AgentExecutionError {

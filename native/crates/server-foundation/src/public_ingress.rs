@@ -18,6 +18,7 @@ use rudder_d1_persistence::goal_reads::{GoalReadRequest, GoalReadView};
 use uuid::Uuid;
 
 mod agent_core;
+mod agent_execution;
 mod agent_runs;
 mod approval_reads;
 mod automation_reads;
@@ -31,6 +32,7 @@ mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
 mod messenger_reads;
+mod managed_mcp;
 mod messenger_writes;
 mod native_chat;
 mod observational_reads;

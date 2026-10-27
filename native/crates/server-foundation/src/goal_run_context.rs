@@ -212,7 +212,7 @@ pub(crate) fn build_goal_run_invocation(
     })
 }
 
-fn prepare_instruction_runtime_context(mut context: Value) -> (Value, Vec<String>) {
+pub(crate) fn prepare_instruction_runtime_context(mut context: Value) -> (Value, Vec<String>) {
     let Some(context_object) = context.as_object_mut() else {
         return (context, Vec::new());
     };
@@ -280,7 +280,7 @@ fn nonempty_string(value: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn build_goal_started_prompt_template(context: &Value) -> String {
+pub(crate) fn build_goal_started_prompt_template(context: &Value) -> String {
     let goal_id = first_prompt_path(context, &["id", "goalId"]);
     let goal_title = first_prompt_path(context, &["title", "goalTitle"]);
     let goal_outcome = first_prompt_path(
@@ -527,7 +527,7 @@ fn write_jsonb_value(output: &mut String, value: &Value) {
     }
 }
 
-fn render_template(template: &str, data: &Value) -> String {
+pub(crate) fn render_template(template: &str, data: &Value) -> String {
     let mut rendered = String::with_capacity(template.len());
     let mut remaining = template;
     while let Some(open) = remaining.find("{{") {

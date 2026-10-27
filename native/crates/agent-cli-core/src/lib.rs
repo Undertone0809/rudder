@@ -24,10 +24,12 @@ use url::Url;
 
 mod board_auth;
 pub(crate) mod issue_transport_budget;
+mod managed_mcp_proxy;
 mod mcp_server;
 mod skill_cli;
 
-pub use mcp_server::run as run_mcp_server;
+pub use managed_mcp_proxy::run as run_managed_mcp_proxy;
+pub use mcp_server::{native_mcp_tool_descriptors, run as run_mcp_server};
 
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 10_000;
 const MIN_HTTP_TIMEOUT_MS: u64 = 50;

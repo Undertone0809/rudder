@@ -327,6 +327,12 @@ fn discover(id: Value, params: &Value) -> Value {
     rpc_result(id, result)
 }
 
+/// The exact currently advertised native core inventory. Provider adapters
+/// may register these descriptors without duplicating CLI capability policy.
+pub fn native_mcp_tool_descriptors() -> Vec<Value> {
+    tool_manifest()
+}
+
 fn tool_manifest() -> Vec<Value> {
     let contract = contract();
     contract["capabilities"]

@@ -846,7 +846,7 @@ async fn enqueue_issue_wakeup_with_agent(
         }
     }
 
-    if status == "queued" {
+    if status == "queued" && native.is_none() {
         let native_goal_run = sqlx::query_scalar::<_, String>(
             "SELECT id::text FROM heartbeat_runs
              WHERE org_id=$1::uuid AND agent_id=$2::uuid
@@ -1021,12 +1021,13 @@ async fn enqueue_issue_wakeup_with_agent(
             "INSERT INTO heartbeat_runs
                (org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,
                 execution_authority,goal_id,context_snapshot,session_reuse_scope,
-                session_id_before,session_params_before_json,scene,target_type,target_id,session_intent_json)
+                session_id_before,session_params_before_json,scene,target_type,target_id,idempotency_key,session_intent_json)
              VALUES($1::uuid,$2::uuid,$4,$5,'queued',$3::uuid,
                 $11,$6::uuid,$7::jsonb,$8,$9,$10::jsonb,
                 CASE WHEN $11='native_rust' THEN 'heartbeat' ELSE NULL END,
                 CASE WHEN $11='native_rust' THEN 'wakeup_request' ELSE NULL END,
-                CASE WHEN $11='native_rust' THEN $3::text ELSE NULL END,$12::jsonb)
+                CASE WHEN $11='native_rust' THEN $3::text ELSE NULL END,
+                CASE WHEN $11='native_rust' THEN 'agent-wakeup:'||$3::text ELSE NULL END,$12::jsonb)
              RETURNING id::text",
         )
         .bind(org)

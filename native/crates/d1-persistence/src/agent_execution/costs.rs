@@ -18,6 +18,7 @@ pub(crate) struct RunCostReceipt {
     pub(crate) status: String,
     pub(crate) error: Option<String>,
     pub(crate) usage: Value,
+    pub(crate) ledger_usage: Option<Value>,
     pub(crate) result: Value,
 }
 
@@ -66,7 +67,7 @@ fn bounded_nonnegative_i32(value: Option<&Value>) -> Result<i32, GoalCostError> 
 }
 
 fn normalize_ledger_receipt(run: &RunCostReceipt) -> Result<LedgerReceipt, GoalCostError> {
-    let usage = &run.usage;
+    let usage = run.ledger_usage.as_ref().unwrap_or(&run.usage);
     let provider = run
         .result
         .get("provider")

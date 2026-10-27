@@ -70,8 +70,8 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
         load_migration_manifest(&journal, &migrations, MigrationLimits::default()).unwrap();
 
     assert_eq!(first.fingerprint, second.fingerprint);
-    assert_eq!(first.journal.entries.len(), 185);
-    assert_eq!(first.entries.len(), 187);
+    assert_eq!(first.journal.entries.len(), 186);
+    assert_eq!(first.entries.len(), 188);
     assert_eq!(first.journal.entries[183].idx, 183);
     assert_eq!(
         first.journal.entries[183].tag,
@@ -79,15 +79,17 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
     );
     assert_eq!(first.journal.entries[184].idx, 184);
     assert_eq!(first.journal.entries[184].tag, "0184_goal_run_ownership");
+    assert_eq!(first.journal.entries[185].idx, 185);
+    assert_eq!(first.journal.entries[185].tag, "0185_native_agent_execution");
     assert_eq!(first.journal.entries[57].tag, "0058_messenger_threads");
     assert_eq!(first.journal.entries[58].tag, "0058_calm_red_ghost");
-    assert!(first.entries[185].is_legacy_unjournaled());
+    assert!(first.entries[186].is_legacy_unjournaled());
     assert_eq!(
-        first.entries[185].file_name,
+        first.entries[186].file_name,
         "0055_illegal_sheva_callister.sql"
     );
-    assert!(first.entries[186].is_legacy_unjournaled());
-    assert_eq!(first.entries[186].file_name, "0128_modern_jetstream.sql");
+    assert!(first.entries[187].is_legacy_unjournaled());
+    assert_eq!(first.entries[187].file_name, "0128_modern_jetstream.sql");
     assert_eq!(first.entries[0].journal_entry.as_ref().unwrap().idx, 0);
     assert_eq!(
         first.entries[0].journal_entry.as_ref().unwrap().tag,
@@ -96,7 +98,7 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
     assert_eq!(first.fingerprint.len(), 64);
     assert_eq!(
         first.fingerprint,
-        "fb22327dbc6c8e8241a5599ea0de0499177aa83af7038db1c1cb5a17f4a07729"
+        "8f9f17479c660b3e84973fc7ce7491ae559a8be24d64ce58a7527de1c07dd50e"
     );
 }
 

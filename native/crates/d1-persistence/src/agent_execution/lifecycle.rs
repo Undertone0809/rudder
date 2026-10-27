@@ -245,6 +245,7 @@ async fn finalize_settled(
     let summary = summarize_result_json(&persisted_result, usage).map(|value| value.to_string());
     let mut tx = pool.begin().await?;
     mark_native_write(&mut tx).await?;
+    let usage = super::usage::normalize(&mut tx, claim, usage, result).await?;
     let run = sqlx::query(
         "UPDATE heartbeat_runs
          SET error_code=CASE WHEN error_code='cancel_requested' OR $4='cancelled' THEN 'cancelled' WHEN $4='timed_out' THEN 'timeout' ELSE CASE WHEN $15 THEN $9::jsonb->>'errorCode' ELSE NULL END END,
@@ -320,6 +321,9 @@ async fn finalize_settled(
     .bind(if claim.is_generic() {result.get("errorCode").and_then(Value::as_str)} else {None})
     .execute(&mut *tx)
     .await?;
+    if claim.is_generic() {
+        super::analytics::terminal(&mut tx, &claim.organization_id, &claim.run_id).await?;
+    }
     append_terminal_event(&mut tx, claim, &final_status).await?;
     sqlx::query(
         "UPDATE agent_wakeup_requests
@@ -332,6 +336,7 @@ async fn finalize_settled(
     .bind(match final_status.as_str() {
         "succeeded" => "completed",
         "cancelled" => "cancelled",
+        "timed_out" if claim.is_generic() => "timed_out",
         _ => "failed",
     })
     .bind(error)
@@ -435,12 +440,16 @@ pub async fn finalize_unlaunched(
     .bind(match final_status.as_str() {
         "succeeded" => "completed",
         "cancelled" => "cancelled",
+        "timed_out" if claim.is_generic() => "timed_out",
         _ => "failed",
     })
     .bind(error)
     .bind(&claim.run_id)
     .execute(&mut *tx)
     .await?;
+    if claim.is_generic() {
+        super::analytics::terminal(&mut tx, &claim.organization_id, &claim.run_id).await?;
+    }
     append_terminal_event(&mut tx, claim, &final_status).await?;
     tx.commit().await?;
     Ok(true)

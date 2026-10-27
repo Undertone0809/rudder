@@ -198,8 +198,7 @@ export const heartbeatRuns = pgTable(
           and ${table.chatConversationId} is null and ${table.nativeAdmissionHold} = false
           and ${table.scene} = 'heartbeat' and ${table.targetType} = 'wakeup_request'
           and ${table.wakeupRequestId} is not null
-          and ${table.targetId} = ${table.wakeupRequestId}::text
-          and ${table.goalId} is not null)
+          and ${table.targetId} = ${table.wakeupRequestId}::text)
       )`,
     ),
     executionAuthorityCheck: check(

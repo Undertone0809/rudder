@@ -203,12 +203,22 @@ pub(super) async fn agent_run_cancel_response(
     run_id: &str,
     owner: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
+    mutation_response(pool, org, run_id, owner, Surface::Agent).await
+}
+
+pub(super) async fn mutation_response(
+    pool: &PgPool,
+    org: &str,
+    run_id: &str,
+    owner: Option<&str>,
+    surface: Surface,
+) -> Result<Option<String>, sqlx::Error> {
     let mut rows = runs(
         pool,
         org,
         "WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
         RunProjection {
-            surface: Surface::Agent,
+            surface,
             list: false,
             skills: false,
         },

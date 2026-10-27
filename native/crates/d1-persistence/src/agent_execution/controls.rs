@@ -53,11 +53,15 @@ pub async fn cancel(
     if !matches!(actor.actor_type, "user" | "agent") {
         return Err(http(401, "Agent or Board authentication required"));
     }
-    let current=sqlx::query("SELECT status,wakeup_request_id::text AS wakeup_id FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust' AND scene='heartbeat' AND target_type='wakeup_request' FOR UPDATE")
+    let current=sqlx::query("SELECT status,wakeup_request_id::text AS wakeup_id,(running_substate='waiting_for_network' AND execution_owner_token IS NULL AND process_exited_at IS NOT NULL) AS waiting_settled FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust' AND scene='heartbeat' AND target_type='wakeup_request' FOR UPDATE")
         .bind(&org).bind(&run_id).fetch_optional(&mut *tx).await?.ok_or_else(||http(404,"Heartbeat run not found"))?;
     let status: String = current.try_get("status")?;
     let wakeup_id: String = current.try_get("wakeup_id")?;
-    let changed = if status == "queued" {
+    let changed = if status == "queued"
+        || current
+            .try_get::<Option<bool>, _>("waiting_settled")?
+            .unwrap_or(false)
+    {
         claim::cancel_queued(
             &mut tx,
             &org,
@@ -293,7 +297,7 @@ pub async fn retry(
             .as_ref()
             .and_then(|value| context::nonempty(value.get("sessionId")))
     });
-    let session_intent = json!({"kind":if session.reuse_scope=="none"{"fresh"}else{"resume"},"reuseScope":session.reuse_scope,"sourceRunId":context::nonempty(snapshot.get("resumeFromRunId")),"sessionId":session_id,"sessionParams":session.params});
+    let session_intent = json!({"kind":if session.reuse_scope=="none"{"fresh"}else{"resume"},"reuseScope":session.reuse_scope,"sourceRunId":if session.reuse_scope=="none"{None}else{context::nonempty(snapshot.get("resumeFromRunId"))},"sessionId":session_id,"sessionParams":session.params});
     let goal_id: Option<String> = source.try_get("goal_id")?;
     let source_run_id: Option<String> = source.try_get("source_run_id")?;
     let retry_count: i32 = source.try_get("process_loss_retry_count")?;
@@ -302,7 +306,7 @@ pub async fn retry(
     mark_native_write(&mut tx).await?;
     sqlx::query("INSERT INTO agent_wakeup_requests(id,org_id,agent_id,source,trigger_detail,reason,payload,status,execution_authority,requested_by_actor_type,requested_by_actor_id) VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','manual','retry_failed_run',$4::jsonb,'queued','native_rust',$5,$6)")
         .bind(&wakeup_id).bind(&org).bind(&agent_id).bind(payload).bind(actor.actor_type).bind(&actor.actor_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,execution_authority,goal_id,source_run_id,context_snapshot,session_reuse_scope,session_id_before,session_params_before_json,scene,target_type,target_id,session_intent_json,retry_of_run_id,process_loss_retry_count) VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','manual','queued',$4::uuid,'native_rust',$5::uuid,$6::uuid,$7::jsonb,$8,$9,$10::jsonb,'heartbeat','wakeup_request',$4::text,$11::jsonb,$12::uuid,$13)")
+    sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,execution_authority,goal_id,source_run_id,context_snapshot,session_reuse_scope,session_id_before,session_params_before_json,scene,target_type,target_id,idempotency_key,session_intent_json,retry_of_run_id,process_loss_retry_count) VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand','manual','queued',$4::uuid,'native_rust',$5::uuid,$6::uuid,$7::jsonb,$8,$9,$10::jsonb,'heartbeat','wakeup_request',$4::text,'agent-wakeup:'||$4::text,$11::jsonb,$12::uuid,$13)")
         .bind(&run_id).bind(&org).bind(&agent_id).bind(&wakeup_id).bind(goal_id).bind(source_run_id).bind(snapshot).bind(session.reuse_scope).bind(session_id).bind(session.params).bind(session_intent).bind(&source_id).bind(retry_count).execute(&mut *tx).await?;
     sqlx::query(
         "UPDATE agent_wakeup_requests SET run_id=$3::uuid WHERE org_id=$1::uuid AND id=$2::uuid",

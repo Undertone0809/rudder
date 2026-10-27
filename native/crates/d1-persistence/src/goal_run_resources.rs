@@ -97,6 +97,25 @@ pub async fn load_goal_started_resources(
     agent_id: &str,
     memory_dir: &Path,
 ) -> Result<GoalStartedResources, StoreError> {
+    load_agent_startup_resources(
+        pool,
+        organization_id,
+        agent_id,
+        memory_dir,
+        &serde_json::json!({}),
+    )
+    .await
+}
+
+/// Existing startup projection with current Issue/project-linked Chat scope.
+/// The Goal wrapper supplies empty scope and preserves its original query.
+pub async fn load_agent_startup_resources(
+    pool: &PgPool,
+    organization_id: &str,
+    agent_id: &str,
+    memory_dir: &Path,
+    context: &serde_json::Value,
+) -> Result<GoalStartedResources, StoreError> {
     let org = organization_id.to_ascii_lowercase();
     let agent = agent_id.to_ascii_lowercase();
     transaction::uuid(&org)?;
@@ -119,8 +138,8 @@ pub async fn load_goal_started_resources(
 
     let automations = load_automations(&mut tx, &org, &agent).await?;
     let integration_tools = load_integration_tools(&mut tx, &org, &agent).await?;
-    let issues = load_recent_issues(&mut tx, &org, &agent).await?;
-    let chats = load_recent_chats(&mut tx, &org, &agent).await?;
+    let issues = load_recent_issues(&mut tx, &org, &agent, context).await?;
+    let chats = load_recent_chats(&mut tx, &org, &agent, context).await?;
     let (member_total, members) = load_organization_members(&mut tx, &org).await?;
     tx.commit().await?;
 
@@ -254,10 +273,17 @@ async fn load_integration_tools(
         .map_err(StoreError::from)
 }
 
+fn context_uuid<'a>(context: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    context[key]
+        .as_str()
+        .filter(|value| transaction::uuid(value).is_ok())
+}
+
 async fn load_recent_issues(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     agent: &str,
+    context: &serde_json::Value,
 ) -> Result<Vec<RecentIssue>, StoreError> {
     let rows = sqlx::query(
         "SELECT id::text AS id,identifier,status,title,description,
@@ -267,12 +293,13 @@ async fn load_recent_issues(
            to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at,
            to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS updated_at
          FROM issues
-         WHERE org_id=$1::uuid AND (assignee_agent_id=$2::uuid OR reviewer_agent_id=$2::uuid OR created_by_agent_id=$2::uuid)
+         WHERE org_id=$1::uuid AND (assignee_agent_id=$2::uuid OR reviewer_agent_id=$2::uuid OR created_by_agent_id=$2::uuid OR id=$3::uuid)
          ORDER BY updated_at DESC,created_at DESC,id DESC
          LIMIT 11",
     )
     .bind(org)
     .bind(agent)
+    .bind(context_uuid(context,"issueId"))
     .fetch_all(&mut **tx)
     .await?;
     rows.into_iter()
@@ -319,6 +346,7 @@ async fn load_recent_chats(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     agent: &str,
+    context: &serde_json::Value,
 ) -> Result<Vec<RecentChat>, StoreError> {
     let rows = sqlx::query(
         "SELECT c.id::text AS id,c.title,c.summary,
@@ -332,14 +360,18 @@ async fn load_recent_chats(
            c.preferred_agent_id=$2::uuid OR c.routed_agent_id=$2::uuid OR EXISTS(
              SELECT 1 FROM chat_context_links l
              WHERE l.org_id=$1::uuid AND l.conversation_id=c.id
-               AND l.entity_type='agent' AND l.entity_id=$2
-           )
-         )
+               AND ((l.entity_type='agent' AND l.entity_id=$2::text) OR (l.entity_type='issue' AND l.entity_id=$3::text) OR (l.entity_type='project' AND l.entity_id=$4::text))
+           ) OR ($6=false AND c.id=$5::uuid)
+         ) AND ($6=false OR $5::uuid IS NULL OR c.id<>$5::uuid)
          ORDER BY COALESCE(c.last_message_at,c.updated_at) DESC,c.id DESC
          LIMIT 11",
     )
     .bind(org)
     .bind(agent)
+    .bind(context_uuid(context,"issueId"))
+    .bind(context_uuid(context,"projectId"))
+    .bind(context_uuid(context,"chatConversationId"))
+    .bind(context["scene"]=="chat" || context["rudderScene"]=="chat" || context["chatMode"]==true)
     .fetch_all(&mut **tx)
     .await?;
     rows.into_iter()

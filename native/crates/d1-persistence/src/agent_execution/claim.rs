@@ -13,6 +13,10 @@ pub struct AgentRunClaim {
     pub agent_name: String,
     pub agent_context: Value,
     pub runtime_type: String,
+    /// Trusted persisted model cursor; public wake context cannot select it.
+    pub model_attempt_index: i32,
+    /// Effective raw configuration for an in-process fallback; never serialized.
+    pub effective_attempt_config: Option<Value>,
     pub goal_id: Option<String>,
     pub issue_id: Option<String>,
     pub wake_payload: Value,
@@ -69,16 +73,34 @@ pub async fn claim_queued_run(
     organization_id: &str,
     run_id: &str,
 ) -> Result<Option<AgentRunClaim>, AgentExecutionError> {
+    claim_run(pool, organization_id, run_id, false).await
+}
+
+pub async fn claim_network_waiting_run(
+    pool: &PgPool,
+    organization_id: &str,
+    run_id: &str,
+) -> Result<Option<AgentRunClaim>, AgentExecutionError> {
+    claim_run(pool, organization_id, run_id, true).await
+}
+
+async fn claim_run(
+    pool: &PgPool,
+    organization_id: &str,
+    run_id: &str,
+    network: bool,
+) -> Result<Option<AgentRunClaim>, AgentExecutionError> {
     let org = canonical_id(organization_id)?;
     let run_id = canonical_id(run_id)?;
     let initial = sqlx::query(
         "SELECT agent_id::text AS agent_id,context_snapshot FROM heartbeat_runs
          WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
-           AND status='queued' AND scene='heartbeat' AND target_type='wakeup_request'
+           AND ((NOT $3 AND status='queued') OR ($3 AND status='running' AND running_substate='waiting_for_network' AND execution_owner_token IS NULL AND process_exited_at IS NOT NULL AND (network_wait_next_retry_at IS NULL OR network_wait_next_retry_at<=statement_timestamp()))) AND scene='heartbeat' AND target_type='wakeup_request'
            AND chat_generation_id IS NULL",
     )
     .bind(&org)
     .bind(&run_id)
+    .bind(network)
     .fetch_optional(pool)
     .await?;
     let Some(initial) = initial else {
@@ -150,15 +172,16 @@ pub async fn claim_queued_run(
     let run = sqlx::query(
         "SELECT id::text AS id,wakeup_request_id::text AS wakeup_id,context_snapshot,
                 goal_id::text AS goal_id,invocation_source,trigger_detail,error_code,error,
-                session_id_before,session_params_before_json,session_reuse_scope
+                session_id_before,session_params_before_json,session_reuse_scope,recovery_checkpoint,network_wait_attempt_count
          FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid
-           AND agent_id=$3::uuid AND execution_authority='native_rust' AND status='queued'
+           AND agent_id=$3::uuid AND execution_authority='native_rust' AND ((NOT $4 AND status='queued') OR ($4 AND status='running' AND running_substate='waiting_for_network' AND execution_owner_token IS NULL AND process_exited_at IS NOT NULL AND (network_wait_next_retry_at IS NULL OR network_wait_next_retry_at<=statement_timestamp())))
            AND scene='heartbeat' AND target_type='wakeup_request' AND chat_generation_id IS NULL
          FOR UPDATE",
     )
     .bind(&org)
     .bind(&run_id)
     .bind(&agent_id)
+    .bind(network)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(run) = run else {
@@ -169,12 +192,13 @@ pub async fn claim_queued_run(
         "SELECT reason,payload,requested_at <= statement_timestamp() AS due
          FROM agent_wakeup_requests
          WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND run_id=$4::uuid
-           AND execution_authority='native_rust' AND status='queued' FOR UPDATE",
+           AND execution_authority='native_rust' AND (status='queued' OR ($5 AND status='claimed')) FOR UPDATE",
     )
     .bind(&org)
     .bind(&wakeup_id)
     .bind(&agent_id)
     .bind(&run_id)
+    .bind(network)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(wakeup) = wakeup else {
@@ -183,11 +207,51 @@ pub async fn claim_queued_run(
     if !wakeup.try_get::<bool, _>("due")? {
         return Ok(None);
     }
-    let context_snapshot = run
+    let mut context_snapshot = run
         .try_get::<Option<Value>, _>("context_snapshot")?
         .unwrap_or_else(|| json!({}));
     if context::nonempty(context_snapshot.get("issueId")) != issue_id {
         return Ok(None);
+    }
+    let mut model_attempt_index = 0;
+    if network {
+        if agent
+            .as_ref()
+            .and_then(|row| row.try_get::<String, _>("status").ok())
+            .is_some_and(|s| matches!(s.as_str(), "paused" | "terminated" | "pending_approval"))
+        {
+            return Ok(None);
+        }
+        let checkpoint = run
+            .try_get::<Option<Value>, _>("recovery_checkpoint")?
+            .unwrap_or_else(|| json!({}));
+        let before_id = run.try_get::<Option<String>, _>("session_id_before")?;
+        let before_params = run.try_get::<Option<Value>, _>("session_params_before_json")?;
+        if !super::network::validate_waiting(
+            &mut tx,
+            &org,
+            &run_id,
+            &wakeup_id,
+            &agent_id,
+            &checkpoint,
+            run.try_get("network_wait_attempt_count")?,
+            before_id.as_deref(),
+            before_params.as_ref(),
+        )
+        .await?
+        {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        context_snapshot["resumeSessionDisplayId"] = json!(before_id);
+        context_snapshot["resumeSessionParams"] = json!(before_params);
+        model_attempt_index = checkpoint
+            .get("modelAttemptIndex")
+            .and_then(Value::as_i64)
+            .and_then(|i| i32::try_from(i).ok())
+            .filter(|i| *i >= 0)
+            .unwrap_or(0);
+        context_snapshot["rudderNetworkRecovery"] = checkpoint;
     }
     let wake_payload = wakeup
         .try_get::<Option<Value>, _>("payload")?
@@ -267,17 +331,26 @@ pub async fn claim_queued_run(
     let (running, effects_pending): (i64, bool) = sqlx::query_as(
         "SELECT count(*) FILTER(WHERE status='running')::bigint,
                 COALESCE(bool_or(terminal_effects_pending),false)
-         FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid",
+         FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid AND id<>$3::uuid",
     )
     .bind(&org)
     .bind(&agent_id)
+    .bind(&run_id)
     .fetch_one(&mut *tx)
     .await?;
     let runtime_config: Value = agent.try_get("runtime_config")?;
     if effects_pending || running >= max_concurrent_runs(&runtime_config) {
         return Ok(None);
     }
-    let runtime_type: String = agent.try_get("agent_runtime_type")?;
+    let runtime_type: String = if network {
+        context_snapshot
+            .pointer("/rudderNetworkRecovery/runtimeType")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or(agent.try_get("agent_runtime_type")?)
+    } else {
+        agent.try_get("agent_runtime_type")?
+    };
     let session =
         select_claim_session(&mut tx, &org, &agent_id, &runtime_type, &context_snapshot).await?;
     let session_id = session.display_id.clone().or_else(|| {
@@ -288,7 +361,7 @@ pub async fn claim_queued_run(
     });
     let session_intent = json!({
         "kind":if session.reuse_scope == "none" {"fresh"} else {"resume"},
-        "reuseScope":session.reuse_scope,"sourceRunId":context::nonempty(context_snapshot.get("resumeFromRunId")),
+        "reuseScope":session.reuse_scope,"sourceRunId":if session.reuse_scope=="none"{None}else{context::nonempty(context_snapshot.get("resumeFromRunId"))},
         "sessionId":session_id,"sessionParams":session.params,
     });
     let owner_token = Uuid::new_v4().to_string();
@@ -298,8 +371,11 @@ pub async fn claim_queued_run(
            started_at=COALESCE(started_at,statement_timestamp()),execution_owner_token=$3,
            execution_lease_expires_at=statement_timestamp()+interval '30 seconds',
            session_id_before=$4,session_params_before_json=$5::jsonb,session_reuse_scope=$6,
-           session_intent_json=$7::jsonb,updated_at=statement_timestamp()
-         WHERE org_id=$1::uuid AND id=$2::uuid AND status='queued'",
+           session_intent_json=$7::jsonb,context_snapshot=$8::jsonb,
+           process_pid=NULL,process_started_at=NULL,process_exited_at=NULL,
+           network_wait_duration_ms=network_wait_duration_ms+CASE WHEN network_wait_started_at IS NOT NULL THEN GREATEST(0,EXTRACT(epoch FROM(statement_timestamp()-network_wait_started_at))*1000)::bigint ELSE 0 END,
+           network_wait_started_at=NULL,network_wait_next_retry_at=NULL,updated_at=statement_timestamp()
+         WHERE org_id=$1::uuid AND id=$2::uuid AND (status='queued' OR (status='running' AND running_substate='waiting_for_network' AND execution_owner_token IS NULL))",
     )
     .bind(&org)
     .bind(&run_id)
@@ -308,6 +384,7 @@ pub async fn claim_queued_run(
     .bind(&session.params)
     .bind(session.reuse_scope)
     .bind(session_intent)
+    .bind(&context_snapshot)
     .execute(&mut *tx)
     .await?;
     let attempt = sqlx::query(
@@ -339,6 +416,7 @@ pub async fn claim_queued_run(
     let goal_id: Option<String> = run.try_get("goal_id")?;
     let invocation_source: String = run.try_get("invocation_source")?;
     let trigger_detail: Option<String> = run.try_get("trigger_detail")?;
+    super::analytics::started(&mut tx, &org, &run_id).await?;
     tx.commit().await?;
     Ok(Some(AgentRunClaim {
         owned: OwnedAgentRun::from_claim(
@@ -354,6 +432,8 @@ pub async fn claim_queued_run(
         agent_name,
         agent_context,
         runtime_type,
+        model_attempt_index,
+        effective_attempt_config: None,
         goal_id,
         issue_id,
         wake_payload,
@@ -425,12 +505,13 @@ pub(crate) async fn cancel_queued(
            finished_at=statement_timestamp(),process_exited_at=statement_timestamp(),
            terminal_effects_pending=true,terminal_effects_json=$4::jsonb,updated_at=statement_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid AND execution_authority='native_rust'
-           AND status='queued' AND execution_owner_token IS NULL
+           AND (status='queued' OR (status='running' AND running_substate='waiting_for_network' AND process_exited_at IS NOT NULL)) AND execution_owner_token IS NULL
            AND process_pid IS NULL AND process_started_at IS NULL",
     ).bind(org).bind(run_id).bind(reason).bind(json!({"version":1,"nativeAgentRunSettlement":true})).execute(&mut **tx).await?.rows_affected()==1;
     if changed {
         sqlx::query("UPDATE agent_wakeup_requests SET status='cancelled',error=$4,finished_at=statement_timestamp(),updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid AND run_id=$3::uuid AND execution_authority='native_rust'")
             .bind(org).bind(wakeup_id).bind(run_id).bind(reason).execute(&mut **tx).await?;
+        super::analytics::terminal(tx, org, run_id).await?;
         append_event(
             tx,
             org,

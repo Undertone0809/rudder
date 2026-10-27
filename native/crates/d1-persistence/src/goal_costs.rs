@@ -255,6 +255,7 @@ async fn write_cost_ledger(
         status: run_row.try_get("status")?,
         error: run_row.try_get("error")?,
         usage: parse_json(run_row.try_get("usage_json")?),
+        ledger_usage: None,
         result: parse_json(run_row.try_get("result_json")?),
     };
     settle_ledger(&mut tx, &receipt).await?;
@@ -343,7 +344,7 @@ async fn evaluate_and_complete(
     Ok(true)
 }
 
-async fn reconcile_agent_status(
+pub(crate) async fn reconcile_agent_status(
     tx: &mut Transaction<'_, Postgres>,
     org_id: &str,
     agent_id: &str,

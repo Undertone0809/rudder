@@ -1,0 +1,4506 @@
+{
+  "browser": {
+    "tabs": {
+      "type": "object",
+      "strict": true,
+      "properties": {}
+    },
+    "user_tabs": {
+      "type": "object",
+      "strict": true,
+      "properties": {}
+    },
+    "open": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "url": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 8192
+            }
+          ]
+        }
+      }
+    },
+    "navigate": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "url": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 8192
+            }
+          ]
+        }
+      }
+    },
+    "back": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    },
+    "forward": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    },
+    "reload": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    },
+    "viewport": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "action": {
+          "enum": [
+            "get",
+            "set",
+            "reset"
+          ]
+        },
+        "width": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 320,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 3840,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "height": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 240,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 2160,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "visible": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "boxes": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "depth": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 30,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "maxNodes": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 3000,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "action": {
+          "enum": [
+            "count",
+            "allTextContents",
+            "textContent",
+            "innerText",
+            "attribute",
+            "visible",
+            "enabled",
+            "checked",
+            "selected",
+            "wait"
+          ]
+        },
+        "locator": {
+          "type": "object",
+          "strict": true,
+          "properties": {
+            "strategy": {
+              "enum": [
+                "css",
+                "testId",
+                "href",
+                "role",
+                "label",
+                "placeholder",
+                "text"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "checks": [
+                {
+                  "kind": "min",
+                  "value": 1
+                },
+                {
+                  "kind": "max",
+                  "value": 2000
+                }
+              ]
+            },
+            "name": {
+              "optional": true,
+              "value": {
+                "type": "string",
+                "checks": [
+                  {
+                    "kind": "max",
+                    "value": 2000
+                  }
+                ]
+              }
+            },
+            "exact": {
+              "optional": true,
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "filter": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "hasText": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "hasNotText": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "visible": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "has": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "hasNot": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "and": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "or": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "index": {
+              "optional": true,
+              "value": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "int"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": true
+                  },
+                  {
+                    "kind": "max",
+                    "value": 499,
+                    "inclusive": true
+                  }
+                ]
+              }
+            },
+            "position": {
+              "optional": true,
+              "value": {
+                "enum": [
+                  "first",
+                  "last"
+                ]
+              }
+            },
+            "frame": {
+              "optional": true,
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "checks": [
+                    {
+                      "kind": "min",
+                      "value": 1
+                    },
+                    {
+                      "kind": "max",
+                      "value": 1000
+                    }
+                  ]
+                },
+                "max": 8
+              }
+            },
+            "scope": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "filter": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "hasText": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "hasNotText": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "visible": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        },
+                        "has": {
+                          "optional": true,
+                          "value": {
+                            "type": "object",
+                            "strict": true,
+                            "properties": {
+                              "strategy": {
+                                "enum": [
+                                  "css",
+                                  "testId",
+                                  "href",
+                                  "role",
+                                  "label",
+                                  "placeholder",
+                                  "text"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "checks": [
+                                  {
+                                    "kind": "min",
+                                    "value": 1
+                                  },
+                                  {
+                                    "kind": "max",
+                                    "value": 2000
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "optional": true,
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                }
+                              },
+                              "exact": {
+                                "optional": true,
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "hasNot": {
+                          "optional": true,
+                          "value": {
+                            "type": "object",
+                            "strict": true,
+                            "properties": {
+                              "strategy": {
+                                "enum": [
+                                  "css",
+                                  "testId",
+                                  "href",
+                                  "role",
+                                  "label",
+                                  "placeholder",
+                                  "text"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "checks": [
+                                  {
+                                    "kind": "min",
+                                    "value": 1
+                                  },
+                                  {
+                                    "kind": "max",
+                                    "value": 2000
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "optional": true,
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                }
+                              },
+                              "exact": {
+                                "optional": true,
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "and": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "or": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "index": {
+                    "optional": true,
+                    "value": {
+                      "type": "number",
+                      "checks": [
+                        {
+                          "kind": "int"
+                        },
+                        {
+                          "kind": "min",
+                          "value": 0,
+                          "inclusive": true
+                        },
+                        {
+                          "kind": "max",
+                          "value": 499,
+                          "inclusive": true
+                        }
+                      ]
+                    }
+                  },
+                  "position": {
+                    "optional": true,
+                    "value": {
+                      "enum": [
+                        "first",
+                        "last"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "name": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 200
+              }
+            ]
+          }
+        },
+        "state": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "attached",
+              "detached",
+              "visible",
+              "hidden"
+            ]
+          }
+        },
+        "timeoutMs": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 30000,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "cua": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "action": {
+          "enum": [
+            "click",
+            "doubleClick",
+            "move",
+            "scroll",
+            "drag",
+            "keypress",
+            "type",
+            "elementInfo"
+          ]
+        },
+        "x": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "y": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "scrollX": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -100000,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 100000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "scrollY": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -100000,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 100000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "button": {
+          "optional": true,
+          "value": {
+            "union": [
+              {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "int"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 1,
+                    "inclusive": true
+                  },
+                  {
+                    "kind": "max",
+                    "value": 5,
+                    "inclusive": true
+                  }
+                ]
+              },
+              {
+                "enum": [
+                  "left",
+                  "middle",
+                  "right"
+                ]
+              }
+            ]
+          }
+        },
+        "keys": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "checks": [
+                {
+                  "kind": "min",
+                  "value": 1
+                },
+                {
+                  "kind": "max",
+                  "value": 100
+                }
+              ]
+            },
+            "max": 10
+          }
+        },
+        "text": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 100000
+              }
+            ]
+          }
+        },
+        "path": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "strict": true,
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "checks": [
+                    {
+                      "kind": "finite"
+                    },
+                    {
+                      "kind": "min",
+                      "value": -32768,
+                      "inclusive": true
+                    },
+                    {
+                      "kind": "max",
+                      "value": 32768,
+                      "inclusive": true
+                    }
+                  ]
+                },
+                "y": {
+                  "type": "number",
+                  "checks": [
+                    {
+                      "kind": "finite"
+                    },
+                    {
+                      "kind": "min",
+                      "value": -32768,
+                      "inclusive": true
+                    },
+                    {
+                      "kind": "max",
+                      "value": 32768,
+                      "inclusive": true
+                    }
+                  ]
+                }
+              }
+            },
+            "min": 2,
+            "max": 200
+          }
+        }
+      }
+    },
+    "dom_cua": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "action": {
+          "literal": "get"
+        },
+        "depth": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 30,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "maxNodes": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 3000,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "dialog": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "action": {
+          "enum": [
+            "get",
+            "accept",
+            "dismiss"
+          ]
+        },
+        "promptText": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 10000
+              }
+            ]
+          }
+        }
+      }
+    },
+    "clipboard": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "action": {
+          "enum": [
+            "read",
+            "readText",
+            "write",
+            "writeText",
+            "clear"
+          ]
+        },
+        "text": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 500000
+              }
+            ]
+          }
+        },
+        "items": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "strict": true,
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "strict": true,
+                    "properties": {
+                      "mimeType": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "min",
+                            "value": 1
+                          },
+                          {
+                            "kind": "max",
+                            "value": 200
+                          }
+                        ]
+                      },
+                      "text": {
+                        "optional": true,
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "max",
+                              "value": 500000
+                            }
+                          ]
+                        }
+                      },
+                      "base64": {
+                        "optional": true,
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "max",
+                              "value": 650000
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "max": 20
+                },
+                "presentationStyle": {
+                  "optional": true,
+                  "value": {
+                    "enum": [
+                      "unspecified",
+                      "inline",
+                      "attachment"
+                    ]
+                  }
+                }
+              }
+            },
+            "max": 20
+          }
+        }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "levels": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "debug",
+                "info",
+                "log",
+                "warn",
+                "error"
+              ]
+            },
+            "max": 5
+          }
+        },
+        "filter": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 2000
+              }
+            ]
+          }
+        },
+        "limit": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 500,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "clear": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "download": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "mode": {
+          "literal": "media"
+        },
+        "locator": {
+          "type": "object",
+          "strict": true,
+          "properties": {
+            "strategy": {
+              "enum": [
+                "css",
+                "testId",
+                "href",
+                "role",
+                "label",
+                "placeholder",
+                "text"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "checks": [
+                {
+                  "kind": "min",
+                  "value": 1
+                },
+                {
+                  "kind": "max",
+                  "value": 2000
+                }
+              ]
+            },
+            "name": {
+              "optional": true,
+              "value": {
+                "type": "string",
+                "checks": [
+                  {
+                    "kind": "max",
+                    "value": 2000
+                  }
+                ]
+              }
+            },
+            "exact": {
+              "optional": true,
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "filter": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "hasText": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "hasNotText": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "visible": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "has": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "hasNot": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "and": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "or": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "index": {
+              "optional": true,
+              "value": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "int"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": true
+                  },
+                  {
+                    "kind": "max",
+                    "value": 499,
+                    "inclusive": true
+                  }
+                ]
+              }
+            },
+            "position": {
+              "optional": true,
+              "value": {
+                "enum": [
+                  "first",
+                  "last"
+                ]
+              }
+            },
+            "frame": {
+              "optional": true,
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "checks": [
+                    {
+                      "kind": "min",
+                      "value": 1
+                    },
+                    {
+                      "kind": "max",
+                      "value": 1000
+                    }
+                  ]
+                },
+                "max": 8
+              }
+            },
+            "scope": {
+              "optional": true,
+              "value": {
+                "type": "object",
+                "strict": true,
+                "properties": {
+                  "strategy": {
+                    "enum": [
+                      "css",
+                      "testId",
+                      "href",
+                      "role",
+                      "label",
+                      "placeholder",
+                      "text"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 2000
+                      }
+                    ]
+                  },
+                  "name": {
+                    "optional": true,
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    }
+                  },
+                  "exact": {
+                    "optional": true,
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "filter": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "hasText": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "hasNotText": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "visible": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        },
+                        "has": {
+                          "optional": true,
+                          "value": {
+                            "type": "object",
+                            "strict": true,
+                            "properties": {
+                              "strategy": {
+                                "enum": [
+                                  "css",
+                                  "testId",
+                                  "href",
+                                  "role",
+                                  "label",
+                                  "placeholder",
+                                  "text"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "checks": [
+                                  {
+                                    "kind": "min",
+                                    "value": 1
+                                  },
+                                  {
+                                    "kind": "max",
+                                    "value": 2000
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "optional": true,
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                }
+                              },
+                              "exact": {
+                                "optional": true,
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "hasNot": {
+                          "optional": true,
+                          "value": {
+                            "type": "object",
+                            "strict": true,
+                            "properties": {
+                              "strategy": {
+                                "enum": [
+                                  "css",
+                                  "testId",
+                                  "href",
+                                  "role",
+                                  "label",
+                                  "placeholder",
+                                  "text"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "checks": [
+                                  {
+                                    "kind": "min",
+                                    "value": 1
+                                  },
+                                  {
+                                    "kind": "max",
+                                    "value": 2000
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "optional": true,
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                }
+                              },
+                              "exact": {
+                                "optional": true,
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "and": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "or": {
+                    "optional": true,
+                    "value": {
+                      "type": "object",
+                      "strict": true,
+                      "properties": {
+                        "strategy": {
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "checks": [
+                            {
+                              "kind": "min",
+                              "value": 1
+                            },
+                            {
+                              "kind": "max",
+                              "value": 2000
+                            }
+                          ]
+                        },
+                        "name": {
+                          "optional": true,
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          }
+                        },
+                        "exact": {
+                          "optional": true,
+                          "value": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "index": {
+                    "optional": true,
+                    "value": {
+                      "type": "number",
+                      "checks": [
+                        {
+                          "kind": "int"
+                        },
+                        {
+                          "kind": "min",
+                          "value": 0,
+                          "inclusive": true
+                        },
+                        {
+                          "kind": "max",
+                          "value": 499,
+                          "inclusive": true
+                        }
+                      ]
+                    }
+                  },
+                  "position": {
+                    "optional": true,
+                    "value": {
+                      "enum": [
+                        "first",
+                        "last"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "action": {
+          "enum": [
+            "list",
+            "bundle"
+          ]
+        },
+        "inventoryId": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "uuid"
+              }
+            ]
+          }
+        },
+        "assetIds": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "checks": [
+                {
+                  "kind": "min",
+                  "value": 1
+                },
+                {
+                  "kind": "max",
+                  "value": 160
+                }
+              ]
+            },
+            "min": 1,
+            "max": 100
+          }
+        },
+        "kinds": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "font",
+                "image",
+                "stylesheet",
+                "video"
+              ]
+            },
+            "min": 1,
+            "max": 4
+          }
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "format": {
+          "enum": [
+            "text",
+            "pdf",
+            "md",
+            "docx",
+            "xlsx",
+            "csv",
+            "pptx"
+          ]
+        }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "url": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 8192
+              }
+            ]
+          }
+        },
+        "text": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 10000
+              }
+            ]
+          }
+        },
+        "textGone": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 10000
+              }
+            ]
+          }
+        },
+        "timeMs": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 30000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "timeoutMs": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 30000,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "read": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    },
+    "click": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    },
+    "type": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "text": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "max",
+              "value": 100000
+            }
+          ]
+        },
+        "submit": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "screenshot": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        },
+        "fullPage": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "format": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "png",
+              "jpeg"
+            ]
+          }
+        },
+        "quality": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 100,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "clip": {
+          "optional": true,
+          "value": {
+            "type": "object",
+            "strict": true,
+            "properties": {
+              "x": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "finite"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": true
+                  },
+                  {
+                    "kind": "max",
+                    "value": 32768,
+                    "inclusive": true
+                  }
+                ]
+              },
+              "y": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "finite"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": true
+                  },
+                  {
+                    "kind": "max",
+                    "value": 32768,
+                    "inclusive": true
+                  }
+                ]
+              },
+              "width": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "finite"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": false
+                  },
+                  {
+                    "kind": "max",
+                    "value": 16384,
+                    "inclusive": true
+                  }
+                ]
+              },
+              "height": {
+                "type": "number",
+                "checks": [
+                  {
+                    "kind": "finite"
+                  },
+                  {
+                    "kind": "min",
+                    "value": 0,
+                    "inclusive": false
+                  },
+                  {
+                    "kind": "max",
+                    "value": 16384,
+                    "inclusive": true
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "locator": {
+          "optional": true,
+          "value": {
+            "type": "object",
+            "strict": true,
+            "properties": {
+              "strategy": {
+                "enum": [
+                  "css",
+                  "testId",
+                  "href",
+                  "role",
+                  "label",
+                  "placeholder",
+                  "text"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "checks": [
+                  {
+                    "kind": "min",
+                    "value": 1
+                  },
+                  {
+                    "kind": "max",
+                    "value": 2000
+                  }
+                ]
+              },
+              "name": {
+                "optional": true,
+                "value": {
+                  "type": "string",
+                  "checks": [
+                    {
+                      "kind": "max",
+                      "value": 2000
+                    }
+                  ]
+                }
+              },
+              "exact": {
+                "optional": true,
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "filter": {
+                "optional": true,
+                "value": {
+                  "type": "object",
+                  "strict": true,
+                  "properties": {
+                    "hasText": {
+                      "optional": true,
+                      "value": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "max",
+                            "value": 2000
+                          }
+                        ]
+                      }
+                    },
+                    "hasNotText": {
+                      "optional": true,
+                      "value": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "max",
+                            "value": 2000
+                          }
+                        ]
+                      }
+                    },
+                    "visible": {
+                      "optional": true,
+                      "value": {
+                        "type": "boolean"
+                      }
+                    },
+                    "has": {
+                      "optional": true,
+                      "value": {
+                        "type": "object",
+                        "strict": true,
+                        "properties": {
+                          "strategy": {
+                            "enum": [
+                              "css",
+                              "testId",
+                              "href",
+                              "role",
+                              "label",
+                              "placeholder",
+                              "text"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "min",
+                                "value": 1
+                              },
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          },
+                          "name": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "exact": {
+                            "optional": true,
+                            "value": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "hasNot": {
+                      "optional": true,
+                      "value": {
+                        "type": "object",
+                        "strict": true,
+                        "properties": {
+                          "strategy": {
+                            "enum": [
+                              "css",
+                              "testId",
+                              "href",
+                              "role",
+                              "label",
+                              "placeholder",
+                              "text"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "min",
+                                "value": 1
+                              },
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          },
+                          "name": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "exact": {
+                            "optional": true,
+                            "value": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "and": {
+                "optional": true,
+                "value": {
+                  "type": "object",
+                  "strict": true,
+                  "properties": {
+                    "strategy": {
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ]
+                    },
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "min",
+                          "value": 1
+                        },
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    },
+                    "name": {
+                      "optional": true,
+                      "value": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "max",
+                            "value": 2000
+                          }
+                        ]
+                      }
+                    },
+                    "exact": {
+                      "optional": true,
+                      "value": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              },
+              "or": {
+                "optional": true,
+                "value": {
+                  "type": "object",
+                  "strict": true,
+                  "properties": {
+                    "strategy": {
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ]
+                    },
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "min",
+                          "value": 1
+                        },
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    },
+                    "name": {
+                      "optional": true,
+                      "value": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "max",
+                            "value": 2000
+                          }
+                        ]
+                      }
+                    },
+                    "exact": {
+                      "optional": true,
+                      "value": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              },
+              "index": {
+                "optional": true,
+                "value": {
+                  "type": "number",
+                  "checks": [
+                    {
+                      "kind": "int"
+                    },
+                    {
+                      "kind": "min",
+                      "value": 0,
+                      "inclusive": true
+                    },
+                    {
+                      "kind": "max",
+                      "value": 499,
+                      "inclusive": true
+                    }
+                  ]
+                }
+              },
+              "position": {
+                "optional": true,
+                "value": {
+                  "enum": [
+                    "first",
+                    "last"
+                  ]
+                }
+              },
+              "frame": {
+                "optional": true,
+                "value": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "checks": [
+                      {
+                        "kind": "min",
+                        "value": 1
+                      },
+                      {
+                        "kind": "max",
+                        "value": 1000
+                      }
+                    ]
+                  },
+                  "max": 8
+                }
+              },
+              "scope": {
+                "optional": true,
+                "value": {
+                  "type": "object",
+                  "strict": true,
+                  "properties": {
+                    "strategy": {
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ]
+                    },
+                    "value": {
+                      "type": "string",
+                      "checks": [
+                        {
+                          "kind": "min",
+                          "value": 1
+                        },
+                        {
+                          "kind": "max",
+                          "value": 2000
+                        }
+                      ]
+                    },
+                    "name": {
+                      "optional": true,
+                      "value": {
+                        "type": "string",
+                        "checks": [
+                          {
+                            "kind": "max",
+                            "value": 2000
+                          }
+                        ]
+                      }
+                    },
+                    "exact": {
+                      "optional": true,
+                      "value": {
+                        "type": "boolean"
+                      }
+                    },
+                    "filter": {
+                      "optional": true,
+                      "value": {
+                        "type": "object",
+                        "strict": true,
+                        "properties": {
+                          "hasText": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "hasNotText": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "visible": {
+                            "optional": true,
+                            "value": {
+                              "type": "boolean"
+                            }
+                          },
+                          "has": {
+                            "optional": true,
+                            "value": {
+                              "type": "object",
+                              "strict": true,
+                              "properties": {
+                                "strategy": {
+                                  "enum": [
+                                    "css",
+                                    "testId",
+                                    "href",
+                                    "role",
+                                    "label",
+                                    "placeholder",
+                                    "text"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "min",
+                                      "value": 1
+                                    },
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                },
+                                "name": {
+                                  "optional": true,
+                                  "value": {
+                                    "type": "string",
+                                    "checks": [
+                                      {
+                                        "kind": "max",
+                                        "value": 2000
+                                      }
+                                    ]
+                                  }
+                                },
+                                "exact": {
+                                  "optional": true,
+                                  "value": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "hasNot": {
+                            "optional": true,
+                            "value": {
+                              "type": "object",
+                              "strict": true,
+                              "properties": {
+                                "strategy": {
+                                  "enum": [
+                                    "css",
+                                    "testId",
+                                    "href",
+                                    "role",
+                                    "label",
+                                    "placeholder",
+                                    "text"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "checks": [
+                                    {
+                                      "kind": "min",
+                                      "value": 1
+                                    },
+                                    {
+                                      "kind": "max",
+                                      "value": 2000
+                                    }
+                                  ]
+                                },
+                                "name": {
+                                  "optional": true,
+                                  "value": {
+                                    "type": "string",
+                                    "checks": [
+                                      {
+                                        "kind": "max",
+                                        "value": 2000
+                                      }
+                                    ]
+                                  }
+                                },
+                                "exact": {
+                                  "optional": true,
+                                  "value": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "and": {
+                      "optional": true,
+                      "value": {
+                        "type": "object",
+                        "strict": true,
+                        "properties": {
+                          "strategy": {
+                            "enum": [
+                              "css",
+                              "testId",
+                              "href",
+                              "role",
+                              "label",
+                              "placeholder",
+                              "text"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "min",
+                                "value": 1
+                              },
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          },
+                          "name": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "exact": {
+                            "optional": true,
+                            "value": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "or": {
+                      "optional": true,
+                      "value": {
+                        "type": "object",
+                        "strict": true,
+                        "properties": {
+                          "strategy": {
+                            "enum": [
+                              "css",
+                              "testId",
+                              "href",
+                              "role",
+                              "label",
+                              "placeholder",
+                              "text"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "checks": [
+                              {
+                                "kind": "min",
+                                "value": 1
+                              },
+                              {
+                                "kind": "max",
+                                "value": 2000
+                              }
+                            ]
+                          },
+                          "name": {
+                            "optional": true,
+                            "value": {
+                              "type": "string",
+                              "checks": [
+                                {
+                                  "kind": "max",
+                                  "value": 2000
+                                }
+                              ]
+                            }
+                          },
+                          "exact": {
+                            "optional": true,
+                            "value": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "index": {
+                      "optional": true,
+                      "value": {
+                        "type": "number",
+                        "checks": [
+                          {
+                            "kind": "int"
+                          },
+                          {
+                            "kind": "min",
+                            "value": 0,
+                            "inclusive": true
+                          },
+                          {
+                            "kind": "max",
+                            "value": 499,
+                            "inclusive": true
+                          }
+                        ]
+                      }
+                    },
+                    "position": {
+                      "optional": true,
+                      "value": {
+                        "enum": [
+                          "first",
+                          "last"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "close": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "tabId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "trim"
+            },
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 160
+            }
+          ]
+        }
+      }
+    }
+  },
+  "computer": {
+    "list_apps": {
+      "type": "object",
+      "strict": true,
+      "properties": {}
+    },
+    "launch_app": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "name": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "trim"
+              },
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "bundleId": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "trim"
+              },
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "newInstance": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "list_windows": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "app": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "trim"
+              },
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "pid": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": false
+              }
+            ]
+          }
+        },
+        "windowId": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": false
+              }
+            ]
+          }
+        },
+        "onScreenOnly": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "get_app_state": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "app": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "trim"
+              },
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "pid": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": false
+              }
+            ]
+          }
+        },
+        "windowId": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": false
+              }
+            ]
+          }
+        },
+        "includeScreenshot": {
+          "optional": true,
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "query": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "max",
+                "value": 2000
+              }
+            ]
+          }
+        },
+        "maxElements": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 2000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "maxDepth": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 25,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "click": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "x": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "y": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        },
+        "button": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ]
+          }
+        },
+        "count": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 3,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "drag": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "fromX": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "fromY": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "toX": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "toY": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "durationMs": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "steps": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 200,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        }
+      }
+    },
+    "type_text": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "x": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "y": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        },
+        "text": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "max",
+              "value": 100000
+            }
+          ]
+        },
+        "delayMs": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 200,
+                "inclusive": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "press_key": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "x": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "y": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        },
+        "key": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "min",
+              "value": 1
+            },
+            {
+              "kind": "max",
+              "value": 100
+            }
+          ]
+        },
+        "modifiers": {
+          "optional": true,
+          "value": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "cmd",
+                "shift",
+                "option",
+                "alt",
+                "ctrl",
+                "fn"
+              ]
+            },
+            "max": 6
+          }
+        }
+      }
+    },
+    "scroll": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "x": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "y": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "finite"
+              },
+              {
+                "kind": "min",
+                "value": -32768,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 32768,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        },
+        "direction": {
+          "enum": [
+            "up",
+            "down",
+            "left",
+            "right"
+          ]
+        },
+        "amount": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 1,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 50,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "by": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "line",
+              "page"
+            ]
+          }
+        }
+      }
+    },
+    "set_value": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "value": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "max",
+              "value": 100000
+            }
+          ]
+        }
+      }
+    },
+    "select_text": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "fromX": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "fromY": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "toX": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "toY": {
+          "type": "number",
+          "checks": [
+            {
+              "kind": "finite"
+            },
+            {
+              "kind": "min",
+              "value": -32768,
+              "inclusive": true
+            },
+            {
+              "kind": "max",
+              "value": 32768,
+              "inclusive": true
+            }
+          ]
+        },
+        "deliveryMode": {
+          "optional": true,
+          "value": {
+            "enum": [
+              "background",
+              "foreground"
+            ]
+          }
+        }
+      }
+    },
+    "perform_secondary_action": {
+      "type": "object",
+      "strict": true,
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "checks": [
+            {
+              "kind": "uuid"
+            }
+          ]
+        },
+        "elementIndex": {
+          "optional": true,
+          "value": {
+            "type": "number",
+            "checks": [
+              {
+                "kind": "int"
+              },
+              {
+                "kind": "min",
+                "value": 0,
+                "inclusive": true
+              },
+              {
+                "kind": "max",
+                "value": 10000,
+                "inclusive": true
+              }
+            ]
+          }
+        },
+        "elementToken": {
+          "optional": true,
+          "value": {
+            "type": "string",
+            "checks": [
+              {
+                "kind": "min",
+                "value": 1
+              },
+              {
+                "kind": "max",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "action": {
+          "enum": [
+            "show_menu",
+            "pick",
+            "confirm",
+            "cancel",
+            "open"
+          ]
+        }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "strict": true,
+      "properties": {}
+    }
+  }
+}

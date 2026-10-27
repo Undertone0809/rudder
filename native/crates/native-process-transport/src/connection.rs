@@ -308,6 +308,49 @@ pub fn read_durable_cleanup_receipt(
     {
         return Err(DurableCleanupReceiptError::InvalidIdentity);
     }
+    let Some(observation) =
+        read_unbound_cleanup_observation(runtime_root, attempt_id, owner_token)?
+    else {
+        return Ok(None);
+    };
+    let identity = ConnectionIdentity::new(
+        run_id.to_owned(),
+        attempt_id.to_owned(),
+        owner_token.to_owned(),
+        Some(connection_epoch),
+        Some(claim_id.to_owned()),
+    );
+    Ok(Some(DurableHostCleanupReceipt {
+        proof: HostCleanupProof::from_owned_host(identity),
+        process_id: observation.process_id,
+        host_status: observation.host_status,
+        host_error_code: observation.host_error_code,
+    }))
+}
+
+/// Descriptive cleanup observation for a separately owned service or MCP
+/// process. This type cannot authorize an Agent Run transition or launch.
+pub struct UnboundCleanupObservation {
+    pub process_id: Option<i32>,
+    pub host_status: String,
+    pub host_error_code: Option<String>,
+}
+
+/// Read the existing fsync-backed descriptor and terminal receipt for one
+/// exact unbound host operation. Never infer cleanup from PID liveness.
+pub fn read_unbound_cleanup_observation(
+    runtime_root: &Path,
+    request_id: &str,
+    owner_token: &str,
+) -> Result<Option<UnboundCleanupObservation>, DurableCleanupReceiptError> {
+    if request_id.trim().is_empty()
+        || owner_token.len() != 36
+        || !owner_token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    {
+        return Err(DurableCleanupReceiptError::InvalidIdentity);
+    }
     let operation_root = runtime_root.join(owner_token);
     let descriptor_path = operation_root.join("owner-descriptor.json");
     let receipt_path = operation_root.join("terminal-receipt.json");
@@ -321,8 +364,8 @@ pub fn read_durable_cleanup_receipt(
     };
     if !protocol_matches(&descriptor)
         || !protocol_matches(&receipt)
-        || descriptor["requestId"].as_str() != Some(attempt_id)
-        || receipt["requestId"].as_str() != Some(attempt_id)
+        || descriptor["requestId"].as_str() != Some(request_id)
+        || receipt["requestId"].as_str() != Some(request_id)
         || descriptor["opaqueOwnerToken"].as_str() != Some(owner_token)
         || receipt["opaqueOwnerToken"].as_str() != Some(owner_token)
         || descriptor["ownerKind"].as_str() != Some("agent_run_attempt")
@@ -374,15 +417,7 @@ pub fn read_durable_cleanup_receipt(
         .get("errorCode")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let identity = ConnectionIdentity::new(
-        run_id.to_owned(),
-        attempt_id.to_owned(),
-        owner_token.to_owned(),
-        Some(connection_epoch),
-        Some(claim_id.to_owned()),
-    );
-    Ok(Some(DurableHostCleanupReceipt {
-        proof: HostCleanupProof::from_owned_host(identity),
+    Ok(Some(UnboundCleanupObservation {
         process_id,
         host_status,
         host_error_code,
@@ -488,6 +523,21 @@ mod durable_receipt_tests {
             ATTEMPT_ID
         ));
         fs::remove_dir_all(root).expect("remove receipt fixture");
+    }
+
+    #[test]
+    fn unbound_observation_matches_receipt_without_execution_capability() {
+        let root = fixture();
+        let observed = read_unbound_cleanup_observation(&root, ATTEMPT_ID, OWNER_TOKEN)
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed.process_id, Some(777));
+        assert_eq!(observed.host_status, "failed");
+        assert!(matches!(
+            read_unbound_cleanup_observation(&root, "different", OWNER_TOKEN),
+            Err(DurableCleanupReceiptError::InvalidReceipt)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

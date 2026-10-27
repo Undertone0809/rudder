@@ -20,6 +20,8 @@ libc = "0.2"
 percent-encoding = "2.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ring = "0.17.14"
+rudder-agent-cli-core = { path = "../agent-cli-core" }
+rudder-agent-request-planner = { path = "../agent-request-planner" }
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-claude-code = { path = "../claude-code" }
@@ -27,6 +29,7 @@ rudder-codex-app-server = { path = "../codex-app-server" }
 rudder-d1-persistence = { path = "../d1-persistence" }
 rudder-native-chat-executor = { path = "../native-chat-executor" }
 rudder-native-process-transport = { path = "../native-process-transport" }
+rudder-native-protocol = { path = "../native-protocol" }
 rudder-opencode-native = { path = "../opencode-native" }
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
