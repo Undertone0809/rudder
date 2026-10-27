@@ -10,6 +10,7 @@ mod activity;
 pub mod activity_link_reads;
 pub mod activity_reads;
 pub mod agent_core;
+pub mod agent_execution;
 pub mod agent_issue_creation;
 pub mod approval_reads;
 pub mod automation_issue_finalization;
