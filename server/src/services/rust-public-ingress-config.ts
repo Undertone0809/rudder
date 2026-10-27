@@ -269,6 +269,7 @@ export function createFoundationChildEnvironment(input: {
       ? { WORKSPACE_OPERATION_LOG_BASE_PATH: resolve(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH) } : {}),
     ...(hostUsername ? { RUDDER_NATIVE_HOST_USERNAME: hostUsername } : {}),
     RUDDER_NATIVE_HOST_LOCALE: new Intl.Collator().resolvedOptions().locale,
+    ...(process.env.PATH !== undefined ? { PATH: process.env.PATH } : {}),
     RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),

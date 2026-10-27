@@ -340,10 +340,57 @@ pub(crate) fn decrypt_runtime_secret(material: &Value, expected_sha256: &str) ->
 /// Resolve a persisted secret reference for an in-process native workflow.
 /// Only the existing local-encrypted provider can be materialized here;
 /// external providers remain governed by their configured provider adapter.
-pub(crate) async fn resolve_local_runtime_secret_reference(
+pub async fn resolve_local_runtime_secret_reference(
     tx: &mut Transaction<'_, Postgres>,
     org_id: &str,
     binding: &Value,
+) -> Result<Option<String>, SecretsError> {
+    resolve_runtime_secret_reference(tx, org_id, binding, false).await
+}
+
+/// Product Intelligence has always allowed organization-managed credential references.
+/// Keep that policy explicit without widening the Agent runtime resolver.
+pub async fn resolve_product_intelligence_secret_reference(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    binding: &Value,
+) -> Result<String, SecretsError> {
+    if let Some(value) = resolve_runtime_secret_reference(tx, org_id, binding, true).await? {
+        return Ok(value);
+    }
+    // Preserve the legacy required-reference errors. The Agent resolver above
+    // remains optional and continues excluding managed credentials.
+    let id = binding
+        .get("secretId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| http(422, "Invalid secret reference"))?;
+    let latest = binding
+        .get("version")
+        .is_none_or(|v| v.as_str() == Some("latest"));
+    let version = binding.get("version").and_then(Value::as_i64).unwrap_or(0);
+    let row = sqlx::query("SELECT s.org_id::text AS org_id, v.version, v.revoked_at IS NOT NULL AS revoked
+        FROM organization_secrets s LEFT JOIN organization_secret_versions v
+          ON v.secret_id=s.id AND v.version=CASE WHEN $2::boolean THEN s.latest_version ELSE $3::bigint END
+        WHERE s.id=$1::uuid")
+        .bind(id).bind(latest).bind(version).fetch_optional(&mut **tx).await?;
+    let row = row.ok_or_else(|| http(404, "Secret not found"))?;
+    if row.try_get::<String, _>("org_id")? != org_id {
+        return Err(http(422, "Secret must belong to same organization"));
+    }
+    if row.try_get::<Option<i32>, _>("version")?.is_none() {
+        return Err(http(404, "Secret version not found"));
+    }
+    if row.try_get::<bool, _>("revoked")? {
+        return Err(http(422, "Secret version is revoked"));
+    }
+    Err(http(500, "Secret value could not be resolved"))
+}
+
+async fn resolve_runtime_secret_reference(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: &str,
+    binding: &Value,
+    allow_managed: bool,
 ) -> Result<Option<String>, SecretsError> {
     let Some(secret_id) = binding.get("secretId").and_then(Value::as_str) else {
         return Ok(None);
@@ -388,7 +435,7 @@ pub(crate) async fn resolve_local_runtime_secret_reference(
             format!("{provider} provider is not configured in this deployment"),
         ));
     }
-    if row.try_get::<String, _>("purpose")? != "user_managed"
+    if (!allow_managed && row.try_get::<String, _>("purpose")? != "user_managed")
         || row.try_get::<bool, _>("revoked")?
     {
         return Ok(None);

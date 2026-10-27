@@ -5,6 +5,7 @@ mod claude;
 mod cursor;
 mod goal;
 mod hermes;
+pub mod messenger_title;
 mod native_turn;
 mod opencode;
 mod pi;

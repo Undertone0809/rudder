@@ -2823,6 +2823,15 @@ dependencies = [
 name = "rudder-native-chat-executor"
 version = "0.7.24"
 dependencies = [
+ "actix-codec",
+ "actix-http",
+ "actix-web",
+ "awc",
+ "base64 0.22.1",
+ "futures-util",
+ "regex-lite",
+ "reqwest",
+ "ring",
  "rudder-auth-core",
  "rudder-claude-code",
  "rudder-codex-app-server",
