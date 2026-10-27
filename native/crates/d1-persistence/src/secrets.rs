@@ -275,7 +275,7 @@ fn encrypt_value_with_key(
     ))
 }
 
-fn encrypt_value(value: &str) -> Result<(Value, String), SecretsError> {
+pub(crate) fn encrypt_value(value: &str) -> Result<(Value, String), SecretsError> {
     encrypt_value_with_key(value, &load_master_key()?)
 }
 
