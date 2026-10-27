@@ -383,10 +383,14 @@ export function createFoundationChildEnvironment(input: {
     // Transport only the existing log-store paths and host masking facts.
     // All file reads and masking decisions remain native.
     ...Object.fromEntries([
-      "RUN_LOG_BASE_PATH", "WORKSPACE_OPERATION_LOG_BASE_PATH",
       "USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE",
     ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    ...(process.env.RUN_LOG_BASE_PATH !== undefined
+      ? { RUN_LOG_BASE_PATH: resolve(process.env.RUN_LOG_BASE_PATH) } : {}),
+    ...(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH !== undefined
+      ? { WORKSPACE_OPERATION_LOG_BASE_PATH: resolve(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH) } : {}),
     ...(hostUsername ? { RUDDER_NATIVE_HOST_USERNAME: hostUsername } : {}),
+    RUDDER_NATIVE_HOST_LOCALE: new Intl.Collator().resolvedOptions().locale,
     RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),

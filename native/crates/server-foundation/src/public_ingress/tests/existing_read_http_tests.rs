@@ -36,7 +36,7 @@ async fn native_existing_reads_keep_scope_owners_filters_artifact_streams_and_no
     let agent=sqlx::query_scalar::<_,String>("INSERT INTO agents (org_id,name,role,status) VALUES ($1::uuid,'Existing read agent','general','idle') RETURNING id::text").bind(org).fetch_one(&pool).await.unwrap();
     let agent_token = format!("pcp_existing_agent_{suffix}");
     sqlx::query("INSERT INTO agent_api_keys (org_id,agent_id,name,key_hash) VALUES ($1::uuid,$2::uuid,'existing read',$3)").bind(org).bind(&agent).bind(crate::native_bearer_auth::hash_token(&agent_token)).execute(&pool).await.unwrap();
-    let issue=sqlx::query_scalar::<_,String>("INSERT INTO issues (org_id,title,identifier,issue_number) VALUES ($1::uuid,'Existing read issue',$2,1) RETURNING id::text").bind(org).bind(format!("EX{}-1",&suffix[..6].to_ascii_uppercase())).fetch_one(&pool).await.unwrap();
+    let issue=sqlx::query_scalar::<_,String>("INSERT INTO issues (org_id,title,identifier,issue_number) VALUES ($1::uuid,'Existing read issue',$2,1) RETURNING id::text").bind(org).bind(format!("EX{}-1",suffix[..6].to_ascii_uppercase())).fetch_one(&pool).await.unwrap();
     let chat=sqlx::query_scalar::<_,String>("INSERT INTO chat_conversations (org_id,conversation_kind,created_by_user_id,title) VALUES ($1::uuid,'side_chat',$2,'Private read chat') RETURNING id::text").bind(org).bind(&user).fetch_one(&pool).await.unwrap();
     for private in [false, true] {
         sqlx::query("INSERT INTO heartbeat_runs (org_id,agent_id,status,context_snapshot,chat_conversation_id) VALUES ($1::uuid,$2::uuid,'running',jsonb_build_object('issueId',$3::text,'scene',$4::text),$5::uuid)").bind(org).bind(&agent).bind(&issue).bind(if private {"side_chat"}else{"issue"}).bind(if private {Some(&chat)}else{None}).execute(&pool).await.unwrap();
@@ -51,7 +51,7 @@ async fn native_existing_reads_keep_scope_owners_filters_artifact_streams_and_no
     .await
     .unwrap();
     let mut views = Vec::new();
-    for (owner, label) in [(&user, "own"), ("other-reader", "other")] {
+    for (owner, label) in [(user.as_str(), "own"), ("other-reader", "other")] {
         views.push(sqlx::query_scalar::<_,String>("INSERT INTO messenger_saved_views (org_id,user_id,target_kind,target_payload,resource_key,instance_id,canonical_resource_key,title) VALUES ($1::uuid,$2,'browser','{}'::jsonb,$3,$3,$3,$3) RETURNING id::text").bind(org).bind(owner).bind(label).fetch_one(&pool).await.unwrap());
     }
     let artifacts = tempfile::tempdir().unwrap();

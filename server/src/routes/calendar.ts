@@ -6,8 +6,8 @@ import {
 import { Router, type Request } from "express";
 import { validate } from "../middleware/validate.js";
 import { logActivity } from "../services/activity-log.js";
-import { calendarService } from "../services/calendar.js";
 import { calendarNativeRequest, type CalendarNativeBridge } from "../services/calendar-native-bridge.js";
+import { calendarService } from "../services/calendar.js";
 import { RustFoundationBridgeError } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 

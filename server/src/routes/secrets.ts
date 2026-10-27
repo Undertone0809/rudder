@@ -1,10 +1,10 @@
 import type { Db } from "@rudderhq/db";
 import {
-  SECRET_PROVIDERS,
-  type SecretProvider,
   createSecretSchema,
   rotateSecretSchema,
+  SECRET_PROVIDERS,
   updateSecretSchema,
+  type SecretProvider,
 } from "@rudderhq/shared";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { markHttpRequestBodySensitive } from "../middleware/logger.js";

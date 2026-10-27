@@ -39,9 +39,12 @@ pub(super) async fn read(
             Err(_) => internal_error(),
         },
         BoardRead::Calendar(operation, id) => {
-            let id = match id.map(|id| decode(&id)).transpose() {
-                Ok(id) => id,
-                Err(response) => return response,
+            let id = match id {
+                Some(id) => match decode(&id) {
+                    Ok(id) => Some(id),
+                    Err(response) => return response,
+                },
+                None => None,
             };
             let input = json!({"operation":operation,"id":id,"filters":query});
             match execute_calendar(pool, org, user, None, &input).await {
