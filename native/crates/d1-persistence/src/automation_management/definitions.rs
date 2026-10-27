@@ -150,10 +150,20 @@ pub(super) async fn update(
     patch["updatedAt"] = json!(schedule::stamp(now_ms())?);
     let id = text(old, "id").unwrap();
     projection::write(tx, org, Some(id), false, &patch).await?;
-    // Legacy definition PATCH emits no activity; preserve that contract.
-    projection::automation(tx, id, false)
+    let row = projection::automation(tx, id, false)
         .await?
-        .ok_or_else(|| http(404, "Automation not found"))
+        .ok_or_else(|| http(404, "Automation not found"))?;
+    audit(
+        tx,
+        org,
+        actor,
+        "automation.updated",
+        "automation",
+        id,
+        json!({"title":row["title"],"assigneeAgentId":row["assigneeAgentId"]}),
+    )
+    .await?;
+    Ok(row)
 }
 pub(super) async fn delete(
     tx: &mut Tx<'_>,

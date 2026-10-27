@@ -280,9 +280,21 @@ async fn native_automation_management_preserves_full_journey_permissions_secret_
             .fetch_one(&pool)
             .await
             .unwrap();
+    assert_eq!(after_audits, audits + 1, "definition PATCH emits activity");
+    let update_receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log a JOIN organization_mutation_outbox o ON o.activity_id=a.id AND o.org_id=a.org_id WHERE a.org_id=$1::uuid AND a.action='automation.updated' AND a.entity_type='automation' AND a.entity_id=$2 AND a.actor_type='user' AND a.actor_id=$3 AND a.details=jsonb_build_object('title',$4::text,'assigneeAgentId',$5::text) AND o.event_type='activity.logged' AND o.payload->>'action'=a.action AND o.payload->>'entityType'=a.entity_type AND o.payload->>'entityId'=a.entity_id AND o.payload->>'actorType'=a.actor_type AND o.payload->>'actorId'=a.actor_id AND o.payload->'details'=a.details",
+    )
+    .bind(&org)
+    .bind(id)
+    .bind(&user)
+    .bind(updated.1["title"].as_str().unwrap())
+    .bind(&other_agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        audits, after_audits,
-        "definition PATCH emits no new activity"
+        update_receipts, 1,
+        "definition PATCH emits its bound outbox"
     );
     call(
         &client,
@@ -436,6 +448,11 @@ async fn native_automation_management_preserves_full_journey_permissions_secret_
         let before = snapshot(&pool, &org).await;
         for (method, path, payload) in [
             (Method::POST, collection.as_str(), Some(body.clone())),
+            (
+                Method::PATCH,
+                path.as_str(),
+                Some(json!({"title":"rollback definition"})),
+            ),
             (
                 Method::POST,
                 triggers.as_str(),
