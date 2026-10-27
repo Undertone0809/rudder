@@ -114,7 +114,14 @@ pub(super) async fn workspace_backup_reads(
     if actor.actor().kind != "user" {
         return error(StatusCode::FORBIDDEN, "Board access required");
     }
-    let input = match serde_json::from_slice::<BackupReadRequest>(&body) {
+    read_authorized(&state, org_id.as_str(), &body).await
+}
+
+/// Called only after public native Board and organization revalidation, or
+/// after the signed private actor envelope above. Reuse the artifact stream,
+/// admission and cancellation owner without proxying or buffering archives.
+pub(crate) async fn read_authorized(state: &AppState, org_id: &str, body: &[u8]) -> HttpResponse {
+    let input = match serde_json::from_slice::<BackupReadRequest>(body) {
         Ok(input) => input,
         Err(_) => {
             return error(
@@ -135,7 +142,7 @@ pub(super) async fn workspace_backup_reads(
         "SELECT org_id::text, artifact_ref, archive_sha256, status, error FROM workspace_backups \
          WHERE org_id = $1::uuid AND id = $2::uuid AND status <> 'deleted' LIMIT 1",
     )
-    .bind(org_id.as_str())
+    .bind(org_id)
     .bind(&input.backup_id)
     .fetch_optional(pool)
     .await;

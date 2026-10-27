@@ -67,7 +67,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     return sanitizeGeneratedTitle(runtimeResultText(result));
   }
 
-  router.get("/orgs/:orgId/messenger/saved-views", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/messenger/saved-views", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
@@ -106,7 +106,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.get("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);

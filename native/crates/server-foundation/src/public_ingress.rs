@@ -25,6 +25,7 @@ mod browser_session;
 mod cli_auth;
 mod cost_reads;
 mod email_auth;
+mod existing_reads;
 mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
@@ -772,6 +773,9 @@ async fn proxy_request(
     }
     if request_reads::is_reserved_path(request.uri().path(), request.method()) {
         return request_reads::dispatch_alias(state, request, payload).await;
+    }
+    if existing_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return existing_reads::dispatch(state, request, payload).await;
     }
     if observational_reads::is_reserved_path(request.uri().path(), request.method()) {
         return observational_reads::dispatch_alias(state, request, payload).await;
@@ -2420,6 +2424,8 @@ mod tests {
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]
     mod cost_read_http_tests;
+    #[path = "existing_read_http_tests.rs"]
+    mod existing_read_http_tests;
     #[path = "issue_core_http_tests.rs"]
     mod issue_core_http_tests;
     #[path = "observational_read_http_tests.rs"]

@@ -11,10 +11,10 @@ pub const LIVE_RUN_READ_ACTION: &str = "live_run.read";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct LiveRunReadRequest {
-    issue_id: Option<String>,
-    goal_id: Option<String>,
-    min_count: u32,
+pub(crate) struct LiveRunReadRequest {
+    pub(crate) issue_id: Option<String>,
+    pub(crate) goal_id: Option<String>,
+    pub(crate) min_count: u32,
 }
 
 // Keep the explicit legacy projection: resultJson is the summary, never the
@@ -83,7 +83,7 @@ SELECT payload FROM (
     )
 }
 
-async fn read_live_runs(
+pub(crate) async fn read_live_runs(
     pool: &PgPool,
     org_id: &str,
     input: &LiveRunReadRequest,

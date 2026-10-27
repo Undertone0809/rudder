@@ -1239,7 +1239,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     await sendRunRead(res, rustFoundationBridge, req.actor, orgId, { operation: "overview" });
   });
 
-  router.get("/orgs/:orgId/live-runs", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const goalId = typeof req.query.goalId === "string" && /^[0-9a-f-]{36}$/i.test(req.query.goalId)
@@ -1460,7 +1460,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json(result);
   });
 
-  router.get("/issues/:issueId/live-runs", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/issues/:issueId/live-runs", async (req, res) => {
     const rawId = req.params.issueId as string;
     const issueSvc = issueService(db);
     const isIdentifier = /^[A-Z][A-Z0-9]*-\d+$/i.test(rawId);
