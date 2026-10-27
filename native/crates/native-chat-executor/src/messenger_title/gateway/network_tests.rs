@@ -388,7 +388,7 @@ fn check_agent(request: &Value, run: &str, role: &str) {
     assert!(params.get("text").is_none());
     assert_eq!(
         params["sessionKey"],
-        format!("agent:title-agent:title-fixture:run:{run}")
+        format!("agent:title-agent:rudder:run:{run}")
     );
     assert_eq!(params["agentId"], "title-agent");
     assert_eq!(params["idempotencyKey"], run);
@@ -484,7 +484,7 @@ async fn openclaw_cancel_aborts_the_provider_run_and_bounds_unproven_cleanup() {
                 let fallback = receive(&mut socket, "chat.abort").await;
                 assert_eq!(
                     fallback["params"],
-                    json!({"sessionKey":format!("agent:title-agent:title-fixture:run:{run}"),"runId":"provider-title-run"})
+                    json!({"sessionKey":format!("agent:title-agent:rudder:run:{run}"),"runId":"provider-title-run"})
                 );
                 send(&mut socket, json!({"type":"res","id":fallback["id"],"ok":false,"error":{"message":"synthetic abort refusal"}})).await;
             } else {
