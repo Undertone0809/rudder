@@ -1,7 +1,10 @@
 //! Requests GET authority: legacy table selection, combined projection and
 //! payload redaction. Mutation handlers keep their existing owners.
 pub(crate) mod redaction;
-use crate::StoreError;
+use crate::{
+    StoreError,
+    activity_reads::{utc_date_text, utc_stamp},
+};
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
@@ -19,15 +22,9 @@ pub struct RequestReadInput {
     pub request_id: Option<String>,
     pub status: Option<String>,
     pub kind: Option<String>,
-    pub legacy_date_timezone: Option<String>,
 }
 impl RequestReadInput {
     pub fn validate(&self) -> Result<(), StoreError> {
-        if self.legacy_date_timezone.as_ref().is_some_and(|zone| {
-            zone.is_empty() || zone.len() > 256 || zone.chars().any(char::is_control)
-        }) {
-            return Err(StoreError::InvalidInput);
-        }
         if self.operation == RequestReadOperation::List {
             if self.request_id.is_some()
                 || self
@@ -58,34 +55,8 @@ pub enum RequestReadError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
-fn timestamp_value(column: &str) -> String {
-    format!(
-        r#"(CASE WHEN NOT isfinite({column}) THEN NULL
- WHEN extract(year FROM {column})<1 OR extract(year FROM {column}) BETWEEN 13 AND 31
-   OR mod(extract(timezone FROM {column}),60)<>0 THEN NULL
- WHEN extract(year FROM {column}) BETWEEN 1 AND 12 THEN
-   make_timestamp(2000+extract(day FROM {column})::int,extract(year FROM {column})::int,
-     extract(month FROM {column})::int,extract(hour FROM {column})::int,
-     extract(minute FROM {column})::int,extract(second FROM {column})::double precision)
-     - extract(timezone FROM {column})::double precision * INTERVAL '1 second'
- WHEN extract(year FROM {column}) BETWEEN 32 AND 99 THEN
-   make_timestamp((CASE WHEN extract(year FROM {column})<50 THEN 2000 ELSE 1900 END)+extract(year FROM {column})::int,
-     extract(month FROM {column})::int,extract(day FROM {column})::int,extract(hour FROM {column})::int,
-     extract(minute FROM {column})::int,extract(second FROM {column})::double precision)
-     - extract(timezone FROM {column})::double precision * INTERVAL '1 second'
- ELSE {column} AT TIME ZONE 'UTC' END)"#
-    )
-}
 pub(crate) fn timestamp(column: &str) -> String {
-    let stamp = timestamp_value(column);
-    // Node Date parsing discards sub-millisecond digits before TimeClip checks
-    // the upper boundary, so max Date plus 1 microsecond is still representable.
-    format!(
-        r#"(SELECT CASE WHEN stamp IS NULL OR extract(epoch FROM date_trunc('milliseconds',stamp))>8640000000000 THEN NULL
- ELSE CASE WHEN extract(year FROM stamp)>=10000 THEN '+' || to_char(extract(year FROM stamp),'FM000000')
- ELSE to_char(stamp,'YYYY') END || to_char(stamp,'-MM-DD"T"HH24:MI:SS.MS"Z"') END
- FROM (SELECT {stamp} AS stamp) legacy_date)"#
-    )
+    utc_date_text(&utc_stamp(column))
 }
 
 pub(crate) fn projection(table: &str) -> String {
@@ -178,13 +149,12 @@ fn array(rows: Vec<String>) -> String {
     format!("[{}]", rows.join(","))
 }
 
-// Explicit total order: preserve the legacy parsed Date instant, floor to a
-// whole UTC second, then UUID and table. Invalid dates follow all finite rows.
-// This intentionally removes the old host-local Date string roundtrip.
+// Explicit total order: use canonical UTC milliseconds, floor to a whole
+// second, then UUID and table. Invalid dates follow all finite rows.
 fn list_time(column: &str) -> String {
-    let stamp = timestamp_value(column);
+    let stamp = utc_stamp(column);
     format!(
-        "(SELECT CASE WHEN stamp IS NULL OR extract(epoch FROM date_trunc('milliseconds',stamp))>8640000000000 THEN NULL ELSE floor(extract(epoch FROM date_trunc('milliseconds',stamp))) END FROM (SELECT {stamp} AS stamp) list_date)"
+        "(SELECT CASE WHEN stamp IS NULL THEN NULL ELSE floor(extract(epoch FROM stamp)) END FROM (SELECT {stamp} AS stamp) utc_date)"
     )
 }
 
@@ -230,12 +200,6 @@ pub async fn read_requests(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    if let Some(zone) = &input.legacy_date_timezone {
-        sqlx::query("SELECT set_config('TimeZone', $1, true)")
-            .bind(zone)
-            .execute(&mut *tx)
-            .await?;
-    }
     if input.operation == RequestReadOperation::List {
         let output = list_requests(&mut tx, org, input).await?;
         tx.commit().await?;

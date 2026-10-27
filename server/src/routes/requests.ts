@@ -11,33 +11,36 @@ export function requestRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
   const router = Router();
   const svc = requestService(db);
   const heartbeat = heartbeatService(db);
+  const nativeRequestReads = rustFoundationBridge?.publicIngressEnabled === true;
 
-  router.get("/orgs/:orgId/requests", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const query = listRequestsQuerySchema.parse(req.query);
-    await sendRequestRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", ...query }, db);
-  });
+  if (!nativeRequestReads) {
+    router.get("/orgs/:orgId/requests", async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const query = listRequestsQuerySchema.parse(req.query);
+      await sendRequestRead(res, rustFoundationBridge, req.actor, orgId, { operation: "list", ...query });
+    });
 
-  router.get("/requests/:id", async (req, res) => {
-    const request = await svc.readIdentity(req.params.id as string);
-    if (!request) {
-      res.status(404).json({ error: "Request not found" });
-      return;
-    }
-    assertCompanyAccess(req, request.orgId as string);
-    await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "detail", requestId: request.id }, db);
-  });
+    router.get("/requests/:id", async (req, res) => {
+      const request = await svc.readIdentity(req.params.id as string);
+      if (!request) {
+        res.status(404).json({ error: "Request not found" });
+        return;
+      }
+      assertCompanyAccess(req, request.orgId as string);
+      await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "detail", requestId: request.id });
+    });
 
-  router.get("/requests/:id/block-audit-attempts", async (req, res) => {
-    const request = await svc.readIdentity(req.params.id as string);
-    if (!request) {
-      res.status(404).json({ error: "Request not found" });
-      return;
-    }
-    assertCompanyAccess(req, request.orgId as string);
-    await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "block-audit-attempts", requestId: request.id }, db);
-  });
+    router.get("/requests/:id/block-audit-attempts", async (req, res) => {
+      const request = await svc.readIdentity(req.params.id as string);
+      if (!request) {
+        res.status(404).json({ error: "Request not found" });
+        return;
+      }
+      assertCompanyAccess(req, request.orgId as string);
+      await sendRequestRead(res, rustFoundationBridge, req.actor, request.orgId, { operation: "block-audit-attempts", requestId: request.id });
+    });
+  }
 
   router.post(
     "/requests/:id/resolve",

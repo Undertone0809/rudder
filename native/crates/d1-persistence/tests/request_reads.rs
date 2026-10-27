@@ -30,13 +30,9 @@ INSERT INTO approvals(id,org_id,type,status,payload,updated_at) VALUES
     .await
     .unwrap();
     let result: Value = serde_json::from_str(
-        &read_requests(
-            &db.pool,
-            ORG,
-            &input(json!({"operation":"list","legacyDateTimezone":"UTC"})),
-        )
-        .await
-        .unwrap(),
+        &read_requests(&db.pool, ORG, &input(json!({"operation":"list"})))
+            .await
+            .unwrap(),
     )
     .unwrap();
     let rows = result.as_array().unwrap();

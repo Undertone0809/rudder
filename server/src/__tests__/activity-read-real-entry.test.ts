@@ -571,11 +571,12 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect((await get(`orgs/${orgId}/activity`).query({ limit: "101" })).status).toBe(400);
     expect((await get(`orgs/${orgId}/activity`).query({ cursor: "invalid" })).body.error).toBe("Activity cursor is invalid or expired");
     if (ingress === "required") {
+      // Native public reads remain available without the Node read adapter.
       const nativeActivityRead = bridge.activityRead;
       bridge.activityRead = undefined;
       try {
-        expect((await get(`orgs/${orgId}/activity`)).status).toBe(503);
-        expect((await get(`issues/${issueId}/activity`)).status).toBe(503);
+        expect((await get(`orgs/${orgId}/activity`)).status).toBe(200);
+        expect((await get(`issues/${issueId}/activity`)).status).toBe(200);
       } finally { bridge.activityRead = nativeActivityRead; }
     } else {
       const unavailable = await startApp();
@@ -629,7 +630,8 @@ describe.each(["off", "required"] as const)("Activity native public ingress %s",
     expect(await snapshot()).toEqual(baseline);
   });
 
-  it.each(["delete", "move"] as const)("rechecks the current issue after route resolution and a %s before native dispatch", async (mutation) => {
+  // These mutation hooks exercise the private Node-to-Rust adapter boundary.
+  it.runIf(ingress === "off").each(["delete", "move"] as const)("rechecks the current issue after route resolution and a %s before native dispatch", async (mutation) => {
     const { db } = fixture;
     const racedIssue = randomUUID();
     await db.insert(issues).values({ id: racedIssue, orgId, title: "Deleted after reference resolution" });

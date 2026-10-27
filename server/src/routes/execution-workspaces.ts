@@ -21,7 +21,7 @@ export function runWorkspaceRoutes(db: Db, rustFoundation?: RustFoundationBridge
   const svc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
 
-  router.get(["/orgs/:orgId/run-workspaces", "/orgs/:orgId/execution-workspaces"], async (req, res) => {
+  if (rustFoundation?.publicIngressEnabled !== true) router.get(["/orgs/:orgId/run-workspaces", "/orgs/:orgId/execution-workspaces"], async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     // Preserve this route's existing split/trim coercion, including repeated
@@ -33,7 +33,7 @@ export function runWorkspaceRoutes(db: Db, rustFoundation?: RustFoundationBridge
       issueId: req.query.issueId, statuses, reuseEligible: req.query.reuseEligible === "true" });
   });
 
-  router.get(["/run-workspaces/:id", "/execution-workspaces/:id"], async (req, res) => {
+  if (rustFoundation?.publicIngressEnabled !== true) router.get(["/run-workspaces/:id", "/execution-workspaces/:id"], async (req, res) => {
     const id = req.params.id as string;
     // Only the canonical target and organization cross the access boundary.
     const workspace = await db.select({ id: executionWorkspaces.id, orgId: executionWorkspaces.orgId })

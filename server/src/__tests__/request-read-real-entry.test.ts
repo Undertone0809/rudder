@@ -70,6 +70,24 @@ async function freePort() {
   return port;
 }
 
+function canonicalUtcMilliseconds(timestamp: string): number | null {
+  if (timestamp === "infinity" || timestamp === "-infinity" || timestamp.endsWith(" BC")) return null;
+  const match = timestamp.match(/^(\d+)-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?Z$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  if (year < 1) return null;
+  const yearText = year >= 10_000 ? `+${String(year).padStart(6, "0")}` : String(year).padStart(4, "0");
+  const millisecond = (match[7] ?? "").slice(0, 3).padEnd(3, "0");
+  const iso = `${yearText}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.${millisecond}Z`;
+  const value = Date.parse(iso);
+  return Number.isFinite(value) && Math.abs(value) <= 8_640_000_000_000_000 ? value : null;
+}
+
+function canonicalUtcTimestamp(timestamp: string): string | null {
+  const milliseconds = canonicalUtcMilliseconds(timestamp);
+  return milliseconds === null ? null : new Date(milliseconds).toISOString();
+}
+
 // These cases first ran against the unchanged Node public route. They pin the
 // ordering and authorization traps before the Rust implementation is exercised.
 const modes = process.env.RUDDER_REQUEST_NODE_ORACLE_ONLY === "1" ? ["node"] as const : ["off", "required"] as const;
@@ -243,9 +261,16 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     expect(actual.status).toBe(expected.status);
     expect(actual.body).toEqual(expected.body);
   });
-  it.each(dates)("pairs historical timestamp boundaries: $timestamp", async ({ id }) => {
-    const response = await pair(`/requests/${id}`);
-    expect(response.status).toBe(200);
+  it.each(dates)("projects historical timestamps as canonical UTC: $timestamp", async ({ id, timestamp }) => {
+    const actual = await get(`/requests/${id}`, payloadToken);
+    const oracle = await request(oracleServer!).get(`/api/requests/${id}`).set("authorization", `Bearer ${payloadToken}`);
+    expect(actual.status).toBe(oracle.status);
+    const expected = mode === "node" ? oracle.body : {
+      ...oracle.body,
+      createdAt: canonicalUtcTimestamp(timestamp),
+      decidedAt: canonicalUtcTimestamp(timestamp),
+    };
+    expect(actual.body).toEqual(expected);
   });
   it.each([
     ["remapped year", ["0032-01-01 00:00:00Z", "2026-01-01 00:00:00Z"]],
@@ -255,7 +280,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     ["Tokyo historical transition", ["1887-12-31 14:59:59Z", "1887-12-31 15:00:00Z"]],
     ["negative subsecond floor", ["1969-12-31 23:59:59.999999Z", "1970-01-01 00:00:00Z"]],
     ["all invalid", ["infinity", "-infinity", "275760-09-13 00:00:00.001Z"]],
-  ] as const)("preserves legacy projection with explicit total list order: %s", async (_name, timestamps) => {
+  ] as const)("orders Request rows by canonical UTC timestamps: %s", async (_name, timestamps) => {
     const selectedOrg = randomUUID(), selectedAgent = randomUUID(), credential = `date-${randomUUID()}`;
     await db.insert(organizations).values({ id: selectedOrg, name: "Dates", urlKey: `dates-${selectedOrg}`, issuePrefix: `DT${selectedOrg.slice(0, 8).toUpperCase()}` });
     await db.insert(agents).values({ id: selectedAgent, orgId: selectedOrg, name: "Date reader", role: "general", status: "idle" });
@@ -274,20 +299,19 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     console.info("Legacy Request date order", _name, expected.body.map((row: { id: string }) => timestamps[ids.indexOf(row.id)]));
     const actual = await get(`/orgs/${selectedOrg}/requests`, credential);
     expect(actual.status).toBe(expected.status);
-    const values = new Map(expected.body.map((row: { id: string }) => [row.id, row]));
+    const values = new Map(expected.body.map((row: { id: string }) => {
+      const dateIndex = ids.indexOf(row.id);
+      const timestamp = timestamps[dateIndex];
+      return [row.id, mode === "node" ? row : { ...row, updatedAt: canonicalUtcTimestamp(timestamp) }];
+    }));
     const ordered = [...rawRows].sort((a, b) => {
-      const aMs = a.updatedAt.getTime(), bMs = b.updatedAt.getTime();
-      const aValid = Number.isFinite(aMs), bValid = Number.isFinite(bMs);
+      const aMs = canonicalUtcMilliseconds(timestamps[ids.indexOf(a.id)]!), bMs = canonicalUtcMilliseconds(timestamps[ids.indexOf(b.id)]!);
+      const aValid = aMs !== null, bValid = bMs !== null;
       if (aValid !== bValid) return aValid ? -1 : 1;
-      if (aValid && Math.floor(aMs / 1000) !== Math.floor(bMs / 1000)) return Math.floor(bMs / 1000) - Math.floor(aMs / 1000);
+      if (aMs !== null && bMs !== null && Math.floor(aMs / 1000) !== Math.floor(bMs / 1000)) return Math.floor(bMs / 1000) - Math.floor(aMs / 1000);
       return b.id.localeCompare(a.id);
     });
     expect(actual.body).toEqual(mode === "node" ? expected.body : ordered.map((row) => values.get(row.id)));
-    if (_name === "Tokyo historical transition" && process.env.RUDDER_REQUEST_ORACLE_TIMEZONE === "UTC") {
-      expect(actual.body.map((row: {id: string}) => row.id)).toEqual(mode === "node" && process.env.TZ === "Asia/Tokyo" ? ids : [...ids].reverse());
-      expect(actual.body.map((row: {id: string; updatedAt: string}) => [row.id, row.updatedAt]).sort()).toEqual(expected.body.map((row: {id: string; updatedAt: string}) => [row.id, row.updatedAt]).sort());
-    }
-
   });
   it("preserves malformed UUID failures and requests-table approval projection", async () => {
     for (const suffix of ["", "/block-audit-attempts"]) {
@@ -313,7 +337,14 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     const expected = await request(oracleServer!).get(`/api${url}`).set("authorization", `Bearer ${credential}`);
     const actual = await get(url, credential);
     expect(actual.status).toBe(expected.status);
-    expect(actual.body).toEqual(expected.body);
+    // The accepted canonical UTC contract also applies when historical rows
+    // occur in lists. Keep every other field and the legacy row order intact.
+    const expectedBody = mode !== "node" && Array.isArray(expected.body)
+      ? expected.body.map((row: Record<string, unknown>) => {
+        const fixture = dates.find(({ id }) => id === row.id);
+        return fixture ? { ...row, createdAt: canonicalUtcTimestamp(fixture.timestamp), decidedAt: canonicalUtcTimestamp(fixture.timestamp) } : row;
+      }) : expected.body;
+    expect(actual.body).toEqual(expectedBody);
     return actual;
   }
   it("preserves list status and kind selection without changing domain state", async () => {
@@ -349,17 +380,17 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
       expect((await request(target).get(`/api${url}`)).status).toBe(401);
       expect((await get(url)).status).toBe(403);
     }
-    for (const query of ["status=bogus", "kind=bogus", "status=", "kind=approval&kind=assistance"]) {
+    for (const query of ["status=bogus", "kind=bogus", "status=", "kind=", "status=open&status=resolved", "kind=approval&kind=assistance", "status=bogus&kind=bogus"]) {
       expect((await pair(`/orgs/${payloadOrg}/requests?${query}`)).status).toBe(400);
     }
   });
-  it.runIf(mode !== "node")("rejects a foreign assistance inserted after Node resolved the approval identity", async () => {
+  it.runIf(mode === "off")("rejects a foreign assistance inserted after Node resolved the approval identity", async () => {
     for (const operation of ["detail", "block-audit-attempts"] as const) {
       const id = randomUUID();
       await db.insert(approvals).values({ id, orgId: payloadOrg, type: "hire_agent", payload: { privateMarker: "must not escape" } });
       const original = bridge!.requestRead!.bind(bridge);
       const intercepted = vi.spyOn(bridge!, "requestRead").mockImplementationOnce(async (actor, orgId, input) => {
-        expect(input).toEqual({ operation, requestId: id, legacyDateTimezone: process.env.RUDDER_REQUEST_ORACLE_TIMEZONE === "UTC" ? "UTC" : "Pacific/Honolulu" });
+        expect(input).toEqual({ operation, requestId: id });
         expect(orgId).toBe(payloadOrg);
         await db.insert(requests).values({ id, orgId: other, kind: "assistance", subtype: "issue_blocker", title: "Foreign winner", prompt: "Hidden" });
         return original(actor, orgId, input);
@@ -390,7 +421,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     const earlier=await get(`/orgs/${orderingOrg}/requests`,orderingToken);
     expect(earlier.body.map((row:{id:string;kind:string})=>[row.id,row.kind])).toEqual([[high,"approval"],[low,"assistance"],[high,"assistance"]]);
   });
-  it.runIf(mode !== "node")("fails closed when native dispatch is absent or its transport is unavailable", async () => {
+  it.runIf(mode === "off")("fails closed when native dispatch is absent or its transport is unavailable", async () => {
     const unusedPort = await freePort();
     const unavailable = { requestRead: (actor, orgId, input) => requestRequestRead(`http://127.0.0.1:${unusedPort}`, "synthetic-unavailable-reader-key", 1000, actor, orgId, input) } as RustFoundationBridge;
     const before = await snapshot();

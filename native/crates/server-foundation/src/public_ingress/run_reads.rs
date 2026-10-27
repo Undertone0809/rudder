@@ -418,7 +418,7 @@ fn number_query(query: &QueryValues, key: &str, default: f64) -> f64 {
     if parsed.is_finite() { parsed } else { default }
 }
 
-fn js_number(raw: &str) -> Option<f64> {
+pub(super) fn js_number(raw: &str) -> Option<f64> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Some(0.0);
@@ -496,7 +496,7 @@ fn js_parse_int(raw: &str) -> Option<f64> {
     found.then_some(sign * number)
 }
 
-fn js_date_to_iso(raw: &str) -> Option<String> {
+pub(super) fn js_date_to_iso(raw: &str) -> Option<String> {
     let parsed = OffsetDateTime::parse(raw, &Rfc3339)
         .ok()
         .or_else(|| {
@@ -646,7 +646,7 @@ fn unix_user_metadata() -> Option<(String, String)> {
 }
 
 #[allow(clippy::result_large_err)]
-async fn resolve_run_reference(
+pub(super) async fn resolve_run_reference(
     pool: &sqlx::PgPool,
     state: &IngressState,
     identity: &NativeIngressIdentity,
@@ -774,7 +774,7 @@ async fn run_alias_organization_scope(
     }
 }
 
-async fn resolve_issue_reference(
+pub(super) async fn resolve_issue_reference(
     pool: &sqlx::PgPool,
     reference: &str,
 ) -> Result<Option<(String, String)>, sqlx::Error> {
