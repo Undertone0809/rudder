@@ -746,7 +746,7 @@ async fn revalidate_actor(
     authorizer: Option<&dyn NativeAgentAuthorizer>,
 ) -> Result<(), SecretsError> {
     if let Some(authorizer) = authorizer {
-        match authorizer.revalidate(&mut **tx, organization_id).await? {
+        match authorizer.revalidate(tx, organization_id).await? {
             NativeAgentAccess::Authorized => {}
             NativeAgentAccess::Unauthorized => return Err(http(401, "Unauthorized")),
             NativeAgentAccess::Forbidden => {

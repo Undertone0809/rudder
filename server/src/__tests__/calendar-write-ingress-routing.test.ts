@@ -34,6 +34,14 @@ beforeEach(() => {
   mocks.logActivity.mockReset().mockResolvedValue(undefined);
 });
 describe("Calendar local write authority at required public ingress", () => {
+  it("omits migrated neighboring Calendar GET/HEAD adapters", async () => {
+    const server = app(true);
+    for (const path of ["/api/orgs/org/calendar/sources", "/api/orgs/org/calendar/events", "/api/orgs/org/calendar/events/event"]) {
+      expect((await request(server).get(path)).status).toBe(404);
+      expect((await request(server).head(path)).status).toBe(404);
+    }
+    expect(mocks.calendar).not.toHaveBeenCalled();
+  });
   it.each(writes)("omits $method $path before any Node adapter", async ({ method, path, body }) => {
     const server = app(true);
     for (const input of [body, null]) expect((await request(server)[method](path).send(input)).status).toBe(404);

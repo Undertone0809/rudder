@@ -2,6 +2,7 @@ use super::*;
 use actix_web::{App, HttpServer};
 use sqlx::PgPool;
 use std::{
+    env,
     net::TcpListener,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -122,8 +123,8 @@ async fn native_secret_writes_preserve_crypto_scope_receipts_rollback_and_no_fal
     .unwrap();
     config.identity_auth = Some(
         crate::public_ingress_config::NativeIdentityAuthConfig::new(
-            "secret-write-test-identity-key",
-            "secret-write-test-jwt",
+            "secret-write-test-identity-assertion-key-0001",
+            "secret-write-test-agent-jwt-secret-0001",
             "rudder-test",
             "rudder-api",
             false,

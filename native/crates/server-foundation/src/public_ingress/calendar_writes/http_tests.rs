@@ -2,6 +2,7 @@ use super::*;
 use actix_web::{App, HttpServer};
 use sqlx::PgPool;
 use std::{
+    env,
     net::TcpListener,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -118,8 +119,8 @@ async fn native_calendar_writes_preserve_validation_scope_privacy_rollback_and_n
     .unwrap();
     config.identity_auth = Some(
         crate::public_ingress_config::NativeIdentityAuthConfig::new(
-            "calendar-write-test-identity-key",
-            "calendar-write-test-jwt",
+            "calendar-write-test-identity-assertion-key-0001",
+            "calendar-write-test-agent-jwt-secret-0001",
             "rudder-test",
             "rudder-api",
             false,

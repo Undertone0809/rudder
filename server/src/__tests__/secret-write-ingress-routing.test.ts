@@ -36,6 +36,15 @@ beforeEach(() => {
 });
 
 describe("Secret write authority at required public ingress", () => {
+  it("omits the migrated neighboring Secret GET/HEAD adapters", async () => {
+    const server = app(true);
+    for (const path of ["/api/orgs/org/secrets", "/api/orgs/org/secret-providers"]) {
+      expect((await request(server).get(path)).status).toBe(404);
+      expect((await request(server).head(path)).status).toBe(404);
+    }
+    expect(mocks.secret).not.toHaveBeenCalled();
+    expect(mocks.getById).not.toHaveBeenCalled();
+  });
   it.each(writes)("omits $method $path before Node lookup, validation or dispatch", async ({ method, path, body }) => {
     const server = app(true);
     for (const payload of [body, { forged: "invalid" }]) {

@@ -9,6 +9,7 @@ use rudder_d1_persistence::secrets::{
 };
 use serde::Deserializer as _;
 use serde_json::{Value, json};
+use std::env;
 
 const PROVIDERS: &[&str] = &[
     "local_encrypted",
