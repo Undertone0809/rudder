@@ -15,16 +15,16 @@ pub(super) async fn read(tx: &mut Tx<'_>, c: &Context<'_>) -> Result<Value> {
     // a validation error into destructive membership removal.
     for entry in &entries {
         let key = text(entry, "threadKey");
-        if let Some(id) = key.strip_prefix("saved-view:") {
-            if id.len() != 36 || uuid::Uuid::parse_str(id).is_err() {
-                return Err(http(400, "Invalid Messenger Saved View item key"));
-            }
+        if let Some(id) = key.strip_prefix("saved-view:")
+            && (id.len() != 36 || uuid::Uuid::parse_str(id).is_err())
+        {
+            return Err(http(400, "Invalid Messenger Saved View item key"));
         }
         for prefix in ["chat:", "issue:"] {
-            if let Some(id) = key.strip_prefix(prefix).filter(|id| !id.trim().is_empty()) {
-                if uuid::Uuid::parse_str(id).is_err() {
-                    return Err(http(500, "Internal server error"));
-                }
+            if let Some(id) = key.strip_prefix(prefix).filter(|id| !id.trim().is_empty())
+                && uuid::Uuid::parse_str(id).is_err()
+            {
+                return Err(http(500, "Internal server error"));
             }
         }
     }

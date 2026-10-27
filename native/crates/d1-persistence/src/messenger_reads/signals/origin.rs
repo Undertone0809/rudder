@@ -127,7 +127,7 @@ fn canonical(r: &Value) -> Value {
 }
 pub(super) async fn load(tx: &mut Tx<'_>, c: &Context<'_>, runs: &[Value]) -> Result<Hydration> {
     let origins = runs.iter().map(canonical).collect::<Vec<_>>();
-    let mut tables = HashMap::new();
+    let mut tables: HashMap<&'static str, HashMap<String, Value>> = HashMap::new();
     for (table, key, columns, visibility) in [
         (
             "chat_conversations",

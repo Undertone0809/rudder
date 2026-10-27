@@ -63,46 +63,43 @@ pub(super) async fn read(tx: &mut Tx<'_>, c: &Context<'_>, detail: bool) -> Resu
     let mut latest = latest_items.first().cloned();
     if !detail {
         let mut candidates = Vec::new();
-        if let Some(a) = approvals.iter().find(|a| a["status"] == "pending") {
-            if let Some(item) = items.iter().find(|item| item["id"] == a["id"]) {
-                candidates.push(item.clone());
-            }
+        if let Some(a) = approvals.iter().find(|a| a["status"] == "pending")
+            && let Some(item) = items.iter().find(|item| item["id"] == a["id"])
+        {
+            candidates.push(item.clone());
         }
         if let Some(comment) = comments.iter().find(|comment| {
             approvals
                 .iter()
                 .any(|a| a["id"] == comment["approvalId"] && a["status"] == "pending")
-        }) {
-            if let Some(item) = items
-                .iter()
-                .find(|item| item["id"] == comment["approvalId"])
-            {
-                candidates.push(item.clone());
-            }
+        }) && let Some(item) = items
+            .iter()
+            .find(|item| item["id"] == comment["approvalId"])
+        {
+            candidates.push(item.clone());
         }
         candidates.sort_by(|a, b| ordering::compare(c, a, b, false, false));
         latest = candidates.first().cloned();
-        if let Some(request) = requests.iter().find(|r| r["status"] == "open") {
-            if latest.as_ref().is_none_or(|item| {
+        if let Some(request) = requests.iter().find(|r| r["status"] == "open")
+            && latest.as_ref().is_none_or(|item| {
                 millis(&request["updatedAt"]) > millis(&item["latestActivityAt"])
-            }) {
-                latest = items
-                    .iter()
-                    .find(|item| item["id"] == request["id"])
-                    .cloned();
-            }
+            })
+        {
+            latest = items
+                .iter()
+                .find(|item| item["id"] == request["id"])
+                .cloned();
         }
     }
     let latest = latest.as_ref();
     let sum = summary(
         "approvals",
         "Requests",
-        count,
+        (count, unread),
         latest
             .map(|i| i["latestActivityAt"].clone())
             .unwrap_or(Value::Null),
         last,
-        unread,
         "No requests yet",
         latest.map(|i| i["preview"].clone()).unwrap_or(Value::Null),
     );

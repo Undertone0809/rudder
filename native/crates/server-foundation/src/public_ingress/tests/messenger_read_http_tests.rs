@@ -1,5 +1,5 @@
 use super::*;
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
+use actix_web::{App, HttpResponse, HttpServer, web};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -72,7 +72,7 @@ async fn native_messenger_reads_cover_journey_paging_privacy_effects_and_no_node
     sqlx::query("INSERT INTO chat_attachments(org_id,conversation_id,message_id,asset_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)").bind(&org).bind(&chats[0]).bind(&incoming).bind(&asset).execute(&pool).await.unwrap();
     message(&pool,&org,&chats[1],"assistant","External reply",json!({"source":"agent_integration","provider":"feishu","integrationId":"historical-binding","externalChatId":"external-chat","externalChatType":"group"})).await;
     let run=sqlx::query_scalar::<_,String>("INSERT INTO heartbeat_runs(org_id,agent_id,status,result_json,context_snapshot) VALUES($1::uuid,$2::uuid,'failed','{\"userMessage\":\"Visible failure\"}',jsonb_build_object('issueId',$3::text,'scene','issue')) RETURNING id::text").bind(&org).bind(&agent).bind(&issue).fetch_one(&pool).await.unwrap();
-    let private_run=sqlx::query_scalar::<_,String>("INSERT INTO heartbeat_runs(org_id,agent_id,status,chat_conversation_id,scene,result_json) VALUES($1::uuid,$2::uuid,'failed',$3::uuid,'side_chat','{\"userMessage\":\"Private failure\"}') RETURNING id::text").bind(&org).bind(&agent).bind(&private).fetch_one(&pool).await.unwrap();
+    let private_run=sqlx::query_scalar::<_,String>("INSERT INTO heartbeat_runs(org_id,agent_id,status,chat_conversation_id,context_snapshot,result_json) VALUES($1::uuid,$2::uuid,'failed',$3::uuid,'{\"scene\":\"side_chat\"}','{\"userMessage\":\"Private failure\"}') RETURNING id::text").bind(&org).bind(&agent).bind(&private).fetch_one(&pool).await.unwrap();
     let approval=sqlx::query_scalar::<_,String>("INSERT INTO approvals(org_id,type,payload,requested_by_user_id) VALUES($1::uuid,'chat_operation','{\"operationProposal\":{\"summary\":\"Review this operation\"},\"apiKey\":\"do-not-echo\"}',$2) RETURNING id::text").bind(&org).bind(&user).fetch_one(&pool).await.unwrap();
     sqlx::query("INSERT INTO requests(org_id,kind,subtype,title,prompt,issue_id) VALUES($1::uuid,'assistance','issue_blocker','Need input','Choose the next step',$2::uuid)").bind(&org).bind(&issue).execute(&pool).await.unwrap();
     let group = create_group(&pool, &org, &user, "My group", 0).await;
@@ -235,6 +235,27 @@ async fn native_messenger_reads_cover_journey_paging_privacy_effects_and_no_node
     }
     assert!(!observed.contains(&format!("chat:{private}")));
     assert!(!observed.contains(&format!("chat:{foreign_chat}")));
+    // The selector runs with an explicit sv-SE host fact even when all four
+    // Linux locale variables are absent, exercising the real ingress handoff.
+    if matches!(
+        env::var("RUDDER_NATIVE_HOST_LOCALE").as_deref(),
+        Ok("sv" | "sv-SE")
+    ) {
+        let a = chat(&pool, &org, &user, "Ångström", false).await;
+        let z = chat(&pool, &org, &user, "Zebra", false).await;
+        let (_, titles) = get(&client, &base, &format!("{prefix}/threads"), Some(&token)).await;
+        let titles = titles.as_array().unwrap();
+        let pos = |id: &str| {
+            titles
+                .iter()
+                .position(|item| item["threadKey"] == format!("chat:{id}"))
+                .unwrap()
+        };
+        assert!(
+            pos(&z) < pos(&a),
+            "public sort must use handed-off Swedish locale"
+        );
+    }
     assert_eq!(
         get(
             &client,

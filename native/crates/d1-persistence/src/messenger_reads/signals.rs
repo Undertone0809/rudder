@@ -119,10 +119,9 @@ pub(super) async fn read(
     let summary = summary(
         kind,
         title,
-        if detail { detail_count } else { summary_count },
+        (if detail { detail_count } else { summary_count }, unread),
         at,
         last,
-        unread,
         empty,
         preview,
     );

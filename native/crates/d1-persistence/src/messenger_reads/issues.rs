@@ -46,13 +46,12 @@ pub(super) async fn read(
     let summary = summary(
         "issues",
         "Issues",
-        entries.len(),
+        (entries.len(), count),
         entries
             .first()
             .map(|e| e["latestActivityAt"].clone())
             .unwrap_or(Value::Null),
         last,
-        count,
         "No tracked issues yet",
         summary_preview,
     );

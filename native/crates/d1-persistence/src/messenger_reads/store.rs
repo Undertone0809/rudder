@@ -38,24 +38,24 @@ pub(super) fn camel(value: Value) -> Value {
         fields
             .into_iter()
             .map(|(key, mut value)| {
-                if key.ends_with("_at") || key.ends_with("At") {
-                    if let Some(raw) = value.as_str() {
-                        value = OffsetDateTime::parse(raw, &Rfc3339)
-                            .ok()
-                            .and_then(|date| {
-                                Some(json!(format!(
-                                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                                    date.year(),
-                                    u8::from(date.month()),
-                                    date.day(),
-                                    date.hour(),
-                                    date.minute(),
-                                    date.second(),
-                                    date.millisecond()
-                                )))
-                            })
-                            .unwrap_or(Value::Null);
-                    }
+                if (key.ends_with("_at") || key.ends_with("At"))
+                    && let Some(raw) = value.as_str()
+                {
+                    value = OffsetDateTime::parse(raw, &Rfc3339)
+                        .ok()
+                        .map(|date| {
+                            json!(format!(
+                                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                                date.year(),
+                                u8::from(date.month()),
+                                date.day(),
+                                date.hour(),
+                                date.minute(),
+                                date.second(),
+                                date.millisecond()
+                            ))
+                        })
+                        .unwrap_or(Value::Null);
                 }
                 if key.starts_with('_') {
                     return (key, value);
@@ -99,13 +99,13 @@ pub(super) async fn state(tx: &mut Tx<'_>, c: &Context<'_>, key: &str) -> Result
 pub(super) fn summary(
     key: &str,
     title: &str,
-    count: usize,
+    counts: (usize, usize),
     at: Value,
     last: Value,
-    unread: usize,
     empty: &str,
     preview: Value,
 ) -> Value {
+    let (count, unread) = counts;
     let (kind, href) = if key == "issues" || key == "approvals" {
         (key, format!("/messenger/{key}"))
     } else {

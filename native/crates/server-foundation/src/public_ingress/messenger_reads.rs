@@ -152,9 +152,10 @@ pub(super) async fn dispatch(
             Err(response) => return response,
         },
     };
-    // ICU receives the operating system's user locale, rather than a fixed
-    // binary/English title order. Missing locale uses Node/ICU's default en-US.
-    let locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".into());
+    // Node hands off its resolved ICU locale because sanitized child environments
+    // do not inherit Linux LANG/LC_* variables. Standalone native runs use the OS.
+    let host = std::env::var("RUDDER_NATIVE_HOST_LOCALE").ok();
+    let locale = host_locale(host.as_deref(), sys_locale::get_locale);
     match domain::read(pool, &org, user, &locale, &input, &auth).await {
         Ok(value) => HttpResponse::Ok().json(value),
         Err(domain::Error::Http(status, message)) => error(
@@ -164,9 +165,17 @@ pub(super) async fn dispatch(
         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
     }
 }
+fn host_locale(host: Option<&str>, native: impl FnOnce() -> Option<String>) -> String {
+    host.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(native)
+        .unwrap_or_else(|| "en-US".into())
+}
 fn normalize_cursor(raw: &str) -> String {
     domain::normalize_cursor_date(raw, run_reads::js_date_to_iso).unwrap_or_else(|| raw.to_owned())
 }
+#[allow(clippy::result_large_err)]
 fn decode(raw: &str) -> Result<String, HttpResponse> {
     percent_encoding::percent_decode_str(raw)
         .decode_utf8()
@@ -240,6 +249,15 @@ mod tests {
             "/api/orgs/org/messenger/saved-views",
             &Method::GET
         ));
+    }
+    #[test]
+    fn explicit_host_locale_precedes_standalone_native_fallback() {
+        assert_eq!(
+            host_locale(Some(" sv-SE "), || panic!("host handoff must win")),
+            "sv-SE"
+        );
+        assert_eq!(host_locale(Some(" "), || Some("fr-FR".into())), "fr-FR");
+        assert_eq!(host_locale(None, || None), "en-US");
     }
     #[test]
     fn decimal_limits_follow_node() {
