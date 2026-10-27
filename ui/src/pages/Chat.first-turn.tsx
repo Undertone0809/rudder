@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import type { ComponentProps } from "react";
 import { OptimisticUserDraftItem } from "./Chat.messages";
 
@@ -10,16 +9,6 @@ export function ChatPendingFirstTurn(props: ComponentProps<typeof OptimisticUser
       className="flex w-full max-w-3xl flex-col items-end gap-1 px-1"
     >
       <OptimisticUserDraftItem {...props} />
-      <div
-        data-testid="chat-pending-first-turn-status"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground"
-      >
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-        <span>Sending message...</span>
-      </div>
     </div>
   );
 }

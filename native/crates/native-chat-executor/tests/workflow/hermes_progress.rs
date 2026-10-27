@@ -555,9 +555,49 @@ async fn correlated_prompt_error_after_stop_terminalizes_without_claiming_provid
     let (database, host, actor, run_id, attempt_id) =
         database_and_hermes_admission("hermes-stop-prompt-error").await;
     let pending = host.probe_path("progress-pending");
-    let worker =
+    let mut worker =
         spawn_native_executor_worker(&database, host, actor.clone(), run_id.clone(), attempt_id);
-    wait_for_path(&pending).await;
+    let readiness = async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if pending.exists() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    let completed_before_progress = tokio::select! {
+        ready = readiness => {
+            if ready {
+                None
+            } else {
+                // Let the unchanged 30-second executor deadline finish cleanup
+                // before failing instead of detaching a blocking worker.
+                Some((&mut worker).await)
+            }
+        }
+        completed = &mut worker => Some(completed),
+    };
+    if let Some(completed) = completed_before_progress {
+        match completed {
+            Ok((Err(failure), _host)) => panic!(
+                "synthetic Hermes did not reach progress before completion: code={}, process={:?}",
+                failure.diagnostic_code(),
+                failure.process_disposition()
+            ),
+            Ok((Ok(_), _host)) => {
+                panic!("synthetic Hermes completed successfully before the stop request")
+            }
+            Err(join) => panic!(
+                "synthetic Hermes worker ended before progress: panic={}, cancelled={}",
+                join.is_panic(),
+                join.is_cancelled()
+            ),
+        }
+    }
     let (generation_id, assistant_id) = wait_for_first_progress(&database.pool, &run_id).await;
     let stop_receipt = request_stop(
         &database.pool,

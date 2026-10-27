@@ -259,7 +259,7 @@
   },
   "current_execution": {
     "updated_at": "2026-10-26T12:22:37.271531+00:00",
-    "observed_main": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+    "observed_main": "8b91adb1e8cc2e9e4e3597239af6fbe9692141e7",
     "branch": "codex/rust-issue-attachments-20261026",
     "status": "Attachment/UTC/Automation/FinanceEvents combined source-stage accepted; author qualification and frozen acceptance pending",
     "scope": "Four attachment operations, three Automation reads and FinanceEvents GET/HEAD, plus approved canonical UTC serialization; reuse existing Rust projections and storage.",
@@ -1177,6 +1177,26 @@
       "author_evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined15-qualification-r1/",
       "baseline": "Original full test run exit1: 7 groups / 37 failures; all affected groups/cases recovered under correct fixture environment. Full build passed after resuming Desktop staging with the exact locked runtime package cache. Original failures retained; no claim that the original commands exited0.",
       "standalone_sha256": "e0f9ef01440fdb9293dc6da071969381e4520feafbe2a49480e98cb39e481ff7"
+    },
+    "ci_unblock_20261027": {
+      "state": "Author checks PASS; independent final publication review and exact-head CI pending",
+      "scope": "Test-only worker-aware readiness for the failing synthetic Hermes case; Windows job budget75min after observed60min cancellationduringcache-save. Production executor deadline30sec unchanged; Intel90/other60unchanged.",
+      "upstream_main": "8b91adb1e8cc2e9e4e3597239af6fbe9692141e7",
+      "upstream_scope": "Four UI/E2E files from protectedPR389, preserved; backend source unchanged.",
+      "author_checks": {
+        "hermes_progress_real_pg": 4,
+        "strict_clippy": "PASS native-chat-executor workflow target",
+        "rust_fmt": "PASS workspace",
+        "architecture": "PASS againstcurrentmain",
+        "authority": "PASS check/compare againstcurrentmain"
+      },
+      "initial_author_setup_failure": "PersistentTMPDIR exceededPostgreSQL103byteUnixsocketpath; original4setupfailures preserved; rerunuses shortisolatedTMPDIR+existingTCP-onlyfixtureoption, no source/workflowassertionrelaxation.",
+      "evidence_root": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/ci-unblock-author-r1",
+      "accepted_backend_artifact_restoration": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/pr388-30c-restored/artifact-restoration.json",
+      "historical_pav_md_sha256": "00955d9ba864a57e783089c4204644b5362c468af427655b658299fab22dcf5f",
+      "historical_machine_json": "Old temporarycopy unavailable; no recovery claim. Original historicalMD exactly restoredfromsessionoutput and originalsource57manifest/artifacthashes independently match.",
+      "production_released": false,
+      "global_complete": false
     }
   }
 }
