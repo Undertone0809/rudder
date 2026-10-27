@@ -1,0 +1,811 @@
+[
+  {
+    "name": "negative sort",
+    "operation": "groupUpdate",
+    "raw": {
+      "sortOrder": -1
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 0,
+        "type": "number",
+        "inclusive": true,
+        "exact": false,
+        "message": "Number must be greater than or equal to 0",
+        "path": [
+          "sortOrder"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "fractional sort",
+    "operation": "groupUpdate",
+    "raw": {
+      "sortOrder": 1.5
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "integer",
+        "received": "float",
+        "message": "Expected integer, received float",
+        "path": [
+          "sortOrder"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "invalid sort type",
+    "operation": "groupUpdate",
+    "raw": {
+      "sortOrder": "1"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "number",
+        "received": "string",
+        "path": [
+          "sortOrder"
+        ],
+        "message": "Expected number, received string"
+      }
+    ]
+  },
+  {
+    "name": "assign invalid saved key",
+    "operation": "groupEntryAssign",
+    "raw": {
+      "itemKey": "saved-view:bad"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Saved View item keys must contain a valid UUID",
+        "path": [
+          "itemKey"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "merge invalid saved anchor",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N",
+      "itemKeys": [
+        "saved-view:bad"
+      ],
+      "anchorItemKey": "saved-view:bad"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Saved View item keys must contain a valid UUID",
+        "path": [
+          "itemKeys",
+          0
+        ]
+      },
+      {
+        "code": "custom",
+        "message": "Saved View item keys must contain a valid UUID",
+        "path": [
+          "anchorItemKey"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "entry triple duplicate",
+    "operation": "groupEntryReorder",
+    "raw": {
+      "threadKeys": [
+        "issues",
+        "issues",
+        "issues"
+      ]
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Messenger custom group reorder keys must be unique",
+        "path": [
+          "threadKeys"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty library path",
+    "operation": "savedViewUpdate",
+    "raw": {
+      "target": {
+        "kind": "library_file",
+        "filePath": "",
+        "viewInstanceId": "v"
+      }
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Library path must be canonical and relative",
+        "path": [
+          "target",
+          "filePath"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "keep",
+    "operation": "savedViewKeep",
+    "raw": {
+      "target": {
+        "kind": "browser",
+        "tabId": "tab",
+        "url": "https://example.invalid",
+        "viewInstanceId": "view"
+      },
+      "title": " title ",
+      "subtitle": null,
+      "clientMutationId": "12345678-1234-4234-8234-123456789abc",
+      "placement": {
+        "kind": "loose"
+      }
+    },
+    "ok": true,
+    "value": {
+      "target": {
+        "kind": "browser",
+        "tabId": "tab",
+        "url": "https://example.invalid",
+        "viewInstanceId": "view"
+      },
+      "title": "title",
+      "subtitle": null,
+      "clientMutationId": "12345678-1234-4234-8234-123456789abc",
+      "placement": {
+        "kind": "loose"
+      }
+    }
+  },
+  {
+    "name": "keep app pin",
+    "operation": "savedViewKeep",
+    "raw": {
+      "target": {
+        "kind": "local_app",
+        "desktopInstallationId": "d",
+        "appPublicId": "a",
+        "localBindingId": "b",
+        "viewInstanceId": "v"
+      },
+      "title": "App",
+      "clientMutationId": "12345678-1234-4234-8234-123456789abc",
+      "placement": {
+        "kind": "loose"
+      },
+      "primaryRailPinned": true
+    },
+    "ok": true,
+    "value": {
+      "target": {
+        "kind": "local_app",
+        "desktopInstallationId": "d",
+        "appPublicId": "a",
+        "localBindingId": "b",
+        "viewInstanceId": "v"
+      },
+      "title": "App",
+      "clientMutationId": "12345678-1234-4234-8234-123456789abc",
+      "primaryRailPinned": true,
+      "placement": {
+        "kind": "loose"
+      }
+    }
+  },
+  {
+    "name": "saved metadata",
+    "operation": "savedViewUpdate",
+    "raw": {
+      "title": " A ",
+      "subtitle": " B ",
+      "favicon": null,
+      "hidden": false
+    },
+    "ok": true,
+    "value": {
+      "title": "A",
+      "subtitle": "B",
+      "favicon": null,
+      "hidden": false
+    }
+  },
+  {
+    "name": "saved target",
+    "operation": "savedViewUpdate",
+    "raw": {
+      "target": {
+        "kind": "browser",
+        "tabId": "tab",
+        "url": "https://example.invalid",
+        "viewInstanceId": "view"
+      }
+    },
+    "ok": true,
+    "value": {
+      "target": {
+        "kind": "browser",
+        "tabId": "tab",
+        "url": "https://example.invalid",
+        "viewInstanceId": "view"
+      }
+    }
+  },
+  {
+    "name": "saved empty",
+    "operation": "savedViewUpdate",
+    "raw": {},
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "At least one field is required",
+        "path": []
+      }
+    ]
+  },
+  {
+    "name": "saved unknown",
+    "operation": "savedViewUpdate",
+    "raw": {
+      "title": "A",
+      "extra": true
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "unrecognized_keys",
+        "keys": [
+          "extra"
+        ],
+        "path": [],
+        "message": "Unrecognized key(s) in object: 'extra'"
+      }
+    ]
+  },
+  {
+    "name": "saved hidden forbidden",
+    "operation": "savedViewUpdate",
+    "raw": {
+      "hidden": true
+    },
+    "ok": false,
+    "issues": [
+      {
+        "received": true,
+        "code": "invalid_literal",
+        "expected": false,
+        "path": [
+          "hidden"
+        ],
+        "message": "Invalid literal value, expected false"
+      }
+    ]
+  },
+  {
+    "name": "saved reorder",
+    "operation": "savedViewReorder",
+    "raw": {
+      "ids": [
+        "12345678-1234-4234-8234-123456789abc"
+      ]
+    },
+    "ok": true,
+    "value": {
+      "ids": [
+        "12345678-1234-4234-8234-123456789abc"
+      ]
+    }
+  },
+  {
+    "name": "saved duplicate",
+    "operation": "savedViewReorder",
+    "raw": {
+      "ids": [
+        "12345678-1234-4234-8234-123456789abc",
+        "12345678-1234-4234-8234-123456789abc"
+      ]
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Saved View ids must be unique",
+        "path": [
+          "ids",
+          1
+        ]
+      }
+    ]
+  },
+  {
+    "name": "saved invalid uuid",
+    "operation": "savedViewReorder",
+    "raw": {
+      "ids": [
+        "bad"
+      ]
+    },
+    "ok": false,
+    "issues": [
+      {
+        "validation": "uuid",
+        "code": "invalid_string",
+        "message": "Invalid uuid",
+        "path": [
+          "ids",
+          0
+        ]
+      }
+    ]
+  },
+  {
+    "name": "create strip",
+    "operation": "groupCreate",
+    "raw": {
+      "name": " Work ",
+      "icon": " folder ",
+      "ignored": true
+    },
+    "ok": true,
+    "value": {
+      "name": "Work",
+      "icon": "folder"
+    }
+  },
+  {
+    "name": "create null icon",
+    "operation": "groupCreate",
+    "raw": {
+      "name": "Work",
+      "icon": null
+    },
+    "ok": true,
+    "value": {
+      "name": "Work",
+      "icon": null
+    }
+  },
+  {
+    "name": "create blank",
+    "operation": "groupCreate",
+    "raw": {
+      "name": "   "
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "name"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "create missing",
+    "operation": "groupCreate",
+    "raw": {},
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "name"
+        ],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "name": "create long",
+    "operation": "groupCreate",
+    "raw": {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "too_big",
+        "maximum": 80,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at most 80 character(s)",
+        "path": [
+          "name"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "create boolean",
+    "operation": "groupCreate",
+    "raw": {
+      "name": 42
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "name"
+        ],
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  {
+    "name": "update group",
+    "operation": "groupUpdate",
+    "raw": {
+      "name": "New",
+      "icon": null,
+      "pinned": false,
+      "collapsed": true,
+      "sortOrder": 0,
+      "extra": true
+    },
+    "ok": true,
+    "value": {
+      "name": "New",
+      "icon": null,
+      "collapsed": true,
+      "pinned": false,
+      "sortOrder": 0
+    }
+  },
+  {
+    "name": "update empty",
+    "operation": "groupUpdate",
+    "raw": {},
+    "ok": true,
+    "value": {}
+  },
+  {
+    "name": "pin",
+    "operation": "threadUserState",
+    "raw": {
+      "pinned": true,
+      "extra": 1
+    },
+    "ok": true,
+    "value": {
+      "pinned": true
+    }
+  },
+  {
+    "name": "pin empty",
+    "operation": "threadUserState",
+    "raw": {},
+    "ok": true,
+    "value": {}
+  },
+  {
+    "name": "pin invalid",
+    "operation": "threadUserState",
+    "raw": {
+      "pinned": "yes"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "boolean",
+        "received": "string",
+        "path": [
+          "pinned"
+        ],
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  {
+    "name": "merge aliases",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N",
+      "threadKeys": [
+        " chat:12345678-1234-4234-8234-123456789abc "
+      ],
+      "anchorItemKey": "chat:12345678-1234-4234-8234-123456789abc",
+      "autoGenerateName": true,
+      "extra": true
+    },
+    "ok": true,
+    "value": {
+      "name": "N",
+      "threadKeys": [
+        "chat:12345678-1234-4234-8234-123456789abc"
+      ],
+      "anchorItemKey": "chat:12345678-1234-4234-8234-123456789abc",
+      "autoGenerateName": true,
+      "itemKeys": [
+        "chat:12345678-1234-4234-8234-123456789abc"
+      ]
+    }
+  },
+  {
+    "name": "merge dedupe valid",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N",
+      "itemKeys": [
+        "chat:12345678-1234-4234-8234-123456789abc",
+        "chat:12345678-1234-4234-8234-123456789abc"
+      ]
+    },
+    "ok": true,
+    "value": {
+      "name": "N",
+      "itemKeys": [
+        "chat:12345678-1234-4234-8234-123456789abc",
+        "chat:12345678-1234-4234-8234-123456789abc"
+      ]
+    }
+  },
+  {
+    "name": "merge absent keys",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "itemKeys or threadKeys is required",
+        "path": [
+          "itemKeys"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "merge mismatched aliases",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N",
+      "itemKeys": [
+        "issues"
+      ],
+      "threadKeys": [
+        "approvals"
+      ]
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "itemKeys and threadKeys must match",
+        "path": [
+          "itemKeys"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "merge anchor outside",
+    "operation": "groupMerge",
+    "raw": {
+      "name": "N",
+      "itemKeys": [
+        "issues"
+      ],
+      "anchorItemKey": "approvals"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "anchorItemKey must be included in itemKeys",
+        "path": [
+          "anchorItemKey"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "groups reorder",
+    "operation": "groupReorder",
+    "raw": {
+      "groupIds": [
+        "12345678-1234-4234-8234-123456789abc",
+        "12345678-1234-4234-8234-123456789abc"
+      ],
+      "ignored": 1
+    },
+    "ok": true,
+    "value": {
+      "groupIds": [
+        "12345678-1234-4234-8234-123456789abc",
+        "12345678-1234-4234-8234-123456789abc"
+      ]
+    }
+  },
+  {
+    "name": "groups reorder empty",
+    "operation": "groupReorder",
+    "raw": {
+      "groupIds": []
+    },
+    "ok": true,
+    "value": {
+      "groupIds": []
+    }
+  },
+  {
+    "name": "assign alias",
+    "operation": "groupEntryAssign",
+    "raw": {
+      "threadKey": " chat:12345678-1234-4234-8234-123456789abc ",
+      "extra": true
+    },
+    "ok": true,
+    "value": {
+      "threadKey": "chat:12345678-1234-4234-8234-123456789abc",
+      "itemKey": "chat:12345678-1234-4234-8234-123456789abc"
+    }
+  },
+  {
+    "name": "assign absent",
+    "operation": "groupEntryAssign",
+    "raw": {},
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "itemKey or threadKey is required",
+        "path": [
+          "itemKey"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "assign mismatch",
+    "operation": "groupEntryAssign",
+    "raw": {
+      "itemKey": "issues",
+      "threadKey": "approvals"
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "itemKey and threadKey must match",
+        "path": [
+          "itemKey"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "entry reorder alias",
+    "operation": "groupEntryReorder",
+    "raw": {
+      "threadKeys": [
+        "issues",
+        "approvals"
+      ]
+    },
+    "ok": true,
+    "value": {
+      "threadKeys": [
+        "issues",
+        "approvals"
+      ],
+      "itemKeys": [
+        "issues",
+        "approvals"
+      ]
+    }
+  },
+  {
+    "name": "entry reorder duplicate",
+    "operation": "groupEntryReorder",
+    "raw": {
+      "itemKeys": [
+        "issues",
+        "issues"
+      ]
+    },
+    "ok": false,
+    "issues": [
+      {
+        "code": "custom",
+        "message": "Messenger custom group reorder keys must be unique",
+        "path": [
+          "itemKeys"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "entry reorder empty",
+    "operation": "groupEntryReorder",
+    "raw": {
+      "itemKeys": []
+    },
+    "ok": true,
+    "value": {
+      "itemKeys": []
+    }
+  },
+  {
+    "name": "missing groupCreate",
+    "operation": "groupCreate",
+    "missing": true,
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "undefined",
+        "path": [],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "name": "missing savedViewKeep",
+    "operation": "savedViewKeep",
+    "missing": true,
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "undefined",
+        "path": [],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "name": "missing threadUserState",
+    "operation": "threadUserState",
+    "missing": true,
+    "ok": false,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "undefined",
+        "path": [],
+        "message": "Required"
+      }
+    ]
+  }
+]

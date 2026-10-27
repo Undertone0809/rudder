@@ -4,6 +4,7 @@
 mod chat;
 mod groups;
 mod issues;
+pub mod mutation_snapshot;
 mod ordering;
 mod projection;
 mod requests;

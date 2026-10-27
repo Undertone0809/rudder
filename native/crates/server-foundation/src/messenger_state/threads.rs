@@ -32,9 +32,9 @@ pub(super) async fn pin(
         // retains this key-share lock until commit so DELETE can cascade after
         // us. This avoids both the Node cleanup lock inversion and FK-race 500s.
         let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id::text FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid FOR KEY SHARE",
+            "SELECT id::text FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid AND (conversation_kind<>'side_chat' OR created_by_user_id=$3) FOR KEY SHARE",
         )
-        .bind(s.org).bind(id).fetch_optional(&mut **tx).await?;
+        .bind(s.org).bind(id).bind(s.user).fetch_optional(&mut **tx).await?;
         if exists.is_none() {
             return Err(Error::Http(404, "Messenger thread not found"));
         }

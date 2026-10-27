@@ -52,6 +52,7 @@ function parseThreadKey(threadKey: string) {
 
 export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
+  const nativeMessengerWrites = rustFoundationBridge?.publicIngressEnabled === true;
   const svc = messengerService(db);
   const productIntelligence = productIntelligenceService(db);
 
@@ -75,7 +76,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewList", query });
   });
 
-  router.post(
+  if (!nativeMessengerWrites) router.post(
     "/orgs/:orgId/messenger/saved-views/keep",
     validate(keepMessengerSavedViewSchema),
     async (req, res) => {
@@ -86,7 +87,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.post("/orgs/:orgId/messenger/saved-views", (req, res) => {
+  if (!nativeMessengerWrites) router.post("/orgs/:orgId/messenger/saved-views", (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
@@ -95,7 +96,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     });
   });
 
-  router.patch(
+  if (!nativeMessengerWrites) router.patch(
     "/orgs/:orgId/messenger/saved-views/reorder",
     validate(reorderMessengerSavedViewsSchema),
     async (req, res) => {
@@ -114,7 +115,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "savedViewGet", id });
   });
 
-  router.patch(
+  if (!nativeMessengerWrites) router.patch(
     "/orgs/:orgId/messenger/saved-views/:id",
     validate(updateMessengerSavedViewSchema),
     async (req, res) => {
@@ -126,7 +127,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.delete("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
+  if (!nativeMessengerWrites) router.delete("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
@@ -141,7 +142,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     res.json(await svc.listCustomGroups(orgId, userId));
   });
 
-  router.post(
+  if (!nativeMessengerWrites) router.post(
     "/orgs/:orgId/messenger/groups",
     validate(createMessengerCustomGroupSchema),
     async (req, res) => {
@@ -152,7 +153,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.post(
+  if (!nativeMessengerWrites) router.post(
     "/orgs/:orgId/messenger/groups/merge",
     validate(createMessengerCustomGroupWithEntriesSchema),
     async (req, res) => {
@@ -174,7 +175,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.patch(
+  if (!nativeMessengerWrites) router.patch(
     "/orgs/:orgId/messenger/groups/reorder",
     validate(reorderMessengerCustomGroupsSchema),
     async (req, res) => {
@@ -185,7 +186,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.patch(
+  if (!nativeMessengerWrites) router.patch(
     "/orgs/:orgId/messenger/groups/:groupId",
     validate(updateMessengerCustomGroupSchema),
     async (req, res) => {
@@ -196,7 +197,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.post("/orgs/:orgId/messenger/groups/:groupId/title/regenerate", async (req, res) => {
+  if (!nativeMessengerWrites) router.post("/orgs/:orgId/messenger/groups/:groupId/title/regenerate", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
@@ -210,21 +211,21 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     res.json(await svc.updateCustomGroup(orgId, userId, groupId, { name: title }));
   });
 
-  router.post("/orgs/:orgId/messenger/groups/:groupId/separate", async (req, res) => {
+  if (!nativeMessengerWrites) router.post("/orgs/:orgId/messenger/groups/:groupId/separate", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
     await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupSeparate", groupId: req.params.groupId as string });
   });
 
-  router.delete("/orgs/:orgId/messenger/groups/:groupId", async (req, res) => {
+  if (!nativeMessengerWrites) router.delete("/orgs/:orgId/messenger/groups/:groupId", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
     await sendMessengerState(res, rustFoundationBridge, req.actor, orgId, { operation: "groupDelete", groupId: req.params.groupId as string });
   });
 
-  router.post(
+  if (!nativeMessengerWrites) router.post(
     "/orgs/:orgId/messenger/groups/:groupId/entries",
     validate(assignMessengerCustomGroupEntrySchema),
     async (req, res) => {
@@ -235,7 +236,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.patch(
+  if (!nativeMessengerWrites) router.patch(
     "/orgs/:orgId/messenger/groups/:groupId/entries/reorder",
     validate(reorderMessengerCustomGroupEntriesSchema),
     async (req, res) => {
@@ -246,7 +247,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     },
   );
 
-  router.delete("/orgs/:orgId/messenger/groups/entries/:threadKey", async (req, res) => {
+  if (!nativeMessengerWrites) router.delete("/orgs/:orgId/messenger/groups/entries/:threadKey", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     boardUserId(req);
@@ -290,7 +291,7 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     res.json(thread);
   });
 
-  router.post("/orgs/:orgId/messenger/threads/:threadKey/read", async (req, res) => {
+  if (!nativeMessengerWrites) router.post("/orgs/:orgId/messenger/threads/:threadKey/read", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
@@ -329,14 +330,14 @@ export function messengerRoutes(db: Db, rustFoundationBridge?: RustFoundationBri
     res.json({ threadKey, lastReadAt: state.lastReadAt });
   });
 
-  router.post("/orgs/:orgId/messenger/unreads/dismiss", async (req, res) => {
+  if (!nativeMessengerWrites) router.post("/orgs/:orgId/messenger/unreads/dismiss", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
     res.json(await svc.dismissUnreadThreads(orgId, userId));
   });
 
-  router.post(
+  if (!nativeMessengerWrites) router.post(
     "/orgs/:orgId/messenger/threads/:threadKey/user-state",
     validate(updateMessengerThreadUserStateSchema),
     async (req, res) => {

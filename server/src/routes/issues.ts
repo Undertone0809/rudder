@@ -923,7 +923,7 @@ export function issueRoutes(
     res.json(removed);
   });
 
-  router.post("/issues/:id/read", async (req, res) => {
+  if (!nativePublicIssueIngress) router.post("/issues/:id/read", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -945,7 +945,7 @@ export function issueRoutes(
     res.json(readState);
   });
 
-  router.post("/issues/:id/follow", async (req, res) => {
+  if (!nativePublicIssueIngress) router.post("/issues/:id/follow", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -969,7 +969,7 @@ export function issueRoutes(
     });
   });
 
-  router.delete("/issues/:id/follow", async (req, res) => {
+  if (!nativePublicIssueIngress) router.delete("/issues/:id/follow", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
