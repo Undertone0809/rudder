@@ -22,6 +22,7 @@ mod agent_execution;
 mod agent_runs;
 mod approval_reads;
 mod automation_reads;
+mod automation_writes;
 mod browser_session;
 mod calendar_writes;
 mod cli_auth;
@@ -779,6 +780,9 @@ async fn proxy_request(
     }
     if cost_reads::is_reserved_path(request.uri().path(), request.method()) {
         return cost_reads::dispatch_alias(state, request, payload).await;
+    }
+    if automation_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return automation_writes::dispatch_alias(state, request, payload).await;
     }
     if automation_reads::is_reserved_path(request.uri().path(), request.method()) {
         return automation_reads::dispatch_alias(state, request, payload).await;

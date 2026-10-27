@@ -68,28 +68,30 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     });
   }
 
-  router.post("/orgs/:orgId/automations", validate(createAutomationSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    await assertBoardCanAssignTasks(req, orgId);
-    assertCanManageCompanyAutomation(req, orgId, req.body.assigneeAgentId);
-    const created = await svc.create(orgId, req.body, {
-      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
-      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+  if (!nativeAutomationReads) {
+    router.post("/orgs/:orgId/automations", validate(createAutomationSchema), async (req, res) => {
+      const orgId = req.params.orgId as string;
+      await assertBoardCanAssignTasks(req, orgId);
+      assertCanManageCompanyAutomation(req, orgId, req.body.assigneeAgentId);
+      const created = await svc.create(orgId, req.body, {
+        agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+        userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      });
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "automation.created",
+        entityType: "automation",
+        entityId: created.id,
+        details: { title: created.title, assigneeAgentId: created.assigneeAgentId },
+      });
+      res.status(201).json(created);
     });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.created",
-      entityType: "automation",
-      entityId: created.id,
-      details: { title: created.title, assigneeAgentId: created.assigneeAgentId },
-    });
-    res.status(201).json(created);
-  });
+  }
 
   if (!nativeAutomationReads) {
     router.get("/automations/:id", async (req, res) => {
@@ -103,60 +105,64 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     });
   }
 
-  router.patch("/automations/:id", validate(updateAutomationSchema), async (req, res) => {
-    const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    const assigneeWillChange =
-      req.body.assigneeAgentId !== undefined &&
-      req.body.assigneeAgentId !== automation.assigneeAgentId;
-    if (assigneeWillChange) {
-      await assertBoardCanAssignTasks(req, automation.orgId);
-    }
-    const statusWillActivate =
-      req.body.status !== undefined &&
-      req.body.status === "active" &&
-      automation.status !== "active";
-    if (statusWillActivate) {
-      await assertBoardCanAssignTasks(req, automation.orgId);
-    }
-    if (req.actor.type === "agent" && req.body.assigneeAgentId && req.body.assigneeAgentId !== req.actor.agentId) {
-      throw forbidden("Agents can only assign automations to themselves");
-    }
-    const updated = await svc.update(automation.id, req.body, {
-      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
-      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+  if (!nativeAutomationReads) {
+    router.patch("/automations/:id", validate(updateAutomationSchema), async (req, res) => {
+      const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
+      if (!automation) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      const assigneeWillChange =
+        req.body.assigneeAgentId !== undefined &&
+        req.body.assigneeAgentId !== automation.assigneeAgentId;
+      if (assigneeWillChange) {
+        await assertBoardCanAssignTasks(req, automation.orgId);
+      }
+      const statusWillActivate =
+        req.body.status !== undefined &&
+        req.body.status === "active" &&
+        automation.status !== "active";
+      if (statusWillActivate) {
+        await assertBoardCanAssignTasks(req, automation.orgId);
+      }
+      if (req.actor.type === "agent" && req.body.assigneeAgentId && req.body.assigneeAgentId !== req.actor.agentId) {
+        throw forbidden("Agents can only assign automations to themselves");
+      }
+      const updated = await svc.update(automation.id, req.body, {
+        agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+        userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      });
+      res.json(updated);
     });
-    res.json(updated);
-  });
+  }
 
-  router.delete("/automations/:id", async (req, res) => {
-    const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    const deleted = await svc.delete(automation.id);
-    if (!deleted) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: automation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.deleted",
-      entityType: "automation",
-      entityId: automation.id,
-      details: { title: automation.title },
+  if (!nativeAutomationReads) {
+    router.delete("/automations/:id", async (req, res) => {
+      const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
+      if (!automation) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      const deleted = await svc.delete(automation.id);
+      if (!deleted) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: automation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "automation.deleted",
+        entityType: "automation",
+        entityId: automation.id,
+        details: { title: automation.title },
+      });
+      res.status(204).end();
     });
-    res.status(204).end();
-  });
+  }
 
   if (!nativeAutomationReads) {
     router.get("/automations/:id/runs", async (req, res) => {
@@ -173,105 +179,15 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     });
   }
 
-  router.post("/automations/:id/triggers", validate(createAutomationTriggerSchema), async (req, res) => {
-    const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    await assertBoardCanAssignTasks(req, automation.orgId);
-    const created = await svc.createTrigger(automation.id, req.body, {
-      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
-      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
-    });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: automation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.trigger_created",
-      entityType: "automation_trigger",
-      entityId: created.trigger.id,
-      details: { automationId: automation.id, kind: created.trigger.kind },
-    });
-    res.status(201).json(created);
-  });
-
-  router.patch("/automation-triggers/:id", validate(updateAutomationTriggerSchema), async (req, res) => {
-    const trigger = await svc.getTrigger(req.params.id as string);
-    if (!trigger) {
-      res.status(404).json({ error: "Automation trigger not found" });
-      return;
-    }
-    const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    await assertBoardCanAssignTasks(req, automation.orgId);
-    const updated = await svc.updateTrigger(trigger.id, req.body, {
-      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
-      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
-    });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: automation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.trigger_updated",
-      entityType: "automation_trigger",
-      entityId: trigger.id,
-      details: { automationId: automation.id, kind: updated?.kind ?? trigger.kind },
-    });
-    res.json(updated);
-  });
-
-  router.delete("/automation-triggers/:id", async (req, res) => {
-    const trigger = await svc.getTrigger(req.params.id as string);
-    if (!trigger) {
-      res.status(404).json({ error: "Automation trigger not found" });
-      return;
-    }
-    const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
-    if (!automation) {
-      res.status(404).json({ error: "Automation not found" });
-      return;
-    }
-    await svc.deleteTrigger(trigger.id);
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: automation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.trigger_deleted",
-      entityType: "automation_trigger",
-      entityId: trigger.id,
-      details: { automationId: automation.id, kind: trigger.kind },
-    });
-    res.status(204).end();
-  });
-
-  router.post(
-    "/automation-triggers/:id/rotate-secret",
-    validate(rotateAutomationTriggerSecretSchema),
-    async (req, res) => {
-      const trigger = await svc.getTrigger(req.params.id as string);
-      if (!trigger) {
-        res.status(404).json({ error: "Automation trigger not found" });
-        return;
-      }
-      const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
+  if (!nativeAutomationReads) {
+    router.post("/automations/:id/triggers", validate(createAutomationTriggerSchema), async (req, res) => {
+      const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
       if (!automation) {
         res.status(404).json({ error: "Automation not found" });
         return;
       }
-      const rotated = await svc.rotateTriggerSecret(trigger.id, {
+      await assertBoardCanAssignTasks(req, automation.orgId);
+      const created = await svc.createTrigger(automation.id, req.body, {
         agentId: req.actor.type === "agent" ? req.actor.agentId : null,
         userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
       });
@@ -282,14 +198,112 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
-        action: "automation.trigger_secret_rotated",
+        action: "automation.trigger_created",
+        entityType: "automation_trigger",
+        entityId: created.trigger.id,
+        details: { automationId: automation.id, kind: created.trigger.kind },
+      });
+      res.status(201).json(created);
+    });
+  }
+
+  if (!nativeAutomationReads) {
+    router.patch("/automation-triggers/:id", validate(updateAutomationTriggerSchema), async (req, res) => {
+      const trigger = await svc.getTrigger(req.params.id as string);
+      if (!trigger) {
+        res.status(404).json({ error: "Automation trigger not found" });
+        return;
+      }
+      const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
+      if (!automation) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      await assertBoardCanAssignTasks(req, automation.orgId);
+      const updated = await svc.updateTrigger(trigger.id, req.body, {
+        agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+        userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      });
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: automation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "automation.trigger_updated",
         entityType: "automation_trigger",
         entityId: trigger.id,
-        details: { automationId: automation.id },
+        details: { automationId: automation.id, kind: updated?.kind ?? trigger.kind },
       });
-      res.json(rotated);
-    },
-  );
+      res.json(updated);
+    });
+  }
+
+  if (!nativeAutomationReads) {
+    router.delete("/automation-triggers/:id", async (req, res) => {
+      const trigger = await svc.getTrigger(req.params.id as string);
+      if (!trigger) {
+        res.status(404).json({ error: "Automation trigger not found" });
+        return;
+      }
+      const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
+      if (!automation) {
+        res.status(404).json({ error: "Automation not found" });
+        return;
+      }
+      await svc.deleteTrigger(trigger.id);
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: automation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "automation.trigger_deleted",
+        entityType: "automation_trigger",
+        entityId: trigger.id,
+        details: { automationId: automation.id, kind: trigger.kind },
+      });
+      res.status(204).end();
+    });
+  }
+
+  if (!nativeAutomationReads) {
+    router.post(
+      "/automation-triggers/:id/rotate-secret",
+      validate(rotateAutomationTriggerSecretSchema),
+      async (req, res) => {
+        const trigger = await svc.getTrigger(req.params.id as string);
+        if (!trigger) {
+          res.status(404).json({ error: "Automation trigger not found" });
+          return;
+        }
+        const automation = await assertCanManageExistingAutomation(req, trigger.automationId);
+        if (!automation) {
+          res.status(404).json({ error: "Automation not found" });
+          return;
+        }
+        const rotated = await svc.rotateTriggerSecret(trigger.id, {
+          agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+          userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+        });
+        const actor = getActorInfo(req);
+        await logActivity(db, {
+          orgId: automation.orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "automation.trigger_secret_rotated",
+          entityType: "automation_trigger",
+          entityId: trigger.id,
+          details: { automationId: automation.id },
+        });
+        res.json(rotated);
+      },
+    );
+  }
 
   router.post("/automations/:id/run", validate(runAutomationSchema), async (req, res) => {
     const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
