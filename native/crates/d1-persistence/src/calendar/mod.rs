@@ -1,7 +1,8 @@
 //! Calendar source and event authority for the public calendar routes.
 //!
-//! The Node adapter authenticates the board user and signs this bounded command;
-//! all validation, organization checks, SQL projections, writes, and activity
+//! The private adapter signs its Board context; native public writes revalidate
+//! credentials and organization access inside the existing mutation transaction.
+//! All validation, organization checks, SQL projections, writes, and activity
 //! delivery intent live here. Google OAuth/configuration and provider sync stay
 //! deliberately outside this contract.
 mod audit;
@@ -10,6 +11,7 @@ mod events;
 mod projections;
 mod sources;
 
+use crate::agent_core::{NativeAgentAccess, NativeAgentAuthorizer};
 use common::Audit;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -40,9 +42,68 @@ pub async fn execute_calendar(
     run_id: Option<&str>,
     request: &Value,
 ) -> Result<(u16, Value)> {
-    let org = Uuid::parse_str(org)
-        .map_err(|_| http(422, "Invalid organization id"))?
-        .to_string();
+    execute_calendar_with_authorizer(pool, org, actor_id, run_id, request, None).await
+}
+
+pub async fn execute_calendar_for_actor(
+    pool: &PgPool,
+    org: &str,
+    actor_id: &str,
+    run_id: Option<&str>,
+    request: &Value,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<(u16, Value)> {
+    if !matches!(
+        text(request, "operation"),
+        Some(
+            "source.create"
+                | "source.update"
+                | "source.delete"
+                | "event.create"
+                | "event.update"
+                | "event.delete"
+        )
+    ) {
+        return Err(http(400, "Validation error"));
+    }
+    execute_calendar_with_authorizer(pool, org, actor_id, run_id, request, Some(authorizer)).await
+}
+
+async fn revalidate_actor(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &str,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<()> {
+    if let Some(authorizer) = authorizer {
+        match authorizer.revalidate(tx, org).await? {
+            NativeAgentAccess::Authorized => {}
+            NativeAgentAccess::Unauthorized => return Err(http(401, "Unauthorized")),
+            NativeAgentAccess::Forbidden => {
+                return Err(http(403, "User does not have access to this organization"));
+            }
+        }
+    }
+    Uuid::parse_str(org).map_err(|_| http(422, "Invalid organization id"))?;
+    Ok(())
+}
+
+async fn execute_calendar_with_authorizer(
+    pool: &PgPool,
+    org: &str,
+    actor_id: &str,
+    run_id: Option<&str>,
+    request: &Value,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<(u16, Value)> {
+    // Public Board scope checks precede body/UUID validation, matching the
+    // existing route. Private signed callers retain their canonical parsing.
+    let org = if authorizer.is_none() {
+        Uuid::parse_str(org)
+            .map_err(|_| http(422, "Invalid organization id"))?
+            .to_string()
+    } else {
+        org.to_owned()
+    };
     let actor = Audit {
         actor_type: "user",
         actor_id: actor_id.to_owned(),
@@ -55,6 +116,7 @@ pub async fn execute_calendar(
             201,
             sources::source_create(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 request
@@ -67,6 +129,7 @@ pub async fn execute_calendar(
             200,
             sources::source_update(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 text(request, "id").ok_or_else(|| http(400, "Validation error"))?,
@@ -80,6 +143,7 @@ pub async fn execute_calendar(
             200,
             sources::source_delete(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 text(request, "id").ok_or_else(|| http(400, "Validation error"))?,
@@ -101,6 +165,7 @@ pub async fn execute_calendar(
             201,
             events::event_create(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 request
@@ -146,6 +211,7 @@ pub async fn execute_calendar(
             200,
             events::event_update(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 text(request, "id").ok_or_else(|| http(400, "Validation error"))?,
@@ -159,6 +225,7 @@ pub async fn execute_calendar(
             200,
             events::event_delete(
                 pool,
+                authorizer,
                 &org,
                 &actor,
                 text(request, "id").ok_or_else(|| http(400, "Validation error"))?,

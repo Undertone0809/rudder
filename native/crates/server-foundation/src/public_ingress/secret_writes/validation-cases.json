@@ -1,0 +1,182 @@
+[
+  {
+    "operation": "create",
+    "rawBody": "{}",
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "name"
+        ],
+        "message": "Required"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "value"
+        ],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "rawBody": "{\"name\":\"\",\"value\":3,\"extra\":true}",
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "name"
+        ]
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "value"
+        ],
+        "message": "Expected string, received number"
+      },
+      {
+        "code": "unrecognized_keys",
+        "keys": [
+          "extra"
+        ],
+        "path": [],
+        "message": "Unrecognized key(s) in object: 'extra'"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "rawBody": "{\"name\":\"Key\",\"value\":\"value\",\"provider\":false}",
+    "issues": [
+      {
+        "expected": "'local_encrypted' | 'aws_secrets_manager' | 'gcp_secret_manager' | 'vault'",
+        "received": "boolean",
+        "code": "invalid_type",
+        "path": [
+          "provider"
+        ],
+        "message": "Expected 'local_encrypted' | 'aws_secrets_manager' | 'gcp_secret_manager' | 'vault', received boolean"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "rawBody": "{\"name\":\"Key\",\"value\":\"value\",\"provider\":\"bogus\"}",
+    "issues": [
+      {
+        "received": "bogus",
+        "code": "invalid_enum_value",
+        "options": [
+          "local_encrypted",
+          "aws_secrets_manager",
+          "gcp_secret_manager",
+          "vault"
+        ],
+        "path": [
+          "provider"
+        ],
+        "message": "Invalid enum value. Expected 'local_encrypted' | 'aws_secrets_manager' | 'gcp_secret_manager' | 'vault', received 'bogus'"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "rawBody": "{\"name\":null,\"value\":[],\"description\":4}",
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "null",
+        "path": [
+          "name"
+        ],
+        "message": "Expected string, received null"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "array",
+        "path": [
+          "value"
+        ],
+        "message": "Expected string, received array"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "description"
+        ],
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  {
+    "operation": "rotate",
+    "rawBody": "{\"value\":\"\",\"externalRef\":false}",
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "value"
+        ]
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "boolean",
+        "path": [
+          "externalRef"
+        ],
+        "message": "Expected string, received boolean"
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "rawBody": "[]",
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [],
+        "message": "Expected object, received array"
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "rawBody": "{\"z\":1,\"a\":2}",
+    "issues": [
+      {
+        "code": "unrecognized_keys",
+        "keys": [
+          "z",
+          "a"
+        ],
+        "path": [],
+        "message": "Unrecognized key(s) in object: 'z', 'a'"
+      }
+    ]
+  }
+]

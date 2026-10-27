@@ -157,6 +157,19 @@ jobs:
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+          RUDDER_SECRETS_PROVIDER=local_encrypted \
+          RUDDER_SECRETS_MASTER_KEY_FILE="$RUNNER_TEMP/rudder-secret-write-synthetic.key" \
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::secret_writes::http_tests::native_secret_writes_preserve_crypto_scope_receipts_rollback_and_no_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::calendar_writes::http_tests::native_calendar_writes_preserve_validation_scope_privacy_rollback_and_no_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify API-wide Rust Project reads against legacy data
         run: |
           set -o pipefail

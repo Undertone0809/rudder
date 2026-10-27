@@ -26,7 +26,7 @@ vi.mock("../services/organization-workspace-browser.js", () => ({ organizationWo
 vi.mock("../services/delegation-runs.js", () => ({ delegationRunService: () => ({}) }));
 
 describe("last existing Rust reads public cutover", () => {
-  it("omits all thirteen Node GET/HEAD registrations while keeping writes and adjacent reads", async () => {
+  it("omits migrated reads and Calendar writes while keeping remaining Node adapters", async () => {
     const db = new Proxy({} as Db, { get() { throw new Error("Node DB authority executed"); } });
     const bridge = { publicIngressEnabled: true } as RustFoundationBridge;
     const app = express();
@@ -40,7 +40,7 @@ describe("last existing Rust reads public cutover", () => {
       expect((await request(app).head(`/api${path}`)).status, path).toBe(404);
     }
     const routes = [calendar, secrets, messenger, organizations, agents].flatMap((router) => router.stack.flatMap((layer) => layer.route ? [layer.route] : []));
-    expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/sources" && route.methods.post)).toBe(true);
+    expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/sources" && route.methods.post)).toBe(false);
     expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/google/config" && route.methods.get)).toBe(true);
     expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/groups" && route.methods.post)).toBe(true);
     expect(routes.some((route) => route.path === "/:orgId/workspace/backups/:backupId/restore" && route.methods.post)).toBe(true);

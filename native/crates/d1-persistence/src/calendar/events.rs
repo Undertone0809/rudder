@@ -6,7 +6,7 @@ use super::common::{
     uuid_optional, validate_event_shape,
 };
 use super::projections::{ProjectionFilters, list_derived_events, list_projected_events};
-use super::{Result, http, text};
+use super::{Result, http, revalidate_actor, text};
 use serde_json::{Map, Value, json};
 use sqlx::{PgPool, Row};
 
@@ -283,8 +283,12 @@ pub(super) async fn get_persisted_event_tx(
         .transpose()
 }
 
-pub(super) async fn get_writable_event(pool: &PgPool, org: &str, id: &str) -> Result<Value> {
-    let event = get_persisted_event(pool, org, id)
+pub(super) async fn get_writable_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &str,
+    id: &str,
+) -> Result<Value> {
+    let event = get_persisted_event_tx(tx, org, id)
         .await?
         .ok_or_else(|| http(404, "Calendar event not found"))?;
     if event["sourceMode"] != "manual" {
@@ -301,13 +305,15 @@ pub(super) async fn get_writable_event(pool: &PgPool, org: &str, id: &str) -> Re
 
 pub(super) async fn event_create(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     input: &Value,
 ) -> Result<Value> {
-    let input = EventInput::parse(input, false)?.value();
-    validate_event_shape(pool, org, &input).await?;
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
+    let input = EventInput::parse(input, false)?.value();
+    validate_event_shape(&mut tx, org, &input).await?;
     let row=sqlx::query("INSERT INTO calendar_events (org_id,source_id,event_kind,event_status,owner_type,owner_user_id,owner_agent_id,title,description,start_at,end_at,timezone,all_day,visibility,issue_id,project_id,goal_id,approval_id,heartbeat_run_id,activity_id,source_mode,external_provider,external_calendar_id,external_event_id,external_etag,external_updated_at,created_by_user_id,updated_by_user_id) VALUES ($1::uuid,NULLIF($2,'')::uuid,$3,$4,$5,$6,NULLIF($7,'')::uuid,$8,$9,$10::timestamptz,$11::timestamptz,$12,$13,$14,NULLIF($15,'')::uuid,NULLIF($16,'')::uuid,NULLIF($17,'')::uuid,NULLIF($18,'')::uuid,NULLIF($19,'')::uuid,NULLIF($20,'')::uuid,$21,$22,$23,$24,$25,NULLIF($26,'')::timestamptz,$27,$27) RETURNING id::text")
         .bind(org).bind(input["sourceId"].as_str().unwrap_or("")).bind(input["eventKind"].as_str()).bind(input["eventStatus"].as_str()).bind(input["ownerType"].as_str()).bind(input.get("ownerUserId").and_then(Value::as_str)).bind(input["ownerAgentId"].as_str().unwrap_or("")).bind(input["title"].as_str()).bind(input.get("description").and_then(Value::as_str)).bind(input["startAt"].as_str()).bind(input["endAt"].as_str()).bind(input["timezone"].as_str()).bind(input["allDay"].as_bool()).bind(input["visibility"].as_str()).bind(input["issueId"].as_str().unwrap_or("")).bind(input["projectId"].as_str().unwrap_or("")).bind(input["goalId"].as_str().unwrap_or("")).bind(input["approvalId"].as_str().unwrap_or("")).bind(input["heartbeatRunId"].as_str().unwrap_or("")).bind(input["activityId"].as_str().unwrap_or("")).bind(input["sourceMode"].as_str()).bind(input.get("externalProvider").and_then(Value::as_str)).bind(input.get("externalCalendarId").and_then(Value::as_str)).bind(input.get("externalEventId").and_then(Value::as_str)).bind(input.get("externalEtag").and_then(Value::as_str)).bind(input.get("externalUpdatedAt").and_then(Value::as_str)).bind(&audit_ctx.actor_id).fetch_one(&mut *tx).await?;
     let id: String = row.try_get("id")?;
@@ -330,20 +336,22 @@ pub(super) async fn event_create(
 
 pub(super) async fn event_update(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     id: &str,
     value: &Value,
 ) -> Result<Value> {
-    let previous = get_writable_event(pool, org, id).await?;
+    let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
+    let previous = get_writable_event(&mut tx, org, id).await?;
     let patch = EventInput::parse(value, true)?.value();
     let mut merged = previous.clone();
     for (key, v) in patch.as_object().unwrap() {
         merged[key] = v.clone();
     }
-    validate_event_shape(pool, org, &merged).await?;
+    validate_event_shape(&mut tx, org, &merged).await?;
     let patch_json = serde_json::to_string(&patch).map_err(|_| http(400, "Validation error"))?;
-    let mut tx = pool.begin().await?;
     sqlx::query("UPDATE calendar_events SET source_id=CASE WHEN $3::jsonb ? 'sourceId' THEN NULLIF(($3::jsonb)->>'sourceId','')::uuid ELSE source_id END,event_kind=CASE WHEN $3::jsonb ? 'eventKind' THEN ($3::jsonb)->>'eventKind' ELSE event_kind END,event_status=CASE WHEN $3::jsonb ? 'eventStatus' THEN ($3::jsonb)->>'eventStatus' ELSE event_status END,owner_type=CASE WHEN $3::jsonb ? 'ownerType' THEN ($3::jsonb)->>'ownerType' ELSE owner_type END,owner_user_id=CASE WHEN $3::jsonb ? 'ownerUserId' THEN ($3::jsonb)->>'ownerUserId' ELSE owner_user_id END,owner_agent_id=CASE WHEN $3::jsonb ? 'ownerAgentId' THEN NULLIF(($3::jsonb)->>'ownerAgentId','')::uuid ELSE owner_agent_id END,title=CASE WHEN $3::jsonb ? 'title' THEN ($3::jsonb)->>'title' ELSE title END,description=CASE WHEN $3::jsonb ? 'description' THEN ($3::jsonb)->>'description' ELSE description END,start_at=CASE WHEN $3::jsonb ? 'startAt' THEN (($3::jsonb)->>'startAt')::timestamptz ELSE start_at END,end_at=CASE WHEN $3::jsonb ? 'endAt' THEN (($3::jsonb)->>'endAt')::timestamptz ELSE end_at END,timezone=CASE WHEN $3::jsonb ? 'timezone' THEN ($3::jsonb)->>'timezone' ELSE timezone END,all_day=CASE WHEN $3::jsonb ? 'allDay' THEN (($3::jsonb)->>'allDay')::boolean ELSE all_day END,visibility=CASE WHEN $3::jsonb ? 'visibility' THEN ($3::jsonb)->>'visibility' ELSE visibility END,issue_id=CASE WHEN $3::jsonb ? 'issueId' THEN NULLIF(($3::jsonb)->>'issueId','')::uuid ELSE issue_id END,project_id=CASE WHEN $3::jsonb ? 'projectId' THEN NULLIF(($3::jsonb)->>'projectId','')::uuid ELSE project_id END,goal_id=CASE WHEN $3::jsonb ? 'goalId' THEN NULLIF(($3::jsonb)->>'goalId','')::uuid ELSE goal_id END,approval_id=CASE WHEN $3::jsonb ? 'approvalId' THEN NULLIF(($3::jsonb)->>'approvalId','')::uuid ELSE approval_id END,heartbeat_run_id=CASE WHEN $3::jsonb ? 'heartbeatRunId' THEN NULLIF(($3::jsonb)->>'heartbeatRunId','')::uuid ELSE heartbeat_run_id END,activity_id=CASE WHEN $3::jsonb ? 'activityId' THEN NULLIF(($3::jsonb)->>'activityId','')::uuid ELSE activity_id END,source_mode=CASE WHEN $3::jsonb ? 'sourceMode' THEN ($3::jsonb)->>'sourceMode' ELSE source_mode END,external_provider=CASE WHEN $3::jsonb ? 'externalProvider' THEN ($3::jsonb)->>'externalProvider' ELSE external_provider END,external_calendar_id=CASE WHEN $3::jsonb ? 'externalCalendarId' THEN ($3::jsonb)->>'externalCalendarId' ELSE external_calendar_id END,external_event_id=CASE WHEN $3::jsonb ? 'externalEventId' THEN ($3::jsonb)->>'externalEventId' ELSE external_event_id END,external_etag=CASE WHEN $3::jsonb ? 'externalEtag' THEN ($3::jsonb)->>'externalEtag' ELSE external_etag END,external_updated_at=CASE WHEN $3::jsonb ? 'externalUpdatedAt' THEN NULLIF(($3::jsonb)->>'externalUpdatedAt','')::timestamptz ELSE external_updated_at END,updated_by_user_id=$4,updated_at=now() WHERE id=$1::uuid AND org_id=$2::uuid")
         .bind(id).bind(org).bind(patch_json).bind(&audit_ctx.actor_id).execute(&mut *tx).await?;
     let event = get_persisted_event_tx(&mut tx, org, id)
@@ -366,12 +374,14 @@ pub(super) async fn event_update(
 
 pub(super) async fn event_delete(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     id: &str,
 ) -> Result<Value> {
-    let event = get_writable_event(pool, org, id).await?;
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
+    let event = get_writable_event(&mut tx, org, id).await?;
     sqlx::query("UPDATE calendar_events SET deleted_at=now(),updated_at=now(),updated_by_user_id=$3,event_status='cancelled' WHERE id=$1::uuid AND org_id=$2::uuid")
         .bind(id).bind(org).bind(&audit_ctx.actor_id).execute(&mut *tx).await?;
     audit(

@@ -7,7 +7,7 @@ pub(super) fn object(value: &Value) -> Result<&Map<String, Value>> {
 }
 
 use serde_json::{Map, Value, json};
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{PgConnection, Row, postgres::PgRow};
 use uuid::Uuid;
 
 pub(super) fn optional_text(value: &Value, key: &str) -> Result<Option<Option<String>>> {
@@ -311,7 +311,7 @@ pub(super) struct Audit {
 }
 
 pub(super) async fn assert_org_reference(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     org: &str,
     table: &str,
     id: &str,
@@ -322,7 +322,7 @@ pub(super) async fn assert_org_reference(
         "SELECT org_id::text FROM {table} WHERE id=$1::uuid"
     ))
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await?;
     let Some(found) = found else {
         return Err(http(404, format!("{label} not found")));
@@ -337,7 +337,11 @@ pub(super) async fn assert_org_reference(
     Ok(())
 }
 
-pub(super) async fn validate_event_shape(pool: &PgPool, org: &str, input: &Value) -> Result<()> {
+pub(super) async fn validate_event_shape(
+    connection: &mut PgConnection,
+    org: &str,
+    input: &Value,
+) -> Result<()> {
     let event_kind = text(input, "eventKind").unwrap_or_default();
     let owner_type = text(input, "ownerType").unwrap_or_default();
     if event_kind == "agent_work_block" {
@@ -362,7 +366,7 @@ pub(super) async fn validate_event_shape(pool: &PgPool, org: &str, input: &Value
         && sqlx::query("SELECT 1 FROM calendar_sources WHERE id=$1::uuid AND org_id=$2::uuid")
             .bind(id)
             .bind(org)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await?
             .is_none()
     {
@@ -371,7 +375,7 @@ pub(super) async fn validate_event_shape(pool: &PgPool, org: &str, input: &Value
     if let Some(id) = text(input, "ownerAgentId") {
         let row = sqlx::query("SELECT org_id::text,status FROM agents WHERE id=$1::uuid")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await?;
         let Some(row) = row else {
             return Err(http(404, "Agent not found"));
@@ -398,7 +402,7 @@ pub(super) async fn validate_event_shape(pool: &PgPool, org: &str, input: &Value
     ] {
         if let Some(id) = text(input, key) {
             if table == "issues" {
-                let row = sqlx::query("SELECT org_id::text, hidden_at IS NOT NULL AS is_hidden FROM issues WHERE id=$1::uuid").bind(id).fetch_optional(pool).await?;
+                let row = sqlx::query("SELECT org_id::text, hidden_at IS NOT NULL AS is_hidden FROM issues WHERE id=$1::uuid").bind(id).fetch_optional(&mut *connection).await?;
                 let Some(row) = row else {
                     return Err(http(404, "Issue not found"));
                 };
@@ -411,7 +415,7 @@ pub(super) async fn validate_event_shape(pool: &PgPool, org: &str, input: &Value
                     return Err(http(422, "Issue must belong to same organization"));
                 }
             } else {
-                assert_org_reference(pool, org, table, id, label).await?;
+                assert_org_reference(connection, org, table, id, label).await?;
             }
         }
     }

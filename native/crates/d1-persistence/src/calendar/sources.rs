@@ -4,7 +4,7 @@ use super::common::{
     Audit, OWNER_TYPES, SOURCE_STATUSES, SOURCE_TYPES, VISIBILITIES, date_field, enum_field,
     list_value, optional_text, source_json, string_field, uuid_optional,
 };
-use super::{Result, http};
+use super::{Result, http, revalidate_actor};
 use serde_json::{Map, Value, json};
 use sqlx::{PgPool, Row};
 
@@ -21,7 +21,11 @@ pub(super) async fn list_sources(pool: &PgPool, org: &str) -> Result<Value> {
     ))
 }
 
-pub(super) async fn get_source(pool: &PgPool, org: &str, id: &str) -> Result<Option<Value>> {
+pub(super) async fn get_source(
+    connection: &mut sqlx::PgConnection,
+    org: &str,
+    id: &str,
+) -> Result<Option<Value>> {
     let sql = format!(
         "SELECT {} AS value FROM calendar_sources s WHERE s.id=$1::uuid AND s.org_id=$2::uuid",
         source_json("s")
@@ -29,7 +33,7 @@ pub(super) async fn get_source(pool: &PgPool, org: &str, id: &str) -> Result<Opt
     let row = sqlx::query(&sql)
         .bind(id)
         .bind(org)
-        .fetch_optional(pool)
+        .fetch_optional(connection)
         .await?;
     row.map(list_value).transpose()
 }
@@ -90,15 +94,18 @@ pub(super) fn source_input(value: &Value, partial: bool) -> Result<Map<String, V
 
 pub(super) async fn source_create(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     input: &Value,
 ) -> Result<Value> {
+    let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let data = source_input(input, false)?;
     if let Some(id) = data.get("ownerAgentId").and_then(Value::as_str) {
         let row = sqlx::query("SELECT org_id::text,status FROM agents WHERE id=$1::uuid")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
         let Some(row) = row else {
             return Err(http(404, "Agent not found"));
@@ -121,7 +128,6 @@ pub(super) async fn source_create(
         .map(serde_json::to_string)
         .transpose()
         .map_err(|_| http(400, "Validation error"))?;
-    let mut tx = pool.begin().await?;
     let row = sqlx::query("INSERT INTO calendar_sources (org_id,type,name,owner_type,owner_user_id,owner_agent_id,external_provider,external_calendar_id,visibility_default,status,sync_cursor_json) VALUES ($1::uuid,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11::jsonb) RETURNING id::text")
         .bind(org).bind(data["type"].as_str()).bind(data["name"].as_str()).bind(data["ownerType"].as_str())
         .bind(data.get("ownerUserId").and_then(Value::as_str).or(Some(audit_ctx.actor_id.as_str())))
@@ -161,19 +167,22 @@ pub(super) async fn source_create(
 
 pub(super) async fn source_update(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     id: &str,
     input: &Value,
 ) -> Result<Value> {
+    let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let data = source_input(input, true)?;
-    let existing = get_source(pool, org, id)
+    let existing = get_source(&mut tx, org, id)
         .await?
         .ok_or_else(|| http(404, "Calendar source not found"))?;
     if let Some(agent) = data.get("ownerAgentId").and_then(Value::as_str) {
         let row = sqlx::query("SELECT org_id::text,status FROM agents WHERE id=$1::uuid")
             .bind(agent)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
         let Some(row) = row else {
             return Err(http(404, "Agent not found"));
@@ -196,7 +205,6 @@ pub(super) async fn source_update(
         .or_else(|| existing["ownerUserId"].as_str())
         .or(Some(audit_ctx.actor_id.as_str()));
     // Preserve nullable fields exactly: null clears the external values/cursor, while null ownerUserId falls back to the stored owner.
-    let mut tx = pool.begin().await?;
     sqlx::query("UPDATE calendar_sources SET type=CASE WHEN $3::jsonb ? 'type' THEN ($3::jsonb)->>'type' ELSE type END,name=CASE WHEN $3::jsonb ? 'name' THEN ($3::jsonb)->>'name' ELSE name END,owner_type=CASE WHEN $3::jsonb ? 'ownerType' THEN ($3::jsonb)->>'ownerType' ELSE owner_type END,owner_user_id=$4,owner_agent_id=CASE WHEN $3::jsonb ? 'ownerAgentId' THEN NULLIF(($3::jsonb)->>'ownerAgentId','')::uuid ELSE owner_agent_id END,external_provider=CASE WHEN $3::jsonb ? 'externalProvider' THEN ($3::jsonb)->>'externalProvider' ELSE external_provider END,external_calendar_id=CASE WHEN $3::jsonb ? 'externalCalendarId' THEN ($3::jsonb)->>'externalCalendarId' ELSE external_calendar_id END,visibility_default=CASE WHEN $3::jsonb ? 'visibilityDefault' THEN ($3::jsonb)->>'visibilityDefault' ELSE visibility_default END,status=CASE WHEN $3::jsonb ? 'status' THEN ($3::jsonb)->>'status' ELSE status END,last_synced_at=CASE WHEN $3::jsonb ? 'lastSyncedAt' THEN NULLIF(($3::jsonb)->>'lastSyncedAt','')::timestamptz ELSE last_synced_at END,sync_cursor_json=CASE WHEN $3::jsonb ? 'syncCursorJson' THEN CASE WHEN ($3::jsonb)->'syncCursorJson' = 'null'::jsonb THEN NULL ELSE ($3::jsonb)->'syncCursorJson' END ELSE sync_cursor_json END,updated_at=now() WHERE id=$1::uuid AND org_id=$2::uuid")
         .bind(id).bind(org).bind(serde_json::to_string(&data).map_err(|_| http(400,"Validation error"))?).bind(owner_user).execute(&mut *tx).await?;
     let updated = {
@@ -230,11 +238,13 @@ pub(super) async fn source_update(
 
 pub(super) async fn source_delete(
     pool: &PgPool,
+    authorizer: Option<&dyn crate::agent_core::NativeAgentAuthorizer>,
     org: &str,
     audit_ctx: &Audit,
     id: &str,
 ) -> Result<Value> {
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let result = sqlx::query("DELETE FROM calendar_sources WHERE id=$1::uuid AND org_id=$2::uuid")
         .bind(id)
         .bind(org)
