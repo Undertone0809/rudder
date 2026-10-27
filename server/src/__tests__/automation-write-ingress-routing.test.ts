@@ -1,8 +1,8 @@
-import { createAutomationSchema,createAutomationTriggerSchema,rotateAutomationTriggerSecretSchema,updateAutomationSchema,updateAutomationTriggerSchema } from "@rudderhq/shared";
+import { createAutomationSchema, createAutomationTriggerSchema, rotateAutomationTriggerSecretSchema, updateAutomationSchema, updateAutomationTriggerSchema } from "@rudderhq/shared";
 import express from "express";
 import { readFileSync } from "node:fs";
 import request from "supertest";
-import { beforeEach,describe,expect,it,vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/error-handler.js";
 import { automationRoutes } from "../routes/automations.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
