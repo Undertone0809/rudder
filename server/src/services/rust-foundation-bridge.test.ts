@@ -678,6 +678,7 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_PRIVATE_TEST_SECRET: process.env.RUDDER_PRIVATE_TEST_SECRET,
       RUDDER_SECRETS_MASTER_KEY: process.env.RUDDER_SECRETS_MASTER_KEY,
       RUDDER_SECRETS_MASTER_KEY_FILE: process.env.RUDDER_SECRETS_MASTER_KEY_FILE,
+      RUDDER_SECRETS_PROVIDER: process.env.RUDDER_SECRETS_PROVIDER,
       RUDDER_AGENT_CREATE_RUST_ENABLED: process.env.RUDDER_AGENT_CREATE_RUST_ENABLED,
       RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED: process.env.RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED,
       RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED: process.env.RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED,
@@ -692,6 +693,7 @@ describe("rust foundation bridge lifecycle", () => {
     process.env.RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED = "true";
     process.env.RUDDER_AGENT_CREATE_RUST_PUBLIC_ENABLED = "true";
     process.env.RUDDER_INSTANCE_ID = "bridge-test-instance";
+    process.env.RUDDER_SECRETS_PROVIDER = "local_encrypted";
     process.env.AWS_SECRET_ACCESS_KEY = "should-not-reach-rust";
     process.env.DATABASE_URL = "postgres://unrelated-parent-secret";
     process.env.RUDDER_PRIVATE_TEST_SECRET = "should-not-reach-rust-either";
@@ -719,6 +721,7 @@ describe("rust foundation bridge lifecycle", () => {
         RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
         RUDDER_NATIVE_HOST_INSTANCE_ID: "bridge-test-instance",
         RUDDER_SECRETS_MASTER_KEY_FILE: resolve(process.cwd(), "data/secrets/master.key"),
+        RUDDER_SECRETS_PROVIDER: "local_encrypted",
       };
       expect(childEnv).toMatchObject(requiredEnv);
       const hostFacts = new Set([

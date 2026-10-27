@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { resolve } from "node:path";
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
 
@@ -230,5 +230,87 @@ export function nativeLocalAccountLifecycleEnvironment(
   }
   return {
     RUDDER_NATIVE_LOCAL_ACCOUNT_AUTH_CONFIG: JSON.stringify(options.localAccountLifecycle),
+  };
+}
+
+export function createFoundationChildEnvironment(input: {
+  databaseUrl: string;
+  actorEnvelopeKey: string;
+  publicIngress?: RustPublicIngressOptions;
+  secretsMasterKey?: string;
+  secretsMasterKeyFile: string;
+}): Record<string, string> {
+  let hostUsername: string | undefined;
+  try { hostUsername = userInfo().username; } catch { /* Match unavailable host metadata. */ }
+  return {
+    // ZIP DOS timestamps follow the Node host's local Date semantics. Keep
+    // this explicit non-secret locale setting without inheriting other env.
+    ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
+    RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
+    RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
+    RUDDER_NATIVE_DATABASE_REQUIRED: "true",
+    RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+    // These existing feature gates must reach the native authority as well as
+    // the public transport. Do not inherit the rest of the ambient environment.
+    ...Object.fromEntries([
+      "RUDDER_AGENT_CREATE_RUST_ENABLED",
+      "RUDDER_AGENT_CREATE_INSTRUCTIONS_DURABLE_ENABLED",
+      "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
+      "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
+    ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    // Transport only the existing log-store paths and host masking facts.
+    // All file reads and masking decisions remain native.
+    ...Object.fromEntries([
+      "USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE",
+    ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    ...(process.env.RUN_LOG_BASE_PATH !== undefined
+      ? { RUN_LOG_BASE_PATH: resolve(process.env.RUN_LOG_BASE_PATH) } : {}),
+    ...(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH !== undefined
+      ? { WORKSPACE_OPERATION_LOG_BASE_PATH: resolve(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH) } : {}),
+    ...(hostUsername ? { RUDDER_NATIVE_HOST_USERNAME: hostUsername } : {}),
+    RUDDER_NATIVE_HOST_LOCALE: new Intl.Collator().resolvedOptions().locale,
+    ...(process.env.RUDDER_API_URL !== undefined
+      ? { RUDDER_NATIVE_HOST_API_URL: process.env.RUDDER_API_URL }
+      : {}),
+    RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
+    RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
+    RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
+    ...(process.env.RUDDER_HOME !== undefined
+      ? { RUDDER_NATIVE_HOST_RUDDER_HOME: process.env.RUDDER_HOME }
+      : {}),
+    ...(process.env.RUDDER_INSTANCE_ID !== undefined
+      ? { RUDDER_NATIVE_HOST_INSTANCE_ID: process.env.RUDDER_INSTANCE_ID }
+      : {}),
+    ...(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME !== undefined
+      ? { RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME }
+      : {}),
+    ...(input.secretsMasterKey ? { RUDDER_SECRETS_MASTER_KEY: input.secretsMasterKey } : {}),
+    RUDDER_SECRETS_MASTER_KEY_FILE: input.secretsMasterKeyFile,
+    ...(process.env.RUDDER_SECRETS_PROVIDER !== undefined
+      ? { RUDDER_SECRETS_PROVIDER: process.env.RUDDER_SECRETS_PROVIDER }
+      : {}),
+    ...(input.publicIngress ? {
+      RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
+      RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
+      RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      RUDDER_NATIVE_DEPLOYMENT_MODE: input.publicIngress.deploymentMode ?? "authenticated",
+      ...(input.publicIngress.privateHostGate
+        ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }
+        : {}),
+      ...nativeIdentityAuthEnvironment(input.publicIngress.identityAuth),
+      ...nativeIssueAssetStorageEnvironment(input.publicIngress.issueAssetStorage),
+      ...nativeSessionAuthEnvironment(input.publicIngress.sessionAuth),
+      ...nativeLocalAccountLifecycleEnvironment(input.publicIngress),
+      ...(input.publicIngress.nativeChatHost
+        ? {
+            RUDDER_NATIVE_CHAT_HOST: JSON.stringify(input.publicIngress.nativeChatHost),
+            PATH: input.publicIngress.nativeChatHost.executableSearchPath,
+          }
+        : {}),
+      ...(input.publicIngress.browserSessionAuth
+        ? { RUDDER_NATIVE_BROWSER_AUTH_ISSUER: JSON.stringify(input.publicIngress.browserSessionAuth) }
+        : {}),
+      ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
+    } : {}),
   };
 }

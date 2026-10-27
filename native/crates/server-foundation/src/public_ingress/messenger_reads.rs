@@ -166,11 +166,18 @@ pub(super) async fn dispatch(
     }
 }
 fn host_locale(host: Option<&str>, native: impl FnOnce() -> Option<String>) -> String {
-    host.map(str::trim)
+    let locale = host
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .or_else(native)
-        .unwrap_or_else(|| "en-US".into())
+        .unwrap_or_else(|| "en-US".into());
+    // POSIX default locales are not BCP-47 identifiers. Node Intl uses en-US.
+    if matches!(locale.as_str(), "C" | "POSIX") {
+        "en-US".into()
+    } else {
+        locale
+    }
 }
 fn normalize_cursor(raw: &str) -> String {
     domain::normalize_cursor_date(raw, run_reads::js_date_to_iso).unwrap_or_else(|| raw.to_owned())
@@ -258,6 +265,10 @@ mod tests {
         );
         assert_eq!(host_locale(Some(" "), || Some("fr-FR".into())), "fr-FR");
         assert_eq!(host_locale(None, || None), "en-US");
+        for locale in ["C", "POSIX"] {
+            assert_eq!(host_locale(None, || Some(locale.into())), "en-US");
+            assert_eq!(host_locale(Some(locale), || None), "en-US");
+        }
     }
     #[test]
     fn decimal_limits_follow_node() {
