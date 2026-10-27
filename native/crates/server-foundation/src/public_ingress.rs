@@ -22,6 +22,7 @@ mod agent_runs;
 mod approval_reads;
 mod automation_reads;
 mod browser_session;
+mod calendar_writes;
 mod cli_auth;
 mod cost_reads;
 mod email_auth;
@@ -754,6 +755,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
+    if calendar_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return calendar_writes::dispatch_alias(state, request, payload).await;
+    }
     if secret_writes::is_reserved_path(request.uri().path(), request.method()) {
         return secret_writes::dispatch_alias(state, request, payload).await;
     }
