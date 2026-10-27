@@ -1388,14 +1388,14 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
   if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
 
-  router.get("/heartbeat-runs/:runId/log", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/log", async (req, res) => {
     const result = await readRunLogForRequest(req, res, "Heartbeat run not found");
     if (!result) return;
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.json(result);
   });
 
-  router.get("/agent-runs/:runId/log", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/log", async (req, res) => {
     const result = await readRunLogForRequest(req, res, "Agent run not found");
     if (!result) return;
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1438,7 +1438,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
   if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
 
-  router.get("/workspace-operations/:operationId/log", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/workspace-operations/:operationId/log", async (req, res) => {
     const operationId = req.params.operationId as string;
     const operation = await workspaceOperations.getById(operationId);
     if (!operation) {

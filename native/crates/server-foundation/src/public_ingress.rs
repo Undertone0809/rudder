@@ -29,6 +29,7 @@ mod existing_reads;
 mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
+mod messenger_reads;
 mod native_chat;
 mod observational_reads;
 mod organization_mutations;
@@ -773,6 +774,9 @@ async fn proxy_request(
     }
     if request_reads::is_reserved_path(request.uri().path(), request.method()) {
         return request_reads::dispatch_alias(state, request, payload).await;
+    }
+    if messenger_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return messenger_reads::dispatch(state, request, payload).await;
     }
     if existing_reads::is_reserved_path(request.uri().path(), request.method()) {
         return existing_reads::dispatch(state, request, payload).await;
@@ -2424,6 +2428,8 @@ mod tests {
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]
     mod cost_read_http_tests;
+    #[path = "messenger_read_http_tests.rs"]
+    mod messenger_read_http_tests;
     #[path = "existing_read_http_tests.rs"]
     mod existing_read_http_tests;
     #[path = "issue_core_http_tests.rs"]

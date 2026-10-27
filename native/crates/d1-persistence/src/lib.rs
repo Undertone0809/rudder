@@ -43,6 +43,7 @@ pub mod organization_catalog_reads;
 pub mod organization_mutations;
 pub mod organization_reads;
 mod organization_resources;
+pub mod messenger_reads;
 pub mod overview_reads;
 pub(crate) mod product_analytics;
 mod project_creations;

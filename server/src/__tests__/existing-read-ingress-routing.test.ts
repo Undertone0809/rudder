@@ -35,15 +35,15 @@ describe("last existing Rust reads public cutover", () => {
     const agents = Router(); registerAgentManagementRoutes({ router: agents, db, rustFoundationBridge: bridge });
     app.use("/api/orgs", organizations);
     for (const router of [calendar, secrets, messenger, agents]) app.use("/api", router);
-    for (const path of ["/orgs/o/calendar/sources", "/orgs/o/calendar/events", "/orgs/o/calendar/events/e", "/orgs/o/secrets", "/orgs/o/secret-providers", "/orgs/o/messenger/saved-views", "/orgs/o/messenger/saved-views/s", "/orgs/o/live-runs", "/issues/i/live-runs", "/orgs/o/workspace/backups", "/orgs/o/workspace/backups/b/files", "/orgs/o/workspace/backups/b/file", "/orgs/o/workspace/backups/b/download"]) {
+    for (const path of ["/heartbeat-runs/r/log", "/agent-runs/r/log", "/workspace-operations/w/log", "/orgs/o/calendar/sources", "/orgs/o/calendar/events", "/orgs/o/calendar/events/e", "/orgs/o/secrets", "/orgs/o/secret-providers", "/orgs/o/messenger/saved-views", "/orgs/o/messenger/saved-views/s", "/orgs/o/live-runs", "/issues/i/live-runs", "/orgs/o/workspace/backups", "/orgs/o/workspace/backups/b/files", "/orgs/o/workspace/backups/b/file", "/orgs/o/workspace/backups/b/download"]) {
       expect((await request(app).get(`/api${path}`)).status, path).toBe(404);
       expect((await request(app).head(`/api${path}`)).status, path).toBe(404);
     }
     const routes = [calendar, secrets, messenger, organizations, agents].flatMap((router) => router.stack.flatMap((layer) => layer.route ? [layer.route] : []));
     expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/sources" && route.methods.post)).toBe(true);
     expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/google/config" && route.methods.get)).toBe(true);
-    expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/groups" && route.methods.get)).toBe(true);
+    expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/groups" && route.methods.post)).toBe(true);
     expect(routes.some((route) => route.path === "/:orgId/workspace/backups/:backupId/restore" && route.methods.post)).toBe(true);
-    expect(routes.some((route) => route.path === "/agent-runs/:runId/log" && route.methods.get)).toBe(true);
+    expect(routes.some((route) => route.path === "/agent-runs/:runId/retry" && route.methods.post)).toBe(true);
   });
 });
