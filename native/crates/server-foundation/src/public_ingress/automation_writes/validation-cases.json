@@ -1,0 +1,315 @@
+[
+  {
+    "operation": "create",
+    "input": {},
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "title"
+        ],
+        "message": "Required"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "assigneeAgentId"
+        ],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": null,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "null",
+        "path": [],
+        "message": "Expected object, received null"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "title": "  Synthetic  ",
+      "assigneeAgentId": "11111111-1111-4111-8111-111111111111"
+    },
+    "output": {
+      "projectId": null,
+      "title": "Synthetic",
+      "assigneeAgentId": "11111111-1111-4111-8111-111111111111",
+      "priority": "medium",
+      "status": "active",
+      "concurrencyPolicy": "coalesce_if_active",
+      "catchUpPolicy": "skip_missed",
+      "outputMode": "track_issue",
+      "chatConversationId": null,
+      "notifyOnIssueCreated": false
+    }
+  },
+  {
+    "operation": "create",
+    "input": {
+      "title": "Synthetic",
+      "assigneeAgentId": "11111111-1111-4111-8111-111111111111",
+      "instructions": "canonical",
+      "description": "legacy",
+      "ignored": true,
+      "outputMode": "chat_output",
+      "notifyOnIssueCreated": true
+    },
+    "output": {
+      "projectId": null,
+      "title": "Synthetic",
+      "description": "canonical",
+      "assigneeAgentId": "11111111-1111-4111-8111-111111111111",
+      "priority": "medium",
+      "status": "active",
+      "concurrencyPolicy": "coalesce_if_active",
+      "catchUpPolicy": "skip_missed",
+      "outputMode": "chat_output",
+      "chatConversationId": null,
+      "notifyOnIssueCreated": false
+    }
+  },
+  {
+    "operation": "update",
+    "input": {},
+    "output": {}
+  },
+  {
+    "operation": "update",
+    "input": {
+      "title": "",
+      "priority": "unexpected"
+    },
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "title"
+        ]
+      },
+      {
+        "received": "unexpected",
+        "code": "invalid_enum_value",
+        "options": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ],
+        "path": [
+          "priority"
+        ],
+        "message": "Invalid enum value. Expected 'critical' | 'high' | 'medium' | 'low', received 'unexpected'"
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "assigneeAgentRuntimeOverrides": {
+        "unknown": true
+      }
+    },
+    "issues": [
+      {
+        "code": "unrecognized_keys",
+        "keys": [
+          "unknown"
+        ],
+        "path": [
+          "assigneeAgentRuntimeOverrides"
+        ],
+        "message": "Unrecognized key(s) in object: 'unknown'"
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "assigneeAgentRuntimeOverrides": {
+        "agentRuntimeConfig": [],
+        "useProjectWorkspace": "yes"
+      }
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [
+          "assigneeAgentRuntimeOverrides",
+          "agentRuntimeConfig"
+        ],
+        "message": "Expected object, received array"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "boolean",
+        "received": "string",
+        "path": [
+          "assigneeAgentRuntimeOverrides",
+          "useProjectWorkspace"
+        ],
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "chatConversationId": "11111111-1111-4111-8111-111111111111"
+    },
+    "issues": [
+      {
+        "code": "custom",
+        "path": [
+          "chatConversationId"
+        ],
+        "message": "Chat output creates an automation-owned conversation; existing chats cannot be selected"
+      }
+    ]
+  },
+  {
+    "operation": "trigger-create",
+    "input": {
+      "kind": "unknown"
+    },
+    "issues": [
+      {
+        "code": "invalid_union_discriminator",
+        "options": [
+          "schedule",
+          "webhook",
+          "api"
+        ],
+        "path": [
+          "kind"
+        ],
+        "message": "Invalid discriminator value. Expected 'schedule' | 'webhook' | 'api'"
+      }
+    ]
+  },
+  {
+    "operation": "trigger-create",
+    "input": {
+      "kind": "schedule",
+      "cronExpression": " * * * * * "
+    },
+    "output": {
+      "enabled": true,
+      "kind": "schedule",
+      "cronExpression": "* * * * *",
+      "timezone": "UTC"
+    }
+  },
+  {
+    "operation": "trigger-create",
+    "input": {
+      "kind": "webhook"
+    },
+    "output": {
+      "enabled": true,
+      "kind": "webhook",
+      "signingMode": "bearer",
+      "replayWindowSec": 300
+    }
+  },
+  {
+    "operation": "trigger-create",
+    "input": {
+      "kind": "api",
+      "ignored": true
+    },
+    "output": {
+      "enabled": true,
+      "kind": "api"
+    }
+  },
+  {
+    "operation": "trigger-update",
+    "input": {
+      "replayWindowSec": 29.5,
+      "enabled": null
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "boolean",
+        "received": "null",
+        "path": [
+          "enabled"
+        ],
+        "message": "Expected boolean, received null"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "integer",
+        "received": "float",
+        "message": "Expected integer, received float",
+        "path": [
+          "replayWindowSec"
+        ]
+      },
+      {
+        "code": "too_small",
+        "minimum": 30,
+        "type": "number",
+        "inclusive": true,
+        "exact": false,
+        "message": "Number must be greater than or equal to 30",
+        "path": [
+          "replayWindowSec"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "trigger-update",
+    "input": {
+      "timezone": null,
+      "signingMode": null,
+      "replayWindowSec": null
+    },
+    "output": {
+      "timezone": null,
+      "signingMode": null,
+      "replayWindowSec": null
+    }
+  },
+  {
+    "operation": "rotate",
+    "input": [],
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [],
+        "message": "Expected object, received array"
+      }
+    ]
+  },
+  {
+    "operation": "rotate",
+    "input": {
+      "ignored": true
+    },
+    "output": {}
+  }
+]
