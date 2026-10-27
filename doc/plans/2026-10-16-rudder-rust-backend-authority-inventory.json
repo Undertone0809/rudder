@@ -59044,20 +59044,6 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/routes/calendar.ts",
-      "base_sha256": "4f68b3d2327fe35645caef2458aa7f3b2261e40c8afb0cd933e4cf9313984546",
-      "head_sha256": "8a340b360ce80aada697f0f7a0fc991af1bfe6e702d0814d5749d4a379c36ac4",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/board.rs; native/crates/d1-persistence/src/calendar; native/crates/server-foundation/src/public_ingress/calendar_writes.rs; native/crates/d1-persistence/src/calendar/sources.rs; native/crates/d1-persistence/src/calendar/events.rs",
-      "scope": "Omit three Calendar read operations only; retain local writes, Google OAuth/config/sync as existing debt. Also omit six local Calendar source/event writes under the same ingress gate; Google integration operations remain legacy.",
-      "compatibility_boundary": "Omit three Calendar read operations only; retain local writes, Google OAuth/config/sync as existing debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt. Six local native writes fail closed; existing Google config/OAuth/sync remain explicit migration debt.",
-      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
-      "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined10-writes-stage-r1/review.md (sha256=dd6c3a0b612a9e2b5bb66d537caf9e6b3aa99e3fcabc77c3bdac5201288ba176; verdict=accept; Secrets4 Calendar6 with raw provider fact)",
-      "review_status": "reviewed"
-    },
-    {
       "path": "server/src/routes/issues.ts",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
@@ -59086,31 +59072,17 @@
       "review_status": "reviewed"
     },
     {
-      "path": "server/src/routes/secrets.ts",
-      "base_sha256": "180b2f9f9b7029cb36ae511cd9f48c33fc2c589d6c1d4871ea3b765753be70f2",
-      "head_sha256": "c71654644b8af7d1ce7ae1765a2f8aa25be4751166c5274e21cd5d56d838b040",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/existing_reads/board.rs; native/crates/d1-persistence/src/secrets.rs; native/crates/server-foundation/src/public_ingress/secret_writes.rs; native/crates/d1-persistence/src/secrets.rs",
-      "scope": "Omit Secret provider/list GET/HEAD only; mutation ingress and legacy runtime secret consumers remain debt. Also omit four Secret public writes under the same ingress gate; native Rust owns crypto, validation, transactions, audit and outbox.",
-      "compatibility_boundary": "Omit Secret provider/list GET/HEAD only; mutation ingress and legacy runtime secret consumers remain debt. Selected native failures are returned directly without Node fallback. Ingress-off remains legacy compatibility debt. Four native Secret writes fail closed without Node fallback.",
-      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
-      "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md (sha256=fa5f9598965ba95a3c0b33c9af10712bf1408794bfdc174c503dffa54caa4a54; verdict=accept; exact seven base/head pins); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined10-writes-stage-r1/review.md (sha256=dd6c3a0b612a9e2b5bb66d537caf9e6b3aa99e3fcabc77c3bdac5201288ba176; verdict=accept; Secrets4 Calendar6 with raw provider fact)",
-      "review_status": "reviewed"
-    },
-    {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "base_sha256": "da31945877f9e70ff08ac380828c7f30b84847b6bdd76d1adcf1d7cbf596a230",
+      "base_sha256": "cd2d8427e92e3a6aeb86e9a856db991a8680dbf3ea9676cf5fcccfff9f6b2412",
       "head_sha256": "0a3910c440ce8d600eb3731efd9e7d963d6bc0fe8548d341e909bfdad9bfe735",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/messenger_writes.rs; native/crates/server-foundation/src/messenger_state; native/crates/native-chat-executor/src/messenger_title",
-      "scope": "Transport explicit raw PATH with configured Native Chat search-path precedence. Also retain the separately accepted Secret/Calendar raw RUDDER_SECRETS_PROVIDER transport until that dependency lands.",
-      "compatibility_boundary": "Curated host facts only. Rust owns provider validation, executable selection and title execution. Existing Native Chat PATH override remains; no wholesale ambient environment inheritance or business fallback.",
+      "scope": "Transport explicit raw PATH with configured Native Chat search-path precedence.",
+      "compatibility_boundary": "Curated PATH host fact only. Rust owns executable selection and title execution; existing Native Chat PATH override is retained.",
       "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
       "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined22-ci-repair-r1/stage-review.md (sha256=79fe22444acf9b0f490ea4e47c445068461cc6406b85b745d258a369a5ad2e1f; verdict=accept; five-file POSIX CI repair and exact transport-only environment move); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined10-writes-stage-r1/review.md (sha256=dd6c3a0b612a9e2b5bb66d537caf9e6b3aa99e3fcabc77c3bdac5201288ba176; verdict=accept; Secrets4 Calendar6 with raw provider fact); /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger-public-writes-stage-r1/stage-review.md (sha256=8ce08958a21e679bd0f686059aee4f289e7dcf9b0ec9896d313e652512db899c; verdict=accept; frozen b132 source-stage)",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger-public-writes-stage-r1/stage-review.md (sha256=8ce08958a21e679bd0f686059aee4f289e7dcf9b0ec9896d313e652512db899c; verdict=accept; frozen b132 source-stage)",
       "review_status": "reviewed"
     }
   ],
