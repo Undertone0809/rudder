@@ -68,7 +68,7 @@ describe.each(["off","required"] as const)("Run workspace public reads (%s ingre
     try{const response=await get(`orgs/${ids.empty}/run-workspaces`,ids.boardToken);expect(response.status,response.text).toBe(200);expect(response.body).toHaveLength(130);expect(response.text.length).toBeGreaterThan(1_048_576);expect(response.body).toEqual(wire(await runWorkspaceService(fixture.db).list(ids.empty)));}
     finally{for(const row of inserted)await fixture.db.delete(executionWorkspaces).where(eq(executionWorkspaces.id,row.id));}
   });
-  it.each(["delete","move"] as const)("rechecks native target after Node access resolution (%s)",async(operation)=>{
+  it.runIf(ingress === "off").each(["delete","move"] as const)("rechecks native target after Node access resolution (%s)",async(operation)=>{
     const [original]=await fixture.db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id,workspaceId));
     const read=server.bridge.runWorkspaceRead!;
     server.bridge.runWorkspaceRead=async(...args)=>{
@@ -92,7 +92,7 @@ describe.each(["off","required"] as const)("Run workspace public reads (%s ingre
     try{expect((await get(`${alias}/${workspaceId}`,ids.boardToken)).status).toBe(403);expect((await get(`orgs/${ids.orgId}/${alias}`,ids.boardToken)).status).toBe(403);}
     finally{await fixture.db.update(organizationMemberships).set({status:"active"}).where(and(eq(organizationMemberships.orgId,ids.orgId),eq(organizationMemberships.principalId,ids.userId)));}
   });
-  it("fails closed without native read transport and has no Node fallback",async()=>{
+  it.runIf(ingress === "off")("fails closed without native read transport and has no Node fallback",async()=>{
     const read=server.bridge.runWorkspaceRead;server.bridge.runWorkspaceRead=undefined;
     try{expect((await get(`orgs/${ids.orgId}/run-workspaces`)).status).toBe(503);expect((await get(`run-workspaces/${workspaceId}`)).status).toBe(503);}
     finally{server.bridge.runWorkspaceRead=read;}
