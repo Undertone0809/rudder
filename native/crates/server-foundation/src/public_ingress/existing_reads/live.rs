@@ -57,11 +57,9 @@ fn parse_min_count(raw: &str) -> Option<u32> {
         .strip_prefix('-')
         .or_else(|| raw.strip_prefix('+'))
         .unwrap_or(raw);
-    let (radix, raw) = if raw.starts_with("0x") || raw.starts_with("0X") {
-        (16, &raw[2..])
-    } else {
-        (10, raw)
-    };
+    // The public Node route explicitly uses parseInt(value, 10), including
+    // prefix/trailing-text behavior. A hexadecimal-looking value stops at x.
+    let radix = 10;
     let mut count = 0u32;
     let mut found = false;
     for digit in raw.chars().map_while(|c| c.to_digit(radix)) {
@@ -69,4 +67,26 @@ fn parse_min_count(raw: &str) -> Option<u32> {
         count = count.saturating_mul(radix).saturating_add(digit).min(20)
     }
     found.then_some(if negative { 0 } else { count })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimum_count_uses_explicit_decimal_parse_int_then_public_clamp() {
+        for (raw, expected) in [
+            ("0x10", Some(0)),
+            ("0X10", Some(0)),
+            ("16", Some(16)),
+            ("  +12tail", Some(12)),
+            ("-12", Some(0)),
+            ("999999999999999999999", Some(20)),
+            ("1.9", Some(1)),
+            ("", None),
+            ("bad", None),
+        ] {
+            assert_eq!(parse_min_count(raw), expected, "{raw}");
+        }
+    }
 }
