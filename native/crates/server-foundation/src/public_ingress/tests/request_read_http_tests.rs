@@ -264,7 +264,7 @@ async fn native_request_reads_revalidate_scope_and_never_fall_back() {
         .status();
 
     let node_requests_before_write = node_requests.load(Ordering::SeqCst);
-    let write_response = client
+    let mut write_response = client
         .post(format!("{base}/api/requests/{ancient_request_id}/resolve"))
         .insert_header((header::AUTHORIZATION, format!("Bearer {board_token}")))
         .insert_header((header::CONTENT_TYPE, "application/json"))

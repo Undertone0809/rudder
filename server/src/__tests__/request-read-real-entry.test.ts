@@ -337,7 +337,14 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
     const expected = await request(oracleServer!).get(`/api${url}`).set("authorization", `Bearer ${credential}`);
     const actual = await get(url, credential);
     expect(actual.status).toBe(expected.status);
-    expect(actual.body).toEqual(expected.body);
+    // The accepted canonical UTC contract also applies when historical rows
+    // occur in lists. Keep every other field and the legacy row order intact.
+    const expectedBody = mode !== "node" && Array.isArray(expected.body)
+      ? expected.body.map((row: Record<string, unknown>) => {
+        const fixture = dates.find(({ id }) => id === row.id);
+        return fixture ? { ...row, createdAt: canonicalUtcTimestamp(fixture.timestamp), decidedAt: canonicalUtcTimestamp(fixture.timestamp) } : row;
+      }) : expected.body;
+    expect(actual.body).toEqual(expectedBody);
     return actual;
   }
   it("preserves list status and kind selection without changing domain state", async () => {
@@ -373,7 +380,7 @@ describe.each(modes)("Request read real public contract (ingress %s)", (mode) =>
       expect((await request(target).get(`/api${url}`)).status).toBe(401);
       expect((await get(url)).status).toBe(403);
     }
-    for (const query of ["status=bogus", "kind=bogus", "status=", "kind=approval&kind=assistance"]) {
+    for (const query of ["status=bogus", "kind=bogus", "status=", "kind=", "status=open&status=resolved", "kind=approval&kind=assistance", "status=bogus&kind=bogus"]) {
       expect((await pair(`/orgs/${payloadOrg}/requests?${query}`)).status).toBe(400);
     }
   });

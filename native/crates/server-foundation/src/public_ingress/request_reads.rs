@@ -14,7 +14,6 @@ use rudder_d1_persistence::{
     request_reads::{RequestReadError, RequestReadInput, RequestReadOperation, read_requests},
 };
 use serde_json::json;
-use sqlx::Row;
 
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
@@ -252,17 +251,22 @@ async fn execute(
         kind: None,
     };
     if operation == RequestReadOperation::List {
+        let mut details = Vec::new();
         match list_filter(
             &request,
             "status",
             &["open", "resolved", "cancelled", "superseded"],
         ) {
             Ok(status) => input.status = status,
-            Err(()) => return HttpResponse::BadRequest().json(json!({"error":"Validation error"})),
+            Err(issue) => details.push(issue),
         }
         match list_filter(&request, "kind", &["approval", "assistance"]) {
             Ok(kind) => input.kind = kind,
-            Err(()) => return HttpResponse::BadRequest().json(json!({"error":"Validation error"})),
+            Err(issue) => details.push(issue),
+        }
+        if !details.is_empty() {
+            return HttpResponse::BadRequest()
+                .json(json!({"error":"Validation error", "details":details}));
         }
     }
 
@@ -293,15 +297,37 @@ async fn target_organization(
     .await
 }
 
-fn list_filter(request: &HttpRequest, name: &str, allowed: &[&str]) -> Result<Option<String>, ()> {
+fn list_filter(
+    request: &HttpRequest,
+    name: &str,
+    allowed: &[&str],
+) -> Result<Option<String>, serde_json::Value> {
     let values = url::form_urlencoded::parse(request.query_string().as_bytes())
         .filter(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
         .collect::<Vec<_>>();
+    let expected = allowed
+        .iter()
+        .map(|value| format!("'{value}'"))
+        .collect::<Vec<_>>()
+        .join(" | ");
     match values.as_slice() {
         [] => Ok(None),
         [value] if allowed.contains(&value.as_str()) => Ok(Some(value.clone())),
-        _ => Err(()),
+        [value] => Err(json!({
+            "received":value,
+            "code":"invalid_enum_value",
+            "options":allowed,
+            "path":[name],
+            "message":format!("Invalid enum value. Expected {expected}, received '{value}'")
+        })),
+        _ => Err(json!({
+            "expected":expected,
+            "received":"array",
+            "code":"invalid_type",
+            "path":[name],
+            "message":format!("Expected {expected}, received array")
+        })),
     }
 }
 
@@ -352,7 +378,11 @@ mod tests {
         );
         assert_eq!(
             list_filter(&request("status="), "status", &["open"]),
-            Err(())
+            Err(json!({
+                "received":"", "code":"invalid_enum_value", "options":["open"],
+                "path":["status"],
+                "message":"Invalid enum value. Expected 'open', received ''"
+            }))
         );
         assert_eq!(
             list_filter(
@@ -360,7 +390,10 @@ mod tests {
                 "status",
                 &["open", "resolved"]
             ),
-            Err(())
+            Err(json!({
+                "expected":"'open' | 'resolved'", "received":"array", "code":"invalid_type",
+                "path":["status"], "message":"Expected 'open' | 'resolved', received array"
+            }))
         );
     }
 }
