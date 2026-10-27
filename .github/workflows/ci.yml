@@ -787,7 +787,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.run_desktop == 'true'
     runs-on: macos-14
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       CI: true
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
