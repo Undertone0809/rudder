@@ -7,7 +7,9 @@ use futures_util::StreamExt;
 use rudder_d1_persistence::automation_management::{
     Actor, Command, Error, Operation, execute, normalize_input,
 };
-use serde_json::{Value, json};
+#[cfg(test)]
+use serde_json::Value;
+use serde_json::json;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Endpoint {
     operation: Operation,

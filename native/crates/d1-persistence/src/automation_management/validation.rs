@@ -62,10 +62,10 @@ fn reference(
     string(
         errors, out, body, key, required, nullable, false, None, None,
     );
-    if let Some(Value::String(v)) = out.get(key) {
-        if v.len() != 36 || Uuid::parse_str(v).is_err() {
-            errors.push(json!({"validation":"uuid","code":"invalid_string","message":"Invalid uuid","path":[key]}));
-        }
+    if let Some(Value::String(v)) = out.get(key)
+        && (v.len() != 36 || Uuid::parse_str(v).is_err())
+    {
+        errors.push(json!({"validation":"uuid","code":"invalid_string","message":"Invalid uuid","path":[key]}));
     }
 }
 fn boolean(
@@ -163,17 +163,16 @@ fn overrides(errors: &mut Vec<Value>, out: &mut Map<String, Value>, body: &Map<S
         ("agentRuntimeConfig", "object"),
         ("useProjectWorkspace", "boolean"),
     ] {
-        if let Some(value) = object.get(key) {
-            if (expected == "object" && !value.is_object())
-                || (expected == "boolean" && !value.is_boolean())
-            {
-                type_issue(
-                    errors,
-                    vec![json!("assigneeAgentRuntimeOverrides"), json!(key)],
-                    expected,
-                    Some(value),
-                );
-            }
+        if let Some(value) = object.get(key)
+            && ((expected == "object" && !value.is_object())
+                || (expected == "boolean" && !value.is_boolean()))
+        {
+            type_issue(
+                errors,
+                vec![json!("assigneeAgentRuntimeOverrides"), json!(key)],
+                expected,
+                Some(value),
+            );
         }
     }
     let unknown = object

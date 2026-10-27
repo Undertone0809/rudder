@@ -617,7 +617,7 @@ async fn native_automation_management_preserves_full_journey_permissions_secret_
     }
     assert_eq!(snapshot(&pool, &org).await, before);
     assert_eq!(count.load(Ordering::SeqCst), 0);
-    control.stop().await;
+    control.stop(true).await;
     task.await.unwrap().unwrap();
     node_control.stop(true).await;
     node_task.await.unwrap().unwrap();
