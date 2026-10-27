@@ -6,8 +6,8 @@ import {
 import { Router, type Request } from "express";
 import { validate } from "../middleware/validate.js";
 import { logActivity } from "../services/activity-log.js";
-import { calendarService } from "../services/calendar.js";
 import { calendarNativeRequest, type CalendarNativeBridge } from "../services/calendar-native-bridge.js";
+import { calendarService } from "../services/calendar.js";
 import { RustFoundationBridgeError } from "../services/rust-foundation-bridge.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -41,37 +41,49 @@ export function calendarRoutes(db: Db, native?: CalendarNativeBridge) {
     await nativeRequest(req, res, { operation: "source.list" });
   });
 
-  router.post("/orgs/:orgId/calendar/sources", async (req, res) => {
-    await nativeRequest(req, res, { operation: "source.create", input: req.body });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.post("/orgs/:orgId/calendar/sources", async (req, res) => {
+      await nativeRequest(req, res, { operation: "source.create", input: req.body });
+    });
+  }
 
-  router.patch("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
-    await nativeRequest(req, res, { operation: "source.update", id: req.params.sourceId as string, input: req.body });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.patch("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
+      await nativeRequest(req, res, { operation: "source.update", id: req.params.sourceId as string, input: req.body });
+    });
+  }
 
-  router.delete("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
-    await nativeRequest(req, res, { operation: "source.delete", id: req.params.sourceId as string });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.delete("/orgs/:orgId/calendar/sources/:sourceId", async (req, res) => {
+      await nativeRequest(req, res, { operation: "source.delete", id: req.params.sourceId as string });
+    });
+  }
 
   router.get("/orgs/:orgId/calendar/events", async (req, res) => {
     await nativeRequest(req, res, { operation: "event.list", filters: req.query as Record<string, unknown> });
   });
 
-  router.post("/orgs/:orgId/calendar/events", async (req, res) => {
-    await nativeRequest(req, res, { operation: "event.create", input: req.body });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.post("/orgs/:orgId/calendar/events", async (req, res) => {
+      await nativeRequest(req, res, { operation: "event.create", input: req.body });
+    });
+  }
 
   router.get("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
     await nativeRequest(req, res, { operation: "event.detail", id: req.params.eventId as string });
   });
 
-  router.patch("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
-    await nativeRequest(req, res, { operation: "event.update", id: req.params.eventId as string, input: req.body });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.patch("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
+      await nativeRequest(req, res, { operation: "event.update", id: req.params.eventId as string, input: req.body });
+    });
+  }
 
-  router.delete("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
-    await nativeRequest(req, res, { operation: "event.delete", id: req.params.eventId as string });
-  });
+  if (!native?.publicIngressEnabled) {
+    router.delete("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
+      await nativeRequest(req, res, { operation: "event.delete", id: req.params.eventId as string });
+    });
+  }
 
   router.post("/orgs/:orgId/calendar/google/connect", async (req, res) => {
     assertBoard(req);
