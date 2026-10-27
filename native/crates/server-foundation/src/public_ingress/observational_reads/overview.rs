@@ -3,14 +3,15 @@ use rudder_d1_persistence::{
     StoreError,
     overview_reads::{OverviewReadError, OverviewReadInput, OverviewReadOperation, read_overview},
 };
-use time::{Date, OffsetDateTime};
+use time::OffsetDateTime;
 
 pub(super) async fn read(pool: &sqlx::PgPool, org: &str, budget: bool) -> HttpResponse {
     let now = OffsetDateTime::now_utc();
-    let Ok(month) = Date::from_calendar_date(now.year(), now.month(), 1) else {
+    let Some(month_start) = calendar::start(now, true) else {
         return internal_error();
     };
-    // One Rust clock supplies both the instant and UTC calendar month boundary.
+    // Match the existing Node host-local month constructor for Dashboard.
+    // D1 Budget overview retains its separate UTC month calculation.
     let input = OverviewReadInput {
         operation: if budget {
             OverviewReadOperation::BudgetOverview
@@ -18,7 +19,7 @@ pub(super) async fn read(pool: &sqlx::PgPool, org: &str, budget: bool) -> HttpRe
             OverviewReadOperation::DashboardSummary
         },
         now_ms: (now.unix_timestamp_nanos() / 1_000_000) as i64,
-        host_local_month_start_ms: month.midnight().assume_utc().unix_timestamp() * 1000,
+        host_local_month_start_ms: month_start.unix_timestamp() * 1000,
         legacy_date_timezone: Some("UTC".into()),
     };
     match read_overview(pool, org, &input).await {

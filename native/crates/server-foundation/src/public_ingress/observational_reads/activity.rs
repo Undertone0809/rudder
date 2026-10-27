@@ -273,9 +273,8 @@ fn date(query: &Query, key: &str) -> Result<Option<String>, HttpResponse> {
     let now = OffsetDateTime::now_utc();
     if normalized == "today" {
         return Ok(Some(
-            now.date()
-                .midnight()
-                .assume_utc()
+            calendar::start(now, false)
+                .ok_or_else(internal_error)?
                 .format(&Rfc3339)
                 .map_err(|_| internal_error())?,
         ));

@@ -1,6 +1,7 @@
 //! Public observational GET/HEAD cutover. Existing D1 readers own SQL and
 //! projection; these modules own native identity, scope, references and input.
 mod activity;
+mod calendar;
 mod overview;
 mod workspace;
 
