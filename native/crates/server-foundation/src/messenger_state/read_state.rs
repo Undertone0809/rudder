@@ -1,7 +1,7 @@
 //! Per-user read cursors, distinct from Issue lifecycle and execution state.
 use super::store::*;
 use rudder_d1_persistence::messenger_reads::mutation_snapshot;
-use serde_json::{Value, json};
+use serde_json::json;
 const STAMP: &str = "YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"";
 async fn can_issue(tx: &mut Tx<'_>, s: &Scope<'_>, id: &str) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issues i WHERE i.org_id=$1::uuid AND i.id=$3::uuid AND ((i.origin_kind<>'automation_execution' AND (i.assignee_user_id=$2 OR i.reviewer_user_id=$2 OR i.created_by_user_id=$2)) OR EXISTS(SELECT 1 FROM issue_follows f WHERE f.org_id=i.org_id AND f.issue_id=i.id AND f.user_id=$2) OR EXISTS(SELECT 1 FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_type='issue' AND a.entity_id=i.id::text AND a.action IN ('automation.issue_created_notification','agent.issue_created_notification') AND a.details->>'userId'=$2)))").bind(s.org).bind(s.user).bind(id).fetch_one(&mut **tx).await?)

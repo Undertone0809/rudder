@@ -504,10 +504,10 @@ pub(super) fn normalize(operation: &str, raw: Option<&Value>) -> Result<Value, V
                     "itemKeys and threadKeys must match",
                 );
             }
-            if !map.contains_key("itemKeys") {
-                if let Some(v) = map.get("threadKeys").cloned() {
-                    map.insert("itemKeys".into(), v);
-                }
+            if !map.contains_key("itemKeys")
+                && let Some(v) = map.get("threadKeys").cloned()
+            {
+                map.insert("itemKeys".into(), v);
             }
             c.string(
                 &mut map,
@@ -521,35 +521,34 @@ pub(super) fn normalize(operation: &str, raw: Option<&Value>) -> Result<Value, V
                 false,
             );
             item_key(&mut c, &map, "anchorItemKey");
-            if let Some(anchor) = map.get("anchorItemKey") {
-                if map
+            if let Some(anchor) = map.get("anchorItemKey")
+                && map
                     .get("itemKeys")
                     .and_then(Value::as_array)
                     .is_some_and(|keys| !keys.contains(anchor))
-                {
-                    c.custom(
-                        vec![json!("anchorItemKey")],
-                        "anchorItemKey must be included in itemKeys",
-                    );
-                }
+            {
+                c.custom(
+                    vec![json!("anchorItemKey")],
+                    "anchorItemKey must be included in itemKeys",
+                );
             }
-            if operation == "groupEntryReorder" {
-                if let Some(keys) = map.get("itemKeys").and_then(Value::as_array) {
-                    let mut seen = Vec::new();
-                    for key in keys {
-                        if seen.contains(key) {
-                            c.custom(
-                                vec![json!(if raw.and_then(|v| v.get("itemKeys")).is_none() {
-                                    "threadKeys"
-                                } else {
-                                    "itemKeys"
-                                })],
-                                "Messenger custom group reorder keys must be unique",
-                            );
-                            break;
-                        }
-                        seen.push(key.clone());
+            if operation == "groupEntryReorder"
+                && let Some(keys) = map.get("itemKeys").and_then(Value::as_array)
+            {
+                let mut seen = Vec::new();
+                for key in keys {
+                    if seen.contains(key) {
+                        c.custom(
+                            vec![json!(if raw.and_then(|v| v.get("itemKeys")).is_none() {
+                                "threadKeys"
+                            } else {
+                                "itemKeys"
+                            })],
+                            "Messenger custom group reorder keys must be unique",
+                        );
+                        break;
                     }
+                    seen.push(key.clone());
                 }
             }
         }
@@ -567,10 +566,10 @@ pub(super) fn normalize(operation: &str, raw: Option<&Value>) -> Result<Value, V
             {
                 c.custom(vec![json!("itemKey")], "itemKey and threadKey must match");
             }
-            if !map.contains_key("itemKey") {
-                if let Some(v) = map.get("threadKey").cloned() {
-                    map.insert("itemKey".into(), v);
-                }
+            if !map.contains_key("itemKey")
+                && let Some(v) = map.get("threadKey").cloned()
+            {
+                map.insert("itemKey".into(), v);
             }
         }
     }

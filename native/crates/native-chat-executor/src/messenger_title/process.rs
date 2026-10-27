@@ -1,7 +1,7 @@
 //! One bounded, owned, noninteractive CLI invocation through the native host.
 use super::{Error, Request};
 use rudder_native_process_transport::{HostConnection, HostError, HostEvent, OwnedHost};
-use rudder_native_protocol::Command;
+use rudder_native_protocol::{Command, ProtocolVersion};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -38,7 +38,7 @@ pub(super) fn run(
     )
     .map_err(|_| Error::Failed("Title process host is unavailable".into()))?;
     host.send(Command::StartProcess {
-        protocol_version: None,
+        protocol_version: Some(ProtocolVersion::default()),
         request_id: Some(attempt.clone()),
         executable,
         argv: args,
@@ -52,8 +52,8 @@ pub(super) fn run(
     })
     .map_err(|_| Error::Failed("Title process launch failed".into()))?;
     let started = Instant::now();
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
     let mut successful = false;
     let mut stop = None;
     let mut stop_at = None;
@@ -66,7 +66,7 @@ pub(super) fn run(
             }
             if stop.is_some() {
                 host.send(Command::Stop {
-                    protocol_version: None,
+                    protocol_version: Some(ProtocolVersion::default()),
                     request_id: Some(attempt.clone()),
                     grace_ms: Some(grace.as_millis() as u64),
                 })
@@ -77,51 +77,50 @@ pub(super) fn run(
         if stop_at.is_some_and(|at| at.elapsed() > grace + Duration::from_secs(5)) {
             return Err(Error::Cleanup);
         }
-        match host.receive(Duration::from_millis(100)) {
-            Ok(HostEvent::Lifecycle(value)) => match value["type"].as_str() {
-                Some("output") => {
-                    let target = if value["stream"] == "stdout" {
-                        &mut stdout
-                    } else {
-                        &mut stderr
-                    };
-                    if let Some(data) = value["data"].as_str() {
-                        if target.len() + data.len() > 4 * 1024 * 1024 {
-                            stop = Some(Error::Failed("Title output exceeded its bound".into()));
-                            host.send(Command::Stop {
-                                protocol_version: None,
-                                request_id: Some(attempt.clone()),
-                                grace_ms: Some(grace.as_millis() as u64),
-                            })
-                            .map_err(|_| Error::Cleanup)?;
-                            stop_at.get_or_insert_with(Instant::now);
-                        } else {
-                            target.push_str(data);
+        // StartProcess is the existing raw-output mode. Preserve each
+        // stream's byte boundaries until proven terminal cleanup.
+        let (target, bytes) = match host.receive(Duration::from_millis(100)) {
+            Ok(HostEvent::Lifecycle(value)) => {
+                match value["type"].as_str() {
+                    Some("app-exit") => {
+                        successful = value["code"] == 0 && value["signal"].is_null()
+                    }
+                    Some("terminal") => {
+                        if host.take_cleanup_proof().is_none() {
+                            return Err(Error::Cleanup);
                         }
+                        host.close();
+                        return if let Some(error) = stop {
+                            Err(error)
+                        } else {
+                            Ok(Capture {
+                                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                                success: successful,
+                            })
+                        };
                     }
+                    _ => (),
                 }
-                Some("app-exit") => successful = value["code"] == 0 && value["signal"].is_null(),
-                Some("terminal") => {
-                    if host.take_cleanup_proof().is_none() {
-                        return Err(Error::Cleanup);
-                    }
-                    host.close();
-                    return if let Some(error) = stop {
-                        Err(error)
-                    } else {
-                        Ok(Capture {
-                            stdout,
-                            stderr,
-                            success: successful,
-                        })
-                    };
-                }
-                _ => (),
-            },
-            Ok(HostEvent::Stdout(_)) => (), // lifecycle carries stream provenance; no duplicate bytes
+                continue;
+            }
+            Ok(HostEvent::Stdout(bytes)) => (&mut stdout, bytes),
+            Ok(HostEvent::Stderr(bytes)) => (&mut stderr, bytes),
             Ok(HostEvent::Failure) => return Err(Error::Cleanup),
-            Err(HostError::Timeout) => (),
+            Err(HostError::Timeout) => continue,
             Err(_) => return Err(Error::Cleanup),
+        };
+        if target.len() + bytes.len() > 4 * 1024 * 1024 {
+            stop = Some(Error::Failed("Title output exceeded its bound".into()));
+            host.send(Command::Stop {
+                protocol_version: Some(ProtocolVersion::default()),
+                request_id: Some(attempt.clone()),
+                grace_ms: Some(grace.as_millis() as u64),
+            })
+            .map_err(|_| Error::Cleanup)?;
+            stop_at.get_or_insert_with(Instant::now);
+        } else {
+            target.extend_from_slice(&bytes);
         }
     }
 }

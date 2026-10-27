@@ -2,6 +2,7 @@
 //! is a tripwire; title generation uses a real loopback HTTP provider.
 use super::*;
 use actix_web::{App, HttpServer};
+use serde_json::Value;
 use sqlx::PgPool;
 use std::{
     env,
@@ -94,6 +95,7 @@ async fn native_messenger_writes_cover_all_twenty_one_journey_privacy_titles_rol
     let private = chat(&pool, &org, &other, "Private side chat", true).await;
     let foreign_chat = chat(&pool, &foreign, &other, "Foreign chat", false).await;
     let issue:String=sqlx::query_scalar("INSERT INTO issues(org_id,title,issue_number,identifier,created_by_user_id) VALUES($1::uuid,'Tracked issue',1,$2,$3) RETURNING id::text").bind(&org).bind(format!("MW{}-1",&suffix[..6])).bind(&user).fetch_one(&pool).await.unwrap();
+    let issue_title = format!("MW{}-1 · Tracked issue", &suffix[..6]);
     // Production-shaped volume: grouping the oldest tracked Issue must not use
     // the split-directory's 100-card page as an eligibility decision.
     sqlx::query("INSERT INTO issues(org_id,title,issue_number,identifier,created_by_user_id,created_at,updated_at) SELECT $1::uuid,'Newer issue '||n,n,$2||'-'||n,$3,now()+n*interval '1 second',now()+n*interval '1 second' FROM generate_series(2,106)n").bind(&org).bind(format!("MW{}",&suffix[..6])).bind(&user).execute(&pool).await.unwrap();
@@ -428,7 +430,8 @@ async fn native_messenger_writes_cover_all_twenty_one_journey_privacy_titles_rol
         .0,
         StatusCode::OK
     );
-    *expected.lock().unwrap() = prompt(&["Tracked issue", "Inbox seed", "Changed"]);
+    let expected_group_prompt = prompt(&[issue_title.as_str(), "Inbox seed", "Changed"]);
+    *expected.lock().unwrap() = expected_group_prompt.clone();
     assert_eq!(
         call(
             &client,
@@ -477,7 +480,7 @@ async fn native_messenger_writes_cover_all_twenty_one_journey_privacy_titles_rol
     .await;
     assert_eq!(status, StatusCode::CREATED, "{foreign_secret}");
     let script = "const fs=require('fs');const input=fs.readFileSync(0,'utf8');if(input!==process.env.EXPECTED_TITLE_PROMPT||process.env.M21_TITLE_SECRET!=='synthetic title key')process.exit(23);process.stdout.write('Actual process title');";
-    let process_profile = json!({"command":"node","args":["-e",script],"timeoutSec":10,"graceSec":1,"env":{"EXPECTED_TITLE_PROMPT":prompt(&["Tracked issue","Inbox seed","Changed"]),"M21_TITLE_SECRET":{"type":"secret_ref","secretId":secret["id"],"version":"latest"}}});
+    let process_profile = json!({"command":"node","args":["-e",script],"timeoutSec":10,"graceSec":1,"env":{"EXPECTED_TITLE_PROMPT":expected_group_prompt,"M21_TITLE_SECRET":{"type":"secret_ref","secretId":secret["id"],"version":"latest"}}});
     sqlx::query("UPDATE organization_intelligence_profiles SET agent_runtime_type='process',agent_runtime_config=$2::jsonb WHERE org_id=$1::uuid AND purpose='default'").bind(&org).bind(process_profile.to_string()).execute(&pool).await.unwrap();
     for (secret_id, version, status, message) in [
         (

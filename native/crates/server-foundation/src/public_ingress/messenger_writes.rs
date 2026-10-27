@@ -4,7 +4,7 @@
 use super::*;
 use crate::native_session_auth::NativeIngressIdentity;
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde_json::json;
 #[cfg(test)]
 mod http_tests;
 #[cfg(test)]

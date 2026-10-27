@@ -36,7 +36,9 @@ pub(super) fn parse(runtime: &str, stdout: &str, stderr: &str, process_ok: bool)
         return if process_ok {
             Output::success(text)
         } else {
-            Output::failed(text)
+            let mut output = Output::failed(text);
+            output.suspended = network(&format!("{stdout}\n{stderr}"), false);
+            output
         };
     }
     let mut messages = Vec::new();

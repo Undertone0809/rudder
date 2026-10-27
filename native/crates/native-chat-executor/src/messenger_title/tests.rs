@@ -35,11 +35,29 @@ fn request() -> Request {
 async fn title_process_receives_prompt_exits_and_cleans_its_workspace() {
     let request = request();
     let dir = request.cwd.clone();
-    let script = "const fs=require('fs');const input=fs.readFileSync(0,'utf8');if(input!==process.env.EXPECTED_TITLE_PROMPT)process.exit(23);process.stdout.write('Actual process title');";
+    let script = "const fs=require('fs');const input=fs.readFileSync(0,'utf8');if(input!==process.env.EXPECTED_TITLE_PROMPT)process.exit(23);process.stdout.write('Actual process title · 测试');";
     let config = json!({"command":"node","args":["-e",script],"env":{"EXPECTED_TITLE_PROMPT":request.prompt},"timeoutSec":10,"graceSec":1});
     let output = execute("process", &config, &request).await.unwrap();
     assert!(output.success);
-    assert_eq!(output.text, "Actual process title");
+    assert_eq!(output.text, "Actual process title · 测试");
+    for (message, suspended) in [
+        ("getaddrinfo ENOTFOUND synthetic.invalid", true),
+        ("401 Unauthorized: connection closed", false),
+    ] {
+        let script = format!(
+            "require('fs').readFileSync(0,'utf8');process.stderr.write({});process.exitCode=1;",
+            serde_json::to_string(message).unwrap()
+        );
+        let failed = execute(
+            "process",
+            &json!({"command":"node","args":["-e",script],"timeoutSec":10,"graceSec":1}),
+            &request,
+        )
+        .await
+        .unwrap();
+        assert!(!failed.success);
+        assert_eq!(failed.suspended, suspended, "{message}");
+    }
     assert!(dir.is_dir());
     drop(request);
     assert!(!dir.exists());

@@ -373,20 +373,20 @@ pub(super) async fn generate(
         "product-intelligence-default".into(),
     );
     env.insert("RUDDER_ORG_ID".into(), scope.org.into());
-    let fallback_host = HostPaths {
-        process_host: installed_process_host().unwrap_or_default(),
-        runtime_root: owned.clone(),
-        isolated_home: owned.clone(),
-    };
-    let paths = paths.unwrap_or(&fallback_host);
+    let process_host = paths
+        .map(|paths| paths.process_host.clone())
+        .or_else(installed_process_host)
+        .unwrap_or_default();
     let request = Request {
         workspace_guard: workspace,
         org_id: scope.org.into(),
         run_id: format!("product-intelligence-{}", uuid::Uuid::new_v4()),
         prompt: prompt(&titles),
         cwd: owned.clone(),
-        process_host: paths.process_host.clone(),
-        runtime_root: paths.runtime_root.clone(),
+        process_host,
+        // Ephemeral title owner receipts share the guarded workspace, even
+        // when the installed Native Chat runtime supplies the host binary.
+        runtime_root: owned.clone(),
         env,
         cancelled,
     };
@@ -438,18 +438,20 @@ pub(super) async fn generate(
 pub(super) fn host_audit() -> AuditContext {
     let mut user_names = Vec::new();
     for key in ["USER", "LOGNAME", "USERNAME", "RUDDER_NATIVE_HOST_USERNAME"] {
-        if let Ok(value) = std::env::var(key) {
-            if !trim(&value).is_empty() && !user_names.contains(&value) {
-                user_names.push(value);
-            }
+        if let Ok(value) = std::env::var(key)
+            && !trim(&value).is_empty()
+            && !user_names.contains(&value)
+        {
+            user_names.push(value);
         }
     }
     let mut home_dirs = Vec::new();
     for key in ["HOME", "USERPROFILE", "RUDDER_NATIVE_HOST_HOME_DIRECTORY"] {
-        if let Ok(value) = std::env::var(key) {
-            if !trim(&value).is_empty() && !home_dirs.contains(&value) {
-                home_dirs.push(value);
-            }
+        if let Ok(value) = std::env::var(key)
+            && !trim(&value).is_empty()
+            && !home_dirs.contains(&value)
+        {
+            home_dirs.push(value);
         }
     }
     for name in &user_names {
