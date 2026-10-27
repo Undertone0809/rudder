@@ -9855,8 +9855,11 @@ describe("Atomic new-chat drafts", () => {
     expect(editor?.value).toBe("");
     expect(container.querySelector("[data-testid='chat-pending-first-turn']")?.textContent)
       .toContain("Create exactly one accepted chat.");
-    expect(container.querySelector("[data-testid='chat-pending-first-turn-status']")?.textContent)
-      .toContain("Sending message...");
+    expect(container.querySelector("[data-testid='chat-pending-first-turn-status']")).toBeNull();
+    expect(container.textContent).not.toContain("Sending message...");
+    const sendingButton = container.querySelector<HTMLButtonElement>('button[aria-label="Sending"]');
+    expect(sendingButton?.disabled).toBe(true);
+    expect(sendingButton?.querySelector(".animate-spin")).not.toBeNull();
 
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
