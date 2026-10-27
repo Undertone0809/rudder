@@ -1231,10 +1231,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/orgs/:orgId/heartbeat-runs", listRunsForRequest("heartbeat"));
-  router.get("/orgs/:orgId/agent-runs", listRunsForRequest("agent"));
-
-  router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/heartbeat-runs", listRunsForRequest("heartbeat"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/agent-runs", listRunsForRequest("agent"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/agent-runs/overview", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     await sendRunRead(res, rustFoundationBridge, req.actor, orgId, { operation: "overview" });
@@ -1267,8 +1266,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId", detailForRequest("heartbeat", "Heartbeat run not found"));
-  router.get("/agent-runs/:runId", detailForRequest("agent", "Agent run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId", detailForRequest("heartbeat", "Heartbeat run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId", detailForRequest("agent", "Agent run not found"));
 
   async function getAuthorizedRunReference(req: Request, res: any, notFoundMessage: string) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, {
@@ -1386,8 +1385,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
-  router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/events", eventsForRequest("Heartbeat run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/events", eventsForRequest("Agent run not found"));
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
     const result = await readRunLogForRequest(req, res, "Heartbeat run not found");
@@ -1436,8 +1435,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     };
   }
-  router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
-  router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/workspace-operations", workspaceOperationsForRequest("Heartbeat run not found"));
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/workspace-operations", workspaceOperationsForRequest("Agent run not found"));
 
   router.get("/workspace-operations/:operationId/log", async (req, res) => {
     const operationId = req.params.operationId as string;
@@ -1481,7 +1480,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     });
   });
 
-  router.get("/issues/:issueId/active-run", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/issues/:issueId/active-run", async (req, res) => {
     const rawId = req.params.issueId as string;
     const issueSvc = issueService(db);
     const isIdentifier = /^[A-Z][A-Z0-9]*-\d+$/i.test(rawId);

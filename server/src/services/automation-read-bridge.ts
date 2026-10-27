@@ -1,5 +1,3 @@
-import type { Db } from "@rudderhq/db";
-import { sql } from "drizzle-orm";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
 import {
@@ -11,8 +9,6 @@ export type AutomationReadInput = {
   operation: "list" | "detail" | "runs";
   automationId?: string;
   limit?: number;
-  /** Signed Node connection context, never a caller-controlled query filter. */
-  legacyDateTimezone?: string;
 };
 
 export async function requestAutomationRead(
@@ -48,7 +44,6 @@ export async function sendAutomationRead(
   actor: RustFoundationActor,
   orgId: string,
   input: AutomationReadInput,
-  db: Db,
 ): Promise<void> {
   if (!bridge?.automationRead) {
     res.status(503).json({ error: "Rust Automation reads are unavailable", code: "rust_foundation_automation_read_unavailable" });
@@ -56,9 +51,7 @@ export async function sendAutomationRead(
   }
   let response: RustFoundationResponse;
   try {
-    const [context] = await db.execute(sql<{ timezone: string }>`SELECT current_setting('TimeZone') AS timezone`);
-    if (typeof context?.timezone !== "string") throw new Error("Missing database date context");
-    response = await bridge.automationRead(actor, orgId, { ...input, legacyDateTimezone: context.timezone });
+    response = await bridge.automationRead(actor, orgId, input);
   } catch {
     res.status(503).json({ error: "Rust Automation reads are unavailable", code: "rust_foundation_automation_read_request_failed" });
     return;

@@ -18,8 +18,6 @@ export type CostReadInput = {
   agentId?: string;
   projectId?: string;
   limit?: number;
-  /** Signed host connection context for legacy Date parsing; no domain rows. */
-  legacyDateTimezone?: string;
 };
 
 /** Cost transport stays separate from bridge lifecycle and startup ownership. */

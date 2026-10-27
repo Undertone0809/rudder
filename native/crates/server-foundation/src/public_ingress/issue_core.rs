@@ -21,6 +21,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+mod attachments;
+mod comments;
+mod work_products;
+
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,11 +51,52 @@ enum Endpoint {
         issue_id: String,
         operation: IssueMetadataReadOperation,
     },
+    WorkProductCreate {
+        issue_ref: String,
+    },
+    WorkProductUpdate {
+        work_product_id: String,
+    },
+    WorkProductDelete {
+        work_product_id: String,
+    },
     Follows {
         organization_id: String,
     },
     Checkout {
         issue_id: String,
+    },
+    CommentList {
+        issue_id: String,
+    },
+    CommentCreate {
+        issue_id: String,
+    },
+    CommentGet {
+        issue_id: String,
+        comment_id: String,
+    },
+    CommentUpdate {
+        issue_id: String,
+        comment_id: String,
+    },
+    CommentDelete {
+        issue_id: String,
+        comment_id: String,
+    },
+    AttachmentUpload {
+        organization_id: String,
+        issue_id: String,
+    },
+    AttachmentWorkspaceImport {
+        organization_id: String,
+        issue_id: String,
+    },
+    AttachmentContent {
+        attachment_id: String,
+    },
+    AttachmentDelete {
+        attachment_id: String,
     },
 }
 
@@ -77,23 +122,13 @@ pub(super) fn is_reserved_namespace(path: &str, method: &Method) -> bool {
     endpoint_path_shape(path, method)
 }
 
-fn endpoint_path_shape(path: &str, method: &Method) -> bool {
+fn endpoint_path_shape(path: &str, _method: &Method) -> bool {
     let Some(path) = path.strip_prefix('/') else {
         return false;
     };
     let path = path.strip_suffix('/').unwrap_or(path);
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.iter().any(|part| part.is_empty()) {
-        return false;
-    }
-    // Work-product creation remains a Node-owned operation. Its GET/HEAD
-    // metadata routes are dispatched above, and other methods stay reserved.
-    if *method == Method::POST
-        && matches!(parts.as_slice(), [api, issues, _id, leaf]
-            if api.eq_ignore_ascii_case("api")
-                && issues.eq_ignore_ascii_case("issues")
-                && leaf.eq_ignore_ascii_case("work-products"))
-    {
         return false;
     }
     matches!(parts.as_slice(), [api, orgs, _org_id, issues]
@@ -106,11 +141,34 @@ fn endpoint_path_shape(path: &str, method: &Method) -> bool {
         if api.eq_ignore_ascii_case("api")
             && issues.eq_ignore_ascii_case("issues")
             && ["attachments", "work-products", "checkout"].iter().any(|candidate| leaf.eq_ignore_ascii_case(candidate)))
+        || matches!(parts.as_slice(), [api, issues, _id, comments]
+            if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
+        || matches!(parts.as_slice(), [api, issues, _id, comments, _comment_id]
+            if api.eq_ignore_ascii_case("api") && issues.eq_ignore_ascii_case("issues") && comments.eq_ignore_ascii_case("comments"))
+        || matches!(parts.as_slice(), [api, work_products, _id]
+            if api.eq_ignore_ascii_case("api") && work_products.eq_ignore_ascii_case("work-products"))
         || matches!(parts.as_slice(), [api, orgs, _org_id, issues, follows]
             if api.eq_ignore_ascii_case("api")
                 && orgs.eq_ignore_ascii_case("orgs")
                 && issues.eq_ignore_ascii_case("issues")
                 && follows.eq_ignore_ascii_case("follows"))
+        || matches!(parts.as_slice(), [api, orgs, _org_id, issues, _issue_id, attachments]
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments"))
+        || matches!(parts.as_slice(), [api, orgs, _org_id, issues, _issue_id, attachments, workspace_file]
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && workspace_file.eq_ignore_ascii_case("workspace-file"))
+        || matches!(parts.as_slice(), [api, attachments, _attachment_id]
+            if api.eq_ignore_ascii_case("api") && attachments.eq_ignore_ascii_case("attachments"))
+        || matches!(parts.as_slice(), [api, attachments, _attachment_id, content]
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && content.eq_ignore_ascii_case("content"))
 }
 
 fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
@@ -184,6 +242,57 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
                 operation: IssueMetadataReadOperation::Attachments,
             })
         }
+        ([api, orgs, organization_id, issues, issue_id, attachments], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && orgs.eq_ignore_ascii_case("orgs")
+                && issues.eq_ignore_ascii_case("issues")
+                && attachments.eq_ignore_ascii_case("attachments") =>
+        {
+            Some(Endpoint::AttachmentUpload {
+                organization_id: decode_capture(organization_id)?,
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        (
+            [
+                api,
+                orgs,
+                organization_id,
+                issues,
+                issue_id,
+                attachments,
+                workspace_file,
+            ],
+            &Method::POST,
+        ) if api.eq_ignore_ascii_case("api")
+            && orgs.eq_ignore_ascii_case("orgs")
+            && issues.eq_ignore_ascii_case("issues")
+            && attachments.eq_ignore_ascii_case("attachments")
+            && workspace_file.eq_ignore_ascii_case("workspace-file") =>
+        {
+            Some(Endpoint::AttachmentWorkspaceImport {
+                organization_id: decode_capture(organization_id)?,
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, attachments, attachment_id, content], method)
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments")
+                && content.eq_ignore_ascii_case("content")
+                && matches!(*method, Method::GET | Method::HEAD) =>
+        {
+            Some(Endpoint::AttachmentContent {
+                attachment_id: decode_capture(attachment_id)?,
+            })
+        }
+        ([api, attachments, attachment_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && attachments.eq_ignore_ascii_case("attachments") =>
+        {
+            Some(Endpoint::AttachmentDelete {
+                attachment_id: decode_capture(attachment_id)?,
+            })
+        }
         ([api, issues, issue_id, resource], method)
             if api.eq_ignore_ascii_case("api")
                 && issues.eq_ignore_ascii_case("issues")
@@ -193,6 +302,31 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
             Some(Endpoint::IssueMetadata {
                 issue_id: decode_capture(issue_id)?,
                 operation: IssueMetadataReadOperation::WorkProducts,
+            })
+        }
+        ([api, issues, issue_id, resource], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && resource.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductCreate {
+                issue_ref: decode_capture(issue_id)?,
+            })
+        }
+        ([api, work_products, work_product_id], &Method::PATCH)
+            if api.eq_ignore_ascii_case("api")
+                && work_products.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductUpdate {
+                work_product_id: decode_capture(work_product_id)?,
+            })
+        }
+        ([api, work_products, work_product_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && work_products.eq_ignore_ascii_case("work-products") =>
+        {
+            Some(Endpoint::WorkProductDelete {
+                work_product_id: decode_capture(work_product_id)?,
             })
         }
         ([api, orgs, organization_id, issues, follows], method)
@@ -213,6 +347,56 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
         {
             Some(Endpoint::Checkout {
                 issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments], method)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && matches!(*method, Method::GET | Method::HEAD)
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentList {
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments], &Method::POST)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentCreate {
+                issue_id: decode_capture(issue_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], method)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && matches!(*method, Method::GET | Method::HEAD)
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentGet {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], &Method::PATCH)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentUpdate {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
+            })
+        }
+        ([api, issues, issue_id, comments, comment_id], &Method::DELETE)
+            if api.eq_ignore_ascii_case("api")
+                && issues.eq_ignore_ascii_case("issues")
+                && comments.eq_ignore_ascii_case("comments") =>
+        {
+            Some(Endpoint::CommentDelete {
+                issue_id: decode_capture(issue_id)?,
+                comment_id: decode_capture(comment_id)?,
             })
         }
         _ => None,
@@ -236,6 +420,16 @@ pub(super) async fn dispatch_alias(
     let Some(endpoint) = endpoint_for_path(request.uri().path(), request.method()) else {
         return HttpResponse::NotFound().json(json!({"error":"Not found"}));
     };
+    if let Endpoint::AttachmentUpload {
+        organization_id,
+        issue_id,
+    } = &endpoint
+    {
+        if let Some(response) = private_host_rejection(&state, &request) {
+            return response;
+        }
+        return attachments::upload(state, request, payload, organization_id, issue_id).await;
+    }
     let body = match read_body(&state, &mut payload).await {
         Ok(body) => body,
         Err(response) => return response,
@@ -296,10 +490,51 @@ pub(super) async fn dispatch_alias(
             issue_id,
             operation,
         } => read_metadata(state, request, &issue_id, operation).await,
+        Endpoint::WorkProductCreate { issue_ref } => {
+            work_products::create(state, request, &body, &issue_ref).await
+        }
+        Endpoint::WorkProductUpdate { work_product_id } => {
+            work_products::update(state, request, &body, &work_product_id).await
+        }
+        Endpoint::WorkProductDelete { work_product_id } => {
+            work_products::delete(state, request, &body, &work_product_id).await
+        }
         Endpoint::Follows { organization_id } => {
             read_follows(state, request, &organization_id).await
         }
         Endpoint::Checkout { issue_id } => checkout(state, request, &body, &issue_id).await,
+        Endpoint::CommentList { issue_id } => comments::list(state, request, &issue_id).await,
+        Endpoint::CommentCreate { issue_id } => {
+            comments::create(state, request, &body, &issue_id).await
+        }
+        Endpoint::CommentGet {
+            issue_id,
+            comment_id,
+        } => comments::get(state, request, &issue_id, &comment_id).await,
+        Endpoint::CommentUpdate {
+            issue_id,
+            comment_id,
+        } => comments::update(state, request, &body, &issue_id, &comment_id).await,
+        Endpoint::CommentDelete {
+            issue_id,
+            comment_id,
+        } => comments::delete(state, request, &issue_id, &comment_id).await,
+        Endpoint::AttachmentUpload { .. } => {
+            unreachable!("attachment upload dispatched before body parsing")
+        }
+        Endpoint::AttachmentWorkspaceImport {
+            organization_id,
+            issue_id,
+        } => {
+            attachments::import_workspace_file(state, request, &body, &organization_id, &issue_id)
+                .await
+        }
+        Endpoint::AttachmentContent { attachment_id } => {
+            attachments::content(state, request, &attachment_id).await
+        }
+        Endpoint::AttachmentDelete { attachment_id } => {
+            attachments::delete(state, request, &attachment_id).await
+        }
     }
 }
 
@@ -539,6 +774,8 @@ async fn execute_issue_write(
         operation,
         issue_id: resolved_issue_id.as_deref(),
         input: &input,
+        comment_activity_details: None,
+        comment_reopen_wakeup: None,
     };
     let asset_storage: Option<&dyn IssueAssetStorage> = state
         .config
@@ -546,7 +783,7 @@ async fn execute_issue_write(
         .as_deref()
         .map(|storage| storage as &dyn IssueAssetStorage);
     match apply_issue_core_write(pool, &write_actor, &write_request, asset_storage).await {
-        Ok((status, value)) => HttpResponse::build(
+        Ok((status, value, _comment_wakeup_error)) => HttpResponse::build(
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         )
         .json(value),
@@ -1107,7 +1344,7 @@ mod tests {
         ] {
             assert!(is_reserved_path(path, &method), "{method} {path}");
         }
-        assert!(!is_reserved_namespace(
+        assert!(is_reserved_namespace(
             "/api/issues/abc/comments",
             &Method::GET
         ));
@@ -1123,13 +1360,19 @@ mod tests {
             "/api/issues/abc/work-products/",
             &Method::HEAD
         ));
-        assert!(!is_reserved_path(
+        assert!(is_reserved_path(
             "/api/issues/abc/work-products",
             &Method::POST
         ));
-        assert!(!is_reserved_namespace(
+        assert!(is_reserved_namespace(
             "/api/issues/abc/work-products",
             &Method::POST
+        ));
+        assert!(is_reserved_path("/api/work-products/wp-1", &Method::PATCH));
+        assert!(is_reserved_path("/api/work-products/wp-1", &Method::DELETE));
+        assert!(is_reserved_namespace(
+            "/api/work-products/wp-1",
+            &Method::PATCH
         ));
         assert!(is_reserved_namespace(
             "/api/issues/abc/work-products",
@@ -1154,13 +1397,44 @@ mod tests {
             &Method::GET
         ));
         assert!(is_reserved_namespace("/api/issues/issue-1", &Method::GET));
-        assert!(!is_reserved_path(
+        assert!(is_reserved_path(
             "/api/issues/issue-1/comments",
             &Method::GET
         ));
         assert!(!is_reserved_path(
             "/api/orgs/org-1/issues/follows",
             &Method::POST
+        ));
+    }
+
+    #[test]
+    fn issue_attachment_write_and_content_paths_are_reserved_for_native_ingress() {
+        let org_upload = "/api/orgs/org-1/issues/issue-1/attachments";
+        let workspace_file = "/api/orgs/org-1/issues/issue-1/attachments/workspace-file";
+        let content = "/api/attachments/attachment-1/content";
+        let remove = "/api/attachments/attachment-1";
+        for (path, method) in [
+            (org_upload, Method::POST),
+            (workspace_file, Method::POST),
+            (content, Method::GET),
+            (content, Method::HEAD),
+            (remove, Method::DELETE),
+        ] {
+            assert!(is_reserved_path(path, &method), "{method} {path}");
+            assert!(is_reserved_namespace(path, &method), "{method} {path}");
+        }
+        for (path, method) in [
+            (org_upload, Method::GET),
+            (workspace_file, Method::DELETE),
+            (content, Method::POST),
+            (remove, Method::GET),
+        ] {
+            assert!(!is_reserved_path(path, &method), "{method} {path}");
+            assert!(is_reserved_namespace(path, &method), "{method} {path}");
+        }
+        assert!(is_reserved_path(
+            "/api/issues/issue-1/attachments",
+            &Method::GET
         ));
     }
 

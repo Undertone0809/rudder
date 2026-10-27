@@ -94,6 +94,8 @@ pub struct IssueCoreWriteRequest<'a> {
     pub operation: IssueCoreWriteOperation,
     pub issue_id: Option<&'a str>,
     pub input: &'a Value,
+    pub comment_activity_details: Option<&'a Value>,
+    pub comment_reopen_wakeup: Option<&'a crate::issue_comments::ReopenCommentWakeup<'a>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -189,7 +191,7 @@ pub async fn apply_issue_core_write(
     actor: &IssueCoreWriteActor<'_>,
     request: &IssueCoreWriteRequest<'_>,
     asset_storage: Option<&dyn IssueAssetStorage>,
-) -> Result<(u16, Value)> {
+) -> Result<(u16, Value, Option<crate::issue_comments::IssueCommentError>)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
     let actor_agent_id = actor.agent_id;
@@ -199,6 +201,7 @@ pub async fn apply_issue_core_write(
     let operation = request.operation;
     let issue_id = request.issue_id;
     let input = request.input;
+    let comment_activity_details = request.comment_activity_details;
     let org = canonical_uuid(org_id)?;
     let mut staged_asset_objects = Vec::new();
     if !matches!(actor_kind, "user" | "agent") || actor_id.trim().is_empty() {
@@ -229,64 +232,114 @@ pub async fn apply_issue_core_write(
                 .map_err(|message| http(422, message))?;
         }
 
-        let (status, body, post_commit, deleted_asset_objects) = match operation {
-            IssueCoreWriteOperation::Create => {
-                let value = create_issue(
-                    &mut tx,
-                    IssueCreateContext {
-                        org: &org,
+        let (status, body, post_commit, deleted_asset_objects, comment_wakeup_error) =
+            match operation {
+                IssueCoreWriteOperation::Create => {
+                    let value = create_issue(
+                        &mut tx,
+                        IssueCreateContext {
+                            org: &org,
+                            actor_kind,
+                            actor_id,
+                            actor_agent_id,
+                            run_id,
+                            input,
+                            asset_storage,
+                            staged_asset_objects: &mut staged_asset_objects,
+                        },
+                    )
+                    .await?;
+                    (201, value, None, Vec::new(), None)
+                }
+                IssueCoreWriteOperation::Update => {
+                    let id = required_issue_id(issue_id)?;
+                    let mutation_actor = IssueMutationActor {
+                        kind: actor_kind,
+                        id: actor_id,
+                        agent_id: actor_agent_id,
+                        run_id,
+                    };
+                    let mut comment_activity_details = comment_activity_details.cloned();
+                    let mut comment_reopen_wakeup = request.comment_reopen_wakeup.cloned();
+                    if let Some(wakeup) = comment_reopen_wakeup.as_mut()
+                        && let Some(run) = wakeup.interrupt_run
+                    {
+                        wakeup.interrupted_run_id =
+                            crate::issue_comments::cancel_reopened_comment_interrupt(
+                                &mut tx,
+                                &org,
+                                &id,
+                                run,
+                                wakeup.actor,
+                            )
+                            .await
+                            .map_err(map_issue_comment_error)?;
+                        if wakeup.interrupted_run_id.is_none()
+                            && let Some(details) = comment_activity_details.as_mut()
+                            && let Some(details) = details.as_object_mut()
+                        {
+                            details.remove("interruptedRunId");
+                        }
+                    }
+                    let (value, post_commit) = update_issue(
+                        &mut tx,
+                        &org,
+                        &mutation_actor,
+                        &id,
+                        input,
+                        comment_activity_details.as_ref(),
+                    )
+                    .await?;
+                    let comment_wakeup_error = if let Some(wakeup) = comment_reopen_wakeup.as_ref()
+                    {
+                        crate::issue_comments::try_enqueue_reopened_comment_effects(
+                            &mut tx,
+                            &org,
+                            &id,
+                            &value["comment"],
+                            wakeup,
+                        )
+                        .await
+                        .map_err(map_issue_comment_error)?
+                    } else {
+                        None
+                    };
+                    (200, value, post_commit, Vec::new(), comment_wakeup_error)
+                }
+                IssueCoreWriteOperation::Delete => {
+                    let id = required_issue_id(issue_id)?;
+                    let (value, deleted_asset_objects) = delete_issue(
+                        &mut tx,
+                        &org,
                         actor_kind,
                         actor_id,
                         actor_agent_id,
                         run_id,
-                        input,
-                        asset_storage,
-                        staged_asset_objects: &mut staged_asset_objects,
-                    },
-                )
-                .await?;
-                (201, value, None, Vec::new())
-            }
-            IssueCoreWriteOperation::Update => {
-                let id = required_issue_id(issue_id)?;
-                let mutation_actor = IssueMutationActor {
-                    kind: actor_kind,
-                    id: actor_id,
-                    agent_id: actor_agent_id,
-                    run_id,
-                };
-                let (value, post_commit) =
-                    update_issue(&mut tx, &org, &mutation_actor, &id, input).await?;
-                (200, value, post_commit, Vec::new())
-            }
-            IssueCoreWriteOperation::Delete => {
-                let id = required_issue_id(issue_id)?;
-                let (value, deleted_asset_objects) = delete_issue(
-                    &mut tx,
-                    &org,
-                    actor_kind,
-                    actor_id,
-                    actor_agent_id,
-                    run_id,
-                    &id,
-                )
-                .await?;
-                (200, value, None, deleted_asset_objects)
-            }
-            IssueCoreWriteOperation::Reorder => {
-                if actor_kind != "user" {
-                    return Err(http(403, "Board authentication required"));
+                        &id,
+                    )
+                    .await?;
+                    (200, value, None, deleted_asset_objects, None)
                 }
-                let value = reorder_issue(&mut tx, &org, actor_id, input).await?;
-                (200, value, None, Vec::new())
-            }
-        };
-        Ok((status, body, post_commit, deleted_asset_objects))
+                IssueCoreWriteOperation::Reorder => {
+                    if actor_kind != "user" {
+                        return Err(http(403, "Board authentication required"));
+                    }
+                    let value = reorder_issue(&mut tx, &org, actor_id, input).await?;
+                    (200, value, None, Vec::new(), None)
+                }
+            };
+        Ok((
+            status,
+            body,
+            post_commit,
+            deleted_asset_objects,
+            comment_wakeup_error,
+        ))
     }
     .await;
 
     match result {
-        Ok((status, body, post_commit, deleted_asset_objects)) => {
+        Ok((status, body, post_commit, deleted_asset_objects, comment_wakeup_error)) => {
             // A lost COMMIT response does not prove a rollback. Keep the copied
             // objects when the database outcome is unknown.
             tx.commit().await?;
@@ -306,7 +359,7 @@ pub async fn apply_issue_core_write(
                     "Issue asset objects could not be deleted because storage is unavailable"
                 );
             }
-            Ok((status, body))
+            Ok((status, body, comment_wakeup_error))
         }
         Err(error) => {
             if let Err(rollback_error) = tx.rollback().await {
@@ -773,6 +826,10 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             wake_source: "review",
             role: Some("reviewer"),
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         });
     }
     enqueue_issue_wakeups(tx, org, &id, actor_kind, actor_id, wakeups).await?;
@@ -1053,6 +1110,7 @@ async fn update_issue(
     actor: &IssueMutationActor<'_>,
     id: &str,
     input: &Value,
+    comment_activity_details: Option<&Value>,
 ) -> Result<(Value, Option<IssueUpdatePostCommit>)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
@@ -1808,6 +1866,11 @@ async fn update_issue(
         if has_field_changes {
             comment_details["updated"] = Value::Bool(true);
         }
+        if let Some(extra) = comment_activity_details.and_then(Value::as_object) {
+            for (key, value) in extra {
+                comment_details[key] = value.clone();
+            }
+        }
         write_activity_options(
             tx,
             ActivityWrite {
@@ -1928,6 +1991,10 @@ async fn update_issue(
             wake_source: "review",
             role: Some("reviewer"),
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         });
     }
     enqueue_issue_wakeups(tx, org, id, actor_kind, actor_id, wakeups).await?;
@@ -2630,6 +2697,10 @@ impl IssueWakeupIntent {
             wake_source: source,
             role: None,
             comment: None,
+            relationship: None,
+            expected_issue_execution_run_id: None,
+            payload_extra: None,
+            context_extra: None,
         }
     }
 }
@@ -3267,6 +3338,24 @@ fn map_agent_issue_creation_error(
         }
     }
 }
+
+fn map_issue_comment_error(error: crate::issue_comments::IssueCommentError) -> IssueCoreWriteError {
+    match error {
+        crate::issue_comments::IssueCommentError::Http(status, message)
+        | crate::issue_comments::IssueCommentError::OwnershipRejected(status, message, _) => {
+            http(status, &message)
+        }
+        crate::issue_comments::IssueCommentError::HttpDetails(status, message, _) => {
+            http(status, &message)
+        }
+        crate::issue_comments::IssueCommentError::Store(error) => IssueCoreWriteError::Store(error),
+        crate::issue_comments::IssueCommentError::Database(error) => {
+            IssueCoreWriteError::Database(error)
+        }
+        crate::issue_comments::IssueCommentError::Json(error) => IssueCoreWriteError::Json(error),
+    }
+}
+
 fn http(status: u16, message: &str) -> IssueCoreWriteError {
     IssueCoreWriteError::Http(status, message.to_owned())
 }

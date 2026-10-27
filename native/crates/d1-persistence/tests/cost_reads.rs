@@ -204,36 +204,34 @@ INSERT INTO cost_events (org_id,agent_id,provider,model,cost_cents,occurred_at) 
 }
 
 #[tokio::test]
-async fn finance_date_context_is_bound_read_only_and_transaction_local() {
+async fn finance_timestamps_use_canonical_utc_without_legacy_date_context() {
     let db = Database::start().await;
     sqlx::query("INSERT INTO finance_events (org_id,event_kind,biller,amount_cents,occurred_at,created_at) VALUES ($1::uuid,'date','test',1,'0012-02-01 00:00:00Z','0032-01-01 00:00:00Z')")
         .bind(ORG).execute(&db.pool).await.unwrap();
-    let mut selection = input("finance-events");
-    selection.legacy_date_timezone = Some("UTC".to_owned());
+    let selection = input("finance-events");
     let utc: Value =
         serde_json::from_str(&read_costs(&db.pool, ORG, &selection).await.unwrap()).unwrap();
-    assert_eq!(utc[0]["occurredAt"], "2001-12-02T00:00:00.000Z");
-    assert_eq!(utc[0]["createdAt"], "2032-01-01T00:00:00.000Z");
-    selection.legacy_date_timezone = Some("Pacific/Honolulu".to_owned());
-    let legacy: Value =
-        serde_json::from_str(&read_costs(&db.pool, ORG, &selection).await.unwrap()).unwrap();
-    assert_eq!(legacy[0]["occurredAt"], Value::Null);
-    assert_eq!(legacy[0]["createdAt"], Value::Null);
+    assert_eq!(utc[0]["occurredAt"], "0012-02-01T00:00:00.000Z");
+    assert_eq!(utc[0]["createdAt"], "0032-01-01T00:00:00.000Z");
+    assert!(
+        serde_json::from_str::<CostReadInput>(
+            r#"{"operation":"finance-events","legacyDateTimezone":"Pacific/Honolulu"}"#
+        )
+        .is_err()
+    );
     let zone: String = sqlx::query_scalar("SHOW TimeZone")
         .fetch_one(&db.pool)
         .await
         .unwrap();
     assert_eq!(
         zone, "UTC",
-        "date context must not leak out of the read transaction"
+        "canonical UTC projection must not mutate the connection timezone"
     );
     let baseline = db.counts().await;
-    selection.legacy_date_timezone = Some("UTC'); DELETE FROM finance_events; --".to_owned());
-    assert!(read_costs(&db.pool, ORG, &selection).await.is_err());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM finance_events")
         .fetch_one(&db.pool)
         .await
         .unwrap();
-    assert_eq!(count, 1, "timezone is a parameter value, never SQL syntax");
+    assert_eq!(count, 1, "date serialization must not mutate finance rows");
     assert_eq!(db.counts().await, baseline);
 }

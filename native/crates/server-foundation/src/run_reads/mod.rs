@@ -3,7 +3,11 @@
 //! Node fallback can replace these domain queries and public projections.
 mod projection;
 mod redaction;
-use crate::{ActorEnvelopeVerificationError, AppState, DatabaseState};
+use crate::{
+    ActorEnvelopeVerificationError, AppState, DatabaseState,
+    member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth},
+    native_session_auth::NativeIngressIdentity,
+};
 use actix_web::{HttpRequest, HttpResponse, http::StatusCode, web};
 use redaction::{Redaction, redact_json};
 use serde::Deserialize;
@@ -11,7 +15,7 @@ use sqlx::{PgPool, Row};
 
 pub const RUN_READ_ACTION: &str = "run.read";
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum Surface {
     Heartbeat,
@@ -477,6 +481,83 @@ pub(super) async fn run_reads(
 ) -> HttpResponse {
     state.run_read(&request, org.as_str(), &body).await
 }
+
+/// Execute the existing Run projection after native public identity has been
+/// revalidated for the target organization. Ownership is derived here from
+/// that verified identity; callers cannot supply an owner string.
+pub(super) async fn read_with_native_auth(
+    pool: &PgPool,
+    org: &str,
+    identity: &NativeIngressIdentity,
+    native_auth: &MemberDirectoryNativeAuth<'_>,
+    input: serde_json::Value,
+) -> HttpResponse {
+    let owner = match native_run_owner(identity) {
+        Ok(owner) => owner,
+        Err(response) => return response,
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => return db_error(error),
+    };
+    if let Err(error) = sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+    {
+        return db_error(error);
+    }
+    match native_auth.revalidate(&mut tx, org).await {
+        Ok(MemberDirectoryNativeAccess::Authorized) => {}
+        Ok(MemberDirectoryNativeAccess::Unauthorized) => {
+            return json_error(StatusCode::UNAUTHORIZED, "Unauthorized");
+        }
+        Ok(MemberDirectoryNativeAccess::Forbidden) => {
+            return json_error(
+                StatusCode::FORBIDDEN,
+                native_run_forbidden_message(identity),
+            );
+        }
+        Err(error) => return db_error(error),
+    }
+    if let Err(error) = tx.commit().await {
+        return db_error(error);
+    }
+    let input = match serde_json::from_value::<RunReadRequest>(input) {
+        Ok(input) if !matches!(&input, RunReadRequest::List { limit: Some(n), .. } if *n == 0 || *n > 1000) => {
+            input
+        }
+        _ => {
+            return json_error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid run read request");
+        }
+    };
+    match read(pool, org, input, owner).await {
+        Ok(response) => response,
+        Err(error) => db_error(error),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+pub(super) fn native_run_owner(
+    identity: &NativeIngressIdentity,
+) -> Result<Option<&str>, HttpResponse> {
+    match identity {
+        NativeIngressIdentity::LocalImplicit => Ok(Some("local-board")),
+        NativeIngressIdentity::Session(identity) => Ok(Some(identity.user_id.as_str())),
+        NativeIngressIdentity::BoardKey { user_id, .. } => Ok(Some(user_id.as_str())),
+        NativeIngressIdentity::AgentKey { .. } | NativeIngressIdentity::AgentJwt(_) => Ok(None),
+        NativeIngressIdentity::None => Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized")),
+    }
+}
+
+fn native_run_forbidden_message(identity: &NativeIngressIdentity) -> &'static str {
+    match identity {
+        NativeIngressIdentity::AgentKey { .. } | NativeIngressIdentity::AgentJwt(_) => {
+            "Agent key cannot access another organization"
+        }
+        _ => "User does not have access to this organization",
+    }
+}
+
 impl AppState {
     async fn run_read(&self, request: &HttpRequest, org: &str, body: &[u8]) -> HttpResponse {
         let actor = match self.verify_actor_envelope(request, org, RUN_READ_ACTION, None, body) {
@@ -630,6 +711,39 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
             serde_json::json!({"error":"Internal server error"})
+        );
+    }
+
+    #[test]
+    fn public_run_owner_comes_from_verified_board_user_identity() {
+        let board = NativeIngressIdentity::BoardKey {
+            user_id: "board-owner-user".to_owned(),
+            key_id: "board-key-id".to_owned(),
+            token_hash: "board-token-hash".to_owned(),
+        };
+        assert_eq!(native_run_owner(&board).unwrap(), Some("board-owner-user"));
+
+        let session = NativeIngressIdentity::Session(
+            crate::native_session_auth::NativeSessionIdentity::fixture(),
+        );
+        assert_eq!(native_run_owner(&session).unwrap(), Some("user"));
+
+        let agent = NativeIngressIdentity::AgentKey {
+            agent_id: "agent-identity".to_owned(),
+            org_id: ORG.to_owned(),
+            key_id: "agent-key-id".to_owned(),
+            token_hash: "agent-token-hash".to_owned(),
+        };
+        assert_eq!(native_run_owner(&agent).unwrap(), None);
+        assert_eq!(
+            native_run_owner(&NativeIngressIdentity::LocalImplicit).unwrap(),
+            Some("local-board")
+        );
+        assert_eq!(
+            native_run_owner(&NativeIngressIdentity::None)
+                .unwrap_err()
+                .status(),
+            StatusCode::UNAUTHORIZED
         );
     }
 }

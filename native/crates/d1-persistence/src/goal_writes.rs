@@ -151,7 +151,7 @@ pub async fn apply_goal_write(
     }
 }
 
-pub(super) async fn lock_organization(
+pub(crate) async fn lock_organization(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,
 ) -> Result<(), StoreError> {

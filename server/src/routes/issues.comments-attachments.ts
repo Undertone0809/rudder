@@ -48,7 +48,9 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     workspaceBrowser,
     assertAgentRunCheckoutOwnership,
     resolveAgentIssueRunId,
+    nativeIssueCore,
   } = ctx;
+  if (!nativeIssueCore) {
   router.get("/issues/:id/comments", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -513,6 +515,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
 
     res.status(201).json(comment);
   });
+  }
 
   router.get("/issues/:id/attachments", async (req, res) => {
     const issueId = req.params.id as string;
@@ -527,105 +530,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     }, db);
   });
 
-  router.post("/orgs/:orgId/issues/:issueId/attachments", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    const issueId = req.params.issueId as string;
-    assertCompanyAccess(req, orgId);
-    const issue = await svc.getById(issueId);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    if (issue.orgId !== orgId) {
-      res.status(422).json({ error: "Issue does not belong to organization" });
-      return;
-    }
-
-    try {
-      await runSingleFileUpload(req, res);
-    } catch (err) {
-      if (err instanceof multer.MulterError) {
-        if (err.code === "LIMIT_FILE_SIZE") {
-          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
-          return;
-        }
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      throw err;
-    }
-
-    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
-    if (!file) {
-      res.status(400).json({ error: "Missing file field 'file'" });
-      return;
-    }
-    const contentType = (file.mimetype || "").toLowerCase();
-    if (!isAllowedContentType(contentType)) {
-      res.status(422).json({ error: `Unsupported attachment type: ${contentType || "unknown"}` });
-      return;
-    }
-    if (file.buffer.length <= 0) {
-      res.status(422).json({ error: "Attachment is empty" });
-      return;
-    }
-
-    const parsedMeta = createIssueAttachmentMetadataSchema.safeParse(req.body ?? {});
-    if (!parsedMeta.success) {
-      res.status(400).json({ error: "Invalid attachment metadata", details: parsedMeta.error.issues });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    const stored = await storage.putFile({
-      orgId,
-      namespace: `issues/${issueId}`,
-      originalFilename: file.originalname || null,
-      contentType,
-      body: file.buffer,
-    });
-
-    const attachment = await svc.createAttachment({
-      issueId,
-      issueCommentId: parsedMeta.data.issueCommentId ?? null,
-      usage: parsedMeta.data.usage ?? "issue",
-      provider: stored.provider,
-      objectKey: stored.objectKey,
-      contentType: stored.contentType,
-      byteSize: stored.byteSize,
-      sha256: stored.sha256,
-      originalFilename: stored.originalFilename,
-      createdByAgentId: actor.agentId,
-      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-    });
-
-    if (attachment.usage === "issue") {
-      await logActivity(db, {
-        orgId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: "issue.attachment_added",
-        entityType: "issue",
-        entityId: issueId,
-        details: {
-          attachmentId: attachment.id,
-          usage: attachment.usage,
-          originalFilename: attachment.originalFilename,
-          contentType: attachment.contentType,
-          byteSize: attachment.byteSize,
-        },
-      });
-    }
-
-    res.status(201).json(withContentPath(attachment));
-  });
-
-  router.post(
-    "/orgs/:orgId/issues/:issueId/attachments/workspace-file",
-    validate(createIssueWorkspaceAttachmentSchema),
-    async (req, res) => {
+  if (!nativeIssueCore) {
+    router.post("/orgs/:orgId/issues/:issueId/attachments", async (req, res) => {
       const orgId = req.params.orgId as string;
       const issueId = req.params.issueId as string;
       assertCompanyAccess(req, orgId);
@@ -639,17 +545,38 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         return;
       }
 
-      const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, req.body.path);
-      if (workspaceFile.buffer.length <= 0) {
+      try {
+        await runSingleFileUpload(req, res);
+      } catch (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+            return;
+          }
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+
+      const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
+      if (!file) {
+        res.status(400).json({ error: "Missing file field 'file'" });
+        return;
+      }
+      const contentType = (file.mimetype || "").toLowerCase();
+      if (!isAllowedContentType(contentType)) {
+        res.status(422).json({ error: `Unsupported attachment type: ${contentType || "unknown"}` });
+        return;
+      }
+      if (file.buffer.length <= 0) {
         res.status(422).json({ error: "Attachment is empty" });
         return;
       }
-      if (workspaceFile.buffer.length > MAX_ATTACHMENT_BYTES) {
-        res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
-        return;
-      }
-      if (!isAllowedContentType(workspaceFile.contentType)) {
-        res.status(422).json({ error: `Unsupported attachment type: ${workspaceFile.contentType || "unknown"}` });
+
+      const parsedMeta = createIssueAttachmentMetadataSchema.safeParse(req.body ?? {});
+      if (!parsedMeta.success) {
+        res.status(400).json({ error: "Invalid attachment metadata", details: parsedMeta.error.issues });
         return;
       }
 
@@ -657,15 +584,15 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       const stored = await storage.putFile({
         orgId,
         namespace: `issues/${issueId}`,
-        originalFilename: workspaceFile.originalFilename,
-        contentType: workspaceFile.contentType,
-        body: workspaceFile.buffer,
+        originalFilename: file.originalname || null,
+        contentType,
+        body: file.buffer,
       });
 
       const attachment = await svc.createAttachment({
         issueId,
-        issueCommentId: null,
-        usage: "issue",
+        issueCommentId: parsedMeta.data.issueCommentId ?? null,
+        usage: parsedMeta.data.usage ?? "issue",
         provider: stored.provider,
         objectKey: stored.objectKey,
         contentType: stored.contentType,
@@ -676,88 +603,166 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
         createdByUserId: actor.actorType === "user" ? actor.actorId : null,
       });
 
+      if (attachment.usage === "issue") {
+        await logActivity(db, {
+          orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.attachment_added",
+          entityType: "issue",
+          entityId: issueId,
+          details: {
+            attachmentId: attachment.id,
+            usage: attachment.usage,
+            originalFilename: attachment.originalFilename,
+            contentType: attachment.contentType,
+            byteSize: attachment.byteSize,
+          },
+        });
+      }
+
+      res.status(201).json(withContentPath(attachment));
+    });
+
+    router.post(
+      "/orgs/:orgId/issues/:issueId/attachments/workspace-file",
+      validate(createIssueWorkspaceAttachmentSchema),
+      async (req, res) => {
+        const orgId = req.params.orgId as string;
+        const issueId = req.params.issueId as string;
+        assertCompanyAccess(req, orgId);
+        const issue = await svc.getById(issueId);
+        if (!issue) {
+          res.status(404).json({ error: "Issue not found" });
+          return;
+        }
+        if (issue.orgId !== orgId) {
+          res.status(422).json({ error: "Issue does not belong to organization" });
+          return;
+        }
+
+        const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, req.body.path);
+        if (workspaceFile.buffer.length <= 0) {
+          res.status(422).json({ error: "Attachment is empty" });
+          return;
+        }
+        if (workspaceFile.buffer.length > MAX_ATTACHMENT_BYTES) {
+          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+          return;
+        }
+        if (!isAllowedContentType(workspaceFile.contentType)) {
+          res.status(422).json({ error: `Unsupported attachment type: ${workspaceFile.contentType || "unknown"}` });
+          return;
+        }
+
+        const actor = getActorInfo(req);
+        const stored = await storage.putFile({
+          orgId,
+          namespace: `issues/${issueId}`,
+          originalFilename: workspaceFile.originalFilename,
+          contentType: workspaceFile.contentType,
+          body: workspaceFile.buffer,
+        });
+
+        const attachment = await svc.createAttachment({
+          issueId,
+          issueCommentId: null,
+          usage: "issue",
+          provider: stored.provider,
+          objectKey: stored.objectKey,
+          contentType: stored.contentType,
+          byteSize: stored.byteSize,
+          sha256: stored.sha256,
+          originalFilename: stored.originalFilename,
+          createdByAgentId: actor.agentId,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+        });
+
+        await logActivity(db, {
+          orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.attachment_added",
+          entityType: "issue",
+          entityId: issueId,
+          details: {
+            attachmentId: attachment.id,
+            usage: attachment.usage,
+            originalFilename: attachment.originalFilename,
+            contentType: attachment.contentType,
+            byteSize: attachment.byteSize,
+            workspacePath: workspaceFile.normalizedPath,
+          },
+        });
+
+        res.status(201).json(withContentPath(attachment));
+      },
+    );
+
+    router.get("/attachments/:attachmentId/content", async (req, res, next) => {
+      const attachmentId = req.params.attachmentId as string;
+      const attachment = await svc.getAttachmentById(attachmentId);
+      if (!attachment) {
+        res.status(404).json({ error: "Attachment not found" });
+        return;
+      }
+      assertCompanyAccess(req, attachment.orgId);
+
+      const object = await storage.getObject(attachment.orgId, attachment.objectKey);
+      res.setHeader("Content-Type", attachment.contentType || object.contentType || "application/octet-stream");
+      res.setHeader("Content-Length", String(attachment.byteSize || object.contentLength || 0));
+      res.setHeader("Cache-Control", "private, max-age=60");
+      const filename = attachment.originalFilename ?? "attachment";
+      res.setHeader("Content-Disposition", `inline; filename=\"${filename.replaceAll("\"", "")}\"`);
+
+      object.stream.on("error", (err) => {
+        next(err);
+      });
+      object.stream.pipe(res);
+    });
+
+    router.delete("/attachments/:attachmentId", async (req, res) => {
+      const attachmentId = req.params.attachmentId as string;
+      const attachment = await svc.getAttachmentById(attachmentId);
+      if (!attachment) {
+        res.status(404).json({ error: "Attachment not found" });
+        return;
+      }
+      assertCompanyAccess(req, attachment.orgId);
+
+      try {
+        await storage.deleteObject(attachment.orgId, attachment.objectKey);
+      } catch (err) {
+        logger.warn({ err, attachmentId }, "storage delete failed while removing attachment");
+      }
+
+      const removed = await svc.removeAttachment(attachmentId);
+      if (!removed) {
+        res.status(404).json({ error: "Attachment not found" });
+        return;
+      }
+
+      const actor = getActorInfo(req);
       await logActivity(db, {
-        orgId,
+        orgId: removed.orgId,
         actorType: actor.actorType,
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
-        action: "issue.attachment_added",
+        action: "issue.attachment_removed",
         entityType: "issue",
-        entityId: issueId,
+        entityId: removed.issueId,
         details: {
-          attachmentId: attachment.id,
-          usage: attachment.usage,
-          originalFilename: attachment.originalFilename,
-          contentType: attachment.contentType,
-          byteSize: attachment.byteSize,
-          workspacePath: workspaceFile.normalizedPath,
+          attachmentId: removed.id,
         },
       });
 
-      res.status(201).json(withContentPath(attachment));
-    },
-  );
-
-  router.get("/attachments/:attachmentId/content", async (req, res, next) => {
-    const attachmentId = req.params.attachmentId as string;
-    const attachment = await svc.getAttachmentById(attachmentId);
-    if (!attachment) {
-      res.status(404).json({ error: "Attachment not found" });
-      return;
-    }
-    assertCompanyAccess(req, attachment.orgId);
-
-    const object = await storage.getObject(attachment.orgId, attachment.objectKey);
-    res.setHeader("Content-Type", attachment.contentType || object.contentType || "application/octet-stream");
-    res.setHeader("Content-Length", String(attachment.byteSize || object.contentLength || 0));
-    res.setHeader("Cache-Control", "private, max-age=60");
-    const filename = attachment.originalFilename ?? "attachment";
-    res.setHeader("Content-Disposition", `inline; filename=\"${filename.replaceAll("\"", "")}\"`);
-
-    object.stream.on("error", (err) => {
-      next(err);
+      res.json({ ok: true });
     });
-    object.stream.pipe(res);
-  });
-
-  router.delete("/attachments/:attachmentId", async (req, res) => {
-    const attachmentId = req.params.attachmentId as string;
-    const attachment = await svc.getAttachmentById(attachmentId);
-    if (!attachment) {
-      res.status(404).json({ error: "Attachment not found" });
-      return;
-    }
-    assertCompanyAccess(req, attachment.orgId);
-
-    try {
-      await storage.deleteObject(attachment.orgId, attachment.objectKey);
-    } catch (err) {
-      logger.warn({ err, attachmentId }, "storage delete failed while removing attachment");
-    }
-
-    const removed = await svc.removeAttachment(attachmentId);
-    if (!removed) {
-      res.status(404).json({ error: "Attachment not found" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: removed.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.attachment_removed",
-      entityType: "issue",
-      entityId: removed.issueId,
-      details: {
-        attachmentId: removed.id,
-      },
-    });
-
-    res.json({ ok: true });
-  });
+  }
 
 }

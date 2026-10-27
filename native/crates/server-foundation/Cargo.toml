@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 actix-web = { version = "4.11", default-features = false, features = ["macros", "compress-gzip", "compress-brotli"] }
+actix-multipart = { version = "0.8.5", default-features = false }
 actix-ws = { version = "0.4.0", default-features = false }
 awc = { version = "3.8.2", default-features = false }
 aws-config = { version = "1.12", default-features = false, features = ["behavior-version-latest", "rt-tokio", "credentials-process", "sso"] }

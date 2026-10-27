@@ -118,7 +118,7 @@ pub(crate) fn projection(fields: &[(&str, &str)], dates: &[(&str, &str)]) -> Str
     );
     format!("jsonb_build_object({})::text", items.join(","))
 }
-fn attachment_projection() -> String {
+pub(crate) fn attachment_projection() -> String {
     projection(
         &[
             ("id", "t.id"),
@@ -140,7 +140,7 @@ fn attachment_projection() -> String {
         &[("createdAt", "t.created_at"), ("updatedAt", "t.updated_at")],
     )
 }
-fn work_product_projection() -> String {
+pub(crate) fn work_product_projection() -> String {
     projection(
         &[
             ("id", "t.id"),
@@ -164,6 +164,34 @@ fn work_product_projection() -> String {
         ],
         &[("createdAt", "t.created_at"), ("updatedAt", "t.updated_at")],
     )
+}
+
+/// Return the same complete wire projection used by the public metadata read,
+/// including the historical string-valued JSONB normalization for metadata.
+pub(crate) async fn project_work_product_for_write(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: &str,
+    work_product_id: &str,
+) -> Result<Option<String>, IssueMetadataReadError> {
+    let query = format!(
+        "SELECT {} AS value,t.metadata::text AS metadata FROM issue_work_products t WHERE t.org_id=$1::uuid AND t.id=$2::uuid",
+        work_product_projection()
+    );
+    let Some(row) = sqlx::query(&query)
+        .bind(org_id)
+        .bind(work_product_id)
+        .fetch_optional(&mut **tx)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let metadata: Option<String> = row.try_get("metadata")?;
+    let raw: String = row.try_get("value")?;
+    Ok(Some(append_field(
+        normalize_legacy_read_json(&raw)?,
+        "metadata",
+        &json_column(metadata.as_deref().unwrap_or("null"))?,
+    )))
 }
 fn follows_projection() -> String {
     let issue = projection(

@@ -547,6 +547,13 @@ async fn count_cycle_events(
     .await?)
 }
 
+pub(crate) async fn clear_comment_run_detached_warning(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<(), StoreError> {
+    clear_detached_run_warning(pool, run_id).await
+}
+
 async fn clear_detached_run_warning(pool: &PgPool, run_id: &str) -> Result<(), StoreError> {
     let mut tx = pool.begin().await?;
     let cleared = sqlx::query(

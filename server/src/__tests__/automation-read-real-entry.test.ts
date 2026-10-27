@@ -8,13 +8,17 @@ import { automationService } from "../services/automations.js";
 import { createRustActorEnvelope } from "../services/rust-foundation-bridge.js";
 import { database, identities, port, publicServer, snapshot, VISIBILITY_ACTOR_KEY, wire, type Database } from "./visibility-read-fixture.js";
 
-const construction = vi.hoisted(() => ({ native: false }));
+const construction = vi.hoisted(() => ({ native: false, nodeReadCalls: 0, nodeTargetLookups: 0 }));
 vi.mock("../services/automations.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../services/automations.js")>();
   return { ...original, automationService: (...args: Parameters<typeof original.automationService>) => {
     const service = original.automationService(...args);
-    const forbidden = () => { throw new Error("Node Automation read projection executed"); };
-    return construction.native ? { ...service, list: forbidden, getDetail: forbidden, listRuns: forbidden } : service;
+    const forbidden = () => { construction.nodeReadCalls += 1; throw new Error("Node Automation read projection executed"); };
+    const targetLookup = (...lookupArgs: Parameters<typeof service.get>) => {
+      construction.nodeTargetLookups += 1;
+      return service.get(...lookupArgs);
+    };
+    return construction.native ? { ...service, get: targetLookup, list: forbidden, getDetail: forbidden, listRuns: forbidden } : service;
   } };
 });
 
@@ -50,6 +54,23 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
       [`automations/${automationId}/runs`, await automationService(fixture.db).listRuns(automationId)],
     ] as const) { const response = await get(route); expect(response.status, response.text).toBe(200); expect(response.body).toEqual(wire(expected)); }
     expect(await snapshot(fixture.db, tables)).toEqual(before);
+  });
+  it.skipIf(ingress !== "required")("keeps selected public GET/HEAD reads in Rust and leaves trigger writes on Node", async () => {
+    const beforeReads = construction.nodeReadCalls, beforeLookups = construction.nodeTargetLookups;
+    const routes = [`orgs/${ids.orgId}/automations`, `automations/${automationId}`, `automations/${automationId}/runs`];
+    for (const route of routes) {
+      expect((await get(route)).status).toBe(200);
+      expect((await request(server.target).head(`/api/${route}`).set("authorization", `Bearer ${ids.agentToken}`)).status).toBe(200);
+    }
+    expect(construction.nodeReadCalls).toBe(beforeReads);
+    expect(construction.nodeTargetLookups).toBe(beforeLookups);
+    const write = await request(server.target)
+      .post(`/api/automations/${automationId}/triggers`)
+      .set("authorization", `Bearer ${ids.agentToken}`)
+      .send({});
+    expect(write.status, write.text).toBe(400);
+    expect(construction.nodeReadCalls).toBe(beforeReads);
+    expect(construction.nodeTargetLookups).toBe(beforeLookups);
   });
   it("preserves archived detail404, list exclusion and archived runs200", async () => {
     const id = await addAutomation({ status: "archived" });
@@ -124,12 +145,12 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     await fixture.db.insert(chatConversations).values({ id: chat, orgId: ids.orgId, conversationKind: "side_chat", createdByUserId: "local-board", title: "LOCAL_PRIVATE_AUTOMATION_CHAT" });
     await fixture.db.insert(automationRuns).values({ orgId: ids.orgId, automationId: id, source: "manual", linkedChatConversationId: chat });
     for (const [actor, owner] of [[{ type: "board", source: "local_implicit", isInstanceAdmin: true }, true], [{ type: "agent", source: "agent_key", agentId: ids.agentId, orgId: ids.orgId }, false]] as const) for (const operation of ["list", "detail", "runs"] as const) {
-      const response = await server.bridge.automationRead!(actor, ids.orgId, { operation, automationId: id, legacyDateTimezone: "UTC" }); expect(response.status, response.body.toString()).toBe(200);
+      const response = await server.bridge.automationRead!(actor, ids.orgId, { operation, automationId: id }); expect(response.status, response.body.toString()).toBe(200);
       const body = JSON.parse(response.body.toString()), run = operation === "list" ? body.find((row: { id: string }) => row.id === id).lastRun : operation === "detail" ? body.recentRuns[0] : body[0];
       expect(run.linkedChatConversationId).toBe(chat); expect(run.linkedChatConversation.title).toBe(owner ? "LOCAL_PRIVATE_AUTOMATION_CHAT" : "Chat");
     }
   });
-  it.each(["owner", "org"] as const)("rechecks linked Automation Chat visibility after public authorization (%s)", async (change) => {
+  it.skipIf(ingress === "required").each(["owner", "org"] as const)("rechecks linked Automation Chat visibility after public authorization (%s)", async (change) => {
     const id = await addAutomation(), chat = randomUUID();
     await fixture.db.insert(chatConversations).values({ id: chat, orgId: ids.orgId, conversationKind: "side_chat", createdByUserId: ids.userId, title: "CURRENT_PRIVATE_AUTOMATION_CHAT" });
     await fixture.db.insert(automationRuns).values({ orgId: ids.orgId, automationId: id, source: "manual", linkedChatConversationId: chat });
@@ -157,11 +178,16 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     await fixture.db.update(issues).set({ executionRunId: localRun }).where(eq(issues.id, invalidIssue));
     const response = await get(`automations/${id}`); expect(response.status, response.text).toBe(200); expect(response.body).toEqual(wire(await automationService(fixture.db).getDetail(id)));
   });
-  it("pairs deep and reparsed JSON, surrogate values and historical Date projection", async () => {
+  it("pairs deep JSON hydration and projects stored historical timestamps as UTC", async () => {
     const id = await addAutomation();
     for (const raw of ['{"nested":' + '['.repeat(600) + '9007199254740993' + ']'.repeat(600) + '}', JSON.stringify('"\\ud800"'), JSON.stringify('{"\\ud800":true}'), '123', 'null']) {
-      await fixture.db.execute(sql`UPDATE automations SET assignee_agent_runtime_overrides=${raw}::jsonb,created_at='0032-01-01T00:00:00.000900Z'::timestamptz,last_triggered_at='275760-09-13T00:00:00.000999Z'::timestamptz,last_enqueued_at='infinity'::timestamptz WHERE id=${id}::uuid`);
-      const response = await get(`automations/${id}`); expect(response.status, response.text).toBe(200); expect(response.body).toEqual(wire(await automationService(fixture.db).getDetail(id)));
+      await fixture.db.execute(sql`UPDATE automations SET assignee_agent_runtime_overrides=${raw}::jsonb,created_at='0044-01-01T00:00:00.000900Z'::timestamptz,last_triggered_at='275760-09-13T00:00:00.000999Z'::timestamptz,last_enqueued_at='infinity'::timestamptz WHERE id=${id}::uuid`);
+      const response = await get(`automations/${id}`); expect(response.status, response.text).toBe(200);
+      const expected = wire(await automationService(fixture.db).getDetail(id));
+      expected.createdAt = "0044-01-01T00:00:00.000Z";
+      expect(response.body).toEqual(expected);
+      expect(response.body.lastTriggeredAt).toBe("+275760-09-13T00:00:00.000Z");
+      expect(response.body.lastEnqueuedAt).toBeNull();
     }
   });
   it("returns every large list row without a generic receipt cap", async () => {
@@ -169,7 +195,7 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     try { const response = await get(`orgs/${ids.empty}/automations`, ids.boardToken); expect(response.status, response.text).toBe(200); expect(response.body).toHaveLength(130); expect(response.text.length).toBeGreaterThan(1048576); expect(response.body).toEqual(wire(await automationService(fixture.db).list(ids.empty))); }
     finally { for (const row of rows) await fixture.db.delete(automations).where(eq(automations.id, row.id)); }
   });
-  it.each(["delete", "move", "archive"] as const)("rechecks native current target after public identity resolution (%s)", async (change) => {
+  it.skipIf(ingress === "required").each(["delete", "move", "archive"] as const)("rechecks native current target after public identity resolution (%s)", async (change) => {
     const id = await addAutomation(), [original] = await fixture.db.select().from(automations).where(eq(automations.id, id));
     const read = server.bridge.automationRead!; server.bridge.automationRead = async (...args) => {
       if (change === "delete") await fixture.db.delete(automations).where(eq(automations.id, id));
@@ -179,7 +205,7 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     try { const response = await get(`automations/${id}`); expect(response.status, response.text).toBe(404); expect(response.body.error).toBe("Automation not found"); }
     finally { server.bridge.automationRead = read; if (change === "delete") await fixture.db.insert(automations).values(original!); }
   });
-  it.each(["delete", "move"] as const)("rechecks the Automation runs target after identity resolution (%s)", async (change) => {
+  it.skipIf(ingress === "required").each(["delete", "move"] as const)("rechecks the Automation runs target after identity resolution (%s)", async (change) => {
     const id = await addAutomation(), read = server.bridge.automationRead!;
     server.bridge.automationRead = async (...args) => {
       if (change === "delete") await fixture.db.delete(automations).where(eq(automations.id, id));
@@ -198,12 +224,12 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     finally { await fixture.db.update(organizationMemberships).set({ status: "active" }).where(and(eq(organizationMemberships.orgId, ids.orgId), eq(organizationMemberships.principalId, ids.userId))); }
     for (const suffix of ["", "/runs"]) { expect((await get(`automations/${randomUUID()}${suffix}`)).status).toBe(404); expect((await get(`automations/invalid${suffix}`)).status).toBe(500); }
   });
-  it("rejects tampered bodies and signed foreign targets, and fails closed without transport", async () => {
+  it.skipIf(ingress === "required")("rejects tampered bodies and signed foreign targets, and fails closed without transport", async () => {
     const nativeFetch = globalThis.fetch;
     for (const mode of ["tamper", "foreign"] as const) {
       const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
         if (!String(url).endsWith("/automation-reads")) return nativeFetch(url, options);
-        const body = Buffer.from(JSON.stringify({ operation: "detail", automationId: foreignAutomation, legacyDateTimezone: "UTC" })); const headers = { ...options!.headers as Record<string, string> };
+        const body = Buffer.from(JSON.stringify({ operation: "detail", automationId: foreignAutomation })); const headers = { ...options!.headers as Record<string, string> };
         if (mode === "foreign") headers["x-rudder-actor-envelope"] = JSON.stringify(createRustActorEnvelope({ actor: { type: "agent", source: "agent_key", agentId: ids.agentId, orgId: ids.orgId }, organizationId: ids.orgId, method: "POST", path: new URL(String(url)).pathname, action: "automation.read", body, secret: VISIBILITY_ACTOR_KEY, requestId: headers["x-rudder-request-id"] }));
         return nativeFetch(url, { ...options, headers, body: body as unknown as BodyInit });
       });
@@ -212,7 +238,7 @@ describe.each(["off", "required"] as const)("Automation public reads (%s ingress
     const read = server.bridge.automationRead; server.bridge.automationRead = undefined;
     try { for (const route of [`orgs/${ids.orgId}/automations`, `automations/${automationId}`, `automations/${automationId}/runs`]) expect((await get(route)).status).toBe(503); } finally { server.bridge.automationRead = read; }
   });
-  it("returns503 for an unreachable private TCP endpoint and recovers after a real process restart", async () => {
+  it.skipIf(ingress === "required")("returns503 for an unreachable private TCP endpoint and recovers after a real process restart", async () => {
     const routes = [`orgs/${ids.orgId}/automations`, `automations/${automationId}`, `automations/${automationId}/runs`], before = await snapshot(fixture.db, tables);
     const closedPort = await port(), nativeFetch = globalThis.fetch;
     const spy = vi.spyOn(globalThis, "fetch").mockImplementation((url, options) => {

@@ -111,14 +111,14 @@ async function startApp(app: express.Express) {
   return server;
 }
 
-async function createApp() {
+async function createApp(bridge: RustFoundationBridge = readBridge) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.actor = { type: "board", userId: "board-user", source: "local_implicit" };
     next();
   });
-  app.use("/api", costRoutes(makeDb() as any, readBridge));
+  app.use("/api", costRoutes(makeDb() as any, bridge));
   app.use(errorHandler);
   return await startApp(app);
 }
@@ -267,7 +267,7 @@ describe("cost routes", () => {
       .get("/api/orgs/organization-1/costs/finance-events")
       .query({ limit: "25" });
     expect(res.status).toBe(200);
-    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { operation: "finance-events", fromMs: undefined, toMs: undefined, limit: 25, legacyDateTimezone: "UTC" });
+    expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", { operation: "finance-events", fromMs: undefined, toMs: undefined, limit: 25 });
   });
 
   it.each(["summary", "by-agent", "trend", "by-agent-model", "by-provider", "by-biller", "by-project", "window-spend", "finance-summary", "finance-by-biller", "finance-by-kind", "finance-events"])("forwards %s to Rust and preserves its response bytes", async (operation) => {
@@ -279,6 +279,18 @@ describe("cost routes", () => {
     expect(costRead).toHaveBeenCalledWith(expect.anything(), "organization-1", expect.objectContaining({ operation }));
     for (const name of ["summary", "trend", "byAgent", "byAgentModel", "byProvider", "byBiller", "windowSpend", "byProject"] as const) expect(mockCostService[name]).not.toHaveBeenCalled();
     for (const name of ["summary", "byBiller", "byKind", "list"] as const) expect(mockFinanceService[name]).not.toHaveBeenCalled();
+  });
+
+  it("omits all selected public Cost GET and HEAD routes from Node", async () => {
+    const app = await createApp({ publicIngressEnabled: true } as RustFoundationBridge);
+    const operations = ["summary", "by-agent", "trend", "by-agent-model", "by-provider", "by-biller", "by-project", "window-spend", "finance-summary", "finance-by-biller", "finance-by-kind", "finance-events"];
+    for (const operation of operations) {
+      expect((await request(app).get(`/api/orgs/organization-1/costs/${operation}`)).status).toBe(404);
+      expect((await request(app).head(`/api/orgs/organization-1/costs/${operation}`)).status).toBe(404);
+    }
+    expect(costRead).not.toHaveBeenCalled();
+    expect(mockCostService.summary).not.toHaveBeenCalled();
+    expect(mockFinanceService.list).not.toHaveBeenCalled();
   });
 
   it("fails closed on native errors and authenticates before the bridge", async () => {

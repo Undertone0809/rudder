@@ -834,7 +834,7 @@ export function issueRoutes(
     sendRetiredIssueDocumentsResponse(res);
   });
 
-  router.post("/issues/:id/work-products", validate(createIssueWorkProductSchema), async (req, res) => {
+  if (!nativePublicIssueIngress) router.post("/issues/:id/work-products", validate(createIssueWorkProductSchema), async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -866,7 +866,7 @@ export function issueRoutes(
     res.status(201).json(product);
   });
 
-  router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
+  if (!nativePublicIssueIngress) router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
@@ -895,7 +895,7 @@ export function issueRoutes(
     res.json(product);
   });
 
-  router.delete("/work-products/:id", async (req, res) => {
+  if (!nativePublicIssueIngress) router.delete("/work-products/:id", async (req, res) => {
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
@@ -1119,6 +1119,7 @@ export function issueRoutes(
     workspaceBrowser,
     assertAgentRunCheckoutOwnership,
     resolveAgentIssueRunId,
+    nativeIssueCore: nativePublicIssueIngress,
   });
   return router;
 }

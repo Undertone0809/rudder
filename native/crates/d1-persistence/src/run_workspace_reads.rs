@@ -1,7 +1,7 @@
 //! Scoped read authority for the run/execution workspace GET aliases.
 use crate::{
     StoreError,
-    activity_reads::{details, legacy_date_text, legacy_stamp},
+    activity_reads::{details, utc_date_text, utc_stamp},
     legacy_read_json::normalize_legacy_read_json,
 };
 use serde::Deserialize;
@@ -70,10 +70,10 @@ fn read_sql() -> String {
     ];
     let dates = columns
         .iter()
-        .map(|column| format!("{} AS {column}", legacy_stamp(&format!("w.{column}"))))
+        .map(|column| format!("{} AS {column}", utc_stamp(&format!("w.{column}"))))
         .collect::<Vec<_>>()
         .join(",");
-    let date = |column: &str| legacy_date_text(&format!("d.{column}"));
+    let date = |column: &str| utc_date_text(&format!("d.{column}"));
     format!(
         r#"SELECT jsonb_build_object('id',w.id,'orgId',w.org_id,'projectId',w.project_id,
       'projectWorkspaceId',w.project_workspace_id,'sourceIssueId',w.source_issue_id,'mode',w.mode,

@@ -221,7 +221,7 @@ fn replace_bounded(input: &str, needle: &str, replacement: &str) -> String {
     output
 }
 
-fn redact_current_user_text(input: &str) -> String {
+pub(crate) fn redact_current_user_text(input: &str) -> String {
     let mut names = ["USER", "LOGNAME", "USERNAME"]
         .iter()
         .filter_map(|key| env::var(key).ok())

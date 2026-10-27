@@ -7,7 +7,7 @@
     "agent_id": "root"
   },
   "intent": {
-    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# Rudder 全 Rust 后端迁移与 Node 退役\n\n## 目标与完成标准\n\n完成所有 Rudder 后端接口、业务逻辑和运行职责的 Rust 迁移。最终产品直接启动 Rust 后端，不再通过 Node 提供鉴权、业务处理、数据库迁移、调度或恢复能力。新增后端功能从本轮开始统一使用 Rust。\n\n保留 React 前端、Electron 桌面壳、构建工具及用户选择的外部 CLI/MCP；这些组件不能隐藏第一方 Node 后端职责。\n\n**完成必须同时满足：**\n\n- 所有后端能力清单项都有 Rust 实现、真实入口验收及旧实现退役证据。\n- 默认安装、启动、升级和核心工作流不依赖 Node 后端产物。\n- 当前候选通过独立审核、真实环境验收、跨平台打包检查及必要 CI。\n- 所有变更通过受保护 PR 交付；生产部署与源码完成分别记录。\n\n## 实施顺序\n\n| 阶段 | 实施内容 | 退出条件 |\n|---|---|---|\n| 1. 清单与约束 | 基于最新 main 重建 HTTP、WebSocket、鉴权、后台任务、迁移、CLI/MCP、启动和恢复清单；关联近期已合入成果及未合入工作 | 没有未分类能力；CI 能阻止新增 Node 后端职责 |\n| 2. 原生鉴权 | Rust 接管会话、Cookie、API Key、设备授权、OAuth 回调、组织权限及撤销检查 | 现有账号、凭据和会话兼容；无需 Node 提供身份判断 |\n| 3. 数据库与生命周期 | 将 Rust 只读迁移预检扩展为完整迁移执行器；接管 PostgreSQL 启停、备份、恢复与启动协调 | Rust 独占迁移执行；旧库升级、并发启动和失败恢复通过 |\n| 4. 全部业务接口 | 按领域迁移完整读写流程，并直接挂载到 Rust 公共入口；复用已完成的 Rust 实现 | 每个领域的查询、写入、审计、副作用和恢复均闭环，旧 Node 路径退役 |\n| 5. 执行与后台任务 | 迁移 Agent 执行编排、Chat、Automation、heartbeat、队列、调度器、集成、analytics 和 managed MCP 后端 | 单一任务所有者；取消、重试、崩溃恢复和重启不重复执行 |\n| 6. CLI/MCP 与默认切换 | 第一方 CLI/MCP 使用 Rust 实现；桌面与独立服务默认启动 Rust；移除代理和 Node 后端依赖 | 移走 Node 后端产物后，完整安装与核心工作流仍通过 |\n\n阶段 2、3 与独立业务领域可并行。业务领域按“组织/资源/Agent → Project/Goal → Issue/审批/预算/Review → 执行/Chat/Automation → 集成与恢复”推进；已有 Rust 能力直接复用，补齐剩余职责。\n\n公共入口最终切换必须等待原生鉴权完成。后台任务切换必须等待对应事务和持久化状态机完成，禁止两套实现同时拥有写入或调度权。\n\n## 架构与兼容策略\n\n- 采用现有 Actix、Tokio、SQLx 基础，组织为模块化 Rust 后端；按领域拆分模块，避免继续扩大集中式服务文件。\n- 保持现有公开 API 路径、请求响应、错误码、流式协议、CLI 命令及 MCP 工具契约。TypeScript 客户端类型和描述符通过契约生成或一致性检查保持同步。\n- 保留 PostgreSQL 数据、历史 SQL、迁移顺序和 journal 兼容性，不重置实例、不建立第二套独立迁移历史。\n- 每个写入切片同时迁移校验、权限、事务、activity/audit、outbox、幂等及相关副作用；不能只把 SQL 搬到 Rust。\n- 过渡期允许明确登记的 Node 桥接，但已迁移能力失败时不得回退到 Node。最终删除桥接、代理、旧业务实现及其运行依赖。\n- 保留现有会话与加密数据兼容；安全缺陷不作为必须复制的旧行为，修复需单独记录并验证。\n- 更新开发规范和 CI：新增后端业务只能进入 Rust；既有 Node 迁移债务只能减少，兼容代码必须关联具体退役项。\n\n## 验证与交付\n\n每批执行固定流程：**实现与作者检查 → 独立阶段审核 → 冻结候选 → 独立真实验收 → 最终审核 → PR 与 CI**。验收绑定源码、构建产物、运行实例和测试数据身份；相关内容改变后重新验证。\n\n重点覆盖：\n\n- 跨组织访问、私有 Chat、会话撤销、设备撤销、权限变更与并发竞态。\n- 大数据量、分页、时区、深层 JSON、历史数据及完整响应兼容。\n- 事务回滚、重复请求、丢失响应后重试、旧写入者隔离和审计一致性。\n- WebSocket/SSE 断连重连、背压、取消、子进程退出及崩溃恢复。\n- 旧版本数据库升级、迁移锁竞争、备份失败、迁移中断和可恢复回滚。\n- 浏览器核心流程、CLI/MCP 同等操作、真实运行及打包后的安装启动。\n\n跨包变更运行仓库完整基线；涉及启动、迁移和打包时运行 `pnpm desktop:verify`。最终增加独立的 **无 Node 后端验收**：移除后端 JS 产物，检查进程树和监听者，完成核心业务闭环，并证明没有调用旧服务。\n\n## 调度与默认约定\n\n- 当前聊天负责总体调度；子代理统一使用 `gpt-6-luna`、`xhigh`，分别负责边界清晰的实现、审核和验收。\n- 使用已创建的独立工作区，保留原工作区、用户数据及其他任务修改。\n- 先核实旧 PR 和分支是否可复用，再分派重叠领域，避免重复实现。\n- 延续原总计划，实施时更新权威清单和交付记录；历史验收保留，但不能替代当前候选证据。\n- 以已退役的后端职责和完整工作流衡量完成度，不以 Rust 代码量、接口数量或估算百分比宣布完成。\n- 当前计划模式只完成方案；代码修改、提交和运行环境切换在进入执行模式后进行。\n\n",
+    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# Rudder \u5168 Rust \u540e\u7aef\u8fc1\u79fb\u4e0e Node \u9000\u5f79\n\n## \u76ee\u6807\u4e0e\u5b8c\u6210\u6807\u51c6\n\n\u5b8c\u6210\u6240\u6709 Rudder \u540e\u7aef\u63a5\u53e3\u3001\u4e1a\u52a1\u903b\u8f91\u548c\u8fd0\u884c\u804c\u8d23\u7684 Rust \u8fc1\u79fb\u3002\u6700\u7ec8\u4ea7\u54c1\u76f4\u63a5\u542f\u52a8 Rust \u540e\u7aef\uff0c\u4e0d\u518d\u901a\u8fc7 Node \u63d0\u4f9b\u9274\u6743\u3001\u4e1a\u52a1\u5904\u7406\u3001\u6570\u636e\u5e93\u8fc1\u79fb\u3001\u8c03\u5ea6\u6216\u6062\u590d\u80fd\u529b\u3002\u65b0\u589e\u540e\u7aef\u529f\u80fd\u4ece\u672c\u8f6e\u5f00\u59cb\u7edf\u4e00\u4f7f\u7528 Rust\u3002\n\n\u4fdd\u7559 React \u524d\u7aef\u3001Electron \u684c\u9762\u58f3\u3001\u6784\u5efa\u5de5\u5177\u53ca\u7528\u6237\u9009\u62e9\u7684\u5916\u90e8 CLI/MCP\uff1b\u8fd9\u4e9b\u7ec4\u4ef6\u4e0d\u80fd\u9690\u85cf\u7b2c\u4e00\u65b9 Node \u540e\u7aef\u804c\u8d23\u3002\n\n**\u5b8c\u6210\u5fc5\u987b\u540c\u65f6\u6ee1\u8db3\uff1a**\n\n- \u6240\u6709\u540e\u7aef\u80fd\u529b\u6e05\u5355\u9879\u90fd\u6709 Rust \u5b9e\u73b0\u3001\u771f\u5b9e\u5165\u53e3\u9a8c\u6536\u53ca\u65e7\u5b9e\u73b0\u9000\u5f79\u8bc1\u636e\u3002\n- \u9ed8\u8ba4\u5b89\u88c5\u3001\u542f\u52a8\u3001\u5347\u7ea7\u548c\u6838\u5fc3\u5de5\u4f5c\u6d41\u4e0d\u4f9d\u8d56 Node \u540e\u7aef\u4ea7\u7269\u3002\n- \u5f53\u524d\u5019\u9009\u901a\u8fc7\u72ec\u7acb\u5ba1\u6838\u3001\u771f\u5b9e\u73af\u5883\u9a8c\u6536\u3001\u8de8\u5e73\u53f0\u6253\u5305\u68c0\u67e5\u53ca\u5fc5\u8981 CI\u3002\n- \u6240\u6709\u53d8\u66f4\u901a\u8fc7\u53d7\u4fdd\u62a4 PR \u4ea4\u4ed8\uff1b\u751f\u4ea7\u90e8\u7f72\u4e0e\u6e90\u7801\u5b8c\u6210\u5206\u522b\u8bb0\u5f55\u3002\n\n## \u5b9e\u65bd\u987a\u5e8f\n\n| \u9636\u6bb5 | \u5b9e\u65bd\u5185\u5bb9 | \u9000\u51fa\u6761\u4ef6 |\n|---|---|---|\n| 1. \u6e05\u5355\u4e0e\u7ea6\u675f | \u57fa\u4e8e\u6700\u65b0 main \u91cd\u5efa HTTP\u3001WebSocket\u3001\u9274\u6743\u3001\u540e\u53f0\u4efb\u52a1\u3001\u8fc1\u79fb\u3001CLI/MCP\u3001\u542f\u52a8\u548c\u6062\u590d\u6e05\u5355\uff1b\u5173\u8054\u8fd1\u671f\u5df2\u5408\u5165\u6210\u679c\u53ca\u672a\u5408\u5165\u5de5\u4f5c | \u6ca1\u6709\u672a\u5206\u7c7b\u80fd\u529b\uff1bCI \u80fd\u963b\u6b62\u65b0\u589e Node \u540e\u7aef\u804c\u8d23 |\n| 2. \u539f\u751f\u9274\u6743 | Rust \u63a5\u7ba1\u4f1a\u8bdd\u3001Cookie\u3001API Key\u3001\u8bbe\u5907\u6388\u6743\u3001OAuth \u56de\u8c03\u3001\u7ec4\u7ec7\u6743\u9650\u53ca\u64a4\u9500\u68c0\u67e5 | \u73b0\u6709\u8d26\u53f7\u3001\u51ed\u636e\u548c\u4f1a\u8bdd\u517c\u5bb9\uff1b\u65e0\u9700 Node \u63d0\u4f9b\u8eab\u4efd\u5224\u65ad |\n| 3. \u6570\u636e\u5e93\u4e0e\u751f\u547d\u5468\u671f | \u5c06 Rust \u53ea\u8bfb\u8fc1\u79fb\u9884\u68c0\u6269\u5c55\u4e3a\u5b8c\u6574\u8fc1\u79fb\u6267\u884c\u5668\uff1b\u63a5\u7ba1 PostgreSQL \u542f\u505c\u3001\u5907\u4efd\u3001\u6062\u590d\u4e0e\u542f\u52a8\u534f\u8c03 | Rust \u72ec\u5360\u8fc1\u79fb\u6267\u884c\uff1b\u65e7\u5e93\u5347\u7ea7\u3001\u5e76\u53d1\u542f\u52a8\u548c\u5931\u8d25\u6062\u590d\u901a\u8fc7 |\n| 4. \u5168\u90e8\u4e1a\u52a1\u63a5\u53e3 | \u6309\u9886\u57df\u8fc1\u79fb\u5b8c\u6574\u8bfb\u5199\u6d41\u7a0b\uff0c\u5e76\u76f4\u63a5\u6302\u8f7d\u5230 Rust \u516c\u5171\u5165\u53e3\uff1b\u590d\u7528\u5df2\u5b8c\u6210\u7684 Rust \u5b9e\u73b0 | \u6bcf\u4e2a\u9886\u57df\u7684\u67e5\u8be2\u3001\u5199\u5165\u3001\u5ba1\u8ba1\u3001\u526f\u4f5c\u7528\u548c\u6062\u590d\u5747\u95ed\u73af\uff0c\u65e7 Node \u8def\u5f84\u9000\u5f79 |\n| 5. \u6267\u884c\u4e0e\u540e\u53f0\u4efb\u52a1 | \u8fc1\u79fb Agent \u6267\u884c\u7f16\u6392\u3001Chat\u3001Automation\u3001heartbeat\u3001\u961f\u5217\u3001\u8c03\u5ea6\u5668\u3001\u96c6\u6210\u3001analytics \u548c managed MCP \u540e\u7aef | \u5355\u4e00\u4efb\u52a1\u6240\u6709\u8005\uff1b\u53d6\u6d88\u3001\u91cd\u8bd5\u3001\u5d29\u6e83\u6062\u590d\u548c\u91cd\u542f\u4e0d\u91cd\u590d\u6267\u884c |\n| 6. CLI/MCP \u4e0e\u9ed8\u8ba4\u5207\u6362 | \u7b2c\u4e00\u65b9 CLI/MCP \u4f7f\u7528 Rust \u5b9e\u73b0\uff1b\u684c\u9762\u4e0e\u72ec\u7acb\u670d\u52a1\u9ed8\u8ba4\u542f\u52a8 Rust\uff1b\u79fb\u9664\u4ee3\u7406\u548c Node \u540e\u7aef\u4f9d\u8d56 | \u79fb\u8d70 Node \u540e\u7aef\u4ea7\u7269\u540e\uff0c\u5b8c\u6574\u5b89\u88c5\u4e0e\u6838\u5fc3\u5de5\u4f5c\u6d41\u4ecd\u901a\u8fc7 |\n\n\u9636\u6bb5 2\u30013 \u4e0e\u72ec\u7acb\u4e1a\u52a1\u9886\u57df\u53ef\u5e76\u884c\u3002\u4e1a\u52a1\u9886\u57df\u6309\u201c\u7ec4\u7ec7/\u8d44\u6e90/Agent \u2192 Project/Goal \u2192 Issue/\u5ba1\u6279/\u9884\u7b97/Review \u2192 \u6267\u884c/Chat/Automation \u2192 \u96c6\u6210\u4e0e\u6062\u590d\u201d\u63a8\u8fdb\uff1b\u5df2\u6709 Rust \u80fd\u529b\u76f4\u63a5\u590d\u7528\uff0c\u8865\u9f50\u5269\u4f59\u804c\u8d23\u3002\n\n\u516c\u5171\u5165\u53e3\u6700\u7ec8\u5207\u6362\u5fc5\u987b\u7b49\u5f85\u539f\u751f\u9274\u6743\u5b8c\u6210\u3002\u540e\u53f0\u4efb\u52a1\u5207\u6362\u5fc5\u987b\u7b49\u5f85\u5bf9\u5e94\u4e8b\u52a1\u548c\u6301\u4e45\u5316\u72b6\u6001\u673a\u5b8c\u6210\uff0c\u7981\u6b62\u4e24\u5957\u5b9e\u73b0\u540c\u65f6\u62e5\u6709\u5199\u5165\u6216\u8c03\u5ea6\u6743\u3002\n\n## \u67b6\u6784\u4e0e\u517c\u5bb9\u7b56\u7565\n\n- \u91c7\u7528\u73b0\u6709 Actix\u3001Tokio\u3001SQLx \u57fa\u7840\uff0c\u7ec4\u7ec7\u4e3a\u6a21\u5757\u5316 Rust \u540e\u7aef\uff1b\u6309\u9886\u57df\u62c6\u5206\u6a21\u5757\uff0c\u907f\u514d\u7ee7\u7eed\u6269\u5927\u96c6\u4e2d\u5f0f\u670d\u52a1\u6587\u4ef6\u3002\n- \u4fdd\u6301\u73b0\u6709\u516c\u5f00 API \u8def\u5f84\u3001\u8bf7\u6c42\u54cd\u5e94\u3001\u9519\u8bef\u7801\u3001\u6d41\u5f0f\u534f\u8bae\u3001CLI \u547d\u4ee4\u53ca MCP \u5de5\u5177\u5951\u7ea6\u3002TypeScript \u5ba2\u6237\u7aef\u7c7b\u578b\u548c\u63cf\u8ff0\u7b26\u901a\u8fc7\u5951\u7ea6\u751f\u6210\u6216\u4e00\u81f4\u6027\u68c0\u67e5\u4fdd\u6301\u540c\u6b65\u3002\n- \u4fdd\u7559 PostgreSQL \u6570\u636e\u3001\u5386\u53f2 SQL\u3001\u8fc1\u79fb\u987a\u5e8f\u548c journal \u517c\u5bb9\u6027\uff0c\u4e0d\u91cd\u7f6e\u5b9e\u4f8b\u3001\u4e0d\u5efa\u7acb\u7b2c\u4e8c\u5957\u72ec\u7acb\u8fc1\u79fb\u5386\u53f2\u3002\n- \u6bcf\u4e2a\u5199\u5165\u5207\u7247\u540c\u65f6\u8fc1\u79fb\u6821\u9a8c\u3001\u6743\u9650\u3001\u4e8b\u52a1\u3001activity/audit\u3001outbox\u3001\u5e42\u7b49\u53ca\u76f8\u5173\u526f\u4f5c\u7528\uff1b\u4e0d\u80fd\u53ea\u628a SQL \u642c\u5230 Rust\u3002\n- \u8fc7\u6e21\u671f\u5141\u8bb8\u660e\u786e\u767b\u8bb0\u7684 Node \u6865\u63a5\uff0c\u4f46\u5df2\u8fc1\u79fb\u80fd\u529b\u5931\u8d25\u65f6\u4e0d\u5f97\u56de\u9000\u5230 Node\u3002\u6700\u7ec8\u5220\u9664\u6865\u63a5\u3001\u4ee3\u7406\u3001\u65e7\u4e1a\u52a1\u5b9e\u73b0\u53ca\u5176\u8fd0\u884c\u4f9d\u8d56\u3002\n- \u4fdd\u7559\u73b0\u6709\u4f1a\u8bdd\u4e0e\u52a0\u5bc6\u6570\u636e\u517c\u5bb9\uff1b\u5b89\u5168\u7f3a\u9677\u4e0d\u4f5c\u4e3a\u5fc5\u987b\u590d\u5236\u7684\u65e7\u884c\u4e3a\uff0c\u4fee\u590d\u9700\u5355\u72ec\u8bb0\u5f55\u5e76\u9a8c\u8bc1\u3002\n- \u66f4\u65b0\u5f00\u53d1\u89c4\u8303\u548c CI\uff1a\u65b0\u589e\u540e\u7aef\u4e1a\u52a1\u53ea\u80fd\u8fdb\u5165 Rust\uff1b\u65e2\u6709 Node \u8fc1\u79fb\u503a\u52a1\u53ea\u80fd\u51cf\u5c11\uff0c\u517c\u5bb9\u4ee3\u7801\u5fc5\u987b\u5173\u8054\u5177\u4f53\u9000\u5f79\u9879\u3002\n\n## \u9a8c\u8bc1\u4e0e\u4ea4\u4ed8\n\n\u6bcf\u6279\u6267\u884c\u56fa\u5b9a\u6d41\u7a0b\uff1a**\u5b9e\u73b0\u4e0e\u4f5c\u8005\u68c0\u67e5 \u2192 \u72ec\u7acb\u9636\u6bb5\u5ba1\u6838 \u2192 \u51bb\u7ed3\u5019\u9009 \u2192 \u72ec\u7acb\u771f\u5b9e\u9a8c\u6536 \u2192 \u6700\u7ec8\u5ba1\u6838 \u2192 PR \u4e0e CI**\u3002\u9a8c\u6536\u7ed1\u5b9a\u6e90\u7801\u3001\u6784\u5efa\u4ea7\u7269\u3001\u8fd0\u884c\u5b9e\u4f8b\u548c\u6d4b\u8bd5\u6570\u636e\u8eab\u4efd\uff1b\u76f8\u5173\u5185\u5bb9\u6539\u53d8\u540e\u91cd\u65b0\u9a8c\u8bc1\u3002\n\n\u91cd\u70b9\u8986\u76d6\uff1a\n\n- \u8de8\u7ec4\u7ec7\u8bbf\u95ee\u3001\u79c1\u6709 Chat\u3001\u4f1a\u8bdd\u64a4\u9500\u3001\u8bbe\u5907\u64a4\u9500\u3001\u6743\u9650\u53d8\u66f4\u4e0e\u5e76\u53d1\u7ade\u6001\u3002\n- \u5927\u6570\u636e\u91cf\u3001\u5206\u9875\u3001\u65f6\u533a\u3001\u6df1\u5c42 JSON\u3001\u5386\u53f2\u6570\u636e\u53ca\u5b8c\u6574\u54cd\u5e94\u517c\u5bb9\u3002\n- \u4e8b\u52a1\u56de\u6eda\u3001\u91cd\u590d\u8bf7\u6c42\u3001\u4e22\u5931\u54cd\u5e94\u540e\u91cd\u8bd5\u3001\u65e7\u5199\u5165\u8005\u9694\u79bb\u548c\u5ba1\u8ba1\u4e00\u81f4\u6027\u3002\n- WebSocket/SSE \u65ad\u8fde\u91cd\u8fde\u3001\u80cc\u538b\u3001\u53d6\u6d88\u3001\u5b50\u8fdb\u7a0b\u9000\u51fa\u53ca\u5d29\u6e83\u6062\u590d\u3002\n- \u65e7\u7248\u672c\u6570\u636e\u5e93\u5347\u7ea7\u3001\u8fc1\u79fb\u9501\u7ade\u4e89\u3001\u5907\u4efd\u5931\u8d25\u3001\u8fc1\u79fb\u4e2d\u65ad\u548c\u53ef\u6062\u590d\u56de\u6eda\u3002\n- \u6d4f\u89c8\u5668\u6838\u5fc3\u6d41\u7a0b\u3001CLI/MCP \u540c\u7b49\u64cd\u4f5c\u3001\u771f\u5b9e\u8fd0\u884c\u53ca\u6253\u5305\u540e\u7684\u5b89\u88c5\u542f\u52a8\u3002\n\n\u8de8\u5305\u53d8\u66f4\u8fd0\u884c\u4ed3\u5e93\u5b8c\u6574\u57fa\u7ebf\uff1b\u6d89\u53ca\u542f\u52a8\u3001\u8fc1\u79fb\u548c\u6253\u5305\u65f6\u8fd0\u884c `pnpm desktop:verify`\u3002\u6700\u7ec8\u589e\u52a0\u72ec\u7acb\u7684 **\u65e0 Node \u540e\u7aef\u9a8c\u6536**\uff1a\u79fb\u9664\u540e\u7aef JS \u4ea7\u7269\uff0c\u68c0\u67e5\u8fdb\u7a0b\u6811\u548c\u76d1\u542c\u8005\uff0c\u5b8c\u6210\u6838\u5fc3\u4e1a\u52a1\u95ed\u73af\uff0c\u5e76\u8bc1\u660e\u6ca1\u6709\u8c03\u7528\u65e7\u670d\u52a1\u3002\n\n## \u8c03\u5ea6\u4e0e\u9ed8\u8ba4\u7ea6\u5b9a\n\n- \u5f53\u524d\u804a\u5929\u8d1f\u8d23\u603b\u4f53\u8c03\u5ea6\uff1b\u5b50\u4ee3\u7406\u7edf\u4e00\u4f7f\u7528 `gpt-6-luna`\u3001`xhigh`\uff0c\u5206\u522b\u8d1f\u8d23\u8fb9\u754c\u6e05\u6670\u7684\u5b9e\u73b0\u3001\u5ba1\u6838\u548c\u9a8c\u6536\u3002\n- \u4f7f\u7528\u5df2\u521b\u5efa\u7684\u72ec\u7acb\u5de5\u4f5c\u533a\uff0c\u4fdd\u7559\u539f\u5de5\u4f5c\u533a\u3001\u7528\u6237\u6570\u636e\u53ca\u5176\u4ed6\u4efb\u52a1\u4fee\u6539\u3002\n- \u5148\u6838\u5b9e\u65e7 PR \u548c\u5206\u652f\u662f\u5426\u53ef\u590d\u7528\uff0c\u518d\u5206\u6d3e\u91cd\u53e0\u9886\u57df\uff0c\u907f\u514d\u91cd\u590d\u5b9e\u73b0\u3002\n- \u5ef6\u7eed\u539f\u603b\u8ba1\u5212\uff0c\u5b9e\u65bd\u65f6\u66f4\u65b0\u6743\u5a01\u6e05\u5355\u548c\u4ea4\u4ed8\u8bb0\u5f55\uff1b\u5386\u53f2\u9a8c\u6536\u4fdd\u7559\uff0c\u4f46\u4e0d\u80fd\u66ff\u4ee3\u5f53\u524d\u5019\u9009\u8bc1\u636e\u3002\n- \u4ee5\u5df2\u9000\u5f79\u7684\u540e\u7aef\u804c\u8d23\u548c\u5b8c\u6574\u5de5\u4f5c\u6d41\u8861\u91cf\u5b8c\u6210\u5ea6\uff0c\u4e0d\u4ee5 Rust \u4ee3\u7801\u91cf\u3001\u63a5\u53e3\u6570\u91cf\u6216\u4f30\u7b97\u767e\u5206\u6bd4\u5ba3\u5e03\u5b8c\u6210\u3002\n- \u5f53\u524d\u8ba1\u5212\u6a21\u5f0f\u53ea\u5b8c\u6210\u65b9\u6848\uff1b\u4ee3\u7801\u4fee\u6539\u3001\u63d0\u4ea4\u548c\u8fd0\u884c\u73af\u5883\u5207\u6362\u5728\u8fdb\u5165\u6267\u884c\u6a21\u5f0f\u540e\u8fdb\u884c\u3002\n\n",
     "corrections": [],
     "non_goals": [
       "Rewrite React or Electron renderer",
@@ -258,11 +258,11 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-26T02:38:49.543476+00:00",
-    "observed_main": "ef5d1cc8e3db647aa8b39825526d0e8bcc1fc096",
-    "branch": "codex/rust-issue-core-20261026",
-    "status": "issue_core_author_validation_in_progress; no E publication or independent acceptance claimed",
-    "scope": "Issue list/detail/create/update/delete/reorder and self/Board checkout at selected native ingress, including actual validation, audit, wake/cancel requests, creation-request/automation finalization, description-image copy and lifecycle analytics. Legacy execution workers, attachment content reads, sidecar APIs and ingress-off/default cutover remain explicit debt.",
+    "updated_at": "2026-10-26T12:22:37.271531+00:00",
+    "observed_main": "8b91adb1e8cc2e9e4e3597239af6fbe9692141e7",
+    "branch": "codex/rust-issue-attachments-20261026",
+    "status": "Attachment/UTC/Automation/FinanceEvents combined source-stage accepted; author qualification and frozen acceptance pending",
+    "scope": "Four attachment operations, three Automation reads and FinanceEvents GET/HEAD, plus approved canonical UTC serialization; reuse existing Rust projections and storage.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -362,7 +362,14 @@
         "Per-worktree Cargo target and physical frozen acceptance artifacts",
         "Focused failure preflights before repeating broad baseline"
       ],
-      "claim": "These are bounded implemented corrections; no measured project-wide throughput improvement claimed."
+      "claim": "These are bounded implemented corrections; no measured project-wide throughput improvement claimed.",
+      "native_ci_cache_20261026": {
+        "problem": "native-foundations four-platform jobs do not restore Rust dependencies; exact-head CI observed repeated cold compile in Clippy, tests and release staging.",
+        "change": "Add one standard Rust cache step after toolchain selection, native -> target, separate matrix-target key, default dependency-only retention. No tests, thresholds, deadlines or branch protection weakened.",
+        "evidence": "/private/tmp/rudder-native-ci-cache-review-r1.md; sha256=f8c94958be5128d430e0f30512790ee12fcc7e41abc6000823e1d26bb4733cf3",
+        "observed_clippy_runner_seconds": 765,
+        "exact_runtime_savings": "Not yet measured; first cache-populating run may not improve. Full test step times include compilation and runtime."
+      }
     },
     "deployment": "not performed",
     "global_completion": false,
@@ -947,6 +954,224 @@
         "protected CI",
         "production release or installed-artifact acceptance"
       ]
+    },
+    "issue_comments_author_candidate_20261026": {
+      "state": "Author checks passed; independent overall stage/PAV/final and protected CI pending",
+      "dependency": "65be73a171032090880bdba8a1b2ac731d4b2a07",
+      "repository": "/Users/zeeland/.codex/worktrees/rust-maintenance-guardrails-305/rudder-oss",
+      "branch": "codex/rust-issue-comments-20261026",
+      "scope": "Five native public comment operations, aliases/cursors, comment reopening/interrupt/Steer, transactional audit and durable wake admission",
+      "author_report": "/private/tmp/rudder-issue-comments-C-author-r2.md",
+      "author_report_sha256": "3d27e72cf91a40a5b0a4d8828dbc6c8d899436d10f610ab29f0b2de48481ac48",
+      "public_http_postgresql": "PASS1/1 r9; later behavior-preserving lint and test-only corrections; final independent PAV still required",
+      "foundation_unit": "308PASS/0FAIL/26explicitlyignored",
+      "node_route_tests": "110PASS plus5comment/markdown contract tests",
+      "strict_clippy": "PASS affected D1/Foundation alltargets -Dwarnings",
+      "server_typecheck": "PASS",
+      "node_boundary_review": "/private/tmp/rudder-issue-comments-C-node-boundary-review-r1.json",
+      "remaining_debt": [
+        "ingress-off Node compatibility",
+        "attachment binary/upload/write paths",
+        "legacy_ts worker/executor and cancel consumer",
+        "other Issue sidecars and debug Issue writer"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "recorded_at_utc": "2026-10-26T06:02:03.714113+00:00"
+    },
+    "delivered_issue_core_20261026": {
+      "pr": 387,
+      "url": "https://github.com/Undertone0809/rudder/pull/387",
+      "head": "65be73a171032090880bdba8a1b2ac731d4b2a07",
+      "tested_tree": "1823e767f84965de35910d02d0916075a5f8a07d",
+      "merge": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "normal_protected_merge": true,
+      "observed_merged_at_utc": "2026-10-26T06:08:18.991581+00:00",
+      "ci": "21success +1 expected skipped; full qualification",
+      "ci_receipt": "/private/tmp/rudder-issue-core-E-final-candidate-r2/pr387-ci-review-r1.json",
+      "ci_receipt_sha256": "92ddc6ace108adaad9b8284e76a3cf2b33e74353ab7aa46668de435d78399a6e",
+      "independent_pav": "PASS r2, receipt930cd3d8d922fb1efad32d5394b1b7c23286ae4d1f8e1fa5d280b33f090820be",
+      "final_merge_review": "ACCEPT, receipt23dfd43a289a5ea4c6ec81e3c6641dbddf5698b53772a28a8a92a4a94638937b",
+      "desktop": "Exact-head CI packaged macOS arm64 PASS; local desktop:verify not claimed for E",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false
+    },
+    "combined_issue_comments_cost_reads_20261026": {
+      "state": "Author checks passed for combined candidate; independent stage/PAV/final and exact-head protected CI pending",
+      "main_dependency": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "scope": [
+        "Native five Issue comment operations and durable transactional effects",
+        "11native Cost/Finance reads reusing existingRust projections"
+      ],
+      "unmigrated_finance_events": "Existing Node transport + signed Rust projection retained; exact server/session TimeZone recovery blocked by SQLx0.8.6 UTCstartup; no heuristic/native failure fallback added",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "author_evidence": {
+        "comments": "/private/tmp/rudder-issue-comments-C-author-r2.md",
+        "cost_reads": "/private/tmp/rudder-cost-public-read-author-r1/cost-public-read-author-evidence-r1.md",
+        "cost_raw_terminal_archive": "/private/tmp/rudder-cost-public-read-author-r1/tool-terminal-archive-receipt-r1.json",
+        "direct_http": "Comments1/1 r9 and Cost1/1 current source; final exact-candidate independent replay required",
+        "units": "D1lib244PASS; Foundation308PASS/27ignored; Costparser2PASS",
+        "node_contracts": "Comment/lifecycle115PASS; Cost57PASS",
+        "checks": "PASS strict affected alltargetClippy, fullRustfmt, server typecheck, all6candidateTSimports",
+        "node_admission": "4current reviewed Node deltas; inherited E admissions are retained in Git/frozen history, not stale active comparison records"
+      },
+      "recorded_at_utc": "2026-10-26T07:25:47.135090+00:00",
+      "stage_correction": {
+        "rejected_candidate": "0bc5906c8fc866cd5bcd47f867a79c31ec589cc1",
+        "stage_receipt": "/private/tmp/rudder-comments-cost-final-candidate-r1/independent-stage-review-r1.md",
+        "finding": "Normal Steer admission errors could commit a comment before returning500 or an unrelated409",
+        "fix": "Reuse exact saved-comment Steer409 classifier; every other admission error rolls back the outer transaction",
+        "regression": "Fresh normal Steer queue INSERT failure returns500 with no persisted mutation; paused-Agent deliberate409 returns and persists comment without wake/cancel",
+        "author_result": "/private/tmp/rudder-issue-comments-C-author-steer-r1/author-result.json",
+        "author_result_sha256": "4e8dab298c6159664308384734bf299f6e21667323c0dc8826c2cbff1edb4ab3",
+        "result": "PASS current realHTTP1/1, D1units244, Foundation308/27ignored, fullfmt/strictClippy; final wrapper rebuilt",
+        "state": "New independent stage/PAV pending"
+      }
+    },
+    "issue_work_product_public_writes_20261026": {
+      "state": "Author validation passed; independent stage/PAV/final and protectedCI pending",
+      "source_parent": "4ed20f4ffa5bbd7460e7268781ddba2ff4f2033d",
+      "scope": [
+        "POST /api/issues/:id/work-products",
+        "PATCH /api/work-products/:id",
+        "DELETE /api/work-products/:id"
+      ],
+      "ownership": "Rust native identity, organization scope, payload validation, existing projection, primary-row demotion, transaction and activity; selected Node handlers absent; legacy ingress-off unchanged",
+      "security_correction": "Legacy Node accepted related IDs from another organization. Rust rejects missing or foreign project/execution-workspace/runtime-service/heartbeat-run references using the same422 field_reference_error before mutation. All four fields have POST+PATCH denial and preserved-state checks. No schema/history reset.",
+      "compatibility": "Successful payloads, status/error categories, field diagnostic paths and representative required/numeric validation vectors preserved. Byte-for-byte every Zod human diagnostic message is not claimed; invalid-enum wording and shared nonobject diagnostic detail remain bounded differences.",
+      "legacy_followup": "Changing a primary product type can retain another primary in target type; matches existing Node behavior and remains nonblocking separate product debt.",
+      "author_evidence": "/private/tmp/rudder-issue-work-products-scope-author-r1/result.md",
+      "author_checks": "PASS strict D1/Foundation alltargetClippy,2validatorunits,1realpublicHTTP/PGfixture187migrations,Node112tests/serverTC,rustfmt/standalonebuild; exactrollbackafterprimarydemotion proven with disposable titleCHECK",
+      "boundary_review": "/private/tmp/rudder-issue-work-products-node-boundary-review-r1.md",
+      "remaining_node_debt": [
+        "ingress-off compatibility",
+        "Issue binary attachments/import/content",
+        "Issue debug creation and remaining sidecar writes",
+        "legacy execution/scheduling consumers"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "at_utc": "2026-10-26T09:27:46.164075+00:00"
+    },
+    "combined_issue_cost_run_public_batch_20261026": {
+      "state": "Integrated author checks PASS: strictaffectedClippy,Cursorpollregression1,D1units246,Foundation314/28ignored,standalonebuild; author3HTTPresult recorded; independentstage/frozenPAV andfullnewheadCI pending",
+      "source_parent": "e3c16bd83d6f73bb4cf94ab8db0ebb78a579a5d1",
+      "main_base": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "scope": [
+        "Previously reviewed five Issue comment operations and eleven Cost/Finance reads",
+        "Previously accepted Issue Work Product CRUD with org-reference correction",
+        "Ten public Run GET/HEAD operations reusing existing Rust projections"
+      ],
+      "reuse": "Run6files byteidentical to author7e69; globalrouter differs only by excluding Automation registrations. PriorWorkProduct8files unchanged. New integrated runtime/PAV required.",
+      "excluded": "Automation candidate7e69 preserved separately pending human historical date policy; Attachment source in E unverified and excluded.",
+      "ci_repair": "Existing Cursor cfg(test) helper treated a200ms HostError::Timeout as terminal despite5soverall deadline. Continue normal polling on Timeout, retainfatalerrors/deadline, and exercise250ms syntheticchild; no productionCursor code change.",
+      "old_ci": "4ed Macx64 failed unchanged test-only helper; source comments308Foundationunits passed. One-job rerun was refused by GitHub403 because other workflow jobs were still running. No approval bypass or check mutation.",
+      "delivery_strategy": "Update existing protected PR388 with compatible qualified cohort instead of serially waiting for stalebase CI and another complete qualification; freeze this cutline before taking Attachment work.",
+      "author_reports": [
+        "/private/tmp/rudder-issue-work-products-scope-author-r1/result.md",
+        "/private/tmp/rudder-run-public-reads-author-20261026-r1/author-evidence.md"
+      ],
+      "remaining_node_debt": [
+        "Ingress-off compatibility",
+        "Automation public reads pendingpolicy and allmutation/scheduling",
+        "Run log/live/cancel/retry/delegation/execution",
+        "Issue Attachment lifecycle under separate authorwork",
+        "Other domains and global no-Node installation"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_migration_complete": false,
+      "at_utc": "2026-10-26T10:13:17.539023+00:00",
+      "integration_author_result": "/private/tmp/rudder-issue-cost-run-combined-author-r1/three-http-result.json"
+    },
+    "ci_packaging_exception_20261026": {
+      "approved": true,
+      "human_answer": "\u672c\u8f6e\u7a7a\u95f4\u4e0d\u8db3\u65f6\u7edf\u4e00\u7528 CI\uff08\u63a8\u8350\uff09",
+      "source_question_id": "call_c3400e7f34a9451eb0e4dd148220afcd",
+      "scope": "This Rust migration episode: when local disk is insufficient, the corresponding protected PR full CI replaces local pnpm desktop:verify, including full repository tests/build, cross-platform Rust and packaged Desktop smoke.",
+      "retained_gates": [
+        "Independent real-environment acceptance for every batch",
+        "All necessary exact-head CI",
+        "Final independent review before protected merge"
+      ],
+      "not_authorized": [
+        "Bypassing branch protection",
+        "Replacing independent real acceptance with unit tests",
+        "Automatic release or installed-app replacement"
+      ],
+      "at_utc": "2026-10-26T11:11:21.242969+00:00"
+    },
+    "architecture_preflight_iteration_20261026": {
+      "problem": "The new Node Run route registration blocks grew agents.management-routes.ts from1500 to1511lines and failed the general architecture comparison. Rust authority-inventory checks had passed, but the author preflight omitted this separate cheap check.",
+      "smallest_correction": "Use strict inline existing-bridge configuration guards at the ten registrations; remove redundant localflag andfivewrapperblocks. No body/query/permission call expression changed.",
+      "proof": "TypeScript parse+printed call-expression AST identical; currentfrozenRustbinary reused; realNodeHTTP/Rust/PG Run suite19/19 andserverTC passed; architectureaudit comparisonregressionsnone anddebtgovernancevalid.",
+      "prevention": "Backend Architecture now requires both general architecture and Rust authority source comparisons against a fresh base before expensive qualification; no audit baseline/threshold/exception weakened.",
+      "evidence": "/private/tmp/rudder-pr388-integrated-final-candidate-r1/node-gate-inline-equivalence-r1.json",
+      "remaining": "Fresh exactNodeboundary review/hashadmission andpublicationidentityrebind; allnewheadCI required",
+      "at_utc": "2026-10-26T11:13:02.781031+00:00"
+    },
+    "attachment_automation_utc_batch_20261026": {
+      "state": "Combined author qualification PASS; frozen independent PAV, final publication review and exact-head CI pending",
+      "source_checkpoint": "3087bda6c69aaf0c57aa3dd425b345ddb1ebaed2",
+      "base_candidate": "c31520c373f8e8809cd790b067a136f707f276ec",
+      "current_main": "08820a2df8272bfaee6c675ac00b36682dc765bd",
+      "included_operations": 8,
+      "attachment_author_checkpoint": "c72b0f551d32f3220d668d8de7fc8e8f4a17f513",
+      "utc_author_checkpoint": "d54bf28786c9d70a4d7ba2b2da4fdc69b156b292",
+      "human_date_policy": "Use actual canonical UTC dates while preserving stored data; do not reproduce legacy AD44-to2044/null driver errors. Approved in this chat.",
+      "source_stage_review": "/private/tmp/rudder-issue-attachments-author-r1/independent-stage-review-r1.md (sha256=b8e79cb8225de2c0a55e7e08c0ac0df67e90ac80398af62e24b30c1a5cfd8c92; verdict=accept; exact c315-to-3087 five-file Node boundary)",
+      "source_only_utc_review": "/private/tmp/rudder-automation-utc-source-r1/validation-plan.md",
+      "author_attachment_evidence": "/private/tmp/rudder-issue-attachments-author-r1/author-source-result-r1.json",
+      "qualification_strategy": "One combined build and fresh-database four-selector public HTTP workflow; independent stage/frozen PAV/final publication review and exact-head full CI required. Local desktop verification may use the already-approved episode-wide CI exception when disk is insufficient.",
+      "remaining_node_debt": [
+        "Ingress-off compatibility and proxy",
+        "Automation writes, trigger management and scheduling",
+        "Run execution, logs/live and remaining cancellation/retry consumers",
+        "Other domain ownership and default no-Node installation"
+      ],
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_complete": false,
+      "author_result": {
+        "path": "/private/tmp/rudder-attachments-automation-combined-r1/author-result.json",
+        "sha256": "4c44c32d27f332ca70122c875a9ee6344aae556a40064b02781f539596a744e7",
+        "counts": {
+          "d1_units": 248,
+          "foundation_units": 317,
+          "foundation_ignored": 29,
+          "cost_postgres": 4,
+          "public_http_selectors": 4,
+          "node_passed": 328,
+          "node_skipped": 10
+        },
+        "standalone_sha256": "cbdf21068dbf030049a5c8d12354aa734641e791c997801aacfdc450f901c643"
+      },
+      "ci_isolation": "Public workflow CI explicitly supplies the five host-fact environment inputs required by the attachment fixture, isolated under RUNNER_TEMP; it preserves inherited HOME/CODEX_HOME. Fixed before publication after verifier fixture preflight exposed the missing prerequisite."
+    },
+    "ci_unblock_20261027": {
+      "state": "Author checks PASS; independent final publication review and exact-head CI pending",
+      "scope": "Test-only worker-aware readiness for the failing synthetic Hermes case; Windows job budget75min after observed60min cancellationduringcache-save. Production executor deadline30sec unchanged; Intel90/other60unchanged.",
+      "upstream_main": "8b91adb1e8cc2e9e4e3597239af6fbe9692141e7",
+      "upstream_scope": "Four UI/E2E files from protectedPR389, preserved; backend source unchanged.",
+      "author_checks": {
+        "hermes_progress_real_pg": 4,
+        "strict_clippy": "PASS native-chat-executor workflow target",
+        "rust_fmt": "PASS workspace",
+        "architecture": "PASS againstcurrentmain",
+        "authority": "PASS check/compare againstcurrentmain"
+      },
+      "initial_author_setup_failure": "PersistentTMPDIR exceededPostgreSQL103byteUnixsocketpath; original4setupfailures preserved; rerunuses shortisolatedTMPDIR+existingTCP-onlyfixtureoption, no source/workflowassertionrelaxation.",
+      "evidence_root": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/ci-unblock-author-r1",
+      "accepted_backend_artifact_restoration": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/pr388-30c-restored/artifact-restoration.json",
+      "historical_pav_md_sha256": "00955d9ba864a57e783089c4204644b5362c468af427655b658299fab22dcf5f",
+      "historical_machine_json": "Old temporarycopy unavailable; no recovery claim. Original historicalMD exactly restoredfromsessionoutput and originalsource57manifest/artifacthashes independently match.",
+      "production_released": false,
+      "global_complete": false
     }
   }
 }

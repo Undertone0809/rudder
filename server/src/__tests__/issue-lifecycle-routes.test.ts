@@ -1435,6 +1435,53 @@ describe("issue lifecycle routes", () => {
     expect(mockWorkProductService.createForIssue.mock.calls[0]?.[2]).not.toHaveProperty("runWorkspaceId");
   });
 
+  it("omits Work Product write handlers when Rust Issue ingress is selected", async () => {
+    const client = request(await createApp(createBoardActor(), undefined, true));
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const productId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const create = await client
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({ type: "preview_url", provider: "custom", title: "Preview" });
+    const update = await client.patch(`/api/work-products/${productId}`).send({ title: "Renamed" });
+    const remove = await client.delete(`/api/work-products/${productId}`);
+
+    expect(create.status).toBe(404);
+    expect(update.status).toBe(404);
+    expect(remove.status).toBe(404);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
+    expect(mockWorkProductService.getById).not.toHaveBeenCalled();
+    expect(mockWorkProductService.update).not.toHaveBeenCalled();
+    expect(mockWorkProductService.remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps Work Product PATCH and DELETE handlers available in the default Node mode", async () => {
+    const product = {
+      id: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      orgId: "organization-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      type: "preview_url",
+      provider: "custom",
+      title: "Preview",
+    };
+    mockWorkProductService.getById.mockResolvedValue(product);
+    mockWorkProductService.update.mockResolvedValue({ ...product, title: "Renamed" });
+    mockWorkProductService.remove.mockResolvedValue(product);
+
+    const client = request(await createApp());
+    const update = await client
+      .patch(`/api/work-products/${product.id}`)
+      .send({ title: "Renamed" });
+    const remove = await client.delete(`/api/work-products/${product.id}`);
+
+    expect(update.status).toBe(200);
+    expect(update.body.title).toBe("Renamed");
+    expect(remove.status).toBe(200);
+    expect(remove.body.id).toBe(product.id);
+    expect(mockWorkProductService.update).toHaveBeenCalledWith(product.id, { title: "Renamed" });
+    expect(mockWorkProductService.remove).toHaveBeenCalledWith(product.id);
+  });
+
   it("logs activity details from the final persisted issue changes", async () => {
     const oldProjectId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     const newProjectId = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -2522,6 +2569,17 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("keeps Node Issue comments mounted only in legacy ingress mode", async () => {
+    const app = await createApp(createBoardActor(), undefined, true);
+    const response = await request(app)
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Must be handled by Rust in required ingress." });
+
+    expect(response.status).toBe(404);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
   it("requires a bound run before a collaborator can add an issue comment", async () => {
@@ -3929,11 +3987,32 @@ describe("issue lifecycle routes", () => {
     const checkout = await request(server)
       .post("/api/issues/11111111-1111-4111-8111-111111111111/checkout")
       .send({ agentId: ASSIGNEE_AGENT_ID, expectedStatuses: ["todo"] });
+    const attachmentUpload = await request(server)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments");
+    const workspaceAttachment = await request(server)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments/workspace-file")
+      .send({ path: "notes.txt" });
+    const attachmentContent = await request(server)
+      .get("/api/attachments/attachment-id/content");
+    const attachmentDelete = await request(server)
+      .delete("/api/attachments/attachment-id");
 
-    expect([list.status, detail.status, create.status, patch.status, reorder.status, remove.status, checkout.status])
-      .toEqual([404, 404, 404, 404, 404, 404, 404]);
+    expect([
+      list.status,
+      detail.status,
+      create.status,
+      patch.status,
+      reorder.status,
+      remove.status,
+      checkout.status,
+      attachmentUpload.status,
+      workspaceAttachment.status,
+      attachmentContent.status,
+      attachmentDelete.status,
+    ]).toEqual([404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404]);
     expect(mockIssueService.getById).not.toHaveBeenCalled();
     expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockIssueService.createAttachment).not.toHaveBeenCalled();
     expect(mockIssueService.update).not.toHaveBeenCalled();
     expect(mockIssueService.reorder).not.toHaveBeenCalled();
     expect(mockIssueService.checkout).not.toHaveBeenCalled();

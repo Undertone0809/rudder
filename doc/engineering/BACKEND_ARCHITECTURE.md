@@ -165,6 +165,19 @@ implementation, not a claim that the current chat runtime already satisfies them
 Use the repository's proportional checks and independent review rules in
 [AGENTS.md](../../AGENTS.md#7-verification-before-hand-off). For backend work:
 
+Before expensive builds and qualification, run the cheap source comparisons
+against a freshly fetched base:
+
+```sh
+node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref origin/main --fail-on-regression
+node scripts/rust-backend-authority-inventory.mjs check
+node scripts/rust-backend-authority-inventory.mjs compare --compare-ref origin/main
+```
+
+Both architecture size limits and backend-authority boundaries apply to
+compatibility route changes. Resolve their regressions before starting the
+full platform matrix.
+
 1. Run affected Rust unit/integration tests for business rules and contract
    tests across the transport boundary. Keep UI/client contracts synchronized.
 2. Exercise the real public method/path or workflow through the actual Rust

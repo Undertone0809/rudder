@@ -319,9 +319,22 @@ async fn assert_automation_failure_chat(
 }
 
 #[actix_web::test]
-#[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+#[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL and isolated host workspace paths"]
 async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallback() {
     crate::init_tracing();
+    let workspace_home = env::var("RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME")
+        .expect("the test runner must supply an isolated organization workspace home");
+    let host_home = env::var("RUDDER_NATIVE_HOST_HOME_DIRECTORY")
+        .expect("the test runner must supply an isolated host home");
+    assert!(std::path::Path::new(&workspace_home).is_absolute());
+    assert_ne!(
+        std::path::PathBuf::from(&workspace_home),
+        std::path::PathBuf::from(&host_home).join("Documents/Rudder"),
+        "attachment imports must use the isolated host workspace, not the user's default Library"
+    );
+    assert!(env::var("RUDDER_NATIVE_HOST_RUDDER_HOME").is_ok());
+    assert!(env::var("RUDDER_NATIVE_HOST_INSTANCE_ID").is_ok());
+    assert!(env::var("RUDDER_NATIVE_HOST_HOSTNAME").is_ok());
     let pool = super::disposable_native_auth_pool().await;
     let suffix = Uuid::new_v4().simple().to_string();
     let asset_storage_directory = tempfile::tempdir().unwrap();
@@ -332,6 +345,66 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .bind(format!("Native Issue Core {suffix}"))
     .bind(format!("IC{}", suffix[..8].to_ascii_uppercase()))
     .fetch_one(&pool)
+    .await
+    .unwrap();
+    let related_org_id: String = sqlx::query_scalar(
+        "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+    )
+    .bind(format!("native-issue-work-products-related-{suffix}"))
+    .bind(format!("Native Issue Work Products Related {suffix}"))
+    .bind(format!("WR{}", suffix[..8].to_ascii_uppercase()))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let related_project_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO projects (id, org_id, name, status) VALUES ($1::uuid, $2::uuid, $3, 'backlog')",
+    )
+    .bind(&related_project_id)
+    .bind(&related_org_id)
+    .bind(format!("Related foreign project {suffix}"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_execution_workspace_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO execution_workspaces (id,org_id,project_id,mode,strategy_type,name) VALUES ($1::uuid,$2::uuid,$3::uuid,'local','worktree',$4)",
+    )
+    .bind(&related_execution_workspace_id)
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(format!("Related foreign workspace {suffix}"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&related_org_id)
+    .bind(format!("Related foreign agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let related_run_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id,org_id,agent_id,status,started_at,invocation_source,execution_authority,context_snapshot) VALUES ($1::uuid,$2::uuid,$3::uuid,'completed',now(),'manual','legacy_ts','{}'::jsonb)",
+    )
+    .bind(&related_run_id)
+    .bind(&related_org_id)
+    .bind(&related_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let related_runtime_service_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO workspace_runtime_services (id,org_id,project_id,execution_workspace_id,scope_type,scope_id,service_name,status,lifecycle,provider) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,'execution_workspace',$5,'api','running','active','custom')",
+    )
+    .bind(&related_runtime_service_id)
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(&related_execution_workspace_id)
+    .bind(&related_execution_workspace_id)
+    .execute(&pool)
     .await
     .unwrap();
     let title_project_id = Uuid::new_v4().to_string();
@@ -424,9 +497,13 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .await
     .unwrap();
     let issue_id = Uuid::new_v4().to_string();
+    let work_product_issue_id = Uuid::new_v4().to_string();
+    let seeded_nonprimary_work_product_id = Uuid::new_v4().to_string();
     let board_issue_id = Uuid::new_v4().to_string();
     let member_issue_id = Uuid::new_v4().to_string();
     let paused_issue_id = Uuid::new_v4().to_string();
+    let comment_wakeup_issue_id = Uuid::new_v4().to_string();
+    let reopen_wakeup_issue_id = Uuid::new_v4().to_string();
     let prefix: String =
         sqlx::query_scalar("SELECT issue_prefix FROM organizations WHERE id=$1::uuid")
             .bind(&org_id)
@@ -466,6 +543,35 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .bind(&board_issue_id)
     .bind(&org_id)
     .bind(format!("{prefix}-2"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id,org_id,project_id,title,status,priority,issue_number,identifier) VALUES ($1::uuid,$2::uuid,$3::uuid,'Work Product CRUD target','todo','medium',900009,$4)",
+    )
+    .bind(&work_product_issue_id)
+    .bind(&org_id)
+    .bind(&title_project_id)
+    .bind(format!("{prefix}-900009"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issue_work_products (id,org_id,issue_id,type,provider,title,status,is_primary,created_at,updated_at) VALUES ($1::uuid,$2::uuid,$3::uuid,'preview_url','custom','Older non-primary preview','active',false,now()-interval '2 days',now()-interval '2 days')",
+    )
+    .bind(&seeded_nonprimary_work_product_id)
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id) VALUES ($1::uuid, $2::uuid, 'Comment wake admission through Rust', 'todo', 'medium', 900005, $3, $4::uuid)",
+    )
+    .bind(&comment_wakeup_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900005"))
+    .bind(&other_agent_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -618,19 +724,405 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     assert_eq!(work_products.status(), StatusCode::OK);
     assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+    let seeded_nonprimary_timestamp: String = sqlx::query_scalar(
+        "SELECT updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&seeded_nonprimary_work_product_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
-    let node_owned_work_product = client
-        .post(format!("{base}/api/issues/{issue_id}/work-products"))
-        .bearer_auth(&agent_token)
-        .json(&json!({"probe":"node-owned write"}))
+    let first_work_product = client
+        .post(format!("{base}/api/issues/{prefix}-900009/work-products"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Preview first",
+            "isPrimary":true,
+            "projectId":null,
+            "runWorkspaceId":null,
+            "metadata":{"revision":1}
+        }))
         .send()
         .await
         .unwrap();
-    assert_eq!(node_owned_work_product.status(), StatusCode::OK);
-    let node_owned_work_product: serde_json::Value = node_owned_work_product.json().await.unwrap();
+    assert_eq!(first_work_product.status(), StatusCode::CREATED);
+    let first_work_product: serde_json::Value = first_work_product.json().await.unwrap();
+    let first_work_product_id = first_work_product["id"].as_str().unwrap().to_owned();
+    assert_eq!(first_work_product["issueId"], work_product_issue_id);
+    assert_eq!(first_work_product["projectId"], title_project_id);
     assert_eq!(
-        node_owned_work_product,
-        json!({"nodePath":format!("/api/issues/{issue_id}/work-products"),"nodeMethod":"POST"})
+        first_work_product["runWorkspaceId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        first_work_product["executionWorkspaceId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(first_work_product["isPrimary"], true);
+    assert_eq!(first_work_product["metadata"]["revision"], 1);
+    let seeded_nonprimary_refreshed: bool = sqlx::query_scalar(
+        "SELECT updated_at > $3::timestamptz FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&seeded_nonprimary_work_product_id)
+    .bind(&seeded_nonprimary_timestamp)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(seeded_nonprimary_refreshed);
+
+    let second_work_product = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Preview second",
+            "isPrimary":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second_work_product.status(), StatusCode::CREATED);
+    let second_work_product: serde_json::Value = second_work_product.json().await.unwrap();
+    let second_work_product_id = second_work_product["id"].as_str().unwrap().to_owned();
+    assert_eq!(second_work_product["projectId"], title_project_id);
+
+    let work_product_state_before_failed_create: Vec<(String, bool, String)> = sqlx::query_as(
+        "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let work_product_created_activity_before_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (field, foreign_id) in [
+        ("projectId", related_project_id.as_str()),
+        (
+            "executionWorkspaceId",
+            related_execution_workspace_id.as_str(),
+        ),
+        ("runtimeServiceId", related_runtime_service_id.as_str()),
+        ("createdByRunId", related_run_id.as_str()),
+    ] {
+        let mut create_input = json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Reject cross-organization Work Product reference",
+            "isPrimary":true
+        });
+        create_input
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(foreign_id));
+        let foreign_reference_create = client
+            .post(format!(
+                "{base}/api/issues/{work_product_issue_id}/work-products"
+            ))
+            .bearer_auth(&board_token)
+            .json(&create_input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            foreign_reference_create.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "POST must reject foreign {field}"
+        );
+        assert_eq!(
+            foreign_reference_create
+                .json::<serde_json::Value>()
+                .await
+                .unwrap(),
+            json!({
+                "error":"Invalid work product reference",
+                "code":"field_reference_error",
+                "field":field
+            })
+        );
+
+        let mut update_input = json!({
+            "title":"Must not update through foreign reference",
+            "isPrimary":true
+        });
+        update_input
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(foreign_id));
+        let foreign_reference_update = client
+            .patch(format!("{base}/api/work-products/{first_work_product_id}"))
+            .bearer_auth(&board_token)
+            .json(&update_input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            foreign_reference_update.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "PATCH must reject foreign {field}"
+        );
+        assert_eq!(
+            foreign_reference_update
+                .json::<serde_json::Value>()
+                .await
+                .unwrap(),
+            json!({
+                "error":"Invalid work product reference",
+                "code":"field_reference_error",
+                "field":field
+            })
+        );
+    }
+    let missing_reference = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Reject missing Work Product reference",
+            "isPrimary":true,
+            "projectId":"99999999-9999-4999-8999-999999999999"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_reference.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        missing_reference.json::<serde_json::Value>().await.unwrap(),
+        json!({
+            "error":"Invalid work product reference",
+            "code":"field_reference_error",
+            "field":"projectId"
+        })
+    );
+    let foreign_related_reference_counts: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM projects WHERE org_id=$1::uuid AND id=$2::uuid), (SELECT count(*) FROM execution_workspaces WHERE org_id=$1::uuid AND id=$3::uuid), (SELECT count(*) FROM workspace_runtime_services WHERE org_id=$1::uuid AND id=$4::uuid), (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$5::uuid)",
+    )
+    .bind(&related_org_id)
+    .bind(&related_project_id)
+    .bind(&related_execution_workspace_id)
+    .bind(&related_runtime_service_id)
+    .bind(&related_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_related_reference_counts, (1, 1, 1, 1));
+    let work_product_state_after_reference_rejections: Vec<(String, bool, String)> =
+        sqlx::query_as(
+            "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+        )
+        .bind(&org_id)
+        .bind(&work_product_issue_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        work_product_state_after_reference_rejections,
+        work_product_state_before_failed_create
+    );
+    let work_product_created_activity_after_reference_rejections: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_created_activity_after_reference_rejections,
+        work_product_created_activity_before_failure
+    );
+    sqlx::query(
+        "ALTER TABLE issue_work_products ADD CONSTRAINT issue_work_products_author_failure_check CHECK (title <> 'Force SQL failure after primary demotion')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_primary_create = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Force SQL failure after primary demotion",
+            "isPrimary":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_primary_create.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let work_product_state_after_failed_create: Vec<(String, bool, String)> = sqlx::query_as(
+        "SELECT id::text,is_primary,updated_at::text FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid ORDER BY id",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_state_after_failed_create,
+        work_product_state_before_failed_create
+    );
+    let work_product_created_activity_after_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.work_product_created'",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        work_product_created_activity_after_failure,
+        work_product_created_activity_before_failure
+    );
+    sqlx::query(
+        "ALTER TABLE issue_work_products DROP CONSTRAINT issue_work_products_author_failure_check",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let conflicting_workspace_aliases = client
+        .post(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "type":"preview_url",
+            "provider":"custom",
+            "title":"Invalid alias conflict",
+            "runWorkspaceId":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+            "executionWorkspaceId":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        conflicting_workspace_aliases.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        conflicting_workspace_aliases
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":"runWorkspaceId conflicts with deprecated executionWorkspaceId"})
+    );
+
+    let patched_work_product = client
+        .patch(format!("{base}/api/work-products/{second_work_product_id}"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "title":"Preview polished",
+            "status":"ready_for_review",
+            "summary":null,
+            "metadata":{"revision":2}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patched_work_product.status(), StatusCode::OK);
+    let patched_work_product: serde_json::Value = patched_work_product.json().await.unwrap();
+    assert_eq!(patched_work_product["title"], "Preview polished");
+    assert_eq!(patched_work_product["status"], "ready_for_review");
+    assert_eq!(patched_work_product["summary"], serde_json::Value::Null);
+    assert_eq!(patched_work_product["metadata"]["revision"], 2);
+
+    let work_product_readback = client
+        .get(format!(
+            "{base}/api/issues/{work_product_issue_id}/work-products"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(work_product_readback.status(), StatusCode::OK);
+    let work_product_readback: serde_json::Value = work_product_readback.json().await.unwrap();
+    assert_eq!(work_product_readback.as_array().unwrap().len(), 3);
+    let primary_product = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["isPrimary"] == true)
+        .unwrap();
+    assert_eq!(primary_product["id"], second_work_product_id);
+    let demoted_product = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["id"] == first_work_product_id)
+        .unwrap();
+    assert_eq!(demoted_product["isPrimary"], false);
+    let seeded_nonprimary = work_product_readback
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["id"] == seeded_nonprimary_work_product_id)
+        .unwrap();
+    assert_eq!(seeded_nonprimary["isPrimary"], false);
+
+    let removed_work_product = client
+        .delete(format!("{base}/api/work-products/{first_work_product_id}"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed_work_product.status(), StatusCode::OK);
+    let removed_work_product: serde_json::Value = removed_work_product.json().await.unwrap();
+    assert_eq!(removed_work_product["id"], first_work_product_id);
+    assert_eq!(removed_work_product["isPrimary"], false);
+    let remaining_work_products: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_work_products WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining_work_products, 2);
+    let work_product_activity: (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE action='issue.work_product_created'), count(*) FILTER (WHERE action='issue.work_product_updated'), count(*) FILTER (WHERE action='issue.work_product_deleted') FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2",
+    )
+    .bind(&org_id)
+    .bind(&work_product_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(work_product_activity, (2, 1, 1));
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+
+    let node_owned_retired_document = client
+        .get(format!("{base}/api/issues/{issue_id}/documents"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(node_owned_retired_document.status(), StatusCode::OK);
+    let node_owned_retired_document: serde_json::Value =
+        node_owned_retired_document.json().await.unwrap();
+    assert_eq!(
+        node_owned_retired_document,
+        json!({"nodePath":format!("/api/issues/{issue_id}/documents"),"nodeMethod":"GET"})
     );
     assert_eq!(node_requests.load(Ordering::SeqCst), 1);
 
@@ -666,6 +1158,552 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             Some(run_id.clone())
         )
     );
+
+    let agent_comment = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&agent_token)
+        .header("x-rudder-run-id", &run_id)
+        .json(&json!({"body":"Agent comment from the public Rust route."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_comment.status(), StatusCode::CREATED);
+    let agent_comment: serde_json::Value = agent_comment.json().await.unwrap();
+    let agent_comment_id = agent_comment["id"].as_str().unwrap().to_owned();
+    let agent_comment_short_ref = agent_comment["shortRef"].as_str().unwrap().to_owned();
+    assert_eq!(agent_comment["authorAgentId"], agent_id);
+    let board_comment = client
+        .post(format!("{base}/api/issues/{issue_short_ref}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Board response."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(board_comment.status(), StatusCode::CREATED);
+    let board_comment: serde_json::Value = board_comment.json().await.unwrap();
+    let board_comment_id = board_comment["id"].as_str().unwrap().to_owned();
+    let agent_interrupt = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&agent_token)
+        .header("x-rudder-run-id", &run_id)
+        .json(&json!({"body":"Agents cannot interrupt from comments.","interrupt":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_interrupt.status(), StatusCode::FORBIDDEN);
+    let run_after_rejected_agent_interrupt: Option<String> = sqlx::query_scalar(
+        "SELECT error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(run_after_rejected_agent_interrupt, None);
+    let invalid_reopen = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Invalid reopen flag.","reopen":"true"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid_reopen.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let listed_comments = client
+        .get(format!(
+            "{base}/api/issues/{issue_short_ref}/comments?order=asc&limit=10"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed_comments.status(), StatusCode::OK);
+    let listed_comments: serde_json::Value = listed_comments.json().await.unwrap();
+    assert_eq!(listed_comments.as_array().unwrap().len(), 2);
+    assert_eq!(listed_comments[0]["id"], agent_comment_id);
+    let read_by_short_ref = client
+        .get(format!(
+            "{base}/api/issues/{issue_short_ref}/comments/{agent_comment_short_ref}"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read_by_short_ref.status(), StatusCode::OK);
+    assert_eq!(
+        read_by_short_ref.json::<serde_json::Value>().await.unwrap()["id"],
+        agent_comment_id
+    );
+    let missing_cursor = client
+        .get(format!(
+            "{base}/api/issues/{issue_id}/comments?after=cmt_ffffffff"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_cursor.status(), StatusCode::NOT_FOUND);
+    let missing_uuid_cursor = client
+        .get(format!(
+            "{base}/api/issues/{issue_short_ref}/comments?after={}",
+            Uuid::new_v4()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_uuid_cursor.status(), StatusCode::OK);
+    assert_eq!(
+        missing_uuid_cursor
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!([])
+    );
+    let edited_board_comment = client
+        .patch(format!(
+            "{base}/api/issues/{issue_short_ref}/comments/{board_comment_id}"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":"Board response edited."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edited_board_comment.status(), StatusCode::OK);
+    assert_eq!(
+        edited_board_comment
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["body"],
+        "Board response edited."
+    );
+    let deleted_board_comment = client
+        .delete(format!(
+            "{base}/api/issues/{issue_short_ref}/comments/{board_comment_id}"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted_board_comment.status(), StatusCode::OK);
+    let deleted_board_comment: serde_json::Value = deleted_board_comment.json().await.unwrap();
+    assert_eq!(deleted_board_comment["body"], "");
+    assert!(deleted_board_comment["deletedAt"].is_string());
+    let forged_comment_activity = client
+        .patch(format!("{base}/api/issues/{issue_id}"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "comment":"Public clients cannot forge internal comment audit details.",
+            "commentActivityDetails":{
+                "interruptedRunId":run_id,
+                "steerRunId":run_id,
+                "reopened":true
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forged_comment_activity.status(), StatusCode::OK);
+    let forged_comment_activity: serde_json::Value = forged_comment_activity.json().await.unwrap();
+    let forged_comment_id = forged_comment_activity["comment"]["id"].as_str().unwrap();
+    let forged_comment_activity_details: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.comment_added' AND details->>'commentId'=$3",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(forged_comment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        forged_comment_activity_details
+            .get("interruptedRunId")
+            .is_none()
+    );
+    assert!(forged_comment_activity_details.get("steerRunId").is_none());
+    assert!(forged_comment_activity_details.get("reopened").is_none());
+    let node_fallback_comments = node_requests.load(Ordering::SeqCst);
+    assert_eq!(node_fallback_comments, 1);
+
+    let trigger_suffix = Uuid::new_v4().simple().to_string();
+    let trigger_function = format!("test_reject_issue_comment_wakeup_{trigger_suffix}");
+    let trigger_name = format!("test_reject_issue_comment_wakeup_{trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.reason='issue_comment_mentioned'
+              AND NEW.payload->>'issueId'='{comment_wakeup_issue_id}' THEN
+             RAISE EXCEPTION 'forced Issue comment wake admission failure';
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let wake_comment_body =
+        format!("[Other agent](agent://{other_agent_id}?intent=wake) please review this Issue.");
+    let failed_wakeup_comment = client
+        .post(format!(
+            "{base}/api/issues/{comment_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":wake_comment_body}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_wakeup_comment.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_wakeup_state: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.comment_added'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND reason='issue_comment_mentioned' AND payload->>'issueId'=$2)",
+    )
+    .bind(&org_id)
+    .bind(&comment_wakeup_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(failed_wakeup_state, (0, 0, 0));
+
+    let normal_steer_failure_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Normal Steer Failure Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_issue_id = Uuid::new_v4().to_string();
+    let normal_steer_failure_run_id = Uuid::new_v4().to_string();
+    let normal_steer_failure_prior_work: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(normal_steer_failure_prior_work, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&normal_steer_failure_run_id)
+    .bind(&org_id)
+    .bind(&normal_steer_failure_agent_id)
+    .bind(json!({"issueId":normal_steer_failure_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id, execution_run_id) VALUES ($1::uuid, $2::uuid, 'Normal Steer wake admission failure', 'in_progress', 'medium', 900007, $3, $4::uuid, $5::uuid)",
+    )
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900007"))
+    .bind(&normal_steer_failure_agent_id)
+    .bind(&normal_steer_failure_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_row_before: (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,i.updated_at::text,r.status,r.error_code FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_counts_before: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.comment_added'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.updated'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($3::uuid)::text AND action='heartbeat.cancelled' AND details->>'source'='issue_comment_steer'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$4::uuid AND payload->>'issueId'=($2::uuid)::text)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(normal_steer_failure_counts_before, (0, 0, 0, 0, 0));
+    let normal_steer_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let normal_steer_trigger_function =
+        format!("test_reject_normal_issue_steer_{normal_steer_trigger_suffix}");
+    let normal_steer_trigger_name =
+        format!("test_reject_normal_issue_steer_{normal_steer_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {normal_steer_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.agent_id='{normal_steer_failure_agent_id}'::uuid
+              AND NEW.payload->>'issueId'='{normal_steer_failure_issue_id}' THEN
+             RAISE EXCEPTION 'forced normal Issue Steer wake admission failure (attempted reason=%)', NEW.reason;
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {normal_steer_trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {normal_steer_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_normal_steer = client
+        .post(format!(
+            "{base}/api/issues/{normal_steer_failure_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"A wake admission error must roll back this normal Steer comment.",
+            "steer":{"expectedRunId":normal_steer_failure_run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_normal_steer.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {normal_steer_trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {normal_steer_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let normal_steer_failure_row_after: (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,i.updated_at::text,r.status,r.error_code FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let normal_steer_failure_counts_after: (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.comment_added'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($2::uuid)::text AND action='issue.updated'),
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=($3::uuid)::text AND action='heartbeat.cancelled' AND details->>'source'='issue_comment_steer'),
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$4::uuid AND payload->>'issueId'=($2::uuid)::text)",
+    )
+    .bind(&org_id)
+    .bind(&normal_steer_failure_issue_id)
+    .bind(&normal_steer_failure_run_id)
+    .bind(&normal_steer_failure_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        normal_steer_failure_row_after,
+        normal_steer_failure_row_before
+    );
+    assert_eq!(
+        normal_steer_failure_counts_after,
+        normal_steer_failure_counts_before
+    );
+
+    let paused_steer_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'paused') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Paused Steer Admission Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let paused_steer_issue_id = Uuid::new_v4().to_string();
+    let paused_steer_run_id = Uuid::new_v4().to_string();
+    let paused_steer_prior_work: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&paused_steer_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(paused_steer_prior_work, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&paused_steer_run_id)
+    .bind(&org_id)
+    .bind(&paused_steer_agent_id)
+    .bind(json!({"issueId":paused_steer_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id, execution_run_id) VALUES ($1::uuid, $2::uuid, 'Paused Steer policy conflict', 'in_progress', 'medium', 900008, $3, $4::uuid, $5::uuid)",
+    )
+    .bind(&paused_steer_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900008"))
+    .bind(&paused_steer_agent_id)
+    .bind(&paused_steer_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let saved_steer_conflict = client
+        .post(format!(
+            "{base}/api/issues/{paused_steer_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"Keep this comment when the paused Agent cannot accept a continuation.",
+            "steer":{"expectedRunId":paused_steer_run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved_steer_conflict.status(), StatusCode::CONFLICT);
+    let saved_steer_conflict: serde_json::Value = saved_steer_conflict.json().await.unwrap();
+    assert_eq!(
+        saved_steer_conflict["error"],
+        "Steer could not reserve a continuation; feedback was saved as a comment"
+    );
+    assert_eq!(
+        saved_steer_conflict["comment"]["body"],
+        "Keep this comment when the paused Agent cannot accept a continuation."
+    );
+    let saved_steer_comment_id = saved_steer_conflict["comment"]["id"]
+        .as_str()
+        .expect("saved Steer conflict returns its persisted comment ID");
+    let saved_steer_comment_body: String = sqlx::query_scalar(
+        "SELECT body FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(&org_id)
+    .bind(&paused_steer_issue_id)
+    .bind(saved_steer_comment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved_steer_comment_body,
+        "Keep this comment when the paused Agent cannot accept a continuation."
+    );
+    let saved_steer_state: (String, Option<String>, Option<String>, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT i.status,i.execution_run_id::text,i.execution_cancellation_at::text,
+               (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=i.id::text AND a.action='issue.comment_added'),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_steer'),
+               (SELECT count(*) FROM agent_wakeup_requests w WHERE w.org_id=i.org_id AND w.agent_id=i.assignee_agent_id AND w.payload->>'issueId'=i.id::text)
+             FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+             WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+        )
+        .bind(&org_id)
+        .bind(&paused_steer_issue_id)
+        .bind(&paused_steer_run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        saved_steer_state,
+        (
+            "in_progress".to_owned(),
+            Some(paused_steer_run_id.clone()),
+            None,
+            1,
+            1,
+            0,
+            0,
+        )
+    );
+    let paused_steer_agent_status: String =
+        sqlx::query_scalar("SELECT status FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
+            .bind(&org_id)
+            .bind(&paused_steer_agent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(paused_steer_agent_status, "paused");
+
+    let admitted_wakeup_comment = client
+        .post(format!(
+            "{base}/api/issues/{comment_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"body":wake_comment_body}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(admitted_wakeup_comment.status(), StatusCode::CREATED);
+    let admitted_wakeup_comment: serde_json::Value = admitted_wakeup_comment.json().await.unwrap();
+    let admitted_comment_id = admitted_wakeup_comment["id"].as_str().unwrap();
+    let admitted_wakeup: (String, String, String, String, serde_json::Value, String) =
+        sqlx::query_as(
+            "SELECT w.id::text,w.status,w.reason,w.run_id::text,w.payload,r.execution_authority
+             FROM agent_wakeup_requests w JOIN heartbeat_runs r
+               ON r.org_id=w.org_id AND r.wakeup_request_id=w.id AND r.id=w.run_id
+             WHERE w.org_id=$1::uuid AND w.agent_id=$2::uuid AND w.payload->>'issueId'=$3",
+        )
+        .bind(&org_id)
+        .bind(&other_agent_id)
+        .bind(&comment_wakeup_issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(admitted_wakeup.1, "queued");
+    assert_eq!(admitted_wakeup.2, "issue_comment_mentioned");
+    assert_eq!(admitted_wakeup.4["issueId"], comment_wakeup_issue_id);
+    assert_eq!(admitted_wakeup.4["commentId"], admitted_comment_id);
+    assert_eq!(admitted_wakeup.5, "legacy_ts");
+    let comment_wakeup_request_id = admitted_wakeup.0;
+    let comment_wakeup_run_id = admitted_wakeup.3;
+
     let block_claim = client
         .patch(format!("{base}/api/issues/{issue_id}"))
         .bearer_auth(&agent_token)
@@ -1859,6 +2897,78 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
+    let foreign_issue_id = Uuid::new_v4().to_string();
+    let foreign_issue_prefix: String =
+        sqlx::query_scalar("SELECT issue_prefix FROM organizations WHERE id=$1::uuid")
+            .bind(&foreign_org_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier) VALUES ($1::uuid, $2::uuid, 'Foreign organization comment isolation', 'todo', 'medium', 1, $3)",
+    )
+    .bind(&foreign_issue_id)
+    .bind(&foreign_org_id)
+    .bind(format!("{foreign_issue_prefix}-1"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let foreign_work_product_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO issue_work_products (id,org_id,issue_id,type,provider,title,status) VALUES ($1::uuid,$2::uuid,$3::uuid,'preview_url','custom','Foreign preview','active')",
+    )
+    .bind(&foreign_work_product_id)
+    .bind(&foreign_org_id)
+    .bind(&foreign_issue_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let agent_foreign_work_product_update = client
+        .patch(format!(
+            "{base}/api/work-products/{foreign_work_product_id}"
+        ))
+        .bearer_auth(&agent_token)
+        .json(&json!({"title":"Must remain foreign"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        agent_foreign_work_product_update.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        agent_foreign_work_product_update
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":"Agent key cannot access another organization"})
+    );
+    let foreign_work_product_title: String = sqlx::query_scalar(
+        "SELECT title FROM issue_work_products WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&foreign_org_id)
+    .bind(&foreign_work_product_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_work_product_title, "Foreign preview");
+    let foreign_comment_read = client
+        .get(format!("{base}/api/issues/{foreign_issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_comment_read.status(), StatusCode::FORBIDDEN);
+    let foreign_issue_short_ref = format!("iss_{}", &foreign_issue_id.replace('-', "")[..8]);
+    let agent_foreign_comment_read = client
+        .get(format!(
+            "{base}/api/issues/{foreign_issue_short_ref}/comments"
+        ))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_foreign_comment_read.status(), StatusCode::NOT_FOUND);
     let messenger_issue_id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier) VALUES ($1::uuid, $2::uuid, 'Messenger cleanup target', 'todo', 'medium', 950001, $3)",
@@ -2071,6 +3181,573 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
+    let foreign_agent_token = format!("pcp_native_issue_attachment_foreign_{suffix}");
+    let foreign_agent_key_id: String = sqlx::query_scalar(
+        "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'foreign attachment HTTP test', $3) RETURNING id::text",
+    )
+    .bind(&foreign_agent_id)
+    .bind(&foreign_org_id)
+    .bind(crate::native_bearer_auth::hash_token(&foreign_agent_token))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let attachments_node_requests_before = node_requests.load(Ordering::SeqCst);
+    let boundary = format!("----RudderIssueAttachment{suffix}");
+    let upload_bytes = b"Issue attachment bytes";
+    let multipart_body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-note.txt\"\r\nContent-Type: text/plain\r\n\r\n{}\r\n--{boundary}--\r\n",
+        String::from_utf8_lossy(upload_bytes)
+    );
+    let uploaded = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded.status(), StatusCode::CREATED);
+    let uploaded: serde_json::Value = uploaded.json().await.unwrap();
+    let uploaded_attachment_id = uploaded["id"].as_str().unwrap().to_owned();
+    let uploaded_asset_id = uploaded["assetId"].as_str().unwrap().to_owned();
+    let uploaded_object_key = uploaded["objectKey"].as_str().unwrap().to_owned();
+    assert_eq!(uploaded["issueId"], issue_id);
+    assert_eq!(uploaded["usage"], "issue");
+    assert_eq!(uploaded["contentType"], "text/plain");
+    assert_eq!(uploaded["byteSize"], upload_bytes.len());
+    assert_eq!(uploaded["originalFilename"], "attachment-note.txt");
+    assert_eq!(
+        uploaded["contentPath"],
+        format!("/api/attachments/{uploaded_attachment_id}/content")
+    );
+    let uploaded_object_path = asset_storage_directory.path().join(&uploaded_object_key);
+    assert_eq!(std::fs::read(&uploaded_object_path).unwrap(), upload_bytes);
+
+    let attachment_metadata = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(attachment_metadata.status(), StatusCode::OK);
+    let attachment_metadata: serde_json::Value = attachment_metadata.json().await.unwrap();
+    assert_eq!(attachment_metadata.as_array().unwrap().len(), 1);
+    assert_eq!(attachment_metadata[0]["id"], uploaded_attachment_id);
+
+    let uploaded_content = client
+        .get(format!(
+            "{base}{}",
+            uploaded["contentPath"].as_str().unwrap()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded_content.status(), StatusCode::OK);
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CONTENT_TYPE],
+        "text/plain"
+    );
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CACHE_CONTROL],
+        "private, max-age=60"
+    );
+    assert_eq!(
+        uploaded_content.headers()[reqwest::header::CONTENT_DISPOSITION],
+        "inline; filename=\"attachment-note.txt\""
+    );
+    assert_eq!(
+        uploaded_content.bytes().await.unwrap().as_ref(),
+        upload_bytes
+    );
+    let uploaded_head = client
+        .head(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uploaded_head.status(), StatusCode::OK);
+    assert_eq!(
+        uploaded_head
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok()),
+        Some(upload_bytes.len() as u64)
+    );
+    assert!(uploaded_head.bytes().await.unwrap().is_empty());
+    let foreign_attachment_content = client
+        .get(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&foreign_agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_attachment_content.status(), StatusCode::FORBIDDEN);
+    let foreign_attachment_delete = client
+        .delete(format!("{base}/api/attachments/{uploaded_attachment_id}"))
+        .bearer_auth(&foreign_agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_attachment_delete.status(), StatusCode::FORBIDDEN);
+    assert!(uploaded_object_path.exists());
+
+    let object_count_before_rejected_uploads =
+        local_storage_file_count(&organization_issue_object_root);
+    let unsupported_boundary = format!("----RudderIssueAttachmentUnsupported{suffix}");
+    let unsupported_body = format!(
+        "--{unsupported_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"unsupported.bin\"\r\nContent-Type: application/x-rudder-test\r\n\r\nunsupported bytes\r\n--{unsupported_boundary}--\r\n"
+    );
+    let unsupported_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={unsupported_boundary}"),
+        )
+        .body(unsupported_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unsupported_upload.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let attachment_max_bytes = env::var("RUDDER_ATTACHMENT_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10 * 1024 * 1024);
+    let oversized_boundary = format!("----RudderIssueAttachmentOversized{suffix}");
+    let mut oversized_body = format!(
+        "--{oversized_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"oversized.txt\"\r\nContent-Type: text/plain\r\n\r\n"
+    )
+    .into_bytes();
+    oversized_body.extend(std::iter::repeat_n(b'x', attachment_max_bytes + 1));
+    oversized_body.extend_from_slice(format!("\r\n--{oversized_boundary}--\r\n").as_bytes());
+    let oversized_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={oversized_boundary}"),
+        )
+        .body(oversized_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(oversized_upload.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        object_count_before_rejected_uploads,
+        "unsupported and oversized uploads must not create storage objects"
+    );
+
+    let workspace_root = std::path::PathBuf::from(
+        super::super::agent_core::ensure_organization_workspace_root(&org_id).unwrap(),
+    );
+    let oversized_workspace_relative_path = format!("attachment-fixtures/oversized-{suffix}.txt");
+    let oversized_workspace_file = workspace_root.join(&oversized_workspace_relative_path);
+    std::fs::create_dir_all(oversized_workspace_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &oversized_workspace_file,
+        vec![b'x'; attachment_max_bytes + 1],
+    )
+    .unwrap();
+    let oversized_import_state = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename=$3), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid), (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added')",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(format!("oversized-{suffix}.txt"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let objects_before_oversized_import = local_storage_file_count(&organization_issue_object_root);
+    let oversized_workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":oversized_workspace_relative_path}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        oversized_workspace_import.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        oversized_workspace_import
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!({"error":format!("Attachment exceeds {} bytes", attachment_max_bytes)})
+    );
+    let oversized_import_state_after = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename=$3), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid), (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added')",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(format!("oversized-{suffix}.txt"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(oversized_import_state_after, oversized_import_state);
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        objects_before_oversized_import
+    );
+
+    let workspace_relative_path = format!("attachment-fixtures/{suffix}.txt");
+    let workspace_file_path = workspace_root.join(&workspace_relative_path);
+    std::fs::create_dir_all(workspace_file_path.parent().unwrap()).unwrap();
+    let workspace_bytes = b"workspace Library attachment bytes";
+    std::fs::write(&workspace_file_path, workspace_bytes).unwrap();
+    let workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":workspace_relative_path}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(workspace_import.status(), StatusCode::CREATED);
+    let workspace_import: serde_json::Value = workspace_import.json().await.unwrap();
+    let workspace_attachment_id = workspace_import["id"].as_str().unwrap().to_owned();
+    let workspace_asset_id = workspace_import["assetId"].as_str().unwrap().to_owned();
+    let workspace_object_key = workspace_import["objectKey"].as_str().unwrap().to_owned();
+    assert_eq!(
+        workspace_import["originalFilename"],
+        format!("{}.txt", suffix)
+    );
+    assert_eq!(workspace_import["contentType"], "text/plain");
+    assert_eq!(
+        std::fs::read(asset_storage_directory.path().join(&workspace_object_key)).unwrap(),
+        workspace_bytes
+    );
+    let workspace_content = client
+        .get(format!(
+            "{base}{}",
+            workspace_import["contentPath"].as_str().unwrap()
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(workspace_content.status(), StatusCode::OK);
+    assert_eq!(
+        workspace_content.bytes().await.unwrap().as_ref(),
+        workspace_bytes
+    );
+    let both_attachments = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(both_attachments.status(), StatusCode::OK);
+    let both_attachments: serde_json::Value = both_attachments.json().await.unwrap();
+    assert_eq!(both_attachments.as_array().unwrap().len(), 2);
+    assert!(
+        both_attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attachment| attachment["id"] == uploaded_attachment_id)
+    );
+    assert!(
+        both_attachments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attachment| attachment["id"] == workspace_attachment_id)
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let object_directory = uploaded_object_path.parent().unwrap();
+        let original_permissions = std::fs::metadata(object_directory).unwrap().permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_mode(original_permissions.mode() & !0o222);
+        std::fs::set_permissions(object_directory, read_only_permissions).unwrap();
+        let object_count_before_storage_failure =
+            local_storage_file_count(&organization_issue_object_root);
+        let activity_count_before_storage_failure: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+        )
+        .bind(&org_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let storage_failure_boundary = format!("----RudderIssueAttachmentStorageFailure{suffix}");
+        let storage_failure_body = format!(
+            "--{storage_failure_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-storage-failure.txt\"\r\nContent-Type: text/plain\r\n\r\nforce attachment storage failure\r\n--{storage_failure_boundary}--\r\n"
+        );
+        let storage_failure = client
+            .post(format!(
+                "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+            ))
+            .bearer_auth(&board_token)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={storage_failure_boundary}"),
+            )
+            .body(storage_failure_body)
+            .send()
+            .await;
+        std::fs::set_permissions(object_directory, original_permissions).unwrap();
+        let storage_failure = storage_failure.unwrap();
+        assert_eq!(storage_failure.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let storage_failure_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename='attachment-storage-failure.txt'",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let activity_count_after_storage_failure: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+        )
+        .bind(&org_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(storage_failure_rows, 0);
+        assert_eq!(
+            activity_count_after_storage_failure,
+            activity_count_before_storage_failure
+        );
+        assert_eq!(
+            local_storage_file_count(&organization_issue_object_root),
+            object_count_before_storage_failure,
+            "a storage failure must not leave a partial object"
+        );
+    }
+
+    let escaped_workspace_import = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({"path":"../outside.txt"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        escaped_workspace_import.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    #[cfg(unix)]
+    {
+        let protected_file = workspace_root.join("agents").join("fixture");
+        std::fs::create_dir_all(&protected_file).unwrap();
+        let protected_file = protected_file.join("private.txt");
+        std::fs::write(&protected_file, b"protected workspace content").unwrap();
+        let public_alias = workspace_root
+            .join("attachment-fixtures")
+            .join("protected-alias.txt");
+        std::os::unix::fs::symlink(&protected_file, &public_alias).unwrap();
+        let alias_import = client
+            .post(format!(
+                "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments/workspace-file"
+            ))
+            .bearer_auth(&board_token)
+            .json(&json!({"path":"attachment-fixtures/protected-alias.txt"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias_import.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    sqlx::query(
+        "ALTER TABLE assets ADD CONSTRAINT issue_attachment_upload_rollback_test CHECK (original_filename IS DISTINCT FROM 'attachment-database-failure.txt')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let object_count_before_failed_attachment =
+        local_storage_file_count(&organization_issue_object_root);
+    let attachment_added_activity_before_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let failure_boundary = format!("----RudderIssueAttachmentFailure{suffix}");
+    let failed_upload_body = format!(
+        "--{failure_boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"attachment-database-failure.txt\"\r\nContent-Type: text/plain\r\n\r\nforce attachment SQL rollback\r\n--{failure_boundary}--\r\n"
+    );
+    let failed_upload = client
+        .post(format!(
+            "{base}/api/orgs/{org_id}/issues/{issue_id}/attachments"
+        ))
+        .bearer_auth(&board_token)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={failure_boundary}"),
+        )
+        .body(failed_upload_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(failed_upload.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let failed_attachment_rows: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM assets WHERE org_id=$1::uuid AND original_filename='attachment-database-failure.txt'), (SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND asset_id IN (SELECT id FROM assets WHERE original_filename='attachment-database-failure.txt'))",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let attachment_added_activity_after_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.attachment_added'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(failed_attachment_rows, (0, 0));
+    assert_eq!(
+        attachment_added_activity_after_failure,
+        attachment_added_activity_before_failure
+    );
+    assert_eq!(
+        local_storage_file_count(&organization_issue_object_root),
+        object_count_before_failed_attachment,
+        "a failed attachment transaction must remove its staged object"
+    );
+    sqlx::query("ALTER TABLE assets DROP CONSTRAINT issue_attachment_upload_rollback_test")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let foreign_org_upload = client
+        .post(format!(
+            "{base}/api/orgs/{foreign_org_id}/issues/{foreign_issue_id}/attachments"
+        ))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_org_upload.status(), StatusCode::FORBIDDEN);
+    let imported_activity_workspace_path: Option<String> = sqlx::query_scalar(
+        "SELECT details->>'workspacePath' FROM activity_log WHERE org_id=$1::uuid AND action='issue.attachment_added' AND entity_id=$2 AND details->>'attachmentId'=$3",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(&workspace_attachment_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        imported_activity_workspace_path.as_deref(),
+        Some(workspace_relative_path.as_str())
+    );
+
+    for attachment_id in [&uploaded_attachment_id, &workspace_attachment_id] {
+        let removed = client
+            .delete(format!("{base}/api/attachments/{attachment_id}"))
+            .bearer_auth(&board_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(
+            removed.json::<serde_json::Value>().await.unwrap(),
+            json!({"ok":true})
+        );
+    }
+    let remaining_issue_attachments: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_attachments WHERE org_id=$1::uuid AND issue_id=$2::uuid AND id::text=ANY($3::text[])",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(vec![uploaded_attachment_id.clone(), workspace_attachment_id.clone()])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let remaining_assets: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM assets WHERE org_id=$1::uuid AND id::text=ANY($2::text[])",
+    )
+    .bind(&org_id)
+    .bind(vec![uploaded_asset_id, workspace_asset_id])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((remaining_issue_attachments, remaining_assets), (0, 0));
+    assert!(!uploaded_object_path.exists());
+    assert!(
+        !asset_storage_directory
+            .path()
+            .join(&workspace_object_key)
+            .exists()
+    );
+    let deleted_attachment_content = client
+        .get(format!(
+            "{base}/api/attachments/{uploaded_attachment_id}/content"
+        ))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted_attachment_content.status(), StatusCode::NOT_FOUND);
+    let no_issue_attachments = client
+        .get(format!("{base}/api/issues/{issue_id}/attachments"))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_issue_attachments.status(), StatusCode::OK);
+    assert_eq!(
+        no_issue_attachments
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        json!([])
+    );
+    std::fs::remove_dir_all(workspace_root.join("attachment-fixtures")).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_dir_all(workspace_root.join("agents/fixture")).unwrap();
+    let attachment_activity_counts: (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE action='issue.attachment_added'), count(*) FILTER (WHERE action='issue.attachment_removed') FROM activity_log WHERE org_id=$1::uuid AND entity_type='issue' AND entity_id=$2 AND details->>'attachmentId'=ANY($3::text[])",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(vec![uploaded_attachment_id, workspace_attachment_id])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attachment_activity_counts, (2, 2));
+    assert_eq!(
+        node_requests.load(Ordering::SeqCst),
+        attachments_node_requests_before,
+        "the Rust attachment workflow must not call the legacy Node routes"
+    );
+
     let foreign_run_id = Uuid::new_v4().to_string();
     insert_issue_creation_run(
         &pool,
@@ -2229,6 +3906,315 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .unwrap();
     assert_eq!(foreign_scope_after, foreign_scope_before);
 
+    sqlx::query("UPDATE issues SET status='done' WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&org_id)
+        .bind(&issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reopen_agent_id: String = sqlx::query_scalar(
+        "INSERT INTO agents (org_id, name, role, status) VALUES ($1::uuid, $2, 'general', 'idle') RETURNING id::text",
+    )
+    .bind(&org_id)
+    .bind(format!("Reopen Wake Agent {suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let reopen_agent_prior_ownership: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM agent_task_sessions WHERE agent_id=$2::uuid),
+           (SELECT count(*) FROM goal_owner_assignments WHERE org_id=$1::uuid AND agent_id=$2::uuid),
+           (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid)",
+    )
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reopen_agent_prior_ownership, (0, 0, 0, 0));
+    sqlx::query(
+        "INSERT INTO issues (id, org_id, title, status, priority, issue_number, identifier, assignee_agent_id) VALUES ($1::uuid, $2::uuid, 'Reopen wake admission through Rust', 'todo', 'medium', 900006, $3, $4::uuid)",
+    )
+    .bind(&reopen_wakeup_issue_id)
+    .bind(&org_id)
+    .bind(format!("{prefix}-900006"))
+    .bind(&reopen_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reopen_interrupt_run_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status, started_at, invocation_source, execution_authority, context_snapshot) VALUES ($1::uuid, $2::uuid, $3::uuid, 'running', now(), 'manual', 'legacy_ts', $4::jsonb)",
+    )
+    .bind(&reopen_interrupt_run_id)
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .bind(json!({"issueId":reopen_wakeup_issue_id}).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let unrelated_active_reopen_agent_runs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND agent_id=$2::uuid AND status='running' AND id<>$3::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_agent_id)
+    .bind(&reopen_interrupt_run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(unrelated_active_reopen_agent_runs, 0);
+    sqlx::query(
+        "UPDATE issues SET status='done',execution_run_id=$3::uuid WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_wakeup_issue_id)
+    .bind(&reopen_interrupt_run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let comments_before_reopen_wakeup: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&reopen_wakeup_issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let comments_before_reopen_failure: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let wake_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let wake_trigger_function = format!("test_reject_issue_reopen_wakeup_{wake_trigger_suffix}");
+    let wake_trigger_name = format!("test_reject_issue_reopen_wakeup_{wake_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {wake_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.agent_id='{reopen_agent_id}'::uuid
+              AND NEW.payload->>'issueId'='{reopen_wakeup_issue_id}' THEN
+             RAISE EXCEPTION 'forced Issue reopen wake admission failure (attempted reason=%)', NEW.reason;
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {wake_trigger_name} BEFORE INSERT ON agent_wakeup_requests
+         FOR EACH ROW EXECUTE FUNCTION {wake_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_reopen_wakeup = client
+        .post(format!(
+            "{base}/api/issues/{reopen_wakeup_issue_id}/comments"
+        ))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"This wake failure must roll back the reopen and interruption.",
+            "reopen":true,
+            "interrupt":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_wakeup.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {wake_trigger_name} ON agent_wakeup_requests"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {wake_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_reopen_wakeup_state: (String, Option<String>, Option<String>, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT i.status,i.execution_cancellation_at::text,r.error_code,
+               (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+               (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_interrupt'),
+               (SELECT count(*) FROM agent_wakeup_requests w WHERE w.org_id=i.org_id AND w.agent_id=i.assignee_agent_id AND w.payload->>'issueId'=i.id::text)
+             FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+             WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+        )
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .bind(&reopen_interrupt_run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_wakeup_state,
+        (
+            "done".to_owned(),
+            None,
+            None,
+            comments_before_reopen_wakeup,
+            0,
+            0,
+        )
+    );
+    let interrupt_trigger_suffix = Uuid::new_v4().simple().to_string();
+    let interrupt_trigger_function = format!("test_reject_issue_reopen_{interrupt_trigger_suffix}");
+    let interrupt_trigger_name = format!("test_reject_issue_reopen_{interrupt_trigger_suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {interrupt_trigger_function}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.action='issue.updated' AND NEW.entity_id='{issue_id}'
+              AND NEW.details->>'reopened'='true' THEN
+             RAISE EXCEPTION 'forced Issue reopen activity failure';
+           END IF;
+           RETURN NEW;
+         END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {interrupt_trigger_name} BEFORE INSERT ON activity_log
+         FOR EACH ROW EXECUTE FUNCTION {interrupt_trigger_function}()"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let failed_reopen_interrupt = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"This reopen and interruption must roll back together.",
+            "reopen":true,
+            "interrupt":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_reopen_interrupt.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    sqlx::query(&format!(
+        "DROP TRIGGER {interrupt_trigger_name} ON activity_log"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {interrupt_trigger_function}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let failed_reopen_state: (String, Option<String>, Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT i.status,i.execution_cancellation_at::text,r.error_code,
+           (SELECT count(*) FROM issue_comments c WHERE c.org_id=i.org_id AND c.issue_id=i.id),
+           (SELECT count(*) FROM activity_log a WHERE a.org_id=i.org_id AND a.entity_id=r.id::text AND a.action='heartbeat.cancelled' AND a.details->>'source'='issue_comment_interrupt')
+         FROM issues i JOIN heartbeat_runs r ON r.org_id=i.org_id AND r.id=$3::uuid
+         WHERE i.org_id=$1::uuid AND i.id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        failed_reopen_state,
+        (
+            "done".to_owned(),
+            None,
+            None,
+            comments_before_reopen_failure,
+            0,
+        )
+    );
+    let steered_comment = client
+        .post(format!("{base}/api/issues/{issue_id}/comments"))
+        .bearer_auth(&board_token)
+        .json(&json!({
+            "body":"Please continue with this feedback.",
+            "reopen":true,
+            "steer":{"expectedRunId":run_id}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(steered_comment.status(), StatusCode::CREATED);
+    let steered_comment: serde_json::Value = steered_comment.json().await.unwrap();
+    assert!(
+        steered_comment["body"]
+            .as_str()
+            .unwrap()
+            .contains("Please continue with this feedback.")
+    );
+    assert!(
+        steered_comment["body"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("agent://{agent_id}?intent=wake"))
+    );
+    let reopened_issue = client
+        .get(format!("{base}/api/issues/{issue_id}"))
+        .bearer_auth(&board_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reopened_issue.status(), StatusCode::OK);
+    let reopened_issue: serde_json::Value = reopened_issue.json().await.unwrap();
+    assert_eq!(reopened_issue["status"], "todo");
+    let reopened_activity_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND entity_id=$2 AND action='issue.updated' AND details->>'reopened'='true' AND details->>'source'='comment'",
+    )
+    .bind(&org_id)
+    .bind(&issue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reopened_activity_count, 1);
+    let (steer_request_status, steer_request_reason, steer_request_run_id, steer_request_payload):
+        (String, String, Option<String>, serde_json::Value) = sqlx::query_as(
+            "SELECT status,reason,run_id::text,payload FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=$2::uuid AND payload->>'issueId'=$3 AND reason='issue_execution_deferred' ORDER BY requested_at DESC LIMIT 1",
+        )
+        .bind(&org_id)
+        .bind(&agent_id)
+        .bind(&issue_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(steer_request_status, "deferred_issue_execution");
+    assert_eq!(steer_request_reason, "issue_execution_deferred");
+    assert_eq!(steer_request_run_id, None);
+    assert_eq!(steer_request_payload["steerRunId"], run_id);
+    let steered_run: (String, Option<String>) = sqlx::query_as(
+        "SELECT status,error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        steered_run,
+        ("running".to_owned(), Some("cancel_requested".to_owned()))
+    );
+    let steer_cancel_activity_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND action='heartbeat.cancelled' AND entity_id=$2 AND details->>'source'='issue_comment_steer'",
+    )
+    .bind(&org_id)
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(steer_cancel_activity_count, 1);
+
     let DatabaseState::Configured(native_pool) = &foundation.database else {
         panic!("the public API must have a configured database");
     };
@@ -2303,6 +4289,126 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&board_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&work_product_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&comment_wakeup_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&comment_wakeup_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
+        .bind(&comment_wakeup_request_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE issues SET execution_run_id=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_interrupt_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&reopen_interrupt_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&reopen_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
+        .bind(&org_id)
+        .bind(&comment_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&comment_wakeup_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE issues SET execution_run_id=NULL WHERE org_id=$1::uuid AND id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_issue_id.clone(),
+        paused_steer_issue_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_run_id.clone(),
+        paused_steer_run_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_run_id.clone(),
+            paused_steer_run_id.clone(),
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM agent_wakeup_requests WHERE org_id=$1::uuid AND agent_id=ANY($2::uuid[])",
+    )
+    .bind(&org_id)
+    .bind(vec![
+        normal_steer_failure_agent_id.clone(),
+        paused_steer_agent_id.clone(),
+    ])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_issue_id.clone(),
+            paused_steer_issue_id.clone(),
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM issues WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
+        .bind(&org_id)
+        .bind(vec![
+            normal_steer_failure_issue_id.clone(),
+            paused_steer_issue_id.clone(),
+        ])
         .execute(&pool)
         .await
         .unwrap();
@@ -2464,8 +4570,38 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM workspace_runtime_services WHERE id=$1::uuid")
+        .bind(&related_runtime_service_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM execution_workspaces WHERE id=$1::uuid")
+        .bind(&related_execution_workspace_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
+        .bind(&related_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
+        .bind(&related_agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(&related_project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&agent_key_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
+        .bind(&foreign_agent_key_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -2516,6 +4652,16 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
+        .bind(&reopen_agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=ANY($1::uuid[])")
+        .bind(vec![normal_steer_failure_agent_id, paused_steer_agent_id])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&foreign_agent_id)
         .execute(&pool)
         .await
@@ -2530,6 +4676,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
+        .bind(&foreign_issue_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&org_id)
         .execute(&pool)
@@ -2537,6 +4688,11 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&foreign_org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
+        .bind(&related_org_id)
         .execute(&pool)
         .await
         .unwrap();
