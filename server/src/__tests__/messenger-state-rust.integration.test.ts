@@ -250,15 +250,62 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         const pending = await db.execute(sql`SELECT count(*)::int AS count FROM organization_mutation_outbox WHERE state <> 'published'`);
         expect(pending[0].count).toBe(0);
       }
-      return canonical(result, await snapshot(), events);
+      const state = await snapshot();
+      if (native) {
+        const receipts = await db.execute(sql`SELECT id::text,org_id::text,activity_id::text,event_type,payload,state,attempts,published_at FROM organization_mutation_outbox ORDER BY id`);
+        expect(receipts).toHaveLength(events.length);
+        expect(new Set(receipts.map((row) => row.activity_id)).size).toBe(receipts.length);
+        for (const receipt of receipts) {
+          const activity = state.activity_log.find((row) => row.id === receipt.activity_id);
+          expect(activity, "outbox references a persisted activity").toBeDefined();
+          expect(receipt.org_id).toBe(orgId);
+          expect(receipt.event_type).toBe("activity.logged");
+          expect(receipt.state).toBe("published");
+          expect(receipt.attempts).toBe(1);
+          expect(receipt.published_at).not.toBeNull();
+          const payload = {
+            actorType: activity!.actor_type, actorId: activity!.actor_id,
+            action: activity!.action, entityType: activity!.entity_type, entityId: activity!.entity_id,
+            agentId: activity!.agent_id, runId: activity!.run_id, details: activity!.details,
+          };
+          expect(receipt.payload).toEqual(payload);
+          expect(events).toContainEqual({ orgId, type: "activity.logged", payload });
+        }
+      }
+      return { result, state, events };
     } finally { unsubscribe(); }
   }
-  async function differential(old: () => Promise<unknown>, native: () => Promise<unknown>) {
+  type NativeReceipt = { action: string; entityType: string; entityId: string; details: JsonRow; createActivity?: boolean };
+  type Captured = Awaited<ReturnType<typeof capture>>;
+  async function differential(
+    old: () => Promise<unknown>, native: () => Promise<unknown>,
+    nativeReceipts: NativeReceipt[] | ((expected: Captured) => NativeReceipt[]) = [],
+  ) {
     const expected = await capture(old, false);
     await reset();
     const actual = await capture(native, true);
-    expect(actual).toEqual(expected);
-    return actual;
+    // These are the explicit M21 audit/outbox additions. Retain the complete
+    // legacy response, domain-state, activity and event comparison; add only
+    // the named new receipt rows/payloads, never discard native audit effects.
+    for (const receipt of typeof nativeReceipts === "function" ? nativeReceipts(expected) : nativeReceipts) {
+      const payload = {
+        actorType: "user", actorId: userId, action: receipt.action,
+        entityType: receipt.entityType, entityId: receipt.entityId,
+        agentId: null, runId: null, details: receipt.details,
+      };
+      if (receipt.createActivity !== false) {
+        expected.state.activity_log.push({
+          id: randomUUID(), org_id: orgId, actor_type: "user", actor_id: userId,
+          action: receipt.action, entity_type: receipt.entityType, entity_id: receipt.entityId,
+          agent_id: null, run_id: null, details: receipt.details, idempotency_key: null,
+          created_at: new Date().toISOString(),
+        });
+      }
+      expected.events.push({ orgId, type: "activity.logged", payload });
+    }
+    const normalized = canonical(actual.result, actual.state, actual.events);
+    expect(normalized).toEqual(canonical(expected.result, expected.state, expected.events));
+    return normalized;
   }
   function keepInput(overrides: Partial<KeepMessengerSavedView> = {}): KeepMessengerSavedView {
     return {
@@ -480,14 +527,14 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
   });
 
   it("creates and updates custom group metadata, pinning, collapse and sort order", async () => {
-    await differential(() => legacy(() => messengerService(db).createCustomGroup(orgId, userId, "新组 🧭", "folder"), 201), () => http("post", "/groups", { name: "新组 🧭", icon: "folder" }));
+    await differential(() => legacy(() => messengerService(db).createCustomGroup(orgId, userId, "新组 🧭", "folder"), 201), () => http("post", "/groups", { name: "新组 🧭", icon: "folder" }), (expected) => [{ action: "messenger.custom_group_created", entityType: "messenger_custom_group", entityId: ((expected.result as Result).body as { id: string }).id, details: {} }]);
     await reset();
     const patch = { name: "改名 e\u0301", icon: null, pinned: false, collapsed: true, sortOrder: 37 };
-    await differential(() => legacy(() => messengerService(db).updateCustomGroup(orgId, userId, groupId, patch)), () => http("patch", `/groups/${groupId}`, patch));
+    await differential(() => legacy(() => messengerService(db).updateCustomGroup(orgId, userId, groupId, patch)), () => http("patch", `/groups/${groupId}`, patch), [{ action: "messenger.custom_group_updated", entityType: "messenger_custom_group", entityId: groupId, details: {} }]);
   });
 
   it.each(["delete", "separate"] as const)("%s group preserves saved views and exact per-view/group activity", async (operation) => {
-    await differential(() => legacy(() => operation === "delete" ? messengerService(db).deleteCustomGroup(orgId, userId, groupId) : messengerService(db).separateCustomGroup(orgId, userId, groupId)), () => http(operation === "delete" ? "delete" : "post", `/groups/${groupId}${operation === "separate" ? "/separate" : ""}`));
+    await differential(() => legacy(() => operation === "delete" ? messengerService(db).deleteCustomGroup(orgId, userId, groupId) : messengerService(db).separateCustomGroup(orgId, userId, groupId)), () => http(operation === "delete" ? "delete" : "post", `/groups/${groupId}${operation === "separate" ? "/separate" : ""}`), [{ action: "messenger.custom_group_removed", entityType: "messenger_custom_group", entityId: groupId, details: { source: `group_${operation}` }, createActivity: false }]);
     const state = await snapshot();
     expect(state.messenger_saved_views).toEqual(baseline.messenger_saved_views);
     const activity = state.activity_log.filter((row) => row.action === "messenger.custom_group_removed");
@@ -498,7 +545,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
 
   it.each([0, 6, "chat", "absent"] as const)("removes entry %s with legacy itemKey and empty-group semantics", async (entry) => {
     const key = entry === "chat" ? `chat:${chatId}` : entry === "absent" ? "issues" : `saved-view:${viewIds[entry]}`;
-    await differential(() => legacy(() => messengerService(db).removeThreadFromCustomGroups(orgId, userId, key)), () => http("delete", `/groups/entries/${encodeURIComponent(key)}`));
+    await differential(() => legacy(() => messengerService(db).removeThreadFromCustomGroups(orgId, userId, key)), () => http("delete", `/groups/entries/${encodeURIComponent(key)}`), typeof entry === "string" ? [{ action: "messenger.group_entry_removed", entityType: "messenger_thread", entityId: key, details: {} }] : []);
   });
 
   it.each(["issues", "approvals", "budget-alerts", "chat", "hidden-chat", "issue", "followed", "notification", "private", "foreign-issue"])("pins and unpins %s with owner access and read-position parity", async (kind) => {
@@ -510,7 +557,7 @@ describe("Messenger state through public HTTP, real Rust and disposable PostgreS
         output.push(result ? { status: 200, body: wire(result) } : { status: 404, body: { error: "Messenger thread not found" } });
       }
       return output;
-    }, async () => [await http("post", `/threads/${encodeURIComponent(key)}/user-state`, { pinned: true }), await http("post", `/threads/${encodeURIComponent(key)}/user-state`, { pinned: false })]);
+    }, async () => [await http("post", `/threads/${encodeURIComponent(key)}/user-state`, { pinned: true }), await http("post", `/threads/${encodeURIComponent(key)}/user-state`, { pinned: false })], ["private", "foreign-issue"].includes(kind) ? [] : [true, false].map(() => ({ action: "messenger.thread_user_state_updated", entityType: "messenger_thread", entityId: key, details: {} })));
   });
 
   it("rejects a foreign chat before legacy hydration can create cross-organization state", async () => {
