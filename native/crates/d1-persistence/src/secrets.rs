@@ -1,11 +1,14 @@
 //! Organization secret CRUD for the private, signed Rust foundation route.
 //!
-//! The existing Node adapter owns browser/session authentication and signs the
-//! organization and Board decision. This module owns organization-scoped SQL,
+//! The private adapter signs its Board decision; public native callers revalidate
+//! identity and organization access inside each mutation transaction. This owns
 //! local provider encryption, version allocation under row locks, and the
 //! activity/outbox receipts in the same transaction as each mutation.
 
-use crate::activity::{ActivityActor, write_activity};
+use crate::{
+    activity::{ActivityActor, write_activity},
+    agent_core::{NativeAgentAccess, NativeAgentAuthorizer},
+};
 use base64::{Engine as _, engine::general_purpose};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use serde_json::{Value, json};
@@ -429,6 +432,7 @@ async fn list_secrets(pool: &PgPool, org: &str) -> Result<Value, SecretsError> {
 
 async fn create_secret(
     pool: &PgPool,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
     org: &str,
     actor_id: &str,
     input: &Value,
@@ -444,19 +448,20 @@ async fn create_secret(
         Some(Value::String(provider)) if provider_is_supported(provider) => provider.as_str(),
         _ => return Err(http(400, "Validation error")),
     };
+    let description = optional_string(input, "description")?;
+    // The current local provider deliberately discards external references.
+    // Keep accepting the field for wire compatibility, but persist the
+    // provider's normalized result rather than the caller's unused value.
+    let _external_ref = optional_string(input, "externalRef")?;
+    let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     if provider != "local_encrypted" {
         return Err(http(
             422,
             format!("{provider} provider is not configured in this deployment"),
         ));
     }
-    let description = optional_string(input, "description")?;
-    // The current local provider deliberately discards external references.
-    // Keep accepting the field for wire compatibility, but persist the
-    // provider's normalized result rather than the caller's unused value.
-    let _external_ref = optional_string(input, "externalRef")?;
     let (material, value_sha256) = encrypt_value(value)?;
-    let mut tx = pool.begin().await?;
     let secret_id = match sqlx::query_scalar::<_, String>(
         "INSERT INTO organization_secrets (org_id,name,provider,purpose,external_ref,latest_version,description,created_by_user_id) VALUES ($1::uuid,$2,$3,'user_managed',$4,1,$5,$6) RETURNING id::text",
     )
@@ -525,6 +530,7 @@ async fn lock_user_secret(
 
 async fn rotate_secret(
     pool: &PgPool,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
     org: &str,
     actor_id: &str,
     id: &str,
@@ -534,6 +540,7 @@ async fn rotate_secret(
     let value = required_string(input, "value")?;
     let _requested_external_ref = optional_string(input, "externalRef")?;
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let row = lock_user_secret(&mut tx, org, id)
         .await?
         .ok_or_else(|| http(404, "Secret not found"))?;
@@ -592,6 +599,7 @@ async fn rotate_secret(
 
 async fn update_secret(
     pool: &PgPool,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
     org: &str,
     actor_id: &str,
     id: &str,
@@ -606,6 +614,7 @@ async fn update_secret(
     let description = optional_string(input, "description")?;
     let external_ref = optional_string(input, "externalRef")?;
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let row = lock_user_secret(&mut tx, org, id)
         .await?
         .ok_or_else(|| http(404, "Secret not found"))?;
@@ -672,11 +681,13 @@ async fn update_secret(
 
 async fn delete_secret(
     pool: &PgPool,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
     org: &str,
     actor_id: &str,
     id: &str,
 ) -> Result<Value, SecretsError> {
     let mut tx = pool.begin().await?;
+    revalidate_actor(&mut tx, org, authorizer).await?;
     let row = lock_user_secret(&mut tx, org, id)
         .await?
         .ok_or_else(|| http(404, "Secret not found"))?;
@@ -707,6 +718,52 @@ pub async fn execute_secrets(
     actor_id: &str,
     request: &Value,
 ) -> Result<(u16, Value), SecretsError> {
+    execute_secrets_with_authorizer(pool, organization_id, actor_id, request, None).await
+}
+
+/// Public native ingress supplies credential proof separately from client JSON.
+/// The existing mutation checks it again on the same transaction as its writes.
+pub async fn execute_secrets_for_actor(
+    pool: &PgPool,
+    organization_id: &str,
+    actor_id: &str,
+    request: &Value,
+    authorizer: &dyn NativeAgentAuthorizer,
+) -> Result<(u16, Value), SecretsError> {
+    if !matches!(
+        text(request, "operation"),
+        Some("create" | "rotate" | "update" | "delete")
+    ) {
+        return Err(http(400, "Validation error"));
+    }
+    execute_secrets_with_authorizer(pool, organization_id, actor_id, request, Some(authorizer))
+        .await
+}
+
+async fn revalidate_actor(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &str,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<(), SecretsError> {
+    if let Some(authorizer) = authorizer {
+        match authorizer.revalidate(&mut **tx, organization_id).await? {
+            NativeAgentAccess::Authorized => {}
+            NativeAgentAccess::Unauthorized => return Err(http(401, "Unauthorized")),
+            NativeAgentAccess::Forbidden => {
+                return Err(http(403, "User does not have access to this organization"));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn execute_secrets_with_authorizer(
+    pool: &PgPool,
+    organization_id: &str,
+    actor_id: &str,
+    request: &Value,
+    authorizer: Option<&dyn NativeAgentAuthorizer>,
+) -> Result<(u16, Value), SecretsError> {
     reject_unknown_keys(request, &["operation", "id", "input"])?;
     let organization_id = Uuid::parse_str(organization_id)
         .map_err(|_| http(422, "Invalid organization id"))?
@@ -734,7 +791,7 @@ pub async fn execute_secrets(
                 .ok_or_else(|| http(400, "Validation error"))?;
             (
                 201,
-                create_secret(pool, &organization_id, actor_id, input).await?,
+                create_secret(pool, authorizer, &organization_id, actor_id, input).await?,
             )
         }
         "rotate" => {
@@ -744,7 +801,7 @@ pub async fn execute_secrets(
                 .ok_or_else(|| http(400, "Validation error"))?;
             (
                 200,
-                rotate_secret(pool, &organization_id, actor_id, &id, input).await?,
+                rotate_secret(pool, authorizer, &organization_id, actor_id, &id, input).await?,
             )
         }
         "update" => {
@@ -754,7 +811,7 @@ pub async fn execute_secrets(
                 .ok_or_else(|| http(400, "Validation error"))?;
             (
                 200,
-                update_secret(pool, &organization_id, actor_id, &id, input).await?,
+                update_secret(pool, authorizer, &organization_id, actor_id, &id, input).await?,
             )
         }
         "delete" => {
@@ -764,7 +821,7 @@ pub async fn execute_secrets(
             let id = parse_uuid(text(request, "id").ok_or_else(|| http(400, "Validation error"))?)?;
             (
                 200,
-                delete_secret(pool, &organization_id, actor_id, &id).await?,
+                delete_secret(pool, authorizer, &organization_id, actor_id, &id).await?,
             )
         }
         _ => return Err(http(400, "Validation error")),

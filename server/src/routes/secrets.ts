@@ -1,10 +1,10 @@
 import type { Db } from "@rudderhq/db";
 import {
-  SECRET_PROVIDERS,
-  type SecretProvider,
   createSecretSchema,
   rotateSecretSchema,
+  SECRET_PROVIDERS,
   updateSecretSchema,
+  type SecretProvider,
 } from "@rudderhq/shared";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { markHttpRequestBodySensitive } from "../middleware/logger.js";
@@ -71,51 +71,55 @@ export function secretRoutes(db: Db, native?: RustFoundationBridge) {
     await execute(req, res, orgId, { operation: "list" });
   });
 
-  router.post("/orgs/:orgId/secrets", markSensitiveMutationBody, validate(createSecretSchema), async (req, res) => {
-    assertBoard(req);
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    await execute(req, res, orgId, {
-      operation: "create",
-      input: { ...req.body, provider: req.body.provider ?? defaultProvider },
+  // Required public ingress owns all four writes, including authentication and
+  // Secret lookup. Omit Node adapters so native failure cannot fall back here.
+  if (!native?.publicIngressEnabled) {
+    router.post("/orgs/:orgId/secrets", markSensitiveMutationBody, validate(createSecretSchema), async (req, res) => {
+      assertBoard(req);
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      await execute(req, res, orgId, {
+        operation: "create",
+        input: { ...req.body, provider: req.body.provider ?? defaultProvider },
+      });
     });
-  });
 
-  router.post("/secrets/:id/rotate", markSensitiveMutationBody, validate(rotateSecretSchema), async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Secret not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-    await execute(req, res, existing.orgId, { operation: "rotate", id, input: req.body });
-  });
+    router.post("/secrets/:id/rotate", markSensitiveMutationBody, validate(rotateSecretSchema), async (req, res) => {
+      assertBoard(req);
+      const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (!existing) {
+        res.status(404).json({ error: "Secret not found" });
+        return;
+      }
+      assertCompanyAccess(req, existing.orgId);
+      await execute(req, res, existing.orgId, { operation: "rotate", id, input: req.body });
+    });
 
-  router.patch("/secrets/:id", markSensitiveMutationBody, validate(updateSecretSchema), async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Secret not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-    await execute(req, res, existing.orgId, { operation: "update", id, input: req.body });
-  });
+    router.patch("/secrets/:id", markSensitiveMutationBody, validate(updateSecretSchema), async (req, res) => {
+      assertBoard(req);
+      const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (!existing) {
+        res.status(404).json({ error: "Secret not found" });
+        return;
+      }
+      assertCompanyAccess(req, existing.orgId);
+      await execute(req, res, existing.orgId, { operation: "update", id, input: req.body });
+    });
 
-  router.delete("/secrets/:id", markSensitiveMutationBody, async (req, res) => {
-    assertBoard(req);
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Secret not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-    await execute(req, res, existing.orgId, { operation: "delete", id });
-  });
+    router.delete("/secrets/:id", markSensitiveMutationBody, async (req, res) => {
+      assertBoard(req);
+      const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (!existing) {
+        res.status(404).json({ error: "Secret not found" });
+        return;
+      }
+      assertCompanyAccess(req, existing.orgId);
+      await execute(req, res, existing.orgId, { operation: "delete", id });
+    });
+  }
 
   return router;
 }
