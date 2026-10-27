@@ -149,21 +149,6 @@ pub(super) fn parse(runtime: &str, stdout: &str, stderr: &str, process_ok: bool)
     }
     out
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn terminal_output_only() {
-        let partial = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Draft\"}}\n";
-        assert!(!parse("codex_local", partial, "", true).success);
-        let full = format!("{partial}{{\"type\":\"turn.completed\"}}\n");
-        let result = parse("codex_local", &full, "", true);
-        assert!(result.success);
-        assert_eq!(result.text, "Draft");
-        assert!(!parse("codex_local", &full, "", false).success);
-    }
-}
-
 /// Literal existing provider-transport classifier: auth, quota, config,
 /// provider 5xx and tool failures remain ordinary terminal failures.
 pub(super) fn network(evidence: &str, tools: bool) -> bool {
@@ -182,4 +167,19 @@ pub(super) fn network(evidence: &str, tools: bool) -> bool {
         Regex::new(r"(?i)\b(?:enotfound|eai_again|err_name_not_resolved|name\s+resolution|getaddrinfo|dns\s+(?:lookup|failure|error))\b|stream\s+(?:disconnected|closed)|connection\s+(?:reset|closed|aborted|dropped|refused|failed)|socket\s+(?:hang\s*up|closed|reset)|econnreset|econnaborted|broken\s+pipe|network\s+connection\s+(?:lost|closed)|fetch\s+failed|\betimedout\b|\bconnect(?:ion)?\s+tim(?:e|ed)\s*out\b|\brequest\s+tim(?:e|ed)\s*out\b|network\s+timeout|deadline\s+exceeded|\beconnrefused\b|\bnetwork\s+unreachable\b|\bno\s+route\s+to\s+host\b|\btemporarily\s+unavailable\b").expect("literal provider network regex")
     });
     !tools && !EXCLUDE.iter().any(|r| r.is_match(evidence)) && NETWORK.is_match(evidence)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn terminal_output_only() {
+        let partial = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Draft\"}}\n";
+        assert!(!parse("codex_local", partial, "", true).success);
+        let full = format!("{partial}{{\"type\":\"turn.completed\"}}\n");
+        let result = parse("codex_local", &full, "", true);
+        assert!(result.success);
+        assert_eq!(result.text, "Draft");
+        assert!(!parse("codex_local", &full, "", false).success);
+    }
 }
