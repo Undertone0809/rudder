@@ -613,7 +613,7 @@ export function issueRoutes(
     });
   }
 
-  router.post("/orgs/:orgId/labels", validate(createIssueLabelSchema), async (req, res) => {
+  if (!nativePublicIssueIngress) router.post("/orgs/:orgId/labels", validate(createIssueLabelSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const label = await svc.createLabel(orgId, req.body);
@@ -632,7 +632,7 @@ export function issueRoutes(
     res.status(201).json(label);
   });
 
-  router.patch("/labels/:labelId", validate(updateIssueLabelSchema), async (req, res) => {
+  if (!nativePublicIssueIngress) router.patch("/labels/:labelId", validate(updateIssueLabelSchema), async (req, res) => {
     const labelId = req.params.labelId as string;
     const existing = await svc.getLabelById(labelId);
     if (!existing) {
@@ -660,7 +660,7 @@ export function issueRoutes(
     res.json(updated);
   });
 
-  router.delete("/labels/:labelId", async (req, res) => {
+  if (!nativePublicIssueIngress) router.delete("/labels/:labelId", async (req, res) => {
     const labelId = req.params.labelId as string;
     const existing = await svc.getLabelById(labelId);
     if (!existing) {

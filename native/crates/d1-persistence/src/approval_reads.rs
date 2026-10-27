@@ -54,7 +54,7 @@ pub enum ApprovalReadError {
     Json(#[from] serde_json::Error),
 }
 
-fn projection(table: &str) -> String {
+pub(crate) fn projection(table: &str) -> String {
     let fields: &[(&str, &str)] = match table {
         "approvals" => &[
             ("id", "id"),
