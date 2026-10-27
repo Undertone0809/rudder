@@ -257,7 +257,7 @@ export function costRoutes(
     res.json(results);
   });
 
-  router.get("/orgs/:orgId/budgets/overview", async (req, res) => {
+  if (!nativeCostReads) router.get("/orgs/:orgId/budgets/overview", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     await sendOverviewRead(db, res, rustFoundationBridge, req.actor, orgId, { operation: "budget-overview" });

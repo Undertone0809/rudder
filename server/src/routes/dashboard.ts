@@ -28,7 +28,7 @@ export function dashboardRoutes(db: Db, rustFoundation?: RustFoundationBridge) {
     };
   }
 
-  router.get("/orgs/:orgId/dashboard", async (req, res) => {
+  if (rustFoundation?.publicIngressEnabled !== true) router.get("/orgs/:orgId/dashboard", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     await sendOverviewRead(db, res, rustFoundation, req.actor, orgId, { operation: "dashboard-summary" });
