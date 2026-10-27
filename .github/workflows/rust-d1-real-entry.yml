@@ -97,6 +97,10 @@ jobs:
           test -x native/target/debug/migration-preflight
           test -x native/target/debug/migration-apply
           test -x native/target/debug/rudder-postgres-owner
+          cargo build --locked --manifest-path native/Cargo.toml \
+            --package rudder-process-host --bin rudder-process-host \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          test -x native/target/debug/rudder-process-host
 
       - name: Verify public Rust domain workflows against PostgreSQL
         env:
@@ -167,6 +171,29 @@ jobs:
           cargo test --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation-core --lib \
             public_ingress::calendar_writes::http_tests::native_calendar_writes_preserve_validation_scope_privacy_rollback_and_no_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Verify Rust Messenger writes and ephemeral title processes
+        env:
+          RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: ${{ runner.temp }}/rudder-public-workflow/workspaces
+          RUDDER_NATIVE_HOST_HOME_DIRECTORY: ${{ runner.temp }}/rudder-public-workflow/host-home
+          RUDDER_NATIVE_HOST_RUDDER_HOME: ${{ runner.temp }}/rudder-public-workflow/instance-home
+          RUDDER_NATIVE_HOST_INSTANCE_ID: ci-public-workflow
+          RUDDER_NATIVE_HOST_HOSTNAME: ci-public-workflow-host
+          RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
+          RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
+          RUDDER_SECRETS_PROVIDER: local_encrypted
+          RUDDER_SECRETS_MASTER_KEY_FILE: ${{ runner.temp }}/rudder-messenger-title-synthetic.key
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-native-chat-executor --lib messenger_title::tests::title_ \
+            -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::messenger_writes::http_tests::native_messenger_writes_cover_all_twenty_one_journey_privacy_titles_rollback_and_no_node_fallback \
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
