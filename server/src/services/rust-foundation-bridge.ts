@@ -355,7 +355,7 @@ function candidateBinaryPaths(configured: string | undefined) {
   return candidates;
 }
 
-function createFoundationChildEnvironment(input: {
+export function createFoundationChildEnvironment(input: {
   databaseUrl: string;
   actorEnvelopeKey: string;
   publicIngress?: RustPublicIngressOptions;
@@ -392,6 +392,9 @@ function createFoundationChildEnvironment(input: {
       : {}),
     ...(input.secretsMasterKey ? { RUDDER_SECRETS_MASTER_KEY: input.secretsMasterKey } : {}),
     RUDDER_SECRETS_MASTER_KEY_FILE: input.secretsMasterKeyFile,
+    ...(process.env.RUDDER_SECRETS_PROVIDER !== undefined
+      ? { RUDDER_SECRETS_PROVIDER: process.env.RUDDER_SECRETS_PROVIDER }
+      : {}),
     ...(input.publicIngress ? {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,

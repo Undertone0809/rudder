@@ -35,6 +35,7 @@ mod organization_resources;
 mod project_reads;
 mod project_writes;
 mod run_reads;
+mod secret_writes;
 mod runtime_bindings;
 
 pub(crate) fn ensure_project_organization_workspace_root(org_id: &str) -> Result<String, ()> {
@@ -753,6 +754,9 @@ async fn proxy_request(
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
     // aliases are dispatched here so they remain native and never fall back.
+    if secret_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return secret_writes::dispatch_alias(state, request, payload).await;
+    }
     if project_reads::is_reserved_path(request.uri().path(), request.method()) {
         return project_reads::dispatch_alias(state, request, payload).await;
     }
