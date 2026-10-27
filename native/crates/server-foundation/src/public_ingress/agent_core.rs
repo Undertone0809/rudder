@@ -1044,6 +1044,12 @@ pub(super) fn native_authorizer<'a>(
     }
 }
 
+pub(super) fn instance_root(org_id: &str) -> Result<String, ()> {
+    Ok(host_paths::AgentHostFacts::resolve(org_id)?
+        .instructions_host
+        .instance_root)
+}
+
 pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
     let facts = host_paths::AgentHostFacts::resolve(org_id)?;
     let host = organization_workspace_host(&facts.instructions_host);

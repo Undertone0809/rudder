@@ -721,9 +721,18 @@ describe("rust foundation bridge lifecycle", () => {
         RUDDER_SECRETS_MASTER_KEY_FILE: resolve(process.cwd(), "data/secrets/master.key"),
       };
       expect(childEnv).toMatchObject(requiredEnv);
+      const hostFacts = new Set([
+        "USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE",
+        "RUDDER_NATIVE_HOST_USERNAME", "RUDDER_NATIVE_HOST_LOCALE",
+        "RUN_LOG_BASE_PATH", "WORKSPACE_OPERATION_LOG_BASE_PATH",
+      ]);
       expect(Object.keys(childEnv).filter((name) => (
-        !(name in requiredEnv) && name !== "__CF_USER_TEXT_ENCODING"
+        !(name in requiredEnv) && !hostFacts.has(name) && name !== "__CF_USER_TEXT_ENCODING"
       ))).toEqual([]);
+      for (const name of ["USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE"]) {
+        if (process.env[name] !== undefined) expect(childEnv[name]).toBe(process.env[name]);
+      }
+      expect(childEnv.RUDDER_NATIVE_HOST_LOCALE).toBe(new Intl.Collator().resolvedOptions().locale);
       expect(childEnv).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
       expect(childEnv).not.toHaveProperty("DATABASE_URL");
       expect(childEnv).not.toHaveProperty("RUDDER_PRIVATE_TEST_SECRET");

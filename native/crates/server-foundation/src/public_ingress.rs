@@ -26,15 +26,19 @@ mod calendar_writes;
 mod cli_auth;
 mod cost_reads;
 mod email_auth;
+mod existing_reads;
 mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
+mod messenger_reads;
 mod native_chat;
+mod observational_reads;
 mod organization_mutations;
 mod organization_reads;
 mod organization_resources;
 mod project_reads;
 mod project_writes;
+mod request_reads;
 mod run_reads;
 mod secret_writes;
 mod runtime_bindings;
@@ -775,6 +779,18 @@ async fn proxy_request(
     }
     if automation_reads::is_reserved_path(request.uri().path(), request.method()) {
         return automation_reads::dispatch_alias(state, request, payload).await;
+    }
+    if request_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return request_reads::dispatch_alias(state, request, payload).await;
+    }
+    if messenger_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return messenger_reads::dispatch(state, request, payload).await;
+    }
+    if existing_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return existing_reads::dispatch(state, request, payload).await;
+    }
+    if observational_reads::is_reserved_path(request.uri().path(), request.method()) {
+        return observational_reads::dispatch_alias(state, request, payload).await;
     }
     if run_reads::is_reserved_path(request.uri().path(), request.method()) {
         return run_reads::dispatch_alias(state, request, payload).await;
@@ -2420,10 +2436,18 @@ mod tests {
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]
     mod cost_read_http_tests;
+    #[path = "messenger_read_http_tests.rs"]
+    mod messenger_read_http_tests;
+    #[path = "existing_read_http_tests.rs"]
+    mod existing_read_http_tests;
     #[path = "issue_core_http_tests.rs"]
     mod issue_core_http_tests;
+    #[path = "observational_read_http_tests.rs"]
+    mod observational_read_http_tests;
     #[path = "organization_reads_http_tests.rs"]
     mod organization_reads_http_tests;
+    #[path = "request_read_http_tests.rs"]
+    mod request_read_http_tests;
     #[path = "run_read_http_tests.rs"]
     mod run_read_http_tests;
 

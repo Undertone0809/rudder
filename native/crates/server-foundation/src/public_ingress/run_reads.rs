@@ -2,6 +2,8 @@
 //! existing Rust Run reader; this module resolves public references and
 //! revalidates the native identity before invoking it.
 
+mod logs;
+
 use super::*;
 use crate::{
     member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth},
@@ -22,6 +24,7 @@ const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RunOperation {
     Detail,
+    Log,
     Events,
     WorkspaceOperations,
 }
@@ -39,6 +42,9 @@ enum Endpoint {
         reference: String,
         surface: Surface,
         operation: RunOperation,
+    },
+    WorkspaceLog {
+        operation_id: String,
     },
     Active {
         issue_reference: String,
@@ -102,16 +108,28 @@ fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint> {
                 && (surface.eq_ignore_ascii_case("heartbeat-runs")
                     || surface.eq_ignore_ascii_case("agent-runs"))
                 && (leaf.eq_ignore_ascii_case("events")
-                    || leaf.eq_ignore_ascii_case("workspace-operations")) =>
+                    || leaf.eq_ignore_ascii_case("workspace-operations")
+                    || leaf.eq_ignore_ascii_case("log")) =>
         {
             Some(Endpoint::Run {
                 reference: decode_capture(raw_reference)?,
                 surface: run_surface(surface),
-                operation: if leaf.eq_ignore_ascii_case("events") {
+                operation: if leaf.eq_ignore_ascii_case("log") {
+                    RunOperation::Log
+                } else if leaf.eq_ignore_ascii_case("events") {
                     RunOperation::Events
                 } else {
                     RunOperation::WorkspaceOperations
                 },
+            })
+        }
+        [api, operations, raw_id, log]
+            if api.eq_ignore_ascii_case("api")
+                && operations.eq_ignore_ascii_case("workspace-operations")
+                && log.eq_ignore_ascii_case("log") =>
+        {
+            Some(Endpoint::WorkspaceLog {
+                operation_id: decode_capture(raw_id)?,
             })
         }
         [api, issues, raw_issue_reference, active_run]
@@ -260,9 +278,23 @@ async fn execute(
                 Ok(resolution) => resolution,
                 Err(response) => return response,
             };
+            if operation == RunOperation::Log {
+                return logs::read(
+                    pool,
+                    &identity,
+                    &native_auth,
+                    &request,
+                    &organization_id,
+                    &run_id,
+                    false,
+                    not_found,
+                )
+                .await;
+            }
             let query = query_values(request.query_string());
             let redaction = run_read_redaction();
             let input = match operation {
+                RunOperation::Log => unreachable!("handled before projection"),
                 RunOperation::Detail => json!({
                     "operation":"detail",
                     "surface":surface_name(surface),
@@ -288,6 +320,32 @@ async fn execute(
                 &identity,
                 &native_auth,
                 input,
+            )
+            .await
+        }
+        Endpoint::WorkspaceLog { operation_id } => {
+            let organization_id: Option<String> = match sqlx::query_scalar(
+                "SELECT org_id::text FROM workspace_operations WHERE id=$1::uuid",
+            )
+            .bind(&operation_id)
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => return db_error(error),
+            };
+            let Some(organization_id) = organization_id else {
+                return not_found("Workspace operation not found");
+            };
+            logs::read(
+                pool,
+                &identity,
+                &native_auth,
+                &request,
+                &organization_id,
+                &operation_id,
+                true,
+                "Workspace operation not found",
             )
             .await
         }
@@ -418,7 +476,7 @@ fn number_query(query: &QueryValues, key: &str, default: f64) -> f64 {
     if parsed.is_finite() { parsed } else { default }
 }
 
-fn js_number(raw: &str) -> Option<f64> {
+pub(super) fn js_number(raw: &str) -> Option<f64> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Some(0.0);
@@ -496,7 +554,7 @@ fn js_parse_int(raw: &str) -> Option<f64> {
     found.then_some(sign * number)
 }
 
-fn js_date_to_iso(raw: &str) -> Option<String> {
+pub(super) fn js_date_to_iso(raw: &str) -> Option<String> {
     let parsed = OffsetDateTime::parse(raw, &Rfc3339)
         .ok()
         .or_else(|| {
@@ -567,20 +625,30 @@ fn parse_local_slash_date(raw: &str) -> Option<OffsetDateTime> {
 }
 
 fn run_read_redaction() -> Value {
+    #[cfg(unix)]
+    let metadata = unix_user_metadata();
+    #[cfg(not(unix))]
+    let metadata = None;
+    run_read_redaction_from(|name| std::env::var(name).ok(), metadata)
+}
+
+fn run_read_redaction_from(
+    mut lookup: impl FnMut(&str) -> Option<String>,
+    metadata: Option<(String, String)>,
+) -> Value {
     let mut user_names = Vec::new();
-    for name in ["USER", "LOGNAME", "USERNAME"] {
-        if let Ok(value) = std::env::var(name) {
+    for name in ["RUDDER_NATIVE_HOST_USERNAME", "USER", "LOGNAME", "USERNAME"] {
+        if let Some(value) = lookup(name) {
             push_unique(&mut user_names, value);
         }
     }
     let mut home_dirs = Vec::new();
-    for name in ["HOME", "USERPROFILE"] {
-        if let Ok(value) = std::env::var(name) {
+    for name in ["RUDDER_NATIVE_HOST_HOME_DIRECTORY", "HOME", "USERPROFILE"] {
+        if let Some(value) = lookup(name) {
             push_unique(&mut home_dirs, value);
         }
     }
-    #[cfg(unix)]
-    if let Some((username, home)) = unix_user_metadata() {
+    if let Some((username, home)) = metadata {
         push_unique(&mut user_names, username);
         push_unique(&mut home_dirs, home);
     }
@@ -646,7 +714,7 @@ fn unix_user_metadata() -> Option<(String, String)> {
 }
 
 #[allow(clippy::result_large_err)]
-async fn resolve_run_reference(
+pub(super) async fn resolve_run_reference(
     pool: &sqlx::PgPool,
     state: &IngressState,
     identity: &NativeIngressIdentity,
@@ -774,7 +842,7 @@ async fn run_alias_organization_scope(
     }
 }
 
-async fn resolve_issue_reference(
+pub(super) async fn resolve_issue_reference(
     pool: &sqlx::PgPool,
     reference: &str,
 ) -> Result<Option<(String, String)>, sqlx::Error> {
@@ -932,7 +1000,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reserves_only_the_ten_run_get_head_routes() {
+    fn windows_host_facts_mask_log_content_without_unix_metadata() {
+        let facts = run_read_redaction_from(
+            |name| match name {
+                "RUDDER_NATIVE_HOST_USERNAME" => Some("WindowsOperator".into()),
+                "RUDDER_NATIVE_HOST_HOME_DIRECTORY" => Some(r"C:\Users\WindowsOperator".into()),
+                _ => None,
+            },
+            None,
+        );
+        let mut options: crate::run_reads::redaction::Redaction =
+            serde_json::from_value(facts).unwrap();
+        let original =
+            serde_json::to_string(r"C:\Users\WindowsOperator\work: WindowsOperator").unwrap();
+        let unmasked =
+            crate::run_reads::redaction::redact_json(&original, &options, false).unwrap();
+        assert_eq!(
+            serde_json::from_str::<String>(&unmasked).unwrap(),
+            r"C:\Users\WindowsOperator\work: WindowsOperator"
+        );
+        options.enabled = true;
+        let masked = crate::run_reads::redaction::redact_json(&original, &options, false).unwrap();
+        assert!(!masked.contains("WindowsOperator"));
+        assert!(masked.contains('*'));
+    }
+
+    #[test]
+    fn reserves_only_the_thirteen_run_get_head_routes() {
         let mut paths = vec![
             "/api/orgs/org/heartbeat-runs".to_owned(),
             "/api/orgs/org/agent-runs".to_owned(),
@@ -942,11 +1036,13 @@ mod tests {
             paths.extend([
                 format!("/api/{surface}/run-id"),
                 format!("/api/{surface}/run-id/events"),
+                format!("/api/{surface}/run-id/log"),
                 format!("/api/{surface}/run-id/workspace-operations"),
             ]);
         }
         paths.push("/api/issues/ISS-1/active-run".to_owned());
-        assert_eq!(paths.len(), 10);
+        paths.push("/api/workspace-operations/operation-id/log".to_owned());
+        assert_eq!(paths.len(), 13);
         for path in paths {
             assert!(is_reserved_path(&path, &Method::GET), "{path}");
             assert!(is_reserved_path(&path, &Method::HEAD), "{path}");
@@ -954,7 +1050,6 @@ mod tests {
         for path in [
             "/api/orgs/org/live-runs",
             "/api/issues/ISS-1/live-runs",
-            "/api/agent-runs/run-id/log",
             "/api/agent-runs/run-id/cancel",
             "/api/agent-runs/run-id/retry",
         ] {

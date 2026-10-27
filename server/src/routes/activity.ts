@@ -100,7 +100,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     return issueSvc.getById(rawId);
   }
 
-  router.get("/orgs/:orgId/activity", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/activity", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
 
@@ -117,7 +117,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     await sendActivityRead(db, res, rustFoundationBridge, req.actor, orgId, activityListReadInput(filters, limit, cursor));
   });
 
-  router.get("/orgs/:orgId/users/:userId/activity-ledger", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/orgs/:orgId/users/:userId/activity-ledger", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = resolveUserActivityUserId(req, req.params.userId as string);
@@ -152,7 +152,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     res.status(201).json(event);
   });
 
-  router.get("/issues/:id/activity", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/issues/:id/activity", async (req, res) => {
     const rawId = req.params.id as string;
     const issue = await resolveIssueByRef(rawId);
     if (!issue) {
@@ -163,7 +163,7 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     await sendActivityRead(db, res, rustFoundationBridge, req.actor, issue.orgId, { operation: "issue", issueId: issue.id });
   });
 
-  router.get("/issues/:id/runs", async (req, res) => {
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/issues/:id/runs", async (req, res) => {
     const rawId = req.params.id as string;
     const issue = await resolveIssueByRef(rawId);
     if (!issue) {
@@ -193,9 +193,9 @@ export function activityRoutes(db: Db, rustFoundationBridge?: RustFoundationBrid
     }, db);
   }
 
-  router.get("/heartbeat-runs/:runId/issues", (req, res) =>
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/heartbeat-runs/:runId/issues", (req, res) =>
     handleIssuesForRun(req, res, "Heartbeat run not found"));
-  router.get("/agent-runs/:runId/issues", (req, res) =>
+  if (rustFoundationBridge?.publicIngressEnabled !== true) router.get("/agent-runs/:runId/issues", (req, res) =>
     handleIssuesForRun(req, res, "Agent run not found"));
 
   return router;

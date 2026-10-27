@@ -15,14 +15,13 @@ import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { redactApprovalPayload } from "../redaction.js";
 import { approvalRoutes } from "../routes/approvals.js";
-import { assertCompanyAccess } from "../routes/authz.js";
+import { assertCompanyAccess, getAuthorizedOrgScope } from "../routes/authz.js";
 import { issueRoutes } from "../routes/issues.js";
 import { requestApprovalRead } from "../services/approval-read-bridge.js";
 import { approvalService } from "../services/approvals.js";
 import { issueApprovalService } from "../services/issue-approvals.js";
-import { issueService } from "../services/issues.js";
-import { getAuthorizedOrgScope } from "../routes/authz.js";
 import { resolveIssueReference } from "../services/issue-references.js";
+import { issueService } from "../services/issues.js";
 import { createRustFoundationBridge, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 import { nativeIdentityIngressFixture } from "./helpers/native-identity-ingress.js";
@@ -55,6 +54,18 @@ function legacyRoutes(db: ReturnType<typeof createDb>) {
     return router;
 }
 async function freePort() { const socket = net.createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening"); const port = (socket.address() as net.AddressInfo).port; await new Promise<void>((resolve) => socket.close(() => resolve())); return port; }
+function canonicalUtcTimestamp(timestamp: string): string | null {
+    if (timestamp === "infinity" || timestamp === "-infinity" || timestamp.endsWith(" BC")) return null;
+    const match = timestamp.match(/^(\d+)-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?Z$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    if (year < 1) return null;
+    const yearText = year >= 10_000 ? `+${String(year).padStart(6, "0")}` : String(year).padStart(4, "0");
+    const millisecond = (match[7] ?? "").slice(0, 3).padEnd(3, "0");
+    const iso = `${yearText}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.${millisecond}Z`;
+    const value = Date.parse(iso);
+    return Number.isFinite(value) && Math.abs(value) <= 8_640_000_000_000_000 ? new Date(value).toISOString() : null;
+}
 const modes = process.env.RUDDER_APPROVAL_NODE_ORACLE_ONLY === "1" ? ["node"] as const : ["off", "required"] as const;
 describe.each(modes)("Approval and association public read isolation (%s)", (mode) => {
     let db: ReturnType<typeof createDb>, pg: LocalPostgresInstance, server: Server, oracleServer: Server, directory: string;
@@ -218,14 +229,42 @@ describe.each(modes)("Approval and association public read isolation (%s)", (mod
         const foreign = await get(`/orgs/${other}/approvals?status=%00`);
         expect([anonymous.status, foreign.status]).toEqual([401, 403]);
     });
-    it("pairs legacy Date serialization through approvals, links, issues and labels", async () => {
+    it("serializes Approval dates as canonical UTC across details, links, issues and labels", async () => {
         for (const timestamp of ["0032-01-01 00:00:00Z", "1887-12-31 14:59:59Z", "1969-12-31 23:59:59.999999Z", "infinity", "275760-09-13 00:00:00.000001Z", "275760-09-13 00:00:00.000999Z", "275760-09-13 00:00:00.001Z"]) {
             await db.execute(sql `UPDATE approvals SET created_at=${timestamp}::timestamptz,updated_at=${timestamp}::timestamptz,decided_at=${timestamp}::timestamptz WHERE id=${ownApproval}::uuid`);
             await db.execute(sql `UPDATE issues SET created_at=${timestamp}::timestamptz,updated_at=${timestamp}::timestamptz,started_at=${timestamp}::timestamptz WHERE id=${goodIssue}::uuid`);
             await db.execute(sql `UPDATE labels SET created_at=${timestamp}::timestamptz,updated_at=${timestamp}::timestamptz WHERE id=${ownLabel}::uuid`);
             await db.execute(sql `UPDATE issue_approvals SET created_at=${timestamp}::timestamptz WHERE approval_id=${ownApproval}::uuid`);
-            for (const url of [`/approvals/${ownApproval}`, `/approvals/${ownApproval}/issues`, `/issues/${ownIssue}/approvals`, `/orgs/${org}/labels`, `/orgs/${org}/approvals`])
-                await pair(url);
+            if (mode === "node") {
+                for (const url of [`/approvals/${ownApproval}`, `/approvals/${ownApproval}/issues`, `/issues/${goodIssue}/approvals`, `/orgs/${org}/labels`, `/orgs/${org}/approvals`])
+                    await pair(url);
+                continue;
+            }
+            const expected = canonicalUtcTimestamp(timestamp);
+            const detail = await request(target).get(`/api/approvals/${ownApproval}`).set("authorization", `Bearer ${token}`);
+            expect(detail.status).toBe(200);
+            expect(detail.body).toMatchObject({ createdAt: expected, updatedAt: expected, decidedAt: expected });
+
+            const list = await request(target).get(`/api/orgs/${org}/approvals`).set("authorization", `Bearer ${token}`);
+            expect(list.status).toBe(200);
+            expect(list.body.find((row: { id: string }) => row.id === ownApproval)).toMatchObject({ createdAt: expected, updatedAt: expected, decidedAt: expected });
+
+            const associatedIssues = await request(target).get(`/api/approvals/${ownApproval}/issues`).set("authorization", `Bearer ${token}`);
+            expect(associatedIssues.status).toBe(200);
+            expect(associatedIssues.body.find((row: { id: string }) => row.id === goodIssue)).toMatchObject({ createdAt: expected, updatedAt: expected, startedAt: expected });
+
+            const associatedApprovals = await request(target).get(`/api/issues/${goodIssue}/approvals`).set("authorization", `Bearer ${token}`);
+            expect(associatedApprovals.status).toBe(200);
+            expect(associatedApprovals.body.find((row: { id: string }) => row.id === ownApproval)).toMatchObject({
+                createdAt: expected,
+                updatedAt: expected,
+                decidedAt: expected,
+                link: { createdAt: expected },
+            });
+
+            const labelList = await request(target).get(`/api/orgs/${org}/labels`).set("authorization", `Bearer ${token}`);
+            expect(labelList.status).toBe(200);
+            expect(labelList.body.find((row: { id: string }) => row.id === ownLabel)).toMatchObject({ createdAt: expected, updatedAt: expected });
         }
     });
     it("rechecks live Board membership on every migrated Approval route", async () => {

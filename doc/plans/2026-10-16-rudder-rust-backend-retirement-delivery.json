@@ -1153,6 +1153,35 @@
       },
       "ci_isolation": "Public workflow CI explicitly supplies the five host-fact environment inputs required by the attachment fixture, isolated under RUNNER_TEMP; it preserves inherited HOME/CODEX_HOME. Fixed before publication after verifier fixture preflight exposed the missing prerequisite."
     },
+    "request_public_reads_next_batch_20261026": {
+      "state": "Integrated into combined15 author-qualified candidate; independent current-candidate acceptance pending; excluded from PR388",
+      "source_checkpoint": "f993d073c0826b0672c8972cd5ccc5284fa69b23",
+      "source_base": "30c83a0dd880398b204dd02ab399eae8b95aac51",
+      "original_author_checkpoint": "ed16af7e8dbb8a77d0bdb4e4e8b7c51e1052bd0f",
+      "scope": "Three Request GET/HEAD operations, approved canonical UTC projection shared with Approval, and only directly affected Approval historical expectations.",
+      "source_review": "/private/tmp/rudder-request-public-reads-source-r1/independent-stage-review-r1.md (sha256=5f612595b0a616398c0e472443a6b2ac3d5e902206c7f3164e19ca4ccc2b4626; verdict=accept; exact d54-to-ed16 Request source and Node boundaries)",
+      "compatibility_delta": "Native pathless reads authenticate first: anonymous missing/malformed ID returns401 rather than legacy404/500; no pre-auth database lookup is introduced.",
+      "remaining_debt": "Request writes/resolution/cancellation/effects and ingress-off compatibility remain Node-owned.",
+      "production_released": false,
+      "global_complete": false
+    },
+    "combined15_read_batch_20261027": {
+      "state": "Independent source/PAV/final publication accepted; PR390 published; exact-head CI pending",
+      "head": "1dc3d1f5438aaecb2cdc618c14c519d0d0e777d3",
+      "scope": "Request3 plus Activity/ActivityLink6, Overview2, RunWorkspace4, GET/HEAD paired. Existing D1 reused; no writes/workers migrated by this slice.",
+      "calendar": "Dashboard month and activity today preserve host-local calendar; Budget UTC and canonical UTC wire serialization retain existing contracts. Exotic repeated-midnight ambiguity documented; no new timezone framework.",
+      "node_boundary_review": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/remaining-read-source-r1/node-boundary-review.md (sha256=76e90836f72b4e80aa2f65d79f1ce545f201f2708527e22c84b249976cf17d4b; verdict=accept; four Node boundaries at ea0ff482)",
+      "request_author_result": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/request-qualification-r1/author-result.json",
+      "production_released": false,
+      "global_complete": false,
+      "author_evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined15-qualification-r1/",
+      "baseline": "Original full test run exit1: 7 groups / 37 failures; all affected groups/cases recovered under correct fixture environment. Full build passed after resuming Desktop staging with the exact locked runtime package cache. Original failures retained; no claim that the original commands exited0.",
+      "standalone_sha256": "e0f9ef01440fdb9293dc6da071969381e4520feafbe2a49480e98cb39e481ff7",
+      "pr": "https://github.com/Undertone0809/rudder/pull/390",
+      "pav_evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined15-final-r1/pav/report.md",
+      "ordering_correction": "The temporary millisecond patch was abandoned after real Drizzle Date/String oracle confirmed the original whole-second ordering. Original source/artifacts restored exactly; independent review corrected.",
+      "ci_status": "PR390 exact-head CI still running; two ARM64 jobs cancelled before runner assignment due hosted capacity; no source-failure conclusion. Retry only cancelled jobs after the workflow becomes rerunnable."
+    },
     "ci_unblock_20261027": {
       "state": "Author checks PASS; independent final publication review and exact-head CI pending",
       "scope": "Test-only worker-aware readiness for the failing synthetic Hermes case; Windows job budget75min after observed60min cancellationduringcache-save. Production executor deadline30sec unchanged; Intel90/other60unchanged.",
@@ -1172,6 +1201,33 @@
       "historical_machine_json": "Old temporarycopy unavailable; no recovery claim. Original historicalMD exactly restoredfromsessionoutput and originalsource57manifest/artifacthashes independently match.",
       "production_released": false,
       "global_complete": false
+    },
+    "delivered_pr388_20261027": {
+      "state": "Merged through protected main PR after independent final merge accept and exact-head CI",
+      "pr": "https://github.com/Undertone0809/rudder/pull/388",
+      "head": "68479fc4eec788a4b8c12175499e55c309f245e1",
+      "merge_commit": "a96146f9fd1aa9a882c0fbad27c9bddd956e6e16",
+      "scope": "37 operation shapes; selected public Issue comment/work-product/attachment and Cost/Run/Automation read authority. GET/HEAD paired where applicable.",
+      "ci": "21 success;1 expected conditional skip;0 pending or failed",
+      "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/pr388-ci-final-r1/merge-receipt.json",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_complete": false
+    },
+    "combined22_read_batch_20261027": {
+      "state": "Focused author checks and full typecheck/build passed; all four original failing test scopes recovered; every affected Desktop component and packaged smoke passed; final immutable candidate stage/PAV pending",
+      "source_checkpoint": "c70ee56494fbf40f6729c991ad792f2cbbbc586a",
+      "scope": "Backup4,Calendar3,Secret2,SavedView2,LiveRun2,Messenger6,RunLog3;GET/HEAD paired",
+      "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-qualification-r1/",
+      "lease": "Shared D target serialized; yielded to Request15 sorting correction, then resumes22",
+      "production_released": false,
+      "global_complete": false,
+      "node_boundary_review": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-node-boundary-r1/review.md",
+      "focused": "Foundation334PASS/33ignored; three public HTTP selectors each1PASS; Node7PASS; serverTC; strictClippy; standalone frozen c1641124. Original invalid-scene fixture failure and correction retained.",
+      "baseline_limits": "Raw lint19FAIL (only two touched headers fixed;17 unrelated remain), raw test:run4FAIL (all4 recovered), raw desktop:verify exit130INVALIDATED retained. Build passed70.14s; packaged smoke308.95s and remaining components passed serially.",
+      "author_report": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-qualification-r1/final-author-report.md",
+      "author_manifest_sha256": "5e4d9012b18d3061c5b6f655a26a0d9f9b9166151389e289f7403a532303a619",
+      "isolation_iteration": "AGENTS requires distinct short canonical TMPDIR per concurrent verifier; exact PG smart-shutdown collision retained, contaminated evidence invalidated, commands recovered serially in isolated roots."
     }
   }
 }

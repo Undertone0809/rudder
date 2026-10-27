@@ -80,6 +80,36 @@ impl AppState {
     }
 }
 
+/// Read-only public adapter; never admits placement or state mutation commands.
+pub(crate) async fn public_read(
+    pool: &sqlx::PgPool,
+    org: &str,
+    user: &str,
+    input: serde_json::Value,
+) -> HttpResponse {
+    let request = serde_json::json!({"input":input,"auditContext":{"userNames":[],"homeDirs":[]}});
+    let input = match serde_json::from_value::<Request>(request) {
+        Ok(input) if input.validate() => input,
+        _ => return error_response(Error::Http(400, "Validation error")),
+    };
+    let scope = Scope {
+        org,
+        user,
+        audit: &input.audit_context,
+    };
+    let result = match &input.input {
+        Command::SavedViewList { query } => saved_views::list(pool, &scope, query).await,
+        Command::SavedViewGet { id } => saved_views::get(pool, &scope, id).await,
+        _ => return error_response(Error::Http(400, "Validation error")),
+    };
+    match result {
+        Ok(body) => HttpResponse::Ok()
+            .content_type("application/json")
+            .body(body),
+        Err(error) => error_response(error),
+    }
+}
+
 fn error_response(error: Error) -> HttpResponse {
     let (status, message) = match error {
         Error::Http(status, message) => (status, message),

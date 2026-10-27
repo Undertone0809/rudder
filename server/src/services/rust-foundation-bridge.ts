@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, existsSync, constants as fsConstants, statSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
@@ -362,6 +362,8 @@ export function createFoundationChildEnvironment(input: {
   secretsMasterKey?: string;
   secretsMasterKeyFile: string;
 }): Record<string, string> {
+  let hostUsername: string | undefined;
+  try { hostUsername = userInfo().username; } catch { /* Match unavailable host metadata. */ }
   return {
     // ZIP DOS timestamps follow the Node host's local Date semantics. Keep
     // this explicit non-secret locale setting without inheriting other env.
@@ -378,6 +380,17 @@ export function createFoundationChildEnvironment(input: {
       "RUDDER_AGENT_CREATE_RUST_MANAGED_MCP_ENABLED",
       "RUDDER_AGENT_CREATE_INTELLIGENCE_AVATAR_RUST_ENABLED",
     ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    // Transport only the existing log-store paths and host masking facts.
+    // All file reads and masking decisions remain native.
+    ...Object.fromEntries([
+      "USER", "LOGNAME", "USERNAME", "HOME", "USERPROFILE",
+    ].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    ...(process.env.RUN_LOG_BASE_PATH !== undefined
+      ? { RUN_LOG_BASE_PATH: resolve(process.env.RUN_LOG_BASE_PATH) } : {}),
+    ...(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH !== undefined
+      ? { WORKSPACE_OPERATION_LOG_BASE_PATH: resolve(process.env.WORKSPACE_OPERATION_LOG_BASE_PATH) } : {}),
+    ...(hostUsername ? { RUDDER_NATIVE_HOST_USERNAME: hostUsername } : {}),
+    RUDDER_NATIVE_HOST_LOCALE: new Intl.Collator().resolvedOptions().locale,
     RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),

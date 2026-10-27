@@ -1,5 +1,3 @@
-import type { Db } from "@rudderhq/db";
-import { sql } from "drizzle-orm";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
 import {
@@ -10,10 +8,7 @@ import {
 export type RequestReadInput = (
   | { operation: "list"; status?: "open" | "resolved" | "cancelled" | "superseded"; kind?: "assistance" | "approval" }
   | { operation: "detail" | "block-audit-attempts"; requestId: string }
-) & {
-  /** Signed Node connection context, never a caller-controlled query filter. */
-  legacyDateTimezone?: string;
-};
+);
 
 export async function requestRequestRead(
   baseUrl: string,
@@ -48,7 +43,6 @@ export async function sendRequestRead(
   actor: RustFoundationActor,
   orgId: string,
   input: RequestReadInput,
-  db: Db,
 ): Promise<void> {
   if (!bridge?.requestRead) {
     res.status(503).json({ error: "Rust Request reads are unavailable", code: "rust_foundation_request_read_unavailable" });
@@ -56,9 +50,7 @@ export async function sendRequestRead(
   }
   let response: RustFoundationResponse;
   try {
-    const [context] = await db.execute(sql<{ timezone: string }>`SELECT current_setting('TimeZone') AS timezone`);
-    if (typeof context?.timezone !== "string") throw new Error("Missing database date context");
-    response = await bridge.requestRead(actor, orgId, { ...input, legacyDateTimezone: context.timezone });
+    response = await bridge.requestRead(actor, orgId, input);
   } catch {
     res.status(503).json({ error: "Rust Request reads are unavailable", code: "rust_foundation_request_read_request_failed" });
     return;

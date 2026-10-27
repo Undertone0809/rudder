@@ -30,11 +30,13 @@ rudder-native-process-transport = { path = "../native-process-transport" }
 rudder-opencode-native = { path = "../opencode-native" }
 rudder-organization-mutation-core = { path = "../organization-mutation-core" }
 rudder-project-goal-link-core = { path = "../project-goal-link-core" }
+rudder-run-evidence-core = { path = "../run-evidence-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 scrypt = { version = "0.12", default-features = false }
 subtle = "2.6"
+sys-locale = "0.3.2"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }

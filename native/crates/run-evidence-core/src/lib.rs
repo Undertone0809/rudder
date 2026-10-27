@@ -96,7 +96,18 @@ pub fn read_run_log_range(
     offset: u64,
     limit_bytes: u64,
 ) -> Result<EvidenceReadPage, ReadError> {
-    if limit_bytes == 0 || limit_bytes > MAX_READ_BYTES {
+    read_run_log_range_with_limit(input, offset, limit_bytes, MAX_READ_BYTES)
+}
+
+/// Read a page for an in-process owner with its own response-size contract.
+/// The CLI retains its existing one-megabyte limit through `read_run_log_range`.
+pub fn read_run_log_range_with_limit(
+    input: &Path,
+    offset: u64,
+    limit_bytes: u64,
+    maximum_read_bytes: u64,
+) -> Result<EvidenceReadPage, ReadError> {
+    if limit_bytes == 0 || limit_bytes > maximum_read_bytes {
         return Err(ReadError::new("evidence_read_limit_invalid"));
     }
     let metadata = fs::symlink_metadata(input)
@@ -368,6 +379,17 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn in_process_pages_can_exceed_cli_limit_without_changing_cli_contract() {
+        let root = tempdir().unwrap();
+        let input = root.path().join("large.log");
+        std::fs::write(&input, vec![b'x'; (MAX_READ_BYTES + 8) as usize]).unwrap();
+        assert!(read_run_log_range(&input, 0, MAX_READ_BYTES + 8).is_err());
+        let page = read_run_log_range_with_limit(&input, 0, MAX_READ_BYTES + 8, u64::MAX).unwrap();
+        assert_eq!(page.content.len(), (MAX_READ_BYTES + 8) as usize);
+        assert!(page.eof);
     }
 
     #[test]

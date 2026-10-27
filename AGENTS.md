@@ -122,6 +122,7 @@ Notes:
   - `node desktop/scripts/smoke.mjs --mode=packaged`
 - `pnpm prod` is a convenience command for humans. It builds the installer, verifies packaged boot, and opens the installer. Do not treat it as the only validation step while developing.
 - If you touched Desktop startup, migrations, profile routing, or packaging, do not hand off after dev-shell checks alone.
+- Give each concurrent verification command a distinct, short, canonical `TMPDIR`. Server Vitest cleanup treats PostgreSQL under that root as test-owned; never share it with Desktop smoke, even when their profile/data directories differ.
 - The Desktop CI workflow should continue to run packaged smoke after packaging, but local contributors must also run the packaged path before claiming the issue is done.
 
 ## 5. Core Engineering Rules

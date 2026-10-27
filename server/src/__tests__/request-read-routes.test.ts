@@ -22,7 +22,7 @@ const cases = [
 function app(actor: Request["actor"] = BOARD, bridge?: RustFoundationBridge) {
   const result = express();
   result.use((req, _res, next) => { req.actor = actor; next(); });
-  result.use("/api", requestRoutes({ execute: vi.fn().mockResolvedValue([{ timezone: "UTC" }]) } as unknown as Db, bridge));
+  result.use("/api", requestRoutes({} as Db, bridge));
   result.use(errorHandler);
   return result;
 }
@@ -35,7 +35,7 @@ describe("Request GET authority boundary", () => {
     const response = await request(app(BOARD, { requestRead, mode: "off" } as unknown as RustFoundationBridge)).get(`/api${path}`);
     expect(response.status).toBe(200);
     expect(response.text).toBe(body.toString());
-    expect(requestRead).toHaveBeenCalledWith(BOARD, ORG, { ...input, legacyDateTimezone: "UTC" });
+    expect(requestRead).toHaveBeenCalledWith(BOARD, ORG, input);
     expect(svc.list).not.toHaveBeenCalled();
     expect(svc.getById).not.toHaveBeenCalled();
     expect(svc.attemptsForRequest).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe("Request GET authority boundary", () => {
     }
     expect(requestRead).not.toHaveBeenCalled();
     expect((await request(target).get(`/api/orgs/${ORG}/requests?status=resolved&kind=approval&ignored=value`)).status).toBe(200);
-    expect(requestRead).toHaveBeenCalledWith(BOARD, ORG, { operation: "list", status: "resolved", kind: "approval", legacyDateTimezone: "UTC" });
+    expect(requestRead).toHaveBeenCalledWith(BOARD, ORG, { operation: "list", status: "resolved", kind: "approval" });
     expect(svc.list).not.toHaveBeenCalled();
     const unauthorized = await request(app({ type: "none" }, { requestRead } as unknown as RustFoundationBridge)).get(`/api/orgs/${ORG}/requests?status=bogus`);
     expect(unauthorized.status).toBe(401);
@@ -92,6 +92,19 @@ describe("Request GET authority boundary", () => {
       expect(response.body).toEqual({ error: "Request not found" });
     }
     expect(requestRead).not.toHaveBeenCalled();
+  });
+  it("omits only the selected public Request reads from Node", async () => {
+    const requestRead = vi.fn();
+    const target = app(BOARD, { requestRead, publicIngressEnabled: true } as unknown as RustFoundationBridge);
+    for (const { path } of cases) {
+      const response = await request(target).get(`/api${path}`);
+      expect(response.status).toBe(404);
+      const head = await request(target).head(`/api${path}`);
+      expect(head.status).toBe(404);
+    }
+    expect(requestRead).not.toHaveBeenCalled();
+    expect(svc.readIdentity).not.toHaveBeenCalled();
+    expect(svc.list).not.toHaveBeenCalled();
   });
   it("signs the exact Requests transport body and action without mutation state", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new globalThis.Response('{"native":true}', { status: 200, headers: { "content-type": "application/json" } }));

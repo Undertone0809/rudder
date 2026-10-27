@@ -37,7 +37,7 @@ export function calendarRoutes(db: Db, native?: CalendarNativeBridge) {
     }
   }
 
-  router.get("/orgs/:orgId/calendar/sources", async (req, res) => {
+  if (native?.publicIngressEnabled !== true) router.get("/orgs/:orgId/calendar/sources", async (req, res) => {
     await nativeRequest(req, res, { operation: "source.list" });
   });
 
@@ -59,7 +59,7 @@ export function calendarRoutes(db: Db, native?: CalendarNativeBridge) {
     });
   }
 
-  router.get("/orgs/:orgId/calendar/events", async (req, res) => {
+  if (native?.publicIngressEnabled !== true) router.get("/orgs/:orgId/calendar/events", async (req, res) => {
     await nativeRequest(req, res, { operation: "event.list", filters: req.query as Record<string, unknown> });
   });
 
@@ -69,7 +69,7 @@ export function calendarRoutes(db: Db, native?: CalendarNativeBridge) {
     });
   }
 
-  router.get("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
+  if (native?.publicIngressEnabled !== true) router.get("/orgs/:orgId/calendar/events/:eventId", async (req, res) => {
     await nativeRequest(req, res, { operation: "event.detail", id: req.params.eventId as string });
   });
 

@@ -2,7 +2,7 @@
 //! Node authenticates and resolves references; no mutation-owner switch or
 //! Node fallback can replace these domain queries and public projections.
 mod projection;
-mod redaction;
+pub(crate) mod redaction;
 use crate::{
     ActorEnvelopeVerificationError, AppState, DatabaseState,
     member_directory_auth::{MemberDirectoryNativeAccess, MemberDirectoryNativeAuth},
@@ -223,7 +223,7 @@ pub(super) async fn agent_run_cancel_response(
 /// Read configuration without the Node settings service's get-or-create side
 /// effect. Mirror its strict schema and legacy gitIdentity omission; select
 /// only scalar settings metadata, never decode a legacy configuration object.
-async fn log_redaction_enabled(pool: &PgPool) -> Result<bool, sqlx::Error> {
+pub(crate) async fn log_redaction_enabled(pool: &PgPool) -> Result<bool, sqlx::Error> {
     let row=sqlx::query(r#"
 SELECT CASE WHEN jsonb_typeof(general)='object' THEN
  (general - ARRAY['gitIdentity','censorUsernameInLogs','showDeveloperDiagnostics','experimentalPluginsEnabled','experimentalSitesEnabled','experimentalGoalsEnabled','experimentalComputerUseEnabled','locale','productAnalyticsMode','productAnalyticsConsentEpoch']::text[] = '{}'::jsonb)
