@@ -2428,12 +2428,12 @@ mod tests {
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]
     mod cost_read_http_tests;
-    #[path = "messenger_read_http_tests.rs"]
-    mod messenger_read_http_tests;
     #[path = "existing_read_http_tests.rs"]
     mod existing_read_http_tests;
     #[path = "issue_core_http_tests.rs"]
     mod issue_core_http_tests;
+    #[path = "messenger_read_http_tests.rs"]
+    mod messenger_read_http_tests;
     #[path = "observational_read_http_tests.rs"]
     mod observational_read_http_tests;
     #[path = "organization_reads_http_tests.rs"]
