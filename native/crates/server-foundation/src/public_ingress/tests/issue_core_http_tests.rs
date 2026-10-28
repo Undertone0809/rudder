@@ -4147,8 +4147,9 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         .send()
         .await
         .unwrap();
-    assert_eq!(steered_comment.status(), StatusCode::CREATED);
+    let steered_status = steered_comment.status();
     let steered_comment: serde_json::Value = steered_comment.json().await.unwrap();
+    assert_eq!(steered_status, StatusCode::CREATED, "{steered_comment}");
     assert!(
         steered_comment["body"]
             .as_str()
@@ -4235,121 +4236,127 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     node_control.stop(true).await;
     node_task.await.unwrap().unwrap();
 
+    // Teardown also deletes Rust-owned wakeups and runs; keep its marker local.
+    let mut cleanup = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_cleanup',true)")
+        .execute(&mut *cleanup)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM organization_mutation_outbox WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM activity_log WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     let board_wakeup_id: String =
         sqlx::query_scalar("SELECT wakeup_request_id::text FROM heartbeat_runs WHERE id=$1::uuid")
             .bind(&board_run_id)
-            .fetch_one(&pool)
+            .fetch_one(&mut *cleanup)
             .await
             .unwrap();
     let member_wakeup_id: String =
         sqlx::query_scalar("SELECT wakeup_request_id::text FROM heartbeat_runs WHERE id=$1::uuid")
             .bind(&member_run_id)
-            .fetch_one(&pool)
+            .fetch_one(&mut *cleanup)
             .await
             .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
         .bind(&paused_request_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&member_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
         .bind(&member_wakeup_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&board_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
         .bind(&board_wakeup_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&member_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&board_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&work_product_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
         .bind(&org_id)
         .bind(&comment_wakeup_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&comment_wakeup_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE id=$1::uuid")
         .bind(&comment_wakeup_request_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("UPDATE issues SET execution_run_id=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(&org_id)
         .bind(&reopen_wakeup_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
         .bind(&org_id)
         .bind(&reopen_interrupt_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&reopen_interrupt_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
         .bind(&org_id)
         .bind(&reopen_wakeup_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&reopen_wakeup_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
         .bind(&org_id)
         .bind(&comment_wakeup_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&comment_wakeup_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(
@@ -4360,7 +4367,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         normal_steer_failure_issue_id.clone(),
         paused_steer_issue_id.clone(),
     ])
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query(
@@ -4371,7 +4378,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         normal_steer_failure_run_id.clone(),
         paused_steer_run_id.clone(),
     ])
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
@@ -4380,7 +4387,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             normal_steer_failure_run_id.clone(),
             paused_steer_run_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(
@@ -4391,7 +4398,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
         normal_steer_failure_agent_id.clone(),
         paused_steer_agent_id.clone(),
     ])
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=ANY($2::uuid[])")
@@ -4400,7 +4407,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             normal_steer_failure_issue_id.clone(),
             paused_steer_issue_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
@@ -4409,49 +4416,49 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             normal_steer_failure_issue_id.clone(),
             paused_steer_issue_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issue_comments WHERE org_id=$1::uuid AND issue_id=$2::uuid")
         .bind(&org_id)
         .bind(&issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&paused_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&budget_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
         .bind(&org_id)
         .bind(&run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_issue_creation_requests WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&requested_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=ANY($1::uuid[])")
@@ -4460,7 +4467,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             blocked_issue_id.clone(),
             cancelled_issue_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=ANY($1::uuid[])")
@@ -4469,12 +4476,12 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             ambiguous_run_id.clone(),
             terminal_run_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&foreign_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(
@@ -4483,7 +4490,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
            AND e.run_id=r.id AND r.wakeup_request_id=w.id",
     )
     .bind(&org_id)
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query(
@@ -4491,27 +4498,27 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
          WHERE r.org_id=$1::uuid AND w.org_id=$1::uuid AND r.wakeup_request_id=w.id",
     )
     .bind(&org_id)
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_wakeup_requests WHERE org_id=$1::uuid")
         .bind(&foreign_org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM cost_events WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM budget_policies WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     let automation_chat_ids: Vec<String> = sqlx::query_scalar(
@@ -4533,7 +4540,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             blocked_run_id.clone(),
             cancelled_run_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM automations WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
@@ -4543,7 +4550,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             blocked_automation_id.clone(),
             cancelled_automation_id.clone(),
         ])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(
@@ -4551,63 +4558,63 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     )
     .bind(&org_id)
     .bind(automation_chat_ids.clone())
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query("DELETE FROM chat_conversations WHERE org_id=$1::uuid AND id=ANY($2::uuid[])")
         .bind(&org_id)
         .bind(automation_chat_ids)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM product_analytics_events WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM projects WHERE org_id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM workspace_runtime_services WHERE id=$1::uuid")
         .bind(&related_runtime_service_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM execution_workspaces WHERE id=$1::uuid")
         .bind(&related_execution_workspace_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM heartbeat_runs WHERE id=$1::uuid")
         .bind(&related_run_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&related_agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
         .bind(&related_project_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&agent_key_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agent_api_keys WHERE id=$1::uuid")
         .bind(&foreign_agent_key_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM board_api_keys WHERE id=$1::uuid")
         .bind(&board_key_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(
@@ -4615,7 +4622,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     )
     .bind(&org_id)
     .bind(&board_user_id)
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query(
@@ -4623,78 +4630,79 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     )
     .bind(&org_id)
     .bind(&second_board_user_id)
-    .execute(&pool)
+    .execute(&mut *cleanup)
     .await
     .unwrap();
     sqlx::query(r#"DELETE FROM "user" WHERE id=$1"#)
         .bind(&board_user_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query(r#"DELETE FROM "user" WHERE id=$1"#)
         .bind(&second_board_user_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&other_agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&paused_agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&reopen_agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=ANY($1::uuid[])")
         .bind(vec![normal_steer_failure_agent_id, paused_steer_agent_id])
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM agents WHERE id=$1::uuid")
         .bind(&foreign_agent_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM assets WHERE id=$1::uuid")
         .bind(&source_asset_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM assets WHERE id=$1::uuid")
         .bind(&foreign_asset_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM issues WHERE id=$1::uuid")
         .bind(&foreign_issue_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&foreign_org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
     sqlx::query("DELETE FROM organizations WHERE id=$1::uuid")
         .bind(&related_org_id)
-        .execute(&pool)
+        .execute(&mut *cleanup)
         .await
         .unwrap();
+    cleanup.commit().await.unwrap();
     pool.close().await;
 }
