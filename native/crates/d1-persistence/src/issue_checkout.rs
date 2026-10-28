@@ -620,15 +620,23 @@ async fn enqueue_issue_wakeup_with_agent(
         "updatedAt": updated_at,
     });
     if let Some(expected_run_id) = wakeup.expected_issue_execution_run_id.as_deref() {
-        let active_matches = execution_run_id.as_deref() == Some(expected_run_id)
+        // Reopening clears the Issue pointer before admitting Steer's continuation.
+        // Keep validating the captured running Run through its existing Issue context;
+        // a pointer to a different Run still means the active execution changed.
+        let active_matches = execution_run_id
+            .as_deref()
+            .is_none_or(|run_id| run_id == expected_run_id)
             && (assignee_agent_id.as_deref() == Some(wakeup.agent_id.as_str())
                 || reviewer_agent_id.as_deref() == Some(wakeup.agent_id.as_str()))
             && sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND status='running')",
+                "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND status='running'
+                   AND (id=$4::uuid OR context_snapshot->>'issueId'=$5))",
             )
             .bind(org)
             .bind(expected_run_id)
             .bind(&wakeup.agent_id)
+            .bind(execution_run_id.as_deref())
+            .bind(issue_id)
             .fetch_one(&mut **tx)
             .await?;
         if !active_matches {

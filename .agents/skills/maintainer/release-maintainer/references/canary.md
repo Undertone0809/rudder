@@ -4,6 +4,11 @@
 
 Canary normally follows a successful exact `main` Test run:
 
+Ordinary product and migration PRs must not opt out. Only an explicitly active
+stable-release repair or generated post-stable version handoff uses
+`[skip canary]`. Legacy `[skip release]` text in commit or merged PR messages
+does not suppress automatic publication.
+
 1. verify the Release workflow consumes that CI head SHA rather than resolving
    a moving branch;
 2. confirm every public package published the same immutable prerelease and
