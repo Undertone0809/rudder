@@ -209,7 +209,7 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     config = config
         .with_browser_auth(
             crate::browser_auth::BrowserAuthConfig::required(
-                "synthetic-automation-browser-session-key",
+                b"synthetic-automation-browser-session-key",
                 false,
                 crate::browser_auth::SessionPolicy::BetterAuth,
             )
