@@ -1845,6 +1845,17 @@ async fn finalize_inner(
     sqlx::query("UPDATE heartbeat_runs SET execution_lease_expires_at=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(id.organization_id).bind(id.run_id).execute(&mut *tx).await?;
     super::super::auth::authorize_execution_org(&mut tx, actor, fence).await?;
+    crate::automation_execution::sync_chat_run(&mut tx, id.organization_id, id.run_id)
+        .await
+        .map_err(|error| match error {
+            crate::automation_execution::Error::Database(error) => {
+                crate::runtime_bindings::Error::Database(error)
+            }
+            _ => http(
+                500,
+                "Automation Chat terminal backlink could not be committed",
+            ),
+        })?;
     tx.commit().await?;
     Ok(result)
 }

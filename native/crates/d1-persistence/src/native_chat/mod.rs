@@ -12,6 +12,9 @@ pub use crate::runtime_bindings::Error;
 use crate::runtime_bindings::IdentityInput;
 
 mod actor;
+mod automation;
+pub(crate) use automation::admit as admit_automation;
+pub use automation::{AutomationChatActor, AutomationChatJob, list_automation_jobs};
 mod admission;
 pub use admission::DispatchUnavailableRequest;
 mod auth;

@@ -21,6 +21,7 @@ mod agent_core;
 mod agent_execution;
 mod agent_runs;
 mod approval_reads;
+mod automation_execution;
 mod automation_reads;
 mod automation_writes;
 mod browser_session;
@@ -177,6 +178,7 @@ pub struct PublicIngressRuntime {
     bound_addr: SocketAddr,
     goal_run_worker: Option<crate::goal_run_worker::GoalRunWorker>,
     agent_run_worker: Option<crate::agent_run_worker::AgentRunWorker>,
+    automation_worker: Option<crate::automation_worker::AutomationWorker>,
     session_auth_kind: Option<NativeSessionAuthKind>,
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
@@ -305,6 +307,7 @@ impl PublicIngressRuntime {
         let session_auth_kind = config.session_auth.as_ref().map(|settings| settings.kind);
         let local_account_lifecycle_enabled = config.local_account_auth.is_some();
         let goal_run_runtime = config.native_chat_runtime.clone();
+        let automation_runtime = config.native_chat_runtime.clone();
         let goal_run_identity = config.identity_auth.clone();
         let config_identity = config.identity_auth.clone();
         let local_implicit_enabled = config
@@ -493,6 +496,12 @@ impl PublicIngressRuntime {
             }
             _ => None,
         };
+        let automation_worker = match (&foundation.database, agent_run_host.as_ref()) {
+            (DatabaseState::Configured(pool), Some(host)) => Some(crate::automation_worker::AutomationWorker::start(
+                pool.clone(), automation_runtime, foundation.native_chat_worker.clone(), &host.environment,
+            )),
+            _ => None,
+        };
         let agent_run_worker = match (&foundation.database, agent_run_host, config_identity) {
             (DatabaseState::Configured(pool), Some(host), Some(identity)) => Some(
                 crate::agent_run_worker::AgentRunWorker::start(
@@ -507,6 +516,7 @@ impl PublicIngressRuntime {
             bound_addr,
             goal_run_worker,
             agent_run_worker,
+            automation_worker,
             session_auth_kind,
             native_identity_enabled,
             local_account_lifecycle_enabled,
@@ -548,9 +558,13 @@ impl PublicIngressRuntime {
             server,
             mut goal_run_worker,
             mut agent_run_worker,
+            mut automation_worker,
             ..
         } = self;
         let result = server.await;
+        if let Some(worker) = automation_worker.as_mut() {
+            worker.shutdown().await;
+        }
         if let Some(worker) = agent_run_worker.as_mut() {
             worker.shutdown().await;
         }
@@ -839,6 +853,9 @@ async fn proxy_request(
     }
     if cost_reads::is_reserved_path(request.uri().path(), request.method()) {
         return cost_reads::dispatch_alias(state, request, payload).await;
+    }
+    if automation_execution::is_reserved_path(request.uri().path(), request.method()) {
+        return automation_execution::dispatch_alias(state, request, payload).await;
     }
     if automation_writes::is_reserved_path(request.uri().path(), request.method()) {
         return automation_writes::dispatch_alias(state, request, payload).await;

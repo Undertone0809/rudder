@@ -67,6 +67,7 @@ mod activity_link_reads;
 mod activity_reads;
 mod approval_reads;
 mod automation_reads;
+mod automation_worker;
 pub mod browser_auth;
 pub mod managed_mcp_runtime;
 pub mod live_events;

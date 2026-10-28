@@ -1,8 +1,9 @@
 //! Process-owned execution of already admitted Native Chat attempts.
 //!
 //! This is an in-process Rust API, not an HTTP admission/Stop API. Jobs are not
-//! reconstructed on restart. A commit-to-dispatch crash leaves the admitted
-//! attempt unresolved; durable admission exclusion still prevents a fresh turn.
+//! reconstructed for ordinary requests on restart. The Automation producer
+//! may rediscover only its never-claimed durable admissions. Claimed attempts
+//! stay unresolved; durable admission exclusion still prevents a fresh turn.
 //! Claimed attempts retain their hold until a separate authority resolves them.
 use futures_util::FutureExt;
 use rudder_auth_core::VerifiedActor;
@@ -83,6 +84,7 @@ pub struct Job {
 enum RequestActor {
     Verified(VerifiedActor),
     Browser(BrowserPrincipal),
+    Automation(rudder_d1_persistence::native_chat::AutomationChatActor),
 }
 
 impl RequestActor {
@@ -90,11 +92,31 @@ impl RequestActor {
         match self {
             Self::Verified(actor) => actor.organization_id(),
             Self::Browser(actor) => NativeChatActor::organization_id(actor),
+            Self::Automation(actor) => NativeChatActor::organization_id(actor),
         }
     }
 }
 
 impl Job {
+    /// Private producer capability from a persisted Automation/Chat identity;
+    /// no request DTO can select this actor or construct the job source.
+    pub(crate) fn new_automation(
+        job: rudder_d1_persistence::native_chat::AutomationChatJob,
+        host: LocalHostContext,
+        paths: HostPaths,
+        timeout: Duration,
+    ) -> Result<Self, StartError> {
+        let (actor, run, attempt) = job.into_parts();
+        Self::with_actor(
+            RequestActor::Automation(actor),
+            host,
+            paths,
+            &run,
+            &attempt,
+            timeout,
+        )
+    }
+
     pub fn new(
         actor: VerifiedActor,
         host: LocalHostContext,
@@ -596,6 +618,11 @@ fn run(
             )
         }
         RequestActor::Browser(actor) => {
+            rudder_native_chat_executor::run_observed_native_with_request_actor_on_blocking_thread(
+                handle, &pool, actor, &host, &paths, request,
+            )
+        }
+        RequestActor::Automation(actor) => {
             rudder_native_chat_executor::run_observed_native_with_request_actor_on_blocking_thread(
                 handle, &pool, actor, &host, &paths, request,
             )

@@ -16,6 +16,7 @@ mod sealed {
 
     impl Sealed for rudder_auth_core::VerifiedActor {}
     impl Sealed for super::BrowserPrincipal {}
+    impl Sealed for crate::native_chat::automation::AutomationChatActor {}
     impl ExecutionSealed for rudder_auth_core::VerifiedActor {}
     impl ExecutionSealed for super::NativeChatExecutionPrincipal {}
 }

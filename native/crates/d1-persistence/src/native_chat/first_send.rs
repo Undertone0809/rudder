@@ -294,6 +294,7 @@ pub(super) async fn submit(
             body,
             fingerprint: &body_fingerprint,
             initial_draft_snapshot: Some(&initial_draft_snapshot),
+            message_activity: true,
             host,
         },
     )

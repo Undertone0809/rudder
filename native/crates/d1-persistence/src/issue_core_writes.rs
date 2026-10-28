@@ -149,6 +149,7 @@ struct IssueCreateContext<'a> {
     input: &'a Value,
     asset_storage: Option<&'a dyn IssueAssetStorage>,
     staged_asset_objects: &'a mut Vec<String>,
+    wakeup_context_source: &'static str,
 }
 
 struct IssueDescriptionAssetStageInput<'a> {
@@ -246,6 +247,7 @@ pub async fn apply_issue_core_write(
                             input,
                             asset_storage,
                             staged_asset_objects: &mut staged_asset_objects,
+                            wakeup_context_source: "issue.create",
                         },
                     )
                     .await?;
@@ -385,6 +387,42 @@ async fn cleanup_staged_issue_asset_objects(
     }
 }
 
+/// Existing Issue creation and assignment admission in the Automation's own
+/// transaction. The private producer proves its locked/authorized parent;
+/// public Issue inputs cannot construct this capability.
+pub(crate) async fn create_automation_execution_issue(
+    tx: &mut Tx<'_>,
+    producer: &crate::automation_execution::LockedAutomationDispatch,
+) -> Result<Value> {
+    let automation = producer.automation();
+    let input = json!({
+        "projectId":automation["projectId"], "goalId":automation["goalId"],
+        "parentId":automation["parentIssueId"], "title":automation["title"],
+        "description":automation["description"], "status":"todo",
+        "priority":automation["priority"], "assigneeAgentId":automation["assigneeAgentId"],
+        "assigneeAgentRuntimeOverrides":automation["assigneeAgentRuntimeOverrides"],
+        "originKind":"automation_execution", "originId":automation["id"],
+        "originRunId":producer.run_id(),
+    });
+    lock_organization(tx, producer.org()).await?;
+    let mut staged = Vec::new();
+    create_issue(
+        tx,
+        IssueCreateContext {
+            org: producer.org(),
+            actor_kind: "system",
+            actor_id: "automation-dispatch",
+            actor_agent_id: None,
+            run_id: None,
+            input: &input,
+            asset_storage: None,
+            staged_asset_objects: &mut staged,
+            wakeup_context_source: "automation.dispatch",
+        },
+    )
+    .await
+}
+
 async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Result<Value> {
     let IssueCreateContext {
         org,
@@ -395,6 +433,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
         input,
         asset_storage,
         staged_asset_objects,
+        wakeup_context_source,
     } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
@@ -811,7 +850,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             "assignment",
             "issue_assigned",
             "create",
-            "issue.create",
+            wakeup_context_source,
         ));
     }
     if matches!(issue["status"].as_str(), Some("in_review" | "blocked"))

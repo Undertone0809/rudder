@@ -305,7 +305,7 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     );
   }
 
-  router.post("/automations/:id/run", validate(runAutomationSchema), async (req, res) => {
+  if (!nativeAutomationReads) router.post("/automations/:id/run", validate(runAutomationSchema), async (req, res) => {
     const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
     if (!automation) {
       res.status(404).json({ error: "Automation not found" });
@@ -328,7 +328,7 @@ export function automationRoutes(db: Db, rustBridge?: RustFoundationBridge) {
     res.status(202).json(run);
   });
 
-  router.post("/automation-triggers/public/:publicId/fire", async (req, res) => {
+  if (!nativeAutomationReads) router.post("/automation-triggers/public/:publicId/fire", async (req, res) => {
     const result = await svc.firePublicTrigger(req.params.publicId as string, {
       authorizationHeader: req.header("authorization"),
       signatureHeader: req.header("x-rudder-signature"),
