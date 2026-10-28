@@ -1260,11 +1260,16 @@
       "isolation_iteration": "AGENTS requires distinct short canonical TMPDIR per concurrent verifier; exact PG smart-shutdown collision retained, contaminated evidence invalidated, commands recovered serially in isolated roots."
     },
     "native_agent_execution_batch_20261028": {
-      "status": "independent_stage_accept; backend_PAV_and_packaged_validation_in_progress",
+      "status": "independent_backend_and_packaged_lifecycle_PAV_PASS; final_publication_review_pending",
       "acceptance_packet": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/acceptance-packet.json",
-      "source_checkpoint": "9e33185bbe2a74c39d8c0e551cdbf071e7a426e1; current main integrated with identical tree, inventory rebind and whitespace-only architecture correction",
-      "author_evidence": "Actual process lifecycle, continuous stdout lease+Stop cleanup, context/service setup, managed HTTP/stdio/OAuth, migration187→188 and API contracts; inspect exact per-run receipts, not an aggregate completion claim.",
-      "remaining": "Finish independent broker/upgrade PAV and packaged verification; final independent review, protected PR and exact-head CI. Global Rust target remains incomplete."
+      "source_checkpoint": "dff3161bfb05c96a97b0738cc0a69cddea0a5c49 runtime-equivalent to9e33185; final ledger-only checkpoint",
+      "author_evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/segmented-build-typecheck-reconciliation.json",
+      "remaining": "Final independent publication review, protected PR and exact-head CI. Global Rust migration remains incomplete.",
+      "packaged_verification": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/segmented-desktop-verification-final.json",
+      "backend_pav": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/pav-r3-broker-extension/report.md",
+      "packaged_pav": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/pav-r3/packaged-synthetic-auth-runtime-pav-r1.json",
+      "baseline_limits": "17 pre-existing lint findings in unchanged-main files; original build/test/package failures retained with successful focused recovery. Initial full-only updater failure cause remains unestablished; same-candidate full scenario recovered without weakening assertions.",
+      "production_released": false
     },
     "delivered_pr394_20261028": {
       "state": "Merged after independent final review and exact-head CI",
