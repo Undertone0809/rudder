@@ -354,15 +354,12 @@ async fn native_request_reads_revalidate_scope_and_never_fall_back() {
         wrong_kind["error"],
         "Only Assistance Requests have Block Audit attempts"
     );
-    assert_eq!(write_status, StatusCode::OK);
-    assert_eq!(
-        write_body["nodePath"],
-        format!("/api/requests/{ancient_request_id}/resolve")
-    );
+    assert_eq!(write_status, StatusCode::BAD_REQUEST);
+    assert_eq!(write_body["error"], "Validation error");
     assert_eq!(node_requests_before_write, 0);
-    assert_eq!(node_requests_after_write, 1);
+    assert_eq!(node_requests_after_write, 0);
     assert!(database_failure_status.is_server_error());
-    assert_eq!(node_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
 
     sqlx::query("DELETE FROM issue_block_audit_attempts WHERE request_id=$1::uuid")
         .bind(&ancient_request_id)

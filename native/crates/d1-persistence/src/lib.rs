@@ -61,6 +61,7 @@ mod project_patches;
 mod project_public_writes;
 pub mod project_reads;
 pub mod request_reads;
+pub mod request_writes;
 pub mod run_visibility;
 pub mod run_workspace_reads;
 pub mod run_workspace_updates;

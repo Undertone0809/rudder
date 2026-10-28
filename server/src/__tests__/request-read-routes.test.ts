@@ -8,7 +8,7 @@ import { requestRoutes } from "../routes/requests.js";
 import { requestRequestRead } from "../services/request-read-bridge.js";
 import { createRustActorEnvelope, type RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
-const { svc } = vi.hoisted(() => ({ svc: { readIdentity: vi.fn(), getById: vi.fn(), list: vi.fn(), attemptsForRequest: vi.fn() } }));
+const { svc } = vi.hoisted(() => ({ svc: { readIdentity: vi.fn(), getById: vi.fn(), list: vi.fn(), attemptsForRequest: vi.fn(), resolveAssistance: vi.fn(), cancelAssistance: vi.fn() } }));
 vi.mock("../services/index.js", () => ({ requestService: () => svc, heartbeatService: () => ({}) }));
 const ORG = "10000000-0000-4000-8000-000000000001";
 const OTHER = "10000000-0000-4000-8000-000000000002";
@@ -105,6 +105,14 @@ describe("Request GET authority boundary", () => {
     expect(requestRead).not.toHaveBeenCalled();
     expect(svc.readIdentity).not.toHaveBeenCalled();
     expect(svc.list).not.toHaveBeenCalled();
+  });
+  it.each(["resolve", "cancel"])("omits native Request %s writes without any Node service call", async (action) => {
+    const target = app(BOARD, { publicIngressEnabled: true } as RustFoundationBridge);
+    const response = await request(target).post(`/api/requests/${ID}/${action}`).send({ resolution: "answered", response: "Human input" });
+    expect(response.status).toBe(404);
+    expect(svc.getById).not.toHaveBeenCalled();
+    expect(svc.resolveAssistance).not.toHaveBeenCalled();
+    expect(svc.cancelAssistance).not.toHaveBeenCalled();
   });
   it("signs the exact Requests transport body and action without mutation state", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new globalThis.Response('{"native":true}', { status: 200, headers: { "content-type": "application/json" } }));
