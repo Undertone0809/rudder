@@ -442,6 +442,31 @@ pub(crate) async fn admit_in_transaction(
     Ok(result)
 }
 
+/// An existing domain producer may settle its mutation even when its locked
+/// Agent cannot run. Reuse the native wake writer without changing admission's
+/// rejection contract; the producer commits its effects before returning 409.
+pub(crate) async fn skip_unavailable_wakeup_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &AgentExecutionActor,
+    request: &AgentWakeRequest,
+    org: &str,
+    agent_id: &str,
+    payload: &Value,
+) -> Result<AgentRunAdmission, AgentExecutionError> {
+    insert_wakeup_only(
+        tx,
+        org,
+        agent_id,
+        actor,
+        request,
+        payload,
+        "skipped",
+        Some("agent.unavailable"),
+        true,
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn insert_wakeup_only(
     tx: &mut Transaction<'_, Postgres>,

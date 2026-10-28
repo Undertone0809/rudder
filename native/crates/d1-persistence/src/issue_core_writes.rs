@@ -2567,17 +2567,17 @@ async fn request_json(tx: &mut Tx<'_>, org: &str, request_id: &str) -> Result<Op
     .transpose()
 }
 
-struct IssueRunEvent<'a> {
-    run_id: &'a str,
-    agent_id: &'a str,
-    event_type: &'a str,
-    level: &'a str,
-    message: &'a str,
-    idempotency_key: &'a str,
-    payload: &'a Value,
+pub(crate) struct IssueRunEvent<'a> {
+    pub(crate) run_id: &'a str,
+    pub(crate) agent_id: &'a str,
+    pub(crate) event_type: &'a str,
+    pub(crate) level: &'a str,
+    pub(crate) message: &'a str,
+    pub(crate) idempotency_key: &'a str,
+    pub(crate) payload: &'a Value,
 }
 
-async fn append_issue_run_event(
+pub(crate) async fn append_issue_run_event(
     tx: &mut Tx<'_>,
     org: &str,
     event: IssueRunEvent<'_>,
@@ -2657,9 +2657,9 @@ fn normalize_blocker_text(value: &str) -> String {
         .to_owned()
 }
 
-fn redact_sensitive_text(value: &str) -> String {
+pub(crate) fn redact_sensitive_text(value: &str) -> String {
     let private_key = Regex::new(
-        r"-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----",
+        r"(?i)-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----",
     )
     .expect("private key redaction pattern is valid");
     let mut redacted = private_key
@@ -2670,11 +2670,17 @@ fn redact_sensitive_text(value: &str) -> String {
     let bearer = Regex::new(r"(?i)(bearer\s+)[^\s,;]+").expect("bearer redaction pattern is valid");
     redacted = bearer.replace_all(&redacted, "$1[REDACTED]").into_owned();
     let credentials = Regex::new(
-        r"(?i)((?:^|[?&\s])(?:api[-_]?key|access[-_]?token|token|code|secret|password|credential)\s*[=:]\s*)[^&\s,;\[]+",
+        r"(?i)((?:^|[?&\s])(?:api[-_]?key|access[-_]?token|token|code|secret|password|credential)\s*[=:]\s*)([^&\s,;]+)",
     )
     .expect("credential redaction pattern is valid");
     redacted = credentials
-        .replace_all(&redacted, "$1[REDACTED]")
+        .replace_all(&redacted, |captures: &regex_lite::Captures<'_>| {
+            if captures[2].to_ascii_uppercase().starts_with("[REDACTED_") {
+                captures[0].to_owned()
+            } else {
+                format!("{}[REDACTED]", &captures[1])
+            }
+        })
         .into_owned();
     let known_tokens = Regex::new(
         r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,})\b",
@@ -3791,6 +3797,22 @@ mod tests {
                 "Auth failed",
                 "Provide a replacement credential"
             )
+        );
+    }
+
+    #[test]
+    fn request_redaction_matches_node_private_keys_and_bracket_credentials() {
+        assert_eq!(
+            redact_sensitive_text(
+                "-----begin rsa private key-----\nsynthetic-secret\n-----end rsa private key-----"
+            ),
+            "[REDACTED_PRIVATE_KEY]"
+        );
+        assert_eq!(
+            redact_sensitive_text(
+                "password=[private-value] token=[REDACTED_OTP] code=123456 bearer synthetic"
+            ),
+            "password=[REDACTED] token=[REDACTED_OTP] code=[REDACTED_OTP] bearer [REDACTED]"
         );
     }
 

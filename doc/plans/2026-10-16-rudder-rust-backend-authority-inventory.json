@@ -5191,7 +5191,7 @@
     },
     {
       "path": "server/src/routes/requests.ts",
-      "sha256": "3e498453f94e9391d634e903781b1c3b7797ef8e241a62a29daa2f5959594c11",
+      "sha256": "2ee94253f73644ac618e6cf5c4c94a0b99d54eb4d60cd85e07c4c168bc65bd81",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -21294,7 +21294,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/requests.ts",
-      "line": 108,
+      "line": 110,
       "signature": "server/src/routes/requests.ts|http-route|router|POST|/requests/:id/cancel",
       "receiver": "router",
       "method": "POST",
@@ -21304,7 +21304,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/requests.ts",
-      "line": 45,
+      "line": 47,
       "signature": "server/src/routes/requests.ts|http-route|router|POST|/requests/:id/resolve",
       "receiver": "router",
       "method": "POST",
@@ -59262,6 +59262,20 @@
       "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
       "reviewer": "independent exact-candidate Node boundary reviewer",
       "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/requests.ts",
+      "base_sha256": "3e498453f94e9391d634e903781b1c3b7797ef8e241a62a29daa2f5959594c11",
+      "head_sha256": "2ee94253f73644ac618e6cf5c4c94a0b99d54eb4d60cd85e07c4c168bc65bd81",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/request_writes.rs; native/crates/d1-persistence/src/request_writes.rs; native/crates/d1-persistence/src/agent_execution/admission.rs",
+      "scope": "Omit POST /api/requests/:id/resolve and POST /api/requests/:id/cancel under the existing nativeRequestReads/publicIngressEnabled guard.",
+      "compatibility_boundary": "Adds only an early return before the unchanged legacy write registrations. Rust owns native input validation, identity/organization revalidation, Request settlement, Issue status transition, same-transaction native wake admission, audit/outbox and origin Run events. Existing Node write bodies remain ingress-off compatibility debt; native errors cannot fall back to them.",
+      "retirement_criterion": "Remove remaining Node Request routes/services after complete Rust default/no-Node-backend acceptance.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/assistance-request-writes-qualification-r1/e-cheap-gates-r2/e-node-boundary-review-r1.md sha256=636bfdb017a7982ae2b010ea88013a4bdf5dda4e334d497d2aade43263a79a0d; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance",
       "review_status": "reviewed"
     }
   ],

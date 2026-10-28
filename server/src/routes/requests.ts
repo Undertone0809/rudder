@@ -42,6 +42,8 @@ export function requestRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     });
   }
 
+  if (nativeRequestReads) return router;
+
   router.post(
     "/requests/:id/resolve",
     validate(resolveAssistanceRequestSchema),
