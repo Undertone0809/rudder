@@ -118,7 +118,8 @@ async fn public_assets_persist_sanitize_scope_and_fail_without_node() {
         )
         .unwrap(),
     );
-    config.deployment_mode = "local_trusted".into();
+    // This fixture checks anonymous denial, so use authenticated ingress.
+    config.deployment_mode = "authenticated".into();
     let mut unavailable_config = config.clone();
     unavailable_config.issue_asset_storage = None;
     let runtime = PublicIngressRuntime::bind(config, foundation.clone()).unwrap();
