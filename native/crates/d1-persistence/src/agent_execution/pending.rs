@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
 pub async fn resume_pending(pool: &PgPool) -> Result<usize, AgentExecutionError> {
-    let due=sqlx::query("SELECT org_id::text AS org,id::text AS id FROM agent_wakeup_requests WHERE execution_authority='native_rust' AND run_id IS NULL AND status IN('queued','deferred_agent_paused','deferred_goal_focus','deferred_goal_blocked','deferred_issue_execution') AND requested_at<=statement_timestamp() AND NOT COALESCE((reason='goal_started' AND payload->>'event'='goal_started' AND payload->>'taskKey' LIKE 'goal:%:goal_started:%'),false) ORDER BY requested_at,id LIMIT 32").fetch_all(pool).await?;
+    let due=sqlx::query("SELECT org_id::text AS org,id::text AS id FROM agent_wakeup_requests WHERE execution_authority='native_rust' AND run_id IS NULL AND status IN('queued','deferred_agent_paused','deferred_goal_focus','deferred_goal_blocked','deferred_issue_execution') AND requested_at<=statement_timestamp() AND NOT COALESCE((reason='goal_started' AND payload->>'event'='goal_started' AND payload->>'taskKey' LIKE 'goal:%:goal_started:%' AND payload->>'_rudderExecutionProducer' IS NULL),false) ORDER BY requested_at,id LIMIT 32").fetch_all(pool).await?;
     let mut resumed = 0;
     for row in due {
         let org: String = row.try_get("org")?;
@@ -71,6 +71,16 @@ pub(crate) async fn resume_one(
         .try_get::<Option<Value>, _>("payload")?
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
+    if reason.as_deref() == Some("goal_started")
+        && payload["event"] == "goal_started"
+        && payload
+            .get("taskKey")
+            .and_then(Value::as_str)
+            .is_some_and(|task| task.starts_with("goal:") && task.contains(":goal_started:"))
+        && !super::has_generic_producer(&payload)
+    {
+        return Ok(false);
+    }
     let seed = payload
         .as_object_mut()
         .expect("normalized payload")
@@ -94,6 +104,9 @@ pub(crate) async fn resume_one(
         );
     let mut deferred = None;
     let mut terminal = None;
+    if !super::goal_producer_is_current(&mut tx, org, &agent_id, &payload).await? {
+        deferred = Some(("deferred_goal_blocked", "goal.owner_or_lifecycle_changed"));
+    }
     if let Some(goal) = goal.as_deref().filter(|_| goal_wake) {
         let other:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM goals WHERE org_id=$1::uuid AND lifecycle='active' AND focus=true AND id<>$2::uuid)").bind(org).bind(goal).fetch_one(&mut *tx).await?;
         if other {

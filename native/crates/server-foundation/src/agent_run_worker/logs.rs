@@ -1,4 +1,6 @@
 //! Existing local_file Run-log format and native evidence index.
+use super::live;
+use crate::live_events::LiveEventPublisher;
 use rudder_d1_persistence::agent_execution::{AgentRunObserver, output};
 use rudder_native_chat_executor::agent_run::{AgentRunStream, parse_agent_stdout_line};
 use rudder_run_evidence_core::{IndexLimits, index_run_log};
@@ -12,6 +14,7 @@ use std::{
 };
 
 pub(super) struct RunLogs {
+    events: LiveEventPublisher,
     path: PathBuf,
     file: File,
     runtime: String,
@@ -35,6 +38,7 @@ impl RunLogs {
         owner: AgentRunObserver,
         runtime: &str,
         instance_root: &str,
+        events: LiveEventPublisher,
     ) -> Result<Self, String> {
         let root = std::env::var_os("RUN_LOG_BASE_PATH")
             .map(PathBuf::from)
@@ -57,6 +61,7 @@ impl RunLogs {
             .await
             .map_err(|e| e.to_string())?;
         Ok(Self {
+            events,
             path,
             file,
             runtime: runtime.into(),
@@ -150,6 +155,21 @@ impl RunLogs {
         let row = json!({"ts":ts,"stream":stream,"chunk":chunk});
         serde_json::to_writer(&mut self.file, &row).map_err(|e| e.to_string())?;
         self.file.write_all(b"\n").map_err(|e| e.to_string())?;
+        let payload_chunk = chunk
+            .chars()
+            .rev()
+            .take(8192)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        live::publish(
+            &self.events,
+            self.owner.organization_id(),
+            "heartbeat.run.log",
+            json!({"runId":self.owner.run_id(),"agentId":self.owner.agent_id(),"ts":ts,"stream":stream,"chunk":payload_chunk,"truncated":payload_chunk.len()!=chunk.len()}),
+            None,
+        );
         let target = if stream == "stdout" {
             &mut self.stdout
         } else {

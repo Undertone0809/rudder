@@ -1,9 +1,10 @@
 use super::{
-    approvals,
+    approvals, live,
     logs::{RunLogs, now},
 };
 use crate::{
     agent_run_context::{self, AgentRunContextHost},
+    live_events::LiveEventPublisher,
     native_agent_jwt::NativeAgentJwtConfig,
 };
 use rudder_d1_persistence::agent_execution::{
@@ -23,14 +24,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{
-    sync::mpsc,
-    task::JoinSet,
-    time::{Instant, sleep},
-};
+use tokio::{sync::mpsc, task::JoinSet, time::Instant};
 
 struct Drain {
     pool: PgPool,
+    events: LiveEventPublisher,
     owner: AgentRunObserver,
     runtime: String,
     logs: RunLogs,
@@ -40,17 +38,25 @@ struct Drain {
     metadata: Value,
 }
 impl Drain {
-    async fn receive(&mut self, item: AgentRunOutput) -> Result<(), String> {
+    async fn receive(
+        &mut self,
+        item: AgentRunOutput,
+        last_event_seq: &mut i32,
+    ) -> Result<(), String> {
         match item {
             AgentRunOutput::Log {
                 stream,
                 offset,
                 chunk,
-            } => self.logs.provider_bytes(stream, offset, chunk)?,
+            } => {
+                self.logs.provider_bytes(stream, offset, chunk)?;
+                return Ok(());
+            }
             AgentRunOutput::Event { offset, mut event } => {
                 self.logs.redact_value(&mut event);
                 if event["type"] == "rudder.context.log" {
                     self.logs.context_log(&event)?;
+                    return Ok(());
                 } else {
                     self.logs.transcript.extend(parse_agent_provider_event(
                         &self.runtime,
@@ -131,14 +137,25 @@ impl Drain {
                 }
             }
         }
+        live::committed(
+            &self.pool,
+            &self.events,
+            self.owner.organization_id(),
+            self.owner.run_id(),
+            last_event_seq,
+            false,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
     async fn drain_ready(
         &mut self,
         receiver: &mut mpsc::Receiver<AgentRunOutput>,
+        last_event_seq: &mut i32,
     ) -> Result<(), String> {
         while let Ok(item) = receiver.try_recv() {
-            self.receive(item).await?;
+            self.receive(item, last_event_seq).await?;
         }
         Ok(())
     }
@@ -150,11 +167,15 @@ pub(super) async fn run(
     identity: NativeAgentJwtConfig,
     shutdown: Arc<AtomicBool>,
     claim: AgentRunClaim,
+    events: LiveEventPublisher,
 ) {
     let mut claim = claim;
     let mut plan = None;
     let mut failed_auth = HashSet::new();
     let mut transcript = Vec::new();
+    let mut last_event_seq = 0;
+    let org = claim.organization_id.clone();
+    let run_id = claim.run_id.clone();
     loop {
         match run_attempt(
             pool.clone(),
@@ -165,6 +186,8 @@ pub(super) async fn run(
             &mut plan,
             &mut failed_auth,
             &mut transcript,
+            &events,
+            &mut last_event_seq,
         )
         .await
         {
@@ -172,6 +195,8 @@ pub(super) async fn run(
             None => break,
         }
     }
+    let _ = live::committed(&pool, &events, &org, &run_id, &mut last_event_seq, true).await;
+    let _ = live::status(&pool, &events, &org, &run_id).await;
 }
 
 async fn run_attempt(
@@ -183,7 +208,19 @@ async fn run_attempt(
     plan: &mut Option<Vec<agent_execution::model_attempts::ModelAttempt>>,
     failed_auth: &mut HashSet<String>,
     transcript: &mut Vec<Value>,
+    events: &LiveEventPublisher,
+    last_event_seq: &mut i32,
 ) -> Option<AgentRunClaim> {
+    let _ = live::status(&pool, events, &claim.organization_id, &claim.run_id).await;
+    let _ = live::committed(
+        &pool,
+        events,
+        &claim.organization_id,
+        &claim.run_id,
+        last_event_seq,
+        false,
+    )
+    .await;
     let owner = claim.owned.observer();
     let cancelled = Arc::new(AtomicBool::new(false));
     let logs = match RunLogs::begin(
@@ -191,6 +228,7 @@ async fn run_attempt(
         owner.clone(),
         &claim.runtime_type,
         &host.workspace.instance_root,
+        events.clone(),
     )
     .await
     {
@@ -203,6 +241,7 @@ async fn run_attempt(
     let (sender, mut receiver) = mpsc::channel(256);
     let mut drain = Drain {
         pool: pool.clone(),
+        events: events.clone(),
         owner: owner.clone(),
         runtime: claim.runtime_type.clone(),
         logs,
@@ -223,11 +262,14 @@ async fn run_attempt(
         );
         tokio::pin!(preparation);
         let mut next_renew = Instant::now() + Duration::from_secs(10);
+        let mut prepare_tick = tokio::time::interval(Duration::from_millis(500));
+        prepare_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 result=&mut preparation=>break result,
-                Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
-                _=sleep(Duration::from_millis(500))=>{
+                Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item,last_event_seq).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
+                _=prepare_tick.tick()=>{
+                    let _=live::committed(&pool,events,&claim.organization_id,&claim.run_id,last_event_seq,false).await;
                     if shutdown.load(Ordering::Acquire){let _=output::request_cancel(&pool,&owner,"Server shutdown requested").await;cancelled.store(true,Ordering::Release);}
                     if lifecycle::cancellation_requested(&pool,&claim.owned).await.unwrap_or(true){cancelled.store(true,Ordering::Release);}
                     if Instant::now()>=next_renew{let renewed=if cancelled.load(Ordering::Acquire){lifecycle::renew_cleanup_lease(&pool,&claim.owned,Duration::from_secs(30)).await}else{lifecycle::renew_lease(&pool,&claim.owned,Duration::from_secs(30)).await};if !renewed.unwrap_or(false){cancelled.store(true,Ordering::Release);}next_renew=Instant::now()+Duration::from_secs(10);}
@@ -238,7 +280,7 @@ async fn run_attempt(
     let mut prepared = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
-            let _ = drain.drain_ready(&mut receiver).await;
+            let _ = drain.drain_ready(&mut receiver, last_event_seq).await;
             let _ = drain.logs.finish(&pool).await;
             unlaunched(
                 &pool,
@@ -277,7 +319,7 @@ async fn run_attempt(
             tracing::error!(event="native_agent_preparation_cleanup_unresolved",run_id=%claim.run_id,error=%error);
             return None;
         }
-        let _ = drain.drain_ready(&mut receiver).await;
+        let _ = drain.drain_ready(&mut receiver, last_event_seq).await;
         let _ = drain.logs.finish(&pool).await;
         unlaunched(
             &pool,
@@ -345,11 +387,14 @@ async fn run_attempt(
     };
     let execution = execute_agent_run(pool.clone(), claim, request);
     tokio::pin!(execution);
+    let mut execution_tick = tokio::time::interval(Duration::from_millis(100));
+    execution_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut next_event_poll = Instant::now();
     let outcome = loop {
         tokio::select! {
             result=&mut execution=>break result,
-            Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
-            _=sleep(Duration::from_millis(100)),if shutdown.load(Ordering::Acquire)&&!cancelled.load(Ordering::Acquire)=>{let _=output::request_cancel(&pool,&owner,"Server shutdown requested").await;cancelled.store(true,Ordering::Release);}
+            Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item,last_event_seq).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
+            _=execution_tick.tick()=>{if shutdown.load(Ordering::Acquire)&&!cancelled.load(Ordering::Acquire){let _=output::request_cancel(&pool,&owner,"Server shutdown requested").await;cancelled.store(true,Ordering::Release);}if Instant::now()>=next_event_poll{let _=live::committed(&pool,events,owner.organization_id(),owner.run_id(),last_event_seq,false).await;next_event_poll=Instant::now()+Duration::from_millis(500);}}
         }
     };
     let (mut claim, mut observation) = match outcome {
@@ -359,7 +404,7 @@ async fn run_attempt(
             return None;
         }
     };
-    let _ = drain.drain_ready(&mut receiver).await;
+    let _ = drain.drain_ready(&mut receiver, last_event_seq).await;
     while let Some(result) = drain.approvals.join_next().await {
         if let Err(error) = result {
             tracing::warn!(event="native_agent_approval_observer_failed",error=%error);
@@ -413,15 +458,17 @@ async fn run_attempt(
         };
         tokio::pin!(finish);
         let mut next_cleanup_renew = Instant::now() + Duration::from_secs(10);
+        let mut cleanup_tick = tokio::time::interval(Duration::from_millis(500));
+        cleanup_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {result=&mut finish=>break result,Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item).await{io_error=Some(error);},_=sleep(Duration::from_millis(500))=>{if Instant::now()>=next_cleanup_renew{let _=lifecycle::renew_cleanup_lease(&pool,&claim.owned,Duration::from_secs(30)).await;next_cleanup_renew=Instant::now()+Duration::from_secs(10);}}}
+            tokio::select! {result=&mut finish=>break result,Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item,last_event_seq).await{io_error=Some(error);},_=cleanup_tick.tick()=>{if Instant::now()>=next_cleanup_renew{let _=lifecycle::renew_cleanup_lease(&pool,&claim.owned,Duration::from_secs(30)).await;next_cleanup_renew=Instant::now()+Duration::from_secs(10);}}}
         }
     };
     if let Err(error) = cleanup {
         tracing::error!(event="native_agent_context_cleanup_unresolved",run_id=%claim.run_id,error=%error);
         return None;
     }
-    let _ = drain.drain_ready(&mut receiver).await;
+    let _ = drain.drain_ready(&mut receiver, last_event_seq).await;
     if let Err(error) = drain.logs.finish(&pool).await {
         io_error = Some(error);
     }
@@ -481,7 +528,10 @@ async fn run_attempt(
             }
         };
         match waiting {
-            Ok(true) => return None,
+            Ok(true) => {
+                let _ = live::status(&pool, events, &claim.organization_id, &claim.run_id).await;
+                return None;
+            }
             Ok(false)
                 if lifecycle::cancellation_requested(&pool, &claim.owned)
                     .await

@@ -451,7 +451,7 @@ async fn resolve_agent_id(tx: &mut Tx<'_>, org: &str, raw: &str) -> Result<Strin
 
 /// Preserve the legacy Board checkout wake contract in the same transaction
 /// as the Issue assignment. The existing Node heartbeat owner remains the
-/// consumer of `legacy_ts` runs; this function owns durable admission only.
+/// consumer of already persisted `legacy_ts` runs; new wakes use the native owner.
 async fn enqueue_board_checkout_wakeup(
     tx: &mut Tx<'_>,
     org: &str,
@@ -477,14 +477,13 @@ async fn enqueue_board_checkout_wakeup(
         kind: "user",
         id: requested_by_user_id,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by, None)
+    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by, None, true)
         .await
         .map(|_| ())
 }
 
 /// Admit an assignment or reviewer wakeup in the same transaction as an Issue
-/// mutation. The legacy heartbeat process remains the execution consumer for
-/// the persisted `legacy_ts` wakeup/run rows.
+/// mutation. New intents use native execution; existing legacy rows retain their owner.
 pub(crate) async fn enqueue_issue_core_wakeup(
     tx: &mut Tx<'_>,
     org: &str,
@@ -513,9 +512,18 @@ pub(crate) async fn enqueue_issue_core_wakeup(
         runtime_config: &runtime_config,
         runtime_type: &runtime_type,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, &wakeup_agent, wakeup, requested_by, None)
-        .await
-        .map(|admission| admission.run_id)
+    enqueue_issue_wakeup_with_agent(
+        tx,
+        org,
+        issue_id,
+        &wakeup_agent,
+        wakeup,
+        requested_by,
+        None,
+        true,
+    )
+    .await
+    .map(|admission| admission.run_id)
 }
 
 async fn enqueue_issue_wakeup_with_agent(
@@ -526,7 +534,12 @@ async fn enqueue_issue_wakeup_with_agent(
     wakeup: &IssueWakeupIntent,
     requested_by: &IssueWakeupActor<'_>,
     native: Option<&NativeIssueWakeup<'_>>,
+    native_producer: bool,
 ) -> std::result::Result<IssueWakeupAdmission, IssueCheckoutError> {
+    let native_execution = native_producer || native.is_some();
+    if native_execution {
+        crate::agent_execution::mark_native_write(tx).await?;
+    }
     let source = native.map(|input| input.source).unwrap_or(wakeup.source);
     let wake_reason = native
         .map(|input| input.reason.unwrap_or(""))
@@ -534,7 +547,7 @@ async fn enqueue_issue_wakeup_with_agent(
     let trigger_detail = native
         .map(|input| input.trigger_detail)
         .unwrap_or(Some("system"));
-    let authority = if native.is_some() {
+    let authority = if native_execution {
         "native_rust"
     } else {
         "legacy_ts"
@@ -705,7 +718,7 @@ async fn enqueue_issue_wakeup_with_agent(
         }
         payload = input.payload.clone();
     }
-    let goal_id = if native.is_some() {
+    let goal_id = if native_execution {
         context
             .get("goalId")
             .and_then(Value::as_str)
@@ -792,14 +805,14 @@ async fn enqueue_issue_wakeup_with_agent(
                 .trim()
                 .eq_ignore_ascii_case(agent.name.trim())
                 && !terminal_effects_pending
-                && !(native.is_some()
+                && !(native_execution
                     && active.try_get::<String, _>("status")? == "running"
                     && context
                         .get("wakeCommentId")
                         .and_then(Value::as_str)
                         .is_some_and(|value| !value.trim().is_empty()))
             {
-                let merged_context = if native.is_some() {
+                let merged_context = if native_execution {
                     let previous = active
                         .try_get::<Option<Value>, _>("context_snapshot")?
                         .unwrap_or_else(|| json!({}));
@@ -846,7 +859,7 @@ async fn enqueue_issue_wakeup_with_agent(
         }
     }
 
-    if status == "queued" && native.is_none() {
+    if status == "queued" && !native_execution {
         let native_goal_run = sqlx::query_scalar::<_, String>(
             "SELECT id::text FROM heartbeat_runs
              WHERE org_id=$1::uuid AND agent_id=$2::uuid
@@ -886,7 +899,7 @@ async fn enqueue_issue_wakeup_with_agent(
             let existing_payload: Option<Value> = existing.try_get("payload")?;
             let mut merged_payload =
                 merge_deferred_wakeup_payload(existing_payload.as_ref(), &payload);
-            if native.is_some() {
+            if native_execution {
                 let old_context = existing_payload
                     .as_ref()
                     .and_then(|value| value.get("_paperclipWakeContext"))
@@ -992,7 +1005,7 @@ async fn enqueue_issue_wakeup_with_agent(
         } else {
             "none"
         };
-        let (session_params_before, session_id_before, session_reuse_scope) = if native.is_some() {
+        let (session_params_before, session_id_before, session_reuse_scope) = if native_execution {
             let selected = crate::agent_execution::select_claim_session(
                 tx,
                 org,
@@ -1041,7 +1054,7 @@ async fn enqueue_issue_wakeup_with_agent(
         .bind(&session_id_before)
         .bind(session_params_before.as_ref().map(Value::to_string))
         .bind(authority)
-        .bind(if native.is_some() {Some(json!({"kind":if session_reuse_scope=="none" {"fresh"} else {"resume"},"reuseScope":session_reuse_scope,"sourceRunId":null,"sessionId":session_id_before,"sessionParams":session_params_before}))} else {None})
+        .bind(if native_execution {Some(json!({"kind":if session_reuse_scope=="none" {"fresh"} else {"resume"},"reuseScope":session_reuse_scope,"sourceRunId":null,"sessionId":session_id_before,"sessionParams":session_params_before}))} else {None})
         .fetch_one(&mut **tx)
         .await?;
         admitted_run_id = Some(run_id.clone());

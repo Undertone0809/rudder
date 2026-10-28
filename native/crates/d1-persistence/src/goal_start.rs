@@ -100,7 +100,6 @@ impl GoalStartError {
 #[derive(Clone, Debug)]
 struct GoalStartOwner {
     id: String,
-    runtime_type: String,
     status: String,
     role: Option<String>,
     title: Option<String>,
@@ -265,9 +264,6 @@ pub async fn apply_goal_start(
                 "Goal owner must belong to the same organization",
             ));
         };
-        if owner.runtime_type != "claude_local" {
-            return Err(GoalStartError::LegacyOwned);
-        }
         if matches!(owner.status.as_str(), "terminated" | "pending_approval") {
             return Err(GoalStartError::Unprocessable {
                 message: "Goal owner must be invokable",
@@ -826,6 +822,10 @@ async fn ensure_goal_wakeup_intent(
             DEFERRED_WAKE_CONTEXT_KEY.to_owned(),
             context_snapshot.clone(),
         );
+        stored.insert(
+            crate::agent_execution::GOAL_PRODUCER_KEY.to_owned(),
+            json!(crate::agent_execution::GOAL_PRODUCER_VERSION),
+        );
         Value::Object(stored)
     };
     let actor_type = if matches!(context.actor_kind, "user" | "agent" | "system") {
@@ -847,6 +847,7 @@ async fn ensure_goal_wakeup_intent(
         let persisted_payload: Value = existing.try_get("payload")?;
         let mut raw_payload = persisted_payload.as_object().cloned().unwrap_or_default();
         raw_payload.remove(DEFERRED_WAKE_CONTEXT_KEY);
+        raw_payload.remove(crate::agent_execution::GOAL_PRODUCER_KEY);
         if stable_goal_hash(&Value::Object(raw_payload))? != stable_goal_hash(&payload)? {
             return Err(GoalStartError::Conflict(
                 "Goal Owner wakeup key was reused with a different payload",
@@ -923,7 +924,7 @@ async fn read_start_owner(
     org: &str,
     owner_id: &str,
 ) -> Result<Option<GoalStartOwner>, sqlx::Error> {
-    let row = sqlx::query("SELECT id::text,agent_runtime_type,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
+    let row = sqlx::query("SELECT id::text,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(org).bind(owner_id).fetch_optional(pool).await?;
     row.map(owner_from_row).transpose()
 }
@@ -933,7 +934,7 @@ async fn read_start_owner_tx(
     org: &str,
     owner_id: &str,
 ) -> Result<Option<GoalStartOwner>, sqlx::Error> {
-    let row = sqlx::query("SELECT id::text,agent_runtime_type,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid FOR KEY SHARE")
+    let row = sqlx::query("SELECT id::text,status,role,title,capabilities FROM agents WHERE org_id=$1::uuid AND id=$2::uuid FOR KEY SHARE")
         .bind(org).bind(owner_id).fetch_optional(&mut **tx).await?;
     row.map(owner_from_row).transpose()
 }
@@ -941,7 +942,6 @@ async fn read_start_owner_tx(
 fn owner_from_row(row: sqlx::postgres::PgRow) -> Result<GoalStartOwner, sqlx::Error> {
     Ok(GoalStartOwner {
         id: row.try_get("id")?,
-        runtime_type: row.try_get("agent_runtime_type")?,
         status: row.try_get("status")?,
         role: row.try_get("role")?,
         title: row.try_get("title")?,
@@ -1553,7 +1553,6 @@ mod tests {
     fn capable_owner() -> GoalStartOwner {
         GoalStartOwner {
             id: "55555555-5555-4555-8555-555555555555".to_owned(),
-            runtime_type: "claude_local".to_owned(),
             status: "idle".to_owned(),
             role: Some("engineer".to_owned()),
             title: None,

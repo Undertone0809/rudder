@@ -929,13 +929,15 @@ async function startServerRuntime(
   process.env.RUDDER_LISTEN_PORT = String(listenPort);
   process.env.RUDDER_API_URL = ingress.publicApiUrl;
   
-  const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
-    deploymentMode: config.deploymentMode,
-    authRequirement: options.localAccountAuth ? "required" : undefined,
-    resolveSessionFromHeaders,
-    sessionRevocation: localAccountSessionRevocation,
-  });
-  supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
+  if (!ingress.appOptions.rustPublicIngress?.identityAuth) {
+    const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
+      deploymentMode: config.deploymentMode,
+      authRequirement: options.localAccountAuth ? "required" : undefined,
+      resolveSessionFromHeaders,
+      sessionRevocation: localAccountSessionRevocation,
+    });
+    supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
+  }
 
   void reconcilePersistedRuntimeServicesOnStartup(db as any)
     .then((result) => {

@@ -34,6 +34,8 @@ mod goal_writes;
 mod issue_core;
 mod messenger_reads;
 mod managed_mcp;
+mod desktop;
+mod live_events;
 mod messenger_writes;
 mod native_chat;
 mod observational_reads;
@@ -173,6 +175,7 @@ pub struct PublicIngressRuntime {
     handle: actix_web::dev::ServerHandle,
     bound_addr: SocketAddr,
     goal_run_worker: Option<crate::goal_run_worker::GoalRunWorker>,
+    agent_run_worker: Option<crate::agent_run_worker::AgentRunWorker>,
     session_auth_kind: Option<NativeSessionAuthKind>,
     native_identity_enabled: bool,
     local_implicit_enabled: bool,
@@ -183,9 +186,16 @@ pub struct PublicIngressRuntime {
 
 impl PublicIngressRuntime {
     pub(crate) fn bind(
-        config: PublicIngressConfig,
+        mut config: PublicIngressConfig,
         foundation: Arc<AppState>,
     ) -> Result<Self, ServerError> {
+        let agent_run_host = if config.identity_auth.is_some() {
+            match config.agent_run_host.clone() {
+                Some(host) => Some(host),
+                None => crate::native_chat_startup::agent_execution_host(&mut config, foundation.desktop_brokers.clone())?,
+            }
+        } else { None };
+        config.agent_run_host = agent_run_host.clone();
         {
             let mut reader_runtime = foundation
                 .native_chat_public_runtime
@@ -295,6 +305,7 @@ impl PublicIngressRuntime {
         let local_account_lifecycle_enabled = config.local_account_auth.is_some();
         let goal_run_runtime = config.native_chat_runtime.clone();
         let goal_run_identity = config.identity_auth.clone();
+        let config_identity = config.identity_auth.clone();
         let local_implicit_enabled = config
             .identity_auth
             .as_ref()
@@ -481,11 +492,20 @@ impl PublicIngressRuntime {
             }
             _ => None,
         };
+        let agent_run_worker = match (&foundation.database, agent_run_host, config_identity) {
+            (DatabaseState::Configured(pool), Some(host), Some(identity)) => Some(
+                crate::agent_run_worker::AgentRunWorker::start(
+                    pool.clone(), host, identity.agent_jwt, foundation.live_event_publisher.clone(),
+                )
+            ),
+            _ => None,
+        };
         Ok(Self {
             handle: server.handle(),
             server,
             bound_addr,
             goal_run_worker,
+            agent_run_worker,
             session_auth_kind,
             native_identity_enabled,
             local_account_lifecycle_enabled,
@@ -526,9 +546,13 @@ impl PublicIngressRuntime {
         let Self {
             server,
             mut goal_run_worker,
+            mut agent_run_worker,
             ..
         } = self;
         let result = server.await;
+        if let Some(worker) = agent_run_worker.as_mut() {
+            worker.shutdown().await;
+        }
         if let Some(worker) = goal_run_worker.as_mut() {
             worker.shutdown().await;
         }
@@ -584,6 +608,10 @@ fn public_ingress_startup_receipt(
             "/api/auth/sign-out",
         ]);
     }
+    let mut auth_migration_debt = if better_auth_email_auth_enabled {
+        vec!["remaining_auth_wildcard_routes"]
+    } else { vec!["auth_lifecycle_routes"] };
+    if !native_identity_enabled { auth_migration_debt.push("websocket_session_resolution"); }
     let mut native_authentication = serde_json::json!({
         "authority": if native_identity_enabled { "native-managed-http-identity-resolver" } else { "native-pcp-bearer-resolver" },
         "recognizedBearerPrefix": if native_identity_enabled { serde_json::Value::Null } else { serde_json::json!("pcp_") },
@@ -594,7 +622,7 @@ fn public_ingress_startup_receipt(
         "localImplicitConstraint": if native_identity_enabled && local_implicit_enabled { "numeric_loopback_listener_and_actual_peer" } else { "disabled" },
         "identityAssertionTransport": if native_identity_enabled { "one_time_method_target_bound_loopback_hmac" } else { "disabled" },
         "nodeRechecksCurrentOrganizationRolesAndMemberships": true,
-        "unmigrated": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
+        "unmigrated": auth_migration_debt,
     });
     if let Some(kind) = session_auth_kind {
         native_authentication["sessionCookieAuthority"] = serde_json::json!({
@@ -606,7 +634,7 @@ fn public_ingress_startup_receipt(
             "scope": "public_ingress_non_lifecycle_http_without_bearer",
             "assertionTransport": "one_time_method_target_bound_loopback_hmac",
             "nodeRechecksCurrentOrganizationRolesAndMemberships": true,
-            "unmigrated": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
+            "unmigrated": auth_migration_debt,
         });
     }
     serde_json::json!({
@@ -664,8 +692,8 @@ fn public_ingress_startup_receipt(
         },
         "compatibilityAuthentication": {
             "authority": if native_identity_enabled { "none_for_managed_http_identity" } else { "private-node-adapter" },
-            "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes", "websocket session resolution"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
-            "nodeOwnedRoutes": if better_auth_email_auth_enabled { vec!["remaining_auth_wildcard_routes", "websocket_session_resolution"] } else { vec!["auth_lifecycle_routes", "websocket_session_resolution"] },
+            "credentialForms": if native_identity_enabled { vec!["auth lifecycle routes"] } else { vec!["local Agent JWTs", "local-trusted and local-implicit identities", "non-pcp_ bearer credentials", "Bearer-authenticated HTTP requests"] },
+            "nodeOwnedRoutes": auth_migration_debt,
         },
         "unmigratedHttpAuthority": "explicit-private-node-proxy",
     })
@@ -731,6 +759,14 @@ async fn proxy_request(
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
+    if state.config.identity_auth.is_some()
+        && let Some(binding) = managed_mcp::binding_reference(&request)
+    {
+        let Some(host) = state.config.managed_mcp_host.clone() else {
+            return state.foundation.json_error(StatusCode::SERVICE_UNAVAILABLE, "managed_mcp_unavailable");
+        };
+        return managed_mcp::execute(state, request, payload, binding, host).await;
+    }
     if let Some(reference) = agent_runs::cancellation_reference(&request) {
         let target = match &state.foundation.database {
             DatabaseState::Configured(pool) => match agent_runs::resolve_native_goal_cancel_target(
@@ -759,6 +795,25 @@ async fn proxy_request(
         }
         // The D1 preflight did not select a unique native Goal Run. Leave both
         // request and Payload untouched for the existing legacy route.
+    }
+    if state.config.identity_auth.is_some()
+        && let Some(endpoint) = agent_execution::endpoint_for_path(request.uri().path(), request.method())
+    {
+        match agent_execution::selects_native_run(&state, &request, &endpoint).await {
+            Ok(true) => return agent_execution::execute(state, request, payload, endpoint).await,
+            Ok(false) => {} // Registered historical legacy owner only; native failures never enter Node.
+            Err(response) => return response,
+        }
+    }
+    if state.config.identity_auth.is_some() {
+        if let Some(endpoint) = desktop::endpoint(request.uri().path(), request.method()) {
+            return desktop::execute(state, request, payload, endpoint).await;
+        }
+        if is_native_desktop_namespace(request.uri().path()) {
+            return state
+                .foundation
+                .json_error(StatusCode::NOT_FOUND, "route_not_found");
+        }
     }
     // Express matches route literals case-insensitively and permits a trailing
     // slash. Actix's explicit routes above retain the common spelling; route
@@ -914,6 +969,9 @@ async fn proxy_request(
 
     if has_websocket_upgrade(request.headers()) {
         if is_supported_websocket_upgrade_route(&request) {
+            if state.config.identity_auth.is_some() {
+                return live_events::upgrade(state, request, payload).await;
+            }
             if let Some(response) = private_host_rejection(&state, &request) {
                 return response;
             }
@@ -987,6 +1045,11 @@ async fn proxy_request(
             }
             return websocket_proxy.forward(request, payload).await;
         }
+        return state
+            .foundation
+            .json_error(StatusCode::NOT_FOUND, "route_not_found");
+    }
+    if state.config.identity_auth.is_some() && live_events::reserved_path(request.uri().path()) {
         return state
             .foundation
             .json_error(StatusCode::NOT_FOUND, "route_not_found");
@@ -1343,6 +1406,23 @@ fn is_supported_websocket_upgrade_route(request: &HttpRequest) -> bool {
         (Some(""), Some("api"), Some("orgs"), Some(org_id), Some("events"), Some("ws"), None)
             if !org_id.is_empty()
     )
+}
+
+fn is_native_desktop_namespace(path: &str) -> bool {
+    let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+    if parts
+        .first()
+        .is_none_or(|part| !part.eq_ignore_ascii_case("api"))
+    {
+        return false;
+    }
+    let capability =
+        |part: &str| part.eq_ignore_ascii_case("browser") || part.eq_ignore_ascii_case("computer");
+    parts.get(1).is_some_and(|part| capability(part))
+        || (parts
+            .get(1)
+            .is_some_and(|part| part.eq_ignore_ascii_case("instance"))
+            && parts.get(2).is_some_and(|part| capability(part)))
 }
 
 fn selected_local_account_websocket_session(
@@ -2966,6 +3046,141 @@ mod tests {
                     assert!(response.body().await.unwrap().is_empty());
                 }
             }
+        }
+        assert_eq!(forwarded.load(Ordering::SeqCst), 0);
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+        node_control.stop(true).await;
+        node_task.await.unwrap().unwrap();
+    }
+
+    #[actix_web::test]
+    async fn native_desktop_namespace_reserves_only_capability_routes() {
+        for path in [
+            "/api/browser/click",
+            "/API/COMPUTER/click/extra",
+            "/api/instance/browser/broker",
+            "/api/instance/computer/readiness",
+        ] {
+            assert!(is_native_desktop_namespace(path), "{path}");
+        }
+        for path in [
+            "/api/instance/settings/browser",
+            "/api/instance/settings/general",
+            "/api/browserish/click",
+            "/api/orgs/org/browser",
+        ] {
+            assert!(!is_native_desktop_namespace(path), "{path}");
+        }
+    }
+
+    #[actix_web::test]
+    async fn native_desktop_and_live_routes_never_reach_compatibility_upstream() {
+        let forwarded = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let node = HttpServer::new({
+            let forwarded = forwarded.clone();
+            move || {
+                let forwarded = forwarded.clone();
+                App::new().default_service(web::to(move || {
+                    let forwarded = forwarded.clone();
+                    async move {
+                        forwarded.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let node_control = node.handle();
+        let node_task = actix_web::rt::spawn(node);
+        let foundation = Arc::new(
+            AppState::new(ServerConfig {
+                actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                workers: 1,
+                ..ServerConfig::default()
+            })
+            .unwrap(),
+        );
+        let mut config =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap();
+        config.deployment_mode = "local_trusted".into();
+        config.identity_auth = Some(
+            crate::public_ingress_config::NativeIdentityAuthConfig::new(
+                SECRET,
+                "synthetic-distinct-agent-jwt-key",
+                "rudder",
+                "rudder-api",
+                true,
+            )
+            .unwrap(),
+        );
+        let runtime = PublicIngressRuntime::bind(config, foundation).unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+        let client = awc::Client::default();
+        for (method, path, expected) in [
+            (
+                Method::PUT,
+                "/api/instance/browser/broker",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Method::DELETE,
+                "/API/INSTANCE/COMPUTER/BROKER/",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Method::POST,
+                "/api/browser/click",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Method::POST,
+                "/api/computer/click",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Method::GET,
+                "/api/instance/computer/readiness",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (Method::GET, "/api/browser/click", StatusCode::NOT_FOUND),
+            (
+                Method::POST,
+                "/api/computer/click/extra",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Method::GET,
+                "/api/orgs/10000000-0000-4000-8000-000000000001/events/ws",
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
+            let response = client
+                .request(method, format!("http://{address}{path}"))
+                .send_json(&serde_json::json!({}))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+        }
+        let handshake = client
+            .ws(format!(
+                "ws://{address}/api/orgs/10000000-0000-4000-8000-000000000001/events/ws"
+            ))
+            .connect()
+            .await;
+        match handshake {
+            Err(awc::error::WsClientError::InvalidResponseStatus(status)) => {
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE)
+            }
+            _ => panic!("native WS must reject unavailable database without contacting Node"),
         }
         assert_eq!(forwarded.load(Ordering::SeqCst), 0);
         control.stop(true).await;

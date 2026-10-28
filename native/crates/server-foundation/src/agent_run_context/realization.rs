@@ -147,7 +147,7 @@ pub(super) async fn realize(
         )
         .await?;
         if let Some(command) = text(&workspace.strategy, "provisionCommand") {
-            let mut env = std::env::vars().collect::<BTreeMap<_, _>>();
+            let mut env = host.environment.clone();
             for (key, value) in [
                 ("RUDDER_WORKSPACE_CWD", path.to_string_lossy().into_owned()),
                 ("RUDDER_WORKSPACE_PATH", path.to_string_lossy().into_owned()),
@@ -200,10 +200,12 @@ pub(super) async fn realize(
             ] {
                 env.insert(key.into(), value);
             }
-            super::git_identity::apply_repository_policy(&path, &mut env).await?;
-            let shell = std::env::var("SHELL")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
+            super::git_identity::apply_repository_policy(host, &path, &mut env).await?;
+            let shell = host
+                .environment
+                .get("SHELL")
+                .map(|value| value.trim().to_owned())
+                .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "/bin/sh".into());
             run_operation(
                 pool,
@@ -290,7 +292,7 @@ pub(super) async fn run_git(
         cwd,
         "git",
         args,
-        &std::env::vars().collect(),
+        &host.environment,
         cancelled,
         secret_keys,
         config,

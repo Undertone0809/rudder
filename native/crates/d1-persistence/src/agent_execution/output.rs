@@ -97,3 +97,35 @@ pub async fn provider_failure(
     tx.commit().await?;
     Ok(())
 }
+
+/// Committed event DTOs for the native live transport. Its global frame ID is
+/// distinct from this Run's durable sequence; never derive seq in Foundation.
+pub async fn committed_events(
+    pool: &PgPool,
+    org: &str,
+    run: &str,
+    after: i32,
+) -> Result<Vec<Value>, AgentExecutionError> {
+    Ok(sqlx::query_scalar("SELECT jsonb_build_object('runId',run_id::text,'agentId',agent_id::text,'seq',seq,'eventType',event_type,'stream',stream,'level',level,'color',color,'message',message,'payload',payload) FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid AND seq>$3 ORDER BY seq,id LIMIT 512").bind(org).bind(run).bind(after).fetch_all(pool).await?)
+}
+pub struct LiveStatus {
+    pub run: Value,
+    pub queued: Value,
+    pub agent: Value,
+}
+pub async fn live_status(
+    pool: &PgPool,
+    org: &str,
+    run: &str,
+) -> Result<Option<LiveStatus>, AgentExecutionError> {
+    use sqlx::Row;
+    let row=sqlx::query("SELECT jsonb_build_object('runId',r.id::text,'agentId',r.agent_id::text,'status',r.status,'invocationSource',r.invocation_source,'triggerDetail',r.trigger_detail,'error',r.error,'errorCode',r.error_code,'startedAt',CASE WHEN r.started_at IS NULL THEN NULL ELSE to_char(r.started_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') END,'finishedAt',CASE WHEN r.finished_at IS NULL THEN NULL ELSE to_char(r.finished_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') END,'executionPhase',r.running_substate,'networkWaitAttemptCount',r.network_wait_attempt_count,'networkWaitNextRetryAt',r.network_wait_next_retry_at) AS run,jsonb_build_object('runId',r.id::text,'agentId',r.agent_id::text,'invocationSource',r.invocation_source,'triggerDetail',r.trigger_detail,'wakeupRequestId',r.wakeup_request_id::text) AS queued,jsonb_build_object('agentId',a.id::text,'status',a.status,'lastHeartbeatAt',CASE WHEN a.last_heartbeat_at IS NULL THEN NULL ELSE to_char(a.last_heartbeat_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') END) AS agent FROM heartbeat_runs r JOIN agents a ON a.org_id=r.org_id AND a.id=r.agent_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.execution_authority='native_rust' AND r.scene='heartbeat'").bind(org).bind(run).fetch_optional(pool).await?;
+    row.map(|row| {
+        Ok(LiveStatus {
+            run: row.try_get("run")?,
+            queued: row.try_get("queued")?,
+            agent: row.try_get("agent")?,
+        })
+    })
+    .transpose()
+}

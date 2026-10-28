@@ -67,6 +67,43 @@ pub(super) fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint>
     }
 }
 
+/// Select historical rows before consuming their bodies. Only explicitly legacy
+/// owners retain their registered transport during the migration.
+pub(super) async fn selects_native_run(
+    state: &IngressState,
+    request: &HttpRequest,
+    endpoint: &Endpoint,
+) -> Result<bool, HttpResponse> {
+    let (reference, surface) = match endpoint {
+        Endpoint::Wake(_) | Endpoint::Invoke(_) => return Ok(true),
+        Endpoint::Cancel(reference, surface) | Endpoint::Retry(reference, surface) => {
+            (reference, surface)
+        }
+    };
+    let identity = resolve_public_http_identity(state, request)
+        .await
+        .map_err(|(status, code)| state.foundation.json_error(status, code))?;
+    let (actor, session) = agent_core::actor_and_session(&identity)
+        .ok_or_else(|| HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"})))?;
+    let auth = agent_core::native_authorizer(&identity, &actor, &session, state)
+        .ok_or_else(|| HttpResponse::Unauthorized().json(json!({"error":"Unauthorized"})))?;
+    let DatabaseState::Configured(pool) = &state.foundation.database else {
+        return Err(state.foundation.json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_execution_unavailable",
+        ));
+    };
+    let message = match surface {
+        Surface::Agent => "Agent run not found",
+        Surface::Heartbeat => "Heartbeat run not found",
+    };
+    let (run, org) =
+        run_reads::resolve_run_reference(pool, state, &identity, &auth, reference, message).await?;
+    sqlx::query_scalar::<_, bool>("SELECT execution_authority='native_rust' AND scene='heartbeat' AND target_type='wakeup_request' FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(org).bind(run).fetch_one(pool).await
+        .map_err(|_| state.foundation.json_error(StatusCode::SERVICE_UNAVAILABLE, "agent_execution_unavailable"))
+}
+
 fn wake_validation(value: &Value) -> Result<(), Value> {
     fn received(value: &Value) -> &'static str {
         match value {
@@ -312,6 +349,14 @@ pub(super) async fn execute(
                 .json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
         }
     };
+    if matches!(&endpoint, Endpoint::Wake(_) | Endpoint::Invoke(_))
+        && state.config.agent_run_host.is_none()
+    {
+        return state.foundation.json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_execution_unavailable",
+        );
+    }
     let board = actor.kind == "user";
     let execution_actor = AgentExecutionActor {
         actor_type: if board { "user" } else { "agent" },
@@ -535,3 +580,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod http_tests;

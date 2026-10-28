@@ -77,14 +77,36 @@ enum StdioMode {
     ContentLength,
 }
 
+/// Provider surface facts for the same native MCP protocol/HTTP transport.
+/// Core dispatch passes None and retains its existing inventory and budgets.
+pub(super) struct McpSurface<'a> {
+    pub server_info: Value,
+    pub tools: Vec<Value>,
+    pub invoke: &'a dyn Fn(&Value, &BTreeMap<String, String>) -> Value,
+    pub response_limit: usize,
+    pub browser_contract_hash: Option<String>,
+}
+
 /// Run the additive Rust MCP server over the supplied stdio.
 pub fn run<R: Read, W: Write>(
+    input: R,
+    output: W,
+    environment: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    run_with_surface(input, output, environment, None)
+}
+
+pub(super) fn run_with_surface<R: Read, W: Write>(
     mut input: R,
     mut output: W,
     environment: &BTreeMap<String, String>,
+    surface: Option<&McpSurface<'_>>,
 ) -> Result<(), String> {
-    let mut parser =
-        InputParser::with_limits(FrameLimits::default()).map_err(|error| error.to_string())?;
+    let frame_limits = FrameLimits {
+        max_frame_bytes: surface.map_or(MAX_RESULT_BYTES, |surface| surface.response_limit),
+        ..FrameLimits::default()
+    };
+    let mut parser = InputParser::with_limits(frame_limits).map_err(|error| error.to_string())?;
     let mut mode = None;
     let mut mode_probe = Vec::new();
     let mut chunk = [0_u8; 8192];
@@ -107,19 +129,21 @@ pub fn run<R: Read, W: Write>(
             continue;
         };
         for message in messages {
-            let Some(response) = handle_message(&message, environment) else {
+            let response = if surface.is_some() {
+                handle_message_with_surface(&message, environment, surface)
+            } else {
+                handle_message(&message, environment)
+            };
+            let Some(response) = response else {
                 continue;
             };
             let frame_mode = match mode {
                 StdioMode::Newline => FrameMode::Newline,
                 StdioMode::ContentLength => FrameMode::ContentLength,
             };
-            let frame = rudder_cli_mcp_contract_core::encode_frame(
-                &response,
-                frame_mode,
-                FrameLimits::default(),
-            )
-            .map_err(|error| error.to_string())?;
+            let frame =
+                rudder_cli_mcp_contract_core::encode_frame(&response, frame_mode, frame_limits)
+                    .map_err(|error| error.to_string())?;
             output
                 .write_all(&frame)
                 .and_then(|_| output.flush())
@@ -145,6 +169,13 @@ fn detect_stdio_mode(probe: &[u8]) -> Option<StdioMode> {
 }
 
 fn handle_message(message: &Value, environment: &BTreeMap<String, String>) -> Option<Value> {
+    handle_message_with_surface(message, environment, None)
+}
+fn handle_message_with_surface(
+    message: &Value,
+    environment: &BTreeMap<String, String>,
+    surface: Option<&McpSurface<'_>>,
+) -> Option<Value> {
     let request = message.as_object();
     let id = request.and_then(|value| value.get("id")).cloned();
     let notification = id.is_none();
@@ -205,7 +236,7 @@ fn handle_message(message: &Value, environment: &BTreeMap<String, String>) -> Op
         };
     }
 
-    match method {
+    let response = match method {
         "notifications/initialized" => {
             if notification {
                 None
@@ -224,7 +255,7 @@ fn handle_message(message: &Value, environment: &BTreeMap<String, String>) -> Op
                     None,
                 ));
             }
-            let mut result = json!({"tools": tool_manifest()});
+            let mut result = json!({"tools": surface.map(|surface|surface.tools.clone()).unwrap_or_else(tool_manifest)});
             if modern_request {
                 decorate_modern_result(&mut result, true);
             }
@@ -238,13 +269,20 @@ fn handle_message(message: &Value, environment: &BTreeMap<String, String>) -> Op
             Some(rpc_result(response_id, result))
         }
         "tools/call" => {
-            let tool_result = call_tool(&params, environment);
+            let tool_result = surface.map_or_else(
+                || call_tool(&params, environment),
+                |surface| (surface.invoke)(&params, environment),
+            );
             let mut result = tool_result;
             if modern_request {
                 decorate_modern_result(&mut result, false);
             }
             let response = rpc_result(response_id, result);
-            Some(bound_response(response))
+            Some(if let Some(surface) = surface {
+                bound_response_limit(response, surface.response_limit)
+            } else {
+                bound_response(response)
+            })
         }
         _ if notification => None,
         _ => Some(rpc_error(
@@ -253,7 +291,33 @@ fn handle_message(message: &Value, environment: &BTreeMap<String, String>) -> Op
             &format!("Unsupported JSON-RPC method: {method}"),
             None,
         )),
-    }
+    };
+    response.map(|mut response| {
+        if let Some(surface) = surface {
+            if let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) {
+                if result.contains_key("serverInfo") {
+                    result.insert("serverInfo".into(), surface.server_info.clone());
+                }
+                if let Some(meta) = result.get_mut("_meta").and_then(Value::as_object_mut) {
+                    meta.insert(
+                        "io.modelcontextprotocol/serverInfo".into(),
+                        surface.server_info.clone(),
+                    );
+                }
+                if let Some(hash)=surface.browser_contract_hash.as_ref(){
+                    if let Some(capabilities)=result.get_mut("capabilities").and_then(Value::as_object_mut){
+                        let experimental=capabilities.entry("experimental").or_insert_with(||json!({}));
+                        if !experimental.is_object(){*experimental=json!({});}
+                        if experimental["rudder"].is_null(){experimental["rudder"]=json!({"contractVersion":RUDDER_MCP_CONTRACT_VERSION,"coreContractHash":CORE_MCP_CONTRACT_HASH});}
+                        experimental["rudder"]["browserContractHash"]=json!(hash);
+                    }
+                }
+            }
+            bound_response_limit(response, surface.response_limit)
+        } else {
+            response
+        }
+    })
 }
 
 fn initialize(id: Value, params: &Value) -> Value {
@@ -1088,7 +1152,7 @@ fn run_by_skill_report(page: Value, arguments: &Value) -> Value {
     output
 }
 
-fn execute_direct_request(
+pub(super) fn execute_direct_request(
     request: &DirectRequest,
     environment: &BTreeMap<String, String>,
 ) -> Result<Value, CliError> {
@@ -1278,7 +1342,7 @@ fn plan_error(error: PlanError) -> Value {
     tool_error(code, &error.to_string(), Value::Null)
 }
 
-fn cli_error_result(error: CliError) -> Value {
+pub(super) fn cli_error_result(error: CliError) -> Value {
     let details = error.json_value();
     let code = details["code"]
         .as_str()
@@ -1287,7 +1351,7 @@ fn cli_error_result(error: CliError) -> Value {
     tool_error(&code, &error.message, details)
 }
 
-fn success_tool_result(value: Value) -> Value {
+pub(super) fn success_tool_result(value: Value) -> Value {
     let full_text = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned());
     let full_text_bytes = full_text.len();
     let text = if full_text_bytes <= MAX_INLINE_TEXT_BYTES {
@@ -1308,7 +1372,7 @@ fn success_tool_result(value: Value) -> Value {
     })
 }
 
-fn tool_error(code: &str, message: &str, details: Value) -> Value {
+pub(super) fn tool_error(code: &str, message: &str, details: Value) -> Value {
     let payload = json!({
         "status": "error",
         "code": code,
@@ -1323,8 +1387,11 @@ fn tool_error(code: &str, message: &str, details: Value) -> Value {
 }
 
 fn bound_response(response: Value) -> Value {
+    bound_response_limit(response, MAX_RESULT_BYTES)
+}
+fn bound_response_limit(response: Value, max_bytes: usize) -> Value {
     if serde_json::to_vec(&response)
-        .map(|bytes| bytes.len() <= MAX_RESULT_BYTES)
+        .map(|bytes| bytes.len() <= max_bytes)
         .unwrap_or(false)
     {
         return response;
@@ -1333,7 +1400,7 @@ fn bound_response(response: Value) -> Value {
         "status":"error",
         "code":"rudder_mcp_response_too_large",
         "message": TOOL_RESULT_TOO_LARGE,
-        "details":{"maxBytes":MAX_RESULT_BYTES},
+        "details":{"maxBytes":max_bytes},
     });
     let id = response.get("id").cloned().unwrap_or(Value::Null);
     rpc_result(

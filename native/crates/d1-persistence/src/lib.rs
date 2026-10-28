@@ -13,6 +13,7 @@ pub mod agent_core;
 pub mod agent_execution;
 pub mod managed_mcp_runtime;
 pub mod desktop_capability;
+pub mod live_event_access;
 pub mod agent_run_context;
 pub mod agent_run_workspace;
 pub mod agent_issue_creation;

@@ -2,11 +2,13 @@
 //! complete public admission/context/runtime cutline is installed together.
 mod approvals;
 mod driver;
+mod live;
 mod logs;
 #[cfg(test)]
 mod tests;
 use crate::{
     agent_run_context::{AgentRunContextHost, finish_persisted_agent_run_context},
+    live_events::LiveEventPublisher,
     native_agent_jwt::NativeAgentJwtConfig,
 };
 use rudder_d1_persistence::agent_execution::{self, recovery, settlement};
@@ -33,10 +35,11 @@ impl AgentRunWorker {
         pool: PgPool,
         host: Arc<AgentRunContextHost>,
         identity: NativeAgentJwtConfig,
+        events: LiveEventPublisher,
     ) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
         let control = Arc::clone(&shutdown);
-        let task = tokio::spawn(queue(pool, host, identity, control));
+        let task = tokio::spawn(queue(pool, host, identity, control, events));
         Self {
             shutdown,
             task: Some(task),
@@ -62,6 +65,7 @@ async fn queue(
     host: Arc<AgentRunContextHost>,
     identity: NativeAgentJwtConfig,
     shutdown: Arc<AtomicBool>,
+    events: LiveEventPublisher,
 ) {
     let mut tasks = JoinSet::new();
     let mut active = HashSet::new();
@@ -81,7 +85,7 @@ async fn queue(
                 }
             }
         }
-        if let Err(error) = maintenance(&pool, &host, &active).await {
+        if let Err(error) = maintenance(&pool, &host, &active, &events).await {
             tracing::warn!(event="native_agent_queue_maintenance_failed",error=%error);
         }
         let due = async {
@@ -108,6 +112,7 @@ async fn queue(
                     if active.contains(&due.run_id) {
                         continue;
                     }
+                    let _ = live::status(&pool, &events, &due.organization_id, &due.run_id).await;
                     let claimed = if network {
                         agent_execution::claim_network_waiting_run(
                             &pool,
@@ -127,8 +132,9 @@ async fn queue(
                             let host = Arc::clone(&host);
                             let identity = identity.clone();
                             let shutdown = Arc::clone(&shutdown);
+                            let events = events.clone();
                             let task = tasks.spawn(async move {
-                                driver::run(pool, host, identity, shutdown, claim).await;
+                                driver::run(pool, host, identity, shutdown, claim, events).await;
                                 run
                             });
                             task_runs.insert(task.id(), due.run_id.clone());
@@ -165,6 +171,7 @@ async fn maintenance(
     pool: &PgPool,
     host: &AgentRunContextHost,
     active: &HashSet<String>,
+    events: &LiveEventPublisher,
 ) -> Result<(), agent_execution::AgentExecutionError> {
     for expired in recovery::list_expired(pool).await? {
         if active.contains(&expired.run_id) {
@@ -184,17 +191,36 @@ async fn maintenance(
             }
         };
         if recovered {
-            if let Err(error) =
-                finish_persisted_agent_run_context(pool, &expired.organization_id, &expired.run_id, &host.runtime_root)
-                    .await
+            let _ = live::status(pool, events, &expired.organization_id, &expired.run_id).await;
+            let _ = live::committed(
+                pool,
+                events,
+                &expired.organization_id,
+                &expired.run_id,
+                &mut 0,
+                true,
+            )
+            .await;
+            if let Err(error) = finish_persisted_agent_run_context(
+                pool,
+                &expired.organization_id,
+                &expired.run_id,
+                &host.runtime_root,
+            )
+            .await
             {
                 tracing::warn!(event="native_agent_recovered_context_cleanup_pending",run_id=%expired.run_id,error=%error);
             }
         }
     }
     for due in settlement::list_due(pool).await? {
-        if let Err(error) =
-            finish_persisted_agent_run_context(pool, &due.organization_id, &due.run_id, &host.runtime_root).await
+        if let Err(error) = finish_persisted_agent_run_context(
+            pool,
+            &due.organization_id,
+            &due.run_id,
+            &host.runtime_root,
+        )
+        .await
         {
             tracing::warn!(event="native_agent_terminal_context_cleanup_pending",run_id=%due.run_id,error=%error);
             continue;
@@ -204,6 +230,16 @@ async fn maintenance(
         {
             tracing::error!(event="native_agent_terminal_effects_pending",run_id=%due.run_id,error=%error);
         }
+        let _ = live::status(pool, events, &due.organization_id, &due.run_id).await;
+        let _ = live::committed(
+            pool,
+            events,
+            &due.organization_id,
+            &due.run_id,
+            &mut 0,
+            true,
+        )
+        .await;
     }
     agent_execution::resume_pending(pool).await?;
     Ok(())

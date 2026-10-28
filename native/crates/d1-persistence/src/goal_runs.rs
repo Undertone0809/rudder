@@ -110,6 +110,7 @@ pub async fn list_due_native_goal_wakeups(
              w.payload#>>'{_paperclipWakeContext,goalId}',
              w.payload#>>'{_paperclipWakeContext,goal,id}')
          WHERE w.execution_authority='native_rust' AND w.run_id IS NULL
+           AND w.payload->>'_rudderExecutionProducer' IS NULL
            AND w.reason='goal_started'
            AND w.payload->>'event'='goal_started'
            AND NULLIF(btrim(w.payload->>'goalStartRequestId'),'') IS NOT NULL
@@ -585,6 +586,10 @@ pub async fn claim_wakeup(
         .try_get::<Option<String>, _>("payload")?
         .and_then(|payload| serde_json::from_str(&payload).ok())
         .unwrap_or_else(|| json!({}));
+    if crate::agent_execution::has_generic_producer(&wake_payload) {
+        tx.rollback().await?;
+        return Ok(None);
+    }
     if source != "on_demand"
         || trigger_detail.as_deref() != Some("system")
         || wake_payload.get("event").and_then(Value::as_str) != Some("goal_started")

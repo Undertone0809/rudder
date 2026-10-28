@@ -381,6 +381,25 @@ pub(super) fn provision_core_mcp(
         "rudder-tools".into(),
         json!({"command":host.rudder_cli,"args":["mcp-server"]}),
     );
+    for (enabled, name, surface) in [
+        (
+            config["rudderBrowserEnabled"] == true,
+            "rudder-browser",
+            "browser",
+        ),
+        (
+            config["rudderComputerEnabled"] == true,
+            "rudder-computer",
+            "computer",
+        ),
+    ] {
+        if enabled {
+            servers.insert(
+                name.into(),
+                json!({"command":host.rudder_cli,"args":["mcp-server","--server",surface]}),
+            );
+        }
+    }
     for binding in bindings {
         let id = text(binding, "bindingId")
             .filter(|v| uuid::Uuid::parse_str(v).is_ok())
@@ -492,6 +511,14 @@ pub(super) fn provision_core_mcp(
             );
         }
         "opencode_local" => {
+            // Node's managed OpenCode profile excludes both inline and
+            // alternate-directory configuration, including configured env.
+            for key in ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR"] {
+                env.remove(key);
+                if let Some(configured) = config.get_mut("env").and_then(Value::as_object_mut) {
+                    configured.remove(key);
+                }
+            }
             let mut managed = super::profiles::opencode_base(host);
             let mut opencode_servers = serde_json::Map::new();
             for (name, server) in &servers {
@@ -549,6 +576,10 @@ pub(super) fn provision_core_mcp(
             // Pi's first-party tool bridge is a generated external-provider
             // extension. Native CLI owns every MCP payload and operation.
             let core_tools = rudder_agent_cli_core::native_mcp_tool_descriptors();
+            let desktop_tools = desktop_sources(config)
+                .into_iter()
+                .flat_map(|source| source["tools"].as_array().cloned().unwrap_or_default())
+                .collect::<Vec<_>>();
             let mut tool_names = ["read", "bash", "edit", "write", "grep", "find", "ls"]
                 .into_iter()
                 .map(str::to_owned)
@@ -556,6 +587,12 @@ pub(super) fn provision_core_mcp(
                     core_tools
                         .iter()
                         .filter_map(|t| text(t, "name"))
+                        .map(str::to_owned),
+                )
+                .chain(
+                    desktop_tools
+                        .iter()
+                        .filter_map(|tool| text(tool, "name"))
                         .map(str::to_owned),
                 )
                 .chain(
@@ -571,7 +608,7 @@ pub(super) fn provision_core_mcp(
             args.extend(["--tools".into(), tool_names.join(",")]);
             let extension = artifacts.write(
                 "rudder-pi-mcp.mjs",
-                &pi_extension(&host.rudder_cli, bindings),
+                &pi_extension(&host.rudder_cli, bindings, config),
             )?;
             args.extend([
                 "--extension".into(),
@@ -601,7 +638,13 @@ fn link_directory(source: &Path, target: &Path) -> Result<(), ContextError> {
     }
     Ok(())
 }
-fn pi_extension(cli: &Path, bindings: &[Value]) -> String {
+fn desktop_sources(config: &Value) -> Vec<Value> {
+    use rudder_agent_cli_core::DesktopSurface;
+    [("rudderBrowserEnabled","browser",DesktopSurface::Browser),("rudderComputerEnabled","computer",DesktopSurface::Computer)].into_iter()
+        .filter(|(key,_,_)|config[*key]==true)
+        .map(|(_,name,surface)|json!({"args":["mcp-server","--server",name],"tools":rudder_agent_cli_core::desktop_mcp_tool_descriptors(surface)})).collect()
+}
+fn pi_extension(cli: &Path, bindings: &[Value], config: &Value) -> String {
     // This tiny provider shim only transports JSON-RPC over native stdio.
     // Tool inventory, validation, auth and all Rudder behavior live in Rust.
     format!(
@@ -623,6 +666,7 @@ export default async function(pi) {{
 "#,
         serde_json::to_string(
             &std::iter::once(json!({"args":["mcp-server"],"tools":rudder_agent_cli_core::native_mcp_tool_descriptors()}))
+                .chain(desktop_sources(config))
                 .chain(
                     bindings
                         .iter()
@@ -660,7 +704,7 @@ mod tests {
     }
     #[test]
     fn generated_pi_bridge_contains_only_native_transport() {
-        let script = pi_extension(Path::new("/installed/rudder-cli"), &[]);
+        let script = pi_extension(Path::new("/installed/rudder-cli"), &[], &json!({}));
         assert!(script.contains("mcp-server"));
         assert!(!script.contains("fetch("));
         assert!(script.contains("source.tools"));

@@ -77,7 +77,7 @@ function connectionSummary() {
   };
 }
 
-async function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>, nativeRuntime = false) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -86,6 +86,7 @@ async function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", managedMcpConnectionRoutes({} as never, {
     deploymentMode: "authenticated",
+    nativeRuntime,
     serverPort: 3100,
     authPublicBaseUrl: "https://rudder.example.test",
     allowlists: {
@@ -815,4 +816,15 @@ describe("managed MCP connection organization routes", () => {
     );
     expect(mockOAuthService.revoke).not.toHaveBeenCalled();
   });
+});
+
+
+it("retires the Node signed-run proxy when native runtime authority is installed", async () => {
+  const actor = { type: "board", source: "local_implicit", userId: "fixture" };
+  const native = await createApp(actor, true);
+  const legacy = await createApp(actor, false);
+  const path = `/api/mcp/runtime/bindings/${connectionId}`;
+  await request(native).post(path).send({ jsonrpc: "2.0", method: "tools/list", id: 1 }).expect(404);
+  await request(legacy).post(path).send({ jsonrpc: "2.0", method: "tools/list", id: 1 })
+    .expect(403, { error: "Signed agent run authentication required" });
 });

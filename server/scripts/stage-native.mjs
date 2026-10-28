@@ -52,6 +52,12 @@ export function postgresOwnerBinaryName(target) {
   return `rudder-postgres-owner${config.extension}`;
 }
 
+export function agentCliBinaryName(target) {
+  const config = FOUNDATION_TARGETS[target];
+  if (!config) throw new Error(`Unsupported native Agent CLI target: ${target}`);
+  return `rudder-cli${config.extension}`;
+}
+
 export function nativeMcpBinaryName(target) {
   const config = FOUNDATION_TARGETS[target];
   if (!config) throw new Error(`Unsupported native MCP target: ${target}`);
@@ -149,6 +155,10 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
   const nativeMcpSources = Object.fromEntries(targets.map((target) => [
     target, path.join(artifactDir, target, nativeMcpBinaryName(target)),
   ]));
+  const agentCliSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(artifactDir, target, agentCliBinaryName(target)),
+  ]));
+  await validateFoundationArtifacts(agentCliSources);
   await validateFoundationArtifacts(nativeMcpSources);
   await validateFoundationArtifacts(processHostSources);
   await validateFoundationArtifacts(postgresOwnerSources);
@@ -172,7 +182,9 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
     await publishFoundationArtifact(postgresOwnerSources[target], postgresOwnerPath, target);
     const nativeMcpPath = path.join(resourceRoot, "native", target, nativeMcpBinaryName(target));
     await publishFoundationArtifact(nativeMcpSources[target], nativeMcpPath, target);
-    staged.push({ target, path: destinationPath, migrationPreflightPath, migrationApplyPath, processHostPath, postgresOwnerPath, nativeMcpPath });
+    const agentCliPath = path.join(resourceRoot, "native", target, agentCliBinaryName(target));
+    await publishFoundationArtifact(agentCliSources[target], agentCliPath, target);
+    staged.push({ target, agentCliPath, path: destinationPath, migrationPreflightPath, migrationApplyPath, processHostPath, postgresOwnerPath, nativeMcpPath });
   }
   return staged;
 }
@@ -198,13 +210,17 @@ export async function checkPackagedFoundationArtifacts({ resourcesDir, targets =
   const nativeMcpSources = Object.fromEntries(targets.map((target) => [
     target, path.join(resourceRoot, "native", target, nativeMcpBinaryName(target)),
   ]));
+  const agentCliSources = Object.fromEntries(targets.map((target) => [
+    target, path.join(resourceRoot, "native", target, agentCliBinaryName(target)),
+  ]));
+  await validateFoundationArtifacts(agentCliSources, { requireExecutable: true });
   await validateFoundationArtifacts(nativeMcpSources, { requireExecutable: true });
   await validateFoundationArtifacts(processHostSources, { requireExecutable: true });
   await validateFoundationArtifacts(postgresOwnerSources, { requireExecutable: true });
   await validateFoundationArtifacts(sources, { requireExecutable: true });
   await validateFoundationArtifacts(migrationSources, { requireExecutable: true });
   await validateFoundationArtifacts(migrationApplySources, { requireExecutable: true });
-  return targets.map((target) => ({ target, path: sources[target], migrationPreflightPath: migrationSources[target], migrationApplyPath: migrationApplySources[target], processHostPath: processHostSources[target], postgresOwnerPath: postgresOwnerSources[target], nativeMcpPath: nativeMcpSources[target] }));
+  return targets.map((target) => ({ target, path: sources[target], migrationPreflightPath: migrationSources[target], migrationApplyPath: migrationApplySources[target], processHostPath: processHostSources[target], postgresOwnerPath: postgresOwnerSources[target], nativeMcpPath: nativeMcpSources[target], agentCliPath: agentCliSources[target] }));
 }
 
 export function resolveCargoFoundationExecutable(output, binaryName = "rudder-server-foundation") {
@@ -247,7 +263,7 @@ function buildCargoFoundation(command, args) {
       if (signal) return reject(new Error(`${command} exited with signal ${signal}`));
       if (code !== 0) return reject(new Error(`${command} exited with code ${code ?? 1}`));
       try {
-      resolve(["rudder-server-foundation", "migration-preflight", "migration-apply", "rudder-process-host", "rudder-postgres-owner", "rudder-native"].map((name) => resolveCargoFoundationExecutable(stdout, name)));
+      resolve(["rudder-server-foundation", "migration-preflight", "migration-apply", "rudder-process-host", "rudder-postgres-owner", "rudder-native", "rudder-cli"].map((name) => resolveCargoFoundationExecutable(stdout, name)));
       } catch (error) {
         reject(error);
       }
@@ -311,15 +327,16 @@ async function main() {
   if (cargoBuildTarget && cargoBuildTarget !== target) {
     throw new Error(`Cannot stage ${cargoBuildTarget} as the current host target ${target}`);
   }
-  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "-p", "rudder-migration-service", "--bin", "migration-preflight", "--bin", "migration-apply", "-p", "rudder-process-host", "--bin", "rudder-process-host", "-p", "rudder-postgres-lifecycle", "--bin", "rudder-postgres-owner", "-p", "rudder-native", "--bin", "rudder-native", "--message-format=json-render-diagnostics"];
+  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "-p", "rudder-server-foundation", "--bin", "rudder-server-foundation", "-p", "rudder-migration-service", "--bin", "migration-preflight", "--bin", "migration-apply", "-p", "rudder-process-host", "--bin", "rudder-process-host", "-p", "rudder-postgres-lifecycle", "--bin", "rudder-postgres-owner", "-p", "rudder-native", "--bin", "rudder-native", "-p", "rudder-cli", "--bin", "rudder-cli", "--message-format=json-render-diagnostics"];
   if (release) cargoArgs.push("--release");
-  const [sourcePath, migrationSourcePath, migrationApplySourcePath, processHostSourcePath, postgresOwnerSourcePath, nativeMcpSourcePath] = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
+  const [sourcePath, migrationSourcePath, migrationApplySourcePath, processHostSourcePath, postgresOwnerSourcePath, nativeMcpSourcePath, agentCliSourcePath] = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
   await inspectSource(sourcePath, target);
   await inspectSource(migrationSourcePath, target);
   await inspectSource(migrationApplySourcePath, target);
   await inspectSource(processHostSourcePath, target);
   await inspectSource(postgresOwnerSourcePath, target);
   await inspectSource(nativeMcpSourcePath, target);
+  await inspectSource(agentCliSourcePath, target);
   const destinationPath = path.join(resourcesDir, "native", target, binaryName);
   await publishFoundationArtifact(sourcePath, destinationPath, target);
   await publishFoundationArtifact(migrationSourcePath, path.join(resourcesDir, "native", target, migrationPreflightBinaryName(target)), target);
@@ -327,7 +344,8 @@ async function main() {
   await publishFoundationArtifact(processHostSourcePath, path.join(resourcesDir, "native", target, processHostBinaryName(target)), target);
   await publishFoundationArtifact(postgresOwnerSourcePath, path.join(resourcesDir, "native", target, postgresOwnerBinaryName(target)), target);
   await publishFoundationArtifact(nativeMcpSourcePath, path.join(resourcesDir, "native", target, nativeMcpBinaryName(target)), target);
-  console.log(`[server:stage-native] staged ${target}/${binaryName}, migration-preflight, migration-apply, rudder-process-host, rudder-postgres-owner, and rudder-native`);
+  await publishFoundationArtifact(agentCliSourcePath, path.join(resourcesDir, "native", target, agentCliBinaryName(target)), target);
+  console.log(`[server:stage-native] staged ${target}/${binaryName}, migration-preflight, migration-apply, rudder-process-host, rudder-postgres-owner, rudder-cli, and rudder-native`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

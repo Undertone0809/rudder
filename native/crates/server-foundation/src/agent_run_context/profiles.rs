@@ -36,7 +36,7 @@ pub(super) fn prepare(
     } else {
         organization.join(format!("{}-home", runtime.trim_end_matches("_local")))
     };
-    fs::create_dir_all(&root)?;
+    managed_directory(&root)?;
     match runtime {
         "codex_local" => {
             let source = text(&config["env"], "CODEX_HOME")
@@ -49,16 +49,15 @@ pub(super) fn prepare(
                     }
                 })
                 .or_else(|| {
-                    std::env::var("CODEX_HOME")
-                        .ok()
+                    host.environment
+                        .get("CODEX_HOME")
+                        .cloned()
                         .filter(|s| !s.trim().is_empty())
                         .map(PathBuf::from)
                 })
                 .unwrap_or_else(|| host.operator_home.join(".codex"));
             if source != root {
-                if source.join("auth.json").is_file() {
-                    snapshot_file(&source.join("auth.json"), &root.join("auth.json"))?;
-                }
+                mirror_codex_auth(&source.join("auth.json"), &root.join("auth.json"))?;
                 let content = fs::read_to_string(source.join("config.toml")).unwrap_or_default();
                 if root
                     .join("config.toml")
@@ -74,22 +73,33 @@ pub(super) fn prepare(
             }
         }
         "claude_local" => {
-            fs::create_dir_all(root.join(".claude"))?;
+            managed_directory(&root.join(".claude"))?;
+            managed_directory(&root.join(".config"))?;
             for relative in [".config/claude", ".config/anthropic", ".anthropic"] {
                 share_provider_entry(&host.operator_home.join(relative), &root.join(relative))?;
             }
         }
         "opencode_local" => {
+            for relative in [
+                ".local",
+                ".local/share",
+                ".cache",
+                ".config",
+                ".config/opencode",
+                ".config/opencode/skills",
+            ] {
+                managed_directory(&root.join(relative))?;
+            }
             for relative in [".local/share/opencode", ".cache/opencode"] {
                 share_provider_entry(&host.operator_home.join(relative), &root.join(relative))?;
             }
-            fs::create_dir_all(root.join(".config/opencode/skills"))?;
         }
         "pi_local" => {
             let source = host.operator_home.join(".pi");
             let target = root.join(".pi");
-            fs::create_dir_all(target.join("agent/skills"))?;
-            fs::create_dir_all(target.join("paperclips"))?;
+            for relative in ["", "agent", "agent/skills", "paperclips"] {
+                managed_directory(&target.join(relative))?;
+            }
             for entry in fs::read_dir(&source).into_iter().flatten() {
                 let entry = entry?;
                 let name = entry.file_name();
@@ -108,11 +118,36 @@ pub(super) fn prepare(
             }
         }
         "cursor" => {
-            fs::create_dir_all(root.join(".cursor/skills"))?;
+            managed_directory(&root.join(".cursor"))?;
+            managed_directory(&root.join(".cursor/skills"))?;
         }
         _ => (),
     }
     Ok(root)
+}
+
+/// Detach a known Rudder-managed structural link before creating files.
+/// Preserve its target and all ordinary existing files/directories.
+fn managed_directory(path: &Path) -> Result<(), ContextError> {
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        fs::remove_file(path)?;
+    }
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
+fn mirror_codex_auth(source: &Path, target: &Path) -> Result<(), ContextError> {
+    if source.exists() {
+        return snapshot_file(source, target);
+    }
+    // The shared operator auth file is the source of truth. A removed login
+    // must not leave a usable stale snapshot in this managed Agent profile.
+    if fs::symlink_metadata(target)
+        .is_ok_and(|metadata| metadata.is_file() || metadata.file_type().is_symlink())
+    {
+        fs::remove_file(target)?;
+    }
+    Ok(())
 }
 
 fn snapshot_file(source: &Path, target: &Path) -> Result<(), ContextError> {
@@ -221,7 +256,7 @@ pub(super) fn codex_disabled_skill_paths(
 ) -> Vec<PathBuf> {
     let shared = text(&config["env"], "CODEX_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var("CODEX_HOME").ok().map(PathBuf::from))
+        .or_else(|| host.environment.get("CODEX_HOME").map(PathBuf::from))
         .unwrap_or_else(|| host.operator_home.join(".codex"));
     let mut paths = BTreeSet::new();
     for root in [
@@ -301,6 +336,51 @@ fn sanitize_opencode_provider(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn removed_operator_codex_auth_revokes_only_the_managed_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let operator = root.path().join("operator");
+        let managed = root.path().join("managed");
+        fs::create_dir_all(&operator).unwrap();
+        fs::create_dir_all(&managed).unwrap();
+        let source = operator.join("auth.json");
+        let target = managed.join("auth.json");
+        fs::write(&source, "synthetic login").unwrap();
+        fs::write(managed.join("custom"), "operator customization").unwrap();
+        mirror_codex_auth(&source, &target).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "synthetic login");
+        fs::remove_file(&source).unwrap();
+        mirror_codex_auth(&source, &target).unwrap();
+        assert!(!target.exists());
+        assert!(operator.is_dir());
+        assert_eq!(
+            fs::read_to_string(managed.join("custom")).unwrap(),
+            "operator customization"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn managed_structural_symlink_is_detached_without_touching_operator_files() {
+        let root = tempfile::tempdir().unwrap();
+        let operator = root.path().join("operator");
+        fs::create_dir(&operator).unwrap();
+        fs::write(operator.join("keep"), "operator configuration").unwrap();
+        let managed = root.path().join("managed");
+        std::os::unix::fs::symlink(&operator, &managed).unwrap();
+        managed_directory(&managed).unwrap();
+        fs::write(managed.join("isolated"), "managed").unwrap();
+        assert_eq!(
+            fs::read_to_string(operator.join("keep")).unwrap(),
+            "operator configuration"
+        );
+        assert!(!operator.join("isolated").exists());
+        fs::write(managed.join("custom"), "user file").unwrap();
+        managed_directory(&managed).unwrap();
+        assert_eq!(
+            fs::read_to_string(managed.join("custom")).unwrap(),
+            "user file"
+        );
+    }
     #[test]
     fn codex_provider_routes_survive_while_operator_mcp_and_notify_do_not() {
         let value = sanitize_codex_config(

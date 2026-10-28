@@ -1,4 +1,4 @@
-import { resolveRudderNativeTarget } from "@rudderhq/shared";
+import { resolveRudderNativeTarget, type LiveEvent } from "@rudderhq/shared";
 import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -9,9 +9,11 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { logger } from "../middleware/logger.js";
 import { resolveRustAgentInstructionsHost, type RustAgentCreateCommand } from "./agent-create-bridge.js";
 import { requestIssueCheckout } from "./issue-checkout-rust-bridge.js";
-import { createRustActorEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
+import { subscribeLiveEventTransport } from "./live-events.js";
+import { createRustActorEnvelope, createRustLiveEventTransportEnvelope, type RustFoundationActor } from "./rust-actor-envelope.js";
 import { RustFoundationBridgeError } from "./rust-foundation-bridge-error.js";
 export { buildRustAgentCreateCommand, type RustAgentCreateCommand, type RustAgentCreateInput, type RustAgentCreateInstructionsBundle, type RustAgentCreateIntelligenceDefaults, type RustAgentCreateNodeOwned } from "./agent-create-bridge.js";
 export type { CostReadInput, CostReadOperation } from "./cost-read-bridge.js";
@@ -68,6 +70,7 @@ export type RustFoundationResponse = {
 };
 
 export interface RustFoundationBridge {
+  forwardExistingLiveEvent?(event: LiveEvent): Promise<void>;
   runtimeBinding?(actor: RustFoundationActor, orgId: string, input: RuntimeBindingInput): Promise<RustFoundationResponse>;
   nativeChatTranscript?(actor: RustFoundationActor, orgId: string, input: NativeChatTranscriptInput): Promise<RustFoundationResponse>;
   nativeChatMessages?(actor: RustFoundationActor, orgId: string, input: NativeChatMessageReaderInput): Promise<RustFoundationResponse>;
@@ -438,6 +441,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   let baseUrl: string | null = null;
   let publicIngressBaseUrl: string | null = null;
   let lifecycleState: BridgeLifecycleState = "idle";
+  let disposeLiveEventTransport: (() => void) | null = null;
   let lifecycleTail: Promise<void> = Promise.resolve();
   let lastStderr = "";
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -571,6 +575,13 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
           });
           if (response.status === 200) {
             lifecycleState = "ready";
+            if (options.publicIngress?.identityAuth && !disposeLiveEventTransport) {
+              disposeLiveEventTransport = subscribeLiveEventTransport((event) => {
+                void forwardExistingLiveEvent(event).catch((error) => {
+                  logger.warn({ err: error, eventType: event.type }, "native live-event transport failed");
+                });
+              });
+            }
             return;
           }
         } catch {
@@ -633,8 +644,26 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
     } catch (error) { throw new RustFoundationBridgeError("request_failed", "Rust Agent core request failed", { cause: error }); }
   }
 
+  async function forwardExistingLiveEvent(event: LiveEvent): Promise<void> {
+      // Events are ephemeral. Do not start a backend or create a retry writer
+      // when there is no native listener; clients reconnect and refetch state.
+      if (!baseUrl || lifecycleState !== "ready") return;
+      const body = Buffer.from(JSON.stringify(event), "utf8");
+      const envelope = createRustLiveEventTransportEnvelope({ organizationId: event.orgId, body, secret: actorEnvelopeKey });
+      const response = await fetch(`${baseUrl}/internal/live-events/forward`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-rudder-actor-envelope": JSON.stringify(envelope), "x-rudder-request-id": envelope.requestId },
+        body: body as unknown as BodyInit,
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+      await response.arrayBuffer();
+      if (!response.ok) throw new RustFoundationBridgeError("request_failed", "Native live-event transport rejected the legacy frame");
+  }
+
   const close = (): Promise<void> => enqueueLifecycle(async () => {
     lifecycleState = "closing";
+    disposeLiveEventTransport?.();
+    disposeLiveEventTransport = null;
     const current = child;
     baseUrl = null;
     publicIngressBaseUrl = null;
@@ -1424,6 +1453,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         body: responseBody,
       } satisfies RustFoundationResponse;
     },
+    forwardExistingLiveEvent,
     close,
   };
 }

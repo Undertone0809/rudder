@@ -69,6 +69,7 @@ mod approval_reads;
 mod automation_reads;
 pub mod browser_auth;
 pub mod managed_mcp_runtime;
+pub mod live_events;
 mod desktop_broker;
 mod desktop_validation;
 mod desktop_capability;
@@ -1020,6 +1021,8 @@ struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
     session_revocation: NativeSessionRevocationRegistry,
+    live_event_publisher: live_events::LiveEventPublisher,
+    desktop_brokers: Arc<desktop_broker::DesktopBrokers>,
     d1_mutations: Option<MutationStore>,
     native_chat_worker: Option<native_chat_worker::Supervisor>,
     native_chat_public_runtime: Arc<Mutex<Option<NativeChatPublicRuntime>>>,
@@ -1208,6 +1211,8 @@ impl AppState {
             config: Arc::new(config),
             database,
             session_revocation: NativeSessionRevocationRegistry::default(),
+            live_event_publisher: live_events::LiveEventPublisher::new(),
+            desktop_brokers: Arc::new(desktop_broker::DesktopBrokers::new().map_err(|_| ConfigError::invalid("RUDDER_NATIVE_DESKTOP_BROKERS", "could not initialize Desktop broker transport"))?),
             d1_mutations,
             native_chat_worker,
             native_chat_public_runtime: Arc::new(Mutex::new(None)),
@@ -3009,12 +3014,14 @@ impl ServerRuntime {
         let http_server = HttpServer::new(move || {
             App::new()
                 .app_data(app_state.clone())
+                .app_data(web::Data::new(app_state.live_event_publisher.clone()))
                 .app_data(web::PayloadConfig::new(max_request_bytes))
                 .app_data(web::JsonConfig::default().limit(max_request_bytes))
                 .wrap(middleware::from_fn(request_guard))
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route("/internal/live-events/forward", web::post().to(live_events::forward_handler))
                 .service(
                     web::resource("/internal/run-workspace-ordinary-update")
                         .app_data(web::PayloadConfig::new(80 * 1024 * 1024))
@@ -3239,6 +3246,7 @@ impl ServerControl {
 
     /// Close shared dispatch before either private or public listener drains.
     pub fn begin_shutdown(&self) {
+        self.state.live_event_publisher.close();
         if let Some(worker) = &self.state.native_chat_worker {
             worker.begin_shutdown();
         }

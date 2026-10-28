@@ -22,18 +22,20 @@ pub(crate) use controls::cancel_heartbeat_in_transaction;
 pub use controls::{cancel, retry};
 pub mod lifecycle;
 pub(crate) use claim::select_claim_session;
-pub use claim::{AgentRunClaim, DueAgentRun, claim_queued_run, claim_network_waiting_run, list_due_runs};
+pub use claim::{
+    AgentRunClaim, DueAgentRun, claim_network_waiting_run, claim_queued_run, list_due_runs,
+};
 pub mod model_attempts;
 pub mod network;
-mod owner;
 pub mod output;
+mod owner;
 mod pending;
 pub use pending::resume_pending;
-mod request;
 pub mod recovery;
+mod request;
 mod resume;
-mod usage;
 mod timer_preflight;
+mod usage;
 pub(crate) use owner::Settlement;
 pub use owner::{AgentRunObserver, OwnedAgentRun};
 pub use request::{OwnedRequestExecution, SettledRequestProof, record_request_started};
@@ -65,4 +67,30 @@ pub enum AgentExecutionError {
 
 pub(crate) fn http(status: u16, message: &str) -> AgentExecutionError {
     AgentExecutionError::Http(status, message.to_owned(), None)
+}
+
+// Constructed only by the transactional Goal producer. Public wake input cannot
+// select the old Goal owner or impersonate this producer.
+pub(crate) const GOAL_PRODUCER_KEY: &str = "_rudderExecutionProducer";
+pub(crate) const GOAL_PRODUCER_VERSION: &str = "goal_start_v1";
+pub(crate) fn has_generic_producer(payload: &serde_json::Value) -> bool {
+    payload.get(GOAL_PRODUCER_KEY).is_some()
+}
+
+pub(crate) async fn goal_producer_is_current(
+    tx: &mut Transaction<'_, Postgres>,
+    org: &str,
+    agent: &str,
+    payload: &serde_json::Value,
+) -> Result<bool, sqlx::Error> {
+    if payload
+        .get(GOAL_PRODUCER_KEY)
+        .and_then(serde_json::Value::as_str)
+        != Some(GOAL_PRODUCER_VERSION)
+    {
+        return Ok(true);
+    }
+    let goal = payload.get("goalId").and_then(serde_json::Value::as_str);
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM goals WHERE org_id=$1::uuid AND id=$2::uuid AND owner_agent_id=$3::uuid AND status='active' AND lifecycle='active')")
+        .bind(org).bind(goal).bind(agent).fetch_one(&mut **tx).await
 }

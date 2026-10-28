@@ -21,7 +21,7 @@ pub(crate) struct NativeIssueWakeup<'a> {
 }
 
 /// Caller holds the Issue before the Agent lock and has revalidated access.
-/// No existing Issue mutation calls this native-consumer entry point.
+/// Issue producers share the same native owner without replacing their context.
 pub(crate) async fn enqueue_native_agent_issue_wakeup(
     tx: &mut Tx<'_>,
     org: &str,
@@ -59,5 +59,15 @@ pub(crate) async fn enqueue_native_agent_issue_wakeup(
         payload_extra: None,
         context_extra: None,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, &agent, &intent, actor, Some(input)).await
+    enqueue_issue_wakeup_with_agent(
+        tx,
+        org,
+        issue_id,
+        &agent,
+        &intent,
+        actor,
+        Some(input),
+        false,
+    )
+    .await
 }

@@ -69,7 +69,7 @@ pub(super) fn prepare(
         .and_then(Value::as_str)
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
-        .or_else(|| std::env::var("PAPERCLIP_API_URL").ok())
+        .or_else(|| host.environment.get("PAPERCLIP_API_URL").cloned())
         .unwrap_or_else(|| "http://127.0.0.1:3100/api".into());
     let api = if api.ends_with("/api") {
         api
@@ -101,9 +101,12 @@ pub(super) fn prepare(
         prompt = conditional_sections(&prompt, key, present);
     }
     prompt = render_flat(&prompt, &vars);
-    let runtime_host = std::env::var("PAPERCLIP_LISTEN_HOST")
-        .or_else(|_| std::env::var("HOST"))
-        .unwrap_or_else(|_| "localhost".into());
+    let runtime_host = host
+        .environment
+        .get("PAPERCLIP_LISTEN_HOST")
+        .or_else(|| host.environment.get("HOST"))
+        .cloned()
+        .unwrap_or_else(|| "localhost".into());
     let runtime_host = match runtime_host.trim() {
         "" | "0.0.0.0" | "::" => "localhost".into(),
         value if value.contains(':') && !value.starts_with('[') && !value.ends_with(']') => {
@@ -111,12 +114,18 @@ pub(super) fn prepare(
         }
         value => value.to_owned(),
     };
-    let runtime_port = std::env::var("PAPERCLIP_LISTEN_PORT")
-        .or_else(|_| std::env::var("PORT"))
-        .unwrap_or_else(|_| "3100".into());
-    let runtime_api = std::env::var("PAPERCLIP_RUNTIME_API_URL")
-        .or_else(|_| std::env::var("PAPERCLIP_API_URL"))
-        .unwrap_or_else(|_| format!("http://{runtime_host}:{runtime_port}"));
+    let runtime_port = host
+        .environment
+        .get("PAPERCLIP_LISTEN_PORT")
+        .or_else(|| host.environment.get("PORT"))
+        .cloned()
+        .unwrap_or_else(|| "3100".into());
+    let runtime_api = host
+        .environment
+        .get("PAPERCLIP_RUNTIME_API_URL")
+        .or_else(|| host.environment.get("PAPERCLIP_API_URL"))
+        .cloned()
+        .unwrap_or_else(|| format!("http://{runtime_host}:{runtime_port}"));
     env.insert("PAPERCLIP_AGENT_ID".into(), claim.agent_id.clone());
     env.insert("PAPERCLIP_COMPANY_ID".into(), claim.organization_id.clone());
     env.insert("PAPERCLIP_API_URL".into(), runtime_api);

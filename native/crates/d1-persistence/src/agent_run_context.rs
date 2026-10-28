@@ -155,7 +155,7 @@ pub async fn load_agent_run_resources(
         .as_ref()
         .and_then(|value| id(value, "projectId"))
         .or_else(|| id(context, "projectId"));
-    let project = match project_id.as_deref() {
+    let mut project = match project_id.as_deref() {
         Some(project_id) => {
             json_row(
                 &mut tx,
@@ -169,6 +169,12 @@ pub async fn load_agent_run_resources(
         }
         None => None,
     };
+    if let Some(project) = project.as_mut() {
+        project["urlKey"] = json!(
+            crate::project_creations::normalize_key(project["name"].as_str().unwrap_or_default())
+                .unwrap_or_else(|| project["id"].as_str().unwrap_or_default().to_owned())
+        );
+    }
     let project_workspaces = match project_id.as_deref() {
         Some(project_id) => json_rows(&mut tx,
             "SELECT jsonb_build_object('id',w.id,'cwd',w.cwd,'repoUrl',w.repo_url,

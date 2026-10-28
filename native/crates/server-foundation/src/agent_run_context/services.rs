@@ -23,11 +23,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+type ServiceOutputs = Arc<Mutex<BTreeMap<String, ContextLogSink>>>;
 struct LocalService {
     reference: Value,
     process: ServiceProcess,
     leases: BTreeSet<String>,
-    outputs: BTreeMap<String, ContextLogSink>,
+    outputs: ServiceOutputs,
     last_used: Instant,
 }
 
@@ -94,7 +95,9 @@ impl Drop for RuntimeServiceLease {
         if let Ok(mut state) = state().lock() {
             for id in &self.ids {
                 if let Some(record) = state.by_id.get_mut(id) {
-                    record.outputs.remove(&self.run);
+                    if let Ok(mut outputs) = record.outputs.lock() {
+                        outputs.remove(&self.run);
+                    }
                 }
             }
         }
@@ -209,7 +212,9 @@ pub(super) async fn acquire(
                         return None;
                     }
                     record.leases.insert(claim.run_id.clone());
-                    record.outputs.insert(claim.run_id.clone(), output.clone());
+                    if let Ok(mut outputs) = record.outputs.lock() {
+                        outputs.insert(claim.run_id.clone(), output.clone());
+                    }
                     record.last_used = Instant::now();
                     let mut reference = record.reference.clone();
                     reference["lastUsedAt"] = json!(
@@ -301,8 +306,11 @@ async fn start(
         &workspace.cwd,
         &host.operator_home,
     );
-    let mut env = std::env::vars()
-        .filter(|(key, _)| !key.starts_with("RUDDER_") && key != "DATABASE_URL")
+    let mut env = host
+        .environment
+        .iter()
+        .filter(|(key, _)| !key.starts_with("RUDDER_") && key.as_str() != "DATABASE_URL")
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<BTreeMap<_, _>>();
     for (key, value) in config["env"].as_object().into_iter().flatten() {
         if let Some(value) = value.as_str() {
@@ -321,7 +329,10 @@ async fn start(
         );
     }
     let id = uuid::Uuid::new_v4().to_string();
-    let startup_output = Arc::new(Mutex::new(Some(output.clone())));
+    let service_outputs = Arc::new(Mutex::new(BTreeMap::from([(
+        claim.run_id.clone(),
+        output.clone(),
+    )])));
     let secrets = secret_keys
         .iter()
         .filter_map(|key| config["env"][key].as_str())
@@ -335,7 +346,7 @@ async fn start(
         command,
         &cwd,
         env,
-        startup_output.clone(),
+        service_outputs.clone(),
         secrets,
     )?;
     let started = Instant::now();
@@ -382,8 +393,7 @@ async fn start(
             .map_err(|_| ContextError::Invalid("Runtime service ownership is unavailable"))?;
         let mut leases = BTreeSet::new();
         leases.insert(claim.run_id.clone());
-        let mut outputs = BTreeMap::new();
-        outputs.insert(claim.run_id.clone(), output.clone());
+        let outputs = service_outputs;
         state.by_id.insert(
             id.clone(),
             LocalService {
@@ -400,9 +410,6 @@ async fn start(
                 .insert((claim.organization_id.clone(), reuse.into()), id.clone());
         }
     }
-    if let Ok(mut initial) = startup_output.lock() {
-        initial.take();
-    }
     monitor(pool.clone(), claim.organization_id.clone(), id.clone());
     Ok((id, reference))
 }
@@ -414,7 +421,7 @@ fn launch_service(
     command: &str,
     cwd: &std::path::Path,
     env: BTreeMap<String, String>,
-    initial: Arc<Mutex<Option<ContextLogSink>>>,
+    initial: ServiceOutputs,
     secrets: Vec<String>,
 ) -> Result<ServiceProcess, ContextError> {
     let runtime_root = host.runtime_root.join("runtime-services").join(id);
@@ -434,9 +441,11 @@ fn launch_service(
         .send(Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(id.into()),
-            executable: std::env::var("SHELL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
+            executable: host
+                .environment
+                .get("SHELL")
+                .map(|value| value.trim().to_owned())
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "/bin/sh".into()),
             argv: vec!["-lc".into(), command.into()],
             cwd: cwd.to_string_lossy().into_owned(),
@@ -531,7 +540,7 @@ fn buffer_output(
     stream: &str,
     pending: &mut Vec<u8>,
     bytes: &[u8],
-    initial: &Arc<Mutex<Option<ContextLogSink>>>,
+    initial: &ServiceOutputs,
     secrets: &[String],
 ) {
     pending.extend_from_slice(bytes);
@@ -556,11 +565,11 @@ fn buffer_output(
     emit_output(id, name, stream, &prefix, initial, secrets);
 }
 fn emit_output(
-    id: &str,
+    _id: &str,
     name: &str,
     stream: &str,
     bytes: &[u8],
-    initial: &Arc<Mutex<Option<ContextLogSink>>>,
+    initial: &ServiceOutputs,
     secrets: &[String],
 ) {
     if bytes.is_empty() {
@@ -570,23 +579,10 @@ fn emit_output(
     for secret in secrets {
         chunk = chunk.replace(secret, "***REDACTED***");
     }
-    let outputs = state()
+    let outputs = initial
         .lock()
-        .ok()
-        .and_then(|state| {
-            state
-                .by_id
-                .get(id)
-                .map(|r| r.outputs.values().cloned().collect::<Vec<_>>())
-        })
-        .unwrap_or_else(|| {
-            initial
-                .lock()
-                .ok()
-                .and_then(|v| v.clone())
-                .into_iter()
-                .collect()
-        });
+        .map(|outputs| outputs.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
     for output in outputs {
         output.blocking_log(
             &format!("service:{name}"),
@@ -684,7 +680,6 @@ async fn release_one(pool: &PgPool, org: &str, run: &str, id: &str) -> Result<()
             ));
         }
         record.leases.remove(run);
-        record.outputs.remove(run);
         record.last_used = Instant::now();
         let policy = text(&record.reference["stopPolicy"], "type").unwrap_or(
             if record.reference["lifecycle"] == "ephemeral" {
@@ -693,9 +688,15 @@ async fn release_one(pool: &PgPool, org: &str, run: &str, id: &str) -> Result<()
                 "manual"
             },
         );
+        let stop = record.leases.is_empty()
+            && (record.reference["lifecycle"] == "ephemeral" || policy == "on_run_finish");
+        if !stop {
+            if let Ok(mut outputs) = record.outputs.lock() {
+                outputs.remove(run);
+            }
+        }
         (
-            record.leases.is_empty()
-                && (record.reference["lifecycle"] == "ephemeral" || policy == "on_run_finish"),
+            stop,
             if record.leases.is_empty() && policy == "idle_timeout" {
                 Some(
                     record.reference["stopPolicy"]["idleSeconds"]
@@ -851,7 +852,7 @@ mod tests {
             ordinal: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let initial = Arc::new(Mutex::new(Some(sink)));
+        let initial = Arc::new(Mutex::new(BTreeMap::from([("fixture".into(), sink)])));
         let secrets = vec!["synthetic-token-one\nline-two".to_owned()];
         let mut pending = Vec::new();
         buffer_output(

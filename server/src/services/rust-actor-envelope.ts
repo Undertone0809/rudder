@@ -128,3 +128,35 @@ export function createRustActorEnvelope(input: {
   ).update(canonicalSigningBytes(unsigned)).digest("hex");
   return { ...unsigned, signature };
 }
+
+/** Fixed private transport identity for already-created legacy event frames. */
+export function createRustLiveEventTransportEnvelope(input: {
+  organizationId: string;
+  body: Buffer;
+  secret: string;
+  requestId?: string;
+  nonce?: string;
+  nowSeconds?: number;
+}) {
+  const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const unsigned = {
+    protocolVersion: ACTOR_ENVELOPE_PROTOCOL_VERSION,
+    actor: { kind: "system", id: "node-live-events-transport" },
+    organizationId: input.organizationId,
+    sessionId: "node-live-events-transport",
+    authEpoch: 1,
+    audience: ACTOR_ENVELOPE_AUDIENCE,
+    method: "POST",
+    path: "/internal/live-events/forward",
+    action: "live.events.forward",
+    bodySha256: createHash("sha256").update(input.body).digest("hex"),
+    requestId: input.requestId ?? randomUUID(),
+    nonce: input.nonce ?? randomUUID(),
+    idempotencyKey: null,
+    issuedAt: Math.max(1, now - 1),
+    expiresAt: now + ACTOR_ENVELOPE_LIFETIME_SECONDS,
+  };
+  const signature = createHmac("sha256", Buffer.from(input.secret, "utf8"))
+    .update(canonicalSigningBytes(unsigned)).digest("hex");
+  return { ...unsigned, signature };
+}

@@ -41,6 +41,10 @@ pub(crate) use workspace::AgentWorkspacePreparation;
 /// Installation facts supplied by the host, never deserialized from a wakeup.
 pub(crate) struct AgentRunContextHost {
     pub deployment_mode: String,
+    /// Raw operator environment supplied by the trusted installation host.
+    /// Runtime-specific filtering and managed overrides are applied below.
+    pub environment: BTreeMap<String, String>,
+    pub desktop_brokers: std::sync::Arc<crate::desktop_broker::DesktopBrokers>,
     pub workspace: OrganizationWorkspaceHost,
     pub operator_home: PathBuf,
     pub process_cwd: PathBuf,
@@ -58,8 +62,6 @@ pub(crate) struct AgentRunContextHost {
 pub(crate) enum ContextPreparationRequirement {
     WorkspaceRealization,
     ManagedExternalMcp,
-    BrowserCapability,
-    ComputerCapability,
     ManagedInstructionBundle,
 }
 
@@ -458,23 +460,20 @@ pub(crate) async fn prepare_agent_run_invocation(
         context["rudderManagedMcpAvailability"] = json!({"available":false,"reason":"runtime_transport_unsupported","bindingCount":resources.managed_mcp_bindings.len()});
         output.log("mcp","stderr","[rudder] This runtime transport does not expose managed MCP tools; its frozen binding policy is retained.\n").await;
     }
-    // The Rust browser/computer MCP implementation must be admitted by their
-    // authority owners. The core CLI never accepts the Node --server flags.
-    let browser_requested = resources.browser_settings["enabled"] != false
+    // These capability flags use the native public brokers and Rust MCP CLI.
+    // Availability follows the existing per-runtime Desktop contract.
+    let browser_requested = host.deployment_mode == "local_trusted"
+        && resources.browser_settings["enabled"] != false
         && matches!(
             claim.runtime_type.as_str(),
             "claude_local" | "codex_local" | "opencode_local" | "pi_local"
         );
-    if browser_requested {
-        preparation_requirements.push(ContextPreparationRequirement::BrowserCapability);
-    }
-    if resources.general_settings["experimentalComputerUseEnabled"] == true
+    let computer_requested = host.deployment_mode == "local_trusted"
+        && resources.general_settings["experimentalComputerUseEnabled"] == true
         && claim.runtime_type == "codex_local"
-    {
-        preparation_requirements.push(ContextPreparationRequirement::ComputerCapability);
-    }
-    config["rudderBrowserEnabled"] = json!(false);
-    config["rudderComputerEnabled"] = json!(false);
+        && host.desktop_brokers.computer.is_available();
+    config["rudderBrowserEnabled"] = json!(browser_requested);
+    config["rudderComputerEnabled"] = json!(computer_requested);
     let artifacts =
         InvocationArtifacts::create(&host.runtime_root, &claim.run_id, &claim.attempt_id)?;
     skills::restore_selected_packages(
@@ -529,7 +528,7 @@ pub(crate) async fn prepare_agent_run_invocation(
     )
     .map_err(|_| ContextError::Invalid("Agent instruction context could not be composed"))?;
     let instructions_path = artifacts.write("agent-instructions.md", &instruction_text)?;
-    let mut env = std::env::vars().collect::<BTreeMap<_, _>>();
+    let mut env = host.environment.clone();
     // First-party runtime identity always wins over a persisted env binding.
     for (key, value) in config["env"].as_object().into_iter().flatten() {
         if let Some(value) = value.as_str() {
@@ -975,35 +974,19 @@ fn project_library(
     let Some(id) = text(project, "id") else {
         return Ok((None, None));
     };
-    let name = text(project, "name").unwrap_or("project");
-    let mut slug = String::new();
-    let mut separator = false;
-    for character in name.to_lowercase().chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character);
-            separator = false;
-        } else if !separator && !slug.is_empty() {
-            slug.push('-');
-            separator = true;
-        }
-    }
-    let slug = slug.trim_matches('-');
-    let key = if slug.is_empty() {
-        id.to_owned()
-    } else {
-        slug.to_owned()
-    };
-    let relative = format!("projects/{key}");
-    let root = organization_root.join(&relative);
-    fs::create_dir_all(&root)?;
-    use std::io::Write;
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(root.join("README.md")) {
-        Ok(mut file)=>file.write_all(format!("# {}\n\nAgents should keep durable project work files inside this folder.\nAttached Project Resources are surfaced in the Library tree under `resources/` as virtual references; external resources are not copied into this folder.\n",name.trim()).as_bytes())?,
-        Err(error) if error.kind()==std::io::ErrorKind::AlreadyExists=>(),
-        Err(error)=>return Err(error.into()),
-    }
-    Ok((Some(relative), Some(root)))
+    let layout = rudder_d1_persistence::project_library::ensure_existing_project_library(
+        organization_root,
+        id,
+        text(project, "name").unwrap_or_default(),
+        text(project, "urlKey").unwrap_or_default(),
+    )
+    .map_err(|_| ContextError::Invalid("Project Library could not be prepared"))?;
+    Ok((
+        Some(layout.relative_path.to_string_lossy().replace('\\', "/")),
+        Some(layout.root),
+    ))
 }
+
 fn project_resources_prompt(resources: &[Value]) -> String {
     if resources.is_empty() {
         return String::new();

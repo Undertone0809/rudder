@@ -19,7 +19,9 @@ impl OperationLog {
                 "Invalid workspace operation log identity",
             ));
         }
-        let root = std::env::var_os("WORKSPACE_OPERATION_LOG_BASE_PATH")
+        let root = host
+            .environment
+            .get("WORKSPACE_OPERATION_LOG_BASE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 PathBuf::from(&host.workspace.instance_root).join("data/workspace-operation-logs")

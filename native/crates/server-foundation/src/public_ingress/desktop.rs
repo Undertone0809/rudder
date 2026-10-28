@@ -1,33 +1,10 @@
 //! Public Browser/Computer ingress. Electron owns UI primitives only; native
 //! policy, Run scope, registration and receipts remain on this listener.
 use super::*;
-use crate::{
-    desktop_broker::{DesktopBroker, Kind},
-    desktop_capability,
-    native_session_auth::NativeIngressIdentity,
-};
+use crate::{desktop_broker::Kind, desktop_capability, native_session_auth::NativeIngressIdentity};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
-pub(super) struct Brokers {
-    pub browser: Arc<DesktopBroker>,
-    pub computer: Arc<DesktopBroker>,
-}
-impl Brokers {
-    pub(super) fn new() -> Result<Self, reqwest::Error> {
-        Ok(Self {
-            browser: Arc::new(DesktopBroker::new(Kind::Browser)?),
-            computer: Arc::new(DesktopBroker::new(Kind::Computer)?),
-        })
-    }
-    fn get(&self, kind: Kind) -> &DesktopBroker {
-        match kind {
-            Kind::Browser => &self.browser,
-            Kind::Computer => &self.computer,
-        }
-    }
-}
 #[derive(Debug, PartialEq)]
 pub(super) enum Endpoint {
     Registry(Kind),
@@ -233,7 +210,7 @@ pub(super) async fn execute(
                 Ok(value) => value,
                 Err(_) => return internal(),
             };
-            HttpResponse::Ok().json(json!({"enabled":enabled,"desktopConnected":state.desktop_brokers.computer.is_available(),"supported":state.config.deployment_mode=="local_trusted"}))
+            HttpResponse::Ok().json(json!({"enabled":enabled,"desktopConnected":state.foundation.desktop_brokers.computer.is_available(),"supported":state.config.deployment_mode=="local_trusted"}))
         }
         Endpoint::Registry(kind) => {
             if let Err(response) = admin(pool, &state, &identity).await {
@@ -260,7 +237,7 @@ pub(super) async fn execute(
                     },
                 );
             }
-            let broker = state.desktop_brokers.get(kind);
+            let broker = state.foundation.desktop_brokers.get(kind);
             if *request.method() == Method::DELETE {
                 let Some(object) = input.as_object() else {
                     return error(
@@ -316,13 +293,14 @@ pub(super) async fn execute(
                     );
                 }
                 _ => {
-                    return HttpResponse::Forbidden().json(json!({"error":"Agent access required"}));
+                    return HttpResponse::Forbidden()
+                        .json(json!({"error":"Agent access required"}));
                 }
             };
             let body = if input.is_null() { json!({}) } else { input };
             match desktop_capability::action(
                 pool,
-                state.desktop_brokers.get(kind),
+                state.foundation.desktop_brokers.get(kind),
                 kind,
                 &state.config.deployment_mode,
                 &identity,

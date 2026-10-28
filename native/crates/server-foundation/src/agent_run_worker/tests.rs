@@ -77,6 +77,7 @@ async fn assembled_process_driver_persists_live_logs_terminal_effects_and_retry(
         operator_home: operator,
         process_cwd: cwd,
         executable_search_path: "/usr/bin:/bin".into(),
+        environment: std::collections::BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
         runtime_root: path.join("runtime"),
         rudder_cli: PathBuf::from("/usr/bin/false"),
         process_host: std::env::var_os("RUDDER_TEST_PROCESS_HOST")
@@ -85,6 +86,7 @@ async fn assembled_process_driver_persists_live_logs_terminal_effects_and_retry(
         api_url: "http://127.0.0.1:1".into(),
         deployment_mode: "local_trusted".into(),
         bundled_skills_root: None,
+        desktop_brokers: Arc::new(crate::desktop_broker::DesktopBrokers::new().unwrap()),
     });
     let identity = NativeAgentJwtConfig {
         secret: "synthetic-fixture-key-not-an-operator-credential".into(),
@@ -97,6 +99,7 @@ async fn assembled_process_driver_persists_live_logs_terminal_effects_and_retry(
         identity,
         Arc::new(AtomicBool::new(false)),
         claim,
+        crate::live_events::LiveEventPublisher::new(),
     )
     .await;
     let row=sqlx::query("SELECT status,error,terminal_effects_pending,log_store,log_ref,log_bytes,log_sha256,stdout_excerpt,stderr_excerpt,execution_owner_token FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid").bind(support::ORG).bind(&run).fetch_one(&database.pool).await.unwrap();
@@ -389,6 +392,10 @@ async fn failed_and_unlaunched_primary_attempts_advance_once_with_fresh_authorit
             operator_home: operator,
             process_cwd: cwd,
             executable_search_path: "/usr/bin:/bin".into(),
+            environment: std::collections::BTreeMap::from([(
+                "PATH".into(),
+                "/usr/bin:/bin".into(),
+            )]),
             runtime_root: path.join("runtime"),
             rudder_cli: PathBuf::from("/usr/bin/false"),
             process_host: std::env::var_os("RUDDER_TEST_PROCESS_HOST")
@@ -397,6 +404,7 @@ async fn failed_and_unlaunched_primary_attempts_advance_once_with_fresh_authorit
             api_url: "http://127.0.0.1:1".into(),
             deployment_mode: "local_trusted".into(),
             bundled_skills_root: None,
+            desktop_brokers: Arc::new(crate::desktop_broker::DesktopBrokers::new().unwrap()),
         });
         driver::run(
             database.pool.clone(),
@@ -408,6 +416,7 @@ async fn failed_and_unlaunched_primary_attempts_advance_once_with_fresh_authorit
             },
             Arc::new(AtomicBool::new(false)),
             claim,
+            crate::live_events::LiveEventPublisher::new(),
         )
         .await;
         let row=sqlx::query("SELECT status,error,terminal_effects_pending,log_ref FROM heartbeat_runs WHERE id=$1::uuid").bind(&run).fetch_one(&database.pool).await.unwrap();
@@ -538,4 +547,129 @@ async fn timer_without_actionable_work_skips_and_paused_same_scope_wakes_resume_
             .await
             .unwrap();
     assert_eq!(runs, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable PostgreSQL188 and prebuilt process host; observes actual10s lease renewal under continuous output"]
+async fn continuous_stdout_renews_the_owned_lease_and_shutdown_joins_process_cleanup() {
+    let database = support::Database::start().await;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let operator = path.join("operator");
+    let cwd = path.join("cwd");
+    std::fs::create_dir_all(&operator).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let agent = uuid::Uuid::new_v4().to_string();
+    let config = json!({"command":"/bin/sh","args":["-c","trap 'printf shutdown-stream-marker\\n; exit 0' TERM; while :; do printf 'continuous native driver stdout\\n'; /bin/sleep 0.01; done"],"cwd":cwd,"graceSec":1,"timeoutSec":0});
+    sqlx::query("INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,agent_runtime_config,runtime_config) VALUES($1::uuid,$2::uuid,'Continuous output native fixture','general','idle','process',$3::jsonb,'{}')").bind(&agent).bind(support::ORG).bind(config).execute(&database.pool).await.unwrap();
+    let admitted = agent_execution::admit(
+        &database.pool,
+        &Board,
+        &AgentExecutionActor {
+            actor_type: "user",
+            actor_id: "continuous-stop-fixture".into(),
+            run_id: None,
+        },
+        &AgentWakeRequest {
+            organization_id: support::ORG.into(),
+            agent_id: agent.clone(),
+            source: "on_demand".into(),
+            trigger_detail: Some("manual".into()),
+            reason: Some("continuous_stop_fixture".into()),
+            payload: Some(json!({})),
+            idempotency_key: None,
+            context_snapshot: json!({}),
+        },
+    )
+    .await
+    .unwrap();
+    let run = admitted.run_id.unwrap();
+    let claim = agent_execution::claim_queued_run(&database.pool, support::ORG, &run)
+        .await
+        .unwrap()
+        .unwrap();
+    let host = Arc::new(AgentRunContextHost {
+        workspace: OrganizationWorkspaceHost {
+            instance_root: path.display().to_string(),
+            workspace_home: path.join("workspaces").display().to_string(),
+            previous_documents_root: path.join("previous-documents").display().to_string(),
+            friendly_workspace_home: false,
+            hostname: "fixture".into(),
+        },
+        operator_home: operator,
+        process_cwd: cwd,
+        executable_search_path: "/usr/bin:/bin".into(),
+        environment: std::collections::BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+        runtime_root: path.join("runtime"),
+        rudder_cli: PathBuf::from("/usr/bin/false"),
+        process_host: std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .map(PathBuf::from)
+            .unwrap(),
+        api_url: "http://127.0.0.1:1".into(),
+        deployment_mode: "local_trusted".into(),
+        bundled_skills_root: None,
+        desktop_brokers: Arc::new(crate::desktop_broker::DesktopBrokers::new().unwrap()),
+    });
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let task = tokio::spawn(driver::run(
+        database.pool.clone(),
+        host,
+        NativeAgentJwtConfig {
+            secret: "synthetic-stream-fixture-key".into(),
+            issuer: "rudder".into(),
+            audience: "rudder-api".into(),
+        },
+        Arc::clone(&shutdown),
+        claim,
+        crate::live_events::LiveEventPublisher::new(),
+    ));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let initial_lease = loop {
+        let row=sqlx::query("SELECT process_pid,EXTRACT(epoch FROM execution_lease_expires_at)::float8 AS expires FROM heartbeat_runs WHERE id=$1::uuid").bind(&run).fetch_one(&database.pool).await.unwrap();
+        if row.get::<Option<i32>, _>("process_pid").is_some() {
+            break row.get::<f64, _>("expires");
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "provider did not start"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    let log = path
+        .join("data/run-logs")
+        .join(support::ORG)
+        .join(&agent)
+        .join(format!("{run}.ndjson"));
+    let initial_bytes = std::fs::metadata(&log).unwrap().len();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let expires:f64=sqlx::query_scalar("SELECT EXTRACT(epoch FROM execution_lease_expires_at)::float8 FROM heartbeat_runs WHERE id=$1::uuid").bind(&run).fetch_one(&database.pool).await.unwrap();
+        if expires > initial_lease + 5.0 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "continuous output starved owner renewal"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        std::fs::metadata(&log).unwrap().len() > initial_bytes + 100,
+        "fixture must remain streaming during renewal"
+    );
+    shutdown.store(true, Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(6), task)
+        .await
+        .expect("continuous output must not starve Stop")
+        .unwrap();
+    let row=sqlx::query("SELECT status,process_exited_at IS NOT NULL AS exited,execution_owner_token IS NULL AS unowned,terminal_effects_pending FROM heartbeat_runs WHERE id=$1::uuid").bind(&run).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(row.get::<String, _>("status"), "cancelled");
+    assert!(row.get::<bool, _>("exited"));
+    assert!(row.get::<bool, _>("unowned"));
+    assert!(!row.get::<bool, _>("terminal_effects_pending"));
+    assert!(
+        std::fs::read_to_string(log)
+            .unwrap()
+            .contains("continuous native driver stdout")
+    );
 }

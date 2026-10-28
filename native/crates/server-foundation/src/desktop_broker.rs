@@ -113,8 +113,37 @@ impl DesktopBroker {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 2048)
             .ok_or_else(invalid)?;
-        let url = url::Url::parse(endpoint).map_err(|_| invalid())?;
-        if url.scheme() != "http"
+        let endpoint_error =
+            |message| BrokerError::new(self.kind, "broker_invalid_registration", message);
+        let url = url::Url::parse(endpoint).map_err(|_| {
+            endpoint_error(match self.kind {
+                Kind::Browser => "Browser Broker endpoint must be a valid loopback HTTP URL.",
+                Kind::Computer => "Computer Broker endpoint is invalid.",
+            })
+        })?;
+        if self.kind == Kind::Browser {
+            if url.scheme() != "http"
+                || !matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
+            {
+                return Err(endpoint_error(
+                    "Browser Broker endpoint must use loopback HTTP.",
+                ));
+            }
+            if url.port().is_none() {
+                return Err(endpoint_error(
+                    "Browser Broker endpoint must use an explicit loopback port.",
+                ));
+            }
+            if !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(endpoint_error(
+                    "Browser Broker endpoint cannot contain credentials, query parameters, or a fragment.",
+                ));
+            }
+        } else if url.scheme() != "http"
             || !matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
             || url.port().is_none()
             || !url.username().is_empty()
@@ -122,7 +151,9 @@ impl DesktopBroker {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err(invalid());
+            return Err(endpoint_error(
+                "Computer Broker endpoint must be an explicit loopback HTTP URL.",
+            ));
         }
         let raw_token = object
             .get("token")
@@ -133,7 +164,11 @@ impl DesktopBroker {
         if !(32..=512).contains(&token.encode_utf16().count())
             || token.chars().any(char::is_whitespace)
         {
-            return Err(invalid());
+            return Err(BrokerError::new(
+                self.kind,
+                "broker_invalid_registration",
+                format!("{} Broker credential is invalid.", self.kind.title()),
+            ));
         }
         let owner = match object.get("ownerId") {
             None => None,
@@ -176,6 +211,7 @@ impl DesktopBroker {
                 "Desktop Broker registry is unavailable.",
             )
         })?;
+        self.expire(&mut state);
         let key = next.key();
         let retired = key.as_ref().and_then(|key| {
             state
@@ -193,13 +229,18 @@ impl DesktopBroker {
                 } else {
                     "broker_stale_registration"
                 },
-                if retired == Some("revoked") {
-                    format!(
-                        "{} Broker registration was revoked and must reconnect.",
-                        self.kind.title()
-                    )
-                } else {
-                    format!("{} Broker registration is stale.", self.kind.title())
+                match self.kind {
+                    Kind::Computer => {
+                        "Computer Broker registration no longer owns the Desktop lifecycle."
+                            .to_owned()
+                    }
+                    Kind::Browser if retired == Some("revoked") => {
+                        "Browser Broker registration was revoked and must reconnect.".to_owned()
+                    }
+                    Kind::Browser => {
+                        "Browser Broker refresh no longer owns the active Desktop lifecycle."
+                            .to_owned()
+                    }
                 },
             ));
         }
@@ -208,17 +249,24 @@ impl DesktopBroker {
                 return Err(BrokerError::new(
                     self.kind,
                     "broker_stale_registration",
-                    format!("{} Broker registration is stale.", self.kind.title()),
+                    match self.kind {
+                        Kind::Browser => {
+                            "Browser Broker refresh no longer owns the active Desktop lifecycle."
+                        }
+                        Kind::Computer => "Computer Broker registration is stale.",
+                    },
                 ));
             }
             if next.owner.is_none() && active.owner.is_some() {
                 return Err(BrokerError::new(
                     self.kind,
                     "broker_stale_registration",
-                    format!(
-                        "Legacy {} Broker registration cannot replace an owned Desktop lifecycle.",
-                        self.kind.title()
-                    ),
+                    match self.kind {
+                        Kind::Browser => {
+                            "Legacy Browser Broker registration cannot replace an owned Desktop lifecycle."
+                        }
+                        Kind::Computer => "Legacy registration cannot replace Desktop ownership.",
+                    },
                 ));
             }
             if active.owner.is_some() && active.owner == next.owner {
@@ -228,7 +276,12 @@ impl DesktopBroker {
                     return Err(BrokerError::new(
                         self.kind,
                         "broker_stale_registration",
-                        format!("{} Broker registration was superseded.", self.kind.title()),
+                        match self.kind {
+                            Kind::Browser => {
+                                "Browser Broker registration was superseded by a newer Desktop lifecycle."
+                            }
+                            Kind::Computer => "Computer Broker registration was superseded.",
+                        },
                     ));
                 }
                 if next.generation == active.generation && next.token == active.token {
@@ -302,10 +355,12 @@ impl DesktopBroker {
                     BrokerError::new(
                         self.kind,
                         "unavailable",
-                        format!(
-                            "Rudder Desktop {} Broker could not be reached.",
-                            self.kind.title()
-                        ),
+                        match self.kind {
+                            Kind::Browser => "Rudder Browser Desktop Broker could not be reached.",
+                            Kind::Computer => {
+                                "Rudder Desktop Computer Broker could not be reached."
+                            }
+                        },
                     )
                 })?;
             let limit = self.kind.max_response();
@@ -317,10 +372,12 @@ impl DesktopBroker {
                     } else {
                         "result_too_large"
                     },
-                    format!(
-                        "{} Broker response exceeded the size limit.",
-                        self.kind.title()
-                    ),
+                    match self.kind {
+                        Kind::Browser => {
+                            "Rudder Browser Desktop Broker response exceeded the size limit."
+                        }
+                        Kind::Computer => "Computer Broker response exceeded the size limit.",
+                    },
                 )
             };
             if response
@@ -335,7 +392,12 @@ impl DesktopBroker {
                 BrokerError::new(
                     self.kind,
                     "broker_protocol_error",
-                    format!("{} Broker returned an invalid response.", self.kind.title()),
+                    match self.kind {
+                        Kind::Browser => {
+                            "Rudder Browser Desktop Broker returned an invalid response."
+                        }
+                        Kind::Computer => "Computer Broker returned an invalid response.",
+                    },
                 )
             })? {
                 if bytes.len().saturating_add(chunk.len()) > limit {
@@ -347,7 +409,12 @@ impl DesktopBroker {
                 BrokerError::new(
                     self.kind,
                     "broker_protocol_error",
-                    format!("{} Broker returned an invalid response.", self.kind.title()),
+                    match self.kind {
+                        Kind::Browser => {
+                            "Rudder Browser Desktop Broker returned an invalid response."
+                        }
+                        Kind::Computer => "Computer Broker returned an invalid response.",
+                    },
                 )
             })?;
             if !success || payload["ok"] != true {
@@ -356,6 +423,7 @@ impl DesktopBroker {
                     .as_str()
                     .filter(|s| {
                         s.starts_with(&prefix)
+                            && s.len() > prefix.len()
                             && s[prefix.len()..]
                                 .chars()
                                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -367,7 +435,10 @@ impl DesktopBroker {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(|s| s.chars().take(300).collect())
-                    .unwrap_or_else(|| format!("{} action failed.", self.kind.title()));
+                    .unwrap_or_else(|| match self.kind {
+                        Kind::Browser => "Rudder Browser action failed.".to_owned(),
+                        Kind::Computer => "Computer Use action failed.".to_owned(),
+                    });
                 return Err(BrokerError { code, message });
             }
             Ok(payload
@@ -377,15 +448,106 @@ impl DesktopBroker {
                 .unwrap_or_else(|| json!({})))
         };
         tokio::select! {
-            result=tokio::time::timeout(Duration::from_secs(40),request)=>result.unwrap_or_else(|_|Err(BrokerError::new(self.kind,if self.kind==Kind::Browser{"unavailable"}else{"timeout"},format!("{} action timed out.",self.kind.title())))),
-            _=changed.changed()=>Err(BrokerError::new(self.kind,"unavailable",format!("{} Broker registration changed.",self.kind.title())))
+            result=tokio::time::timeout(Duration::from_secs(40),request)=>result.unwrap_or_else(|_|Err(BrokerError::new(self.kind,if self.kind==Kind::Browser{"unavailable"}else{"timeout"},match self.kind {Kind::Browser=>"Rudder Browser Desktop Broker timed out.",Kind::Computer=>"Computer Use action timed out."}))),
+            _=changed.changed()=>Err(BrokerError::new(self.kind,"unavailable",match self.kind {Kind::Browser=>"Rudder Browser Desktop Broker could not be reached.",Kind::Computer=>"Rudder Desktop Computer Broker could not be reached."}))
         }
     }
 }
 
+pub(crate) struct DesktopBrokers {
+    pub browser: std::sync::Arc<DesktopBroker>,
+    pub computer: std::sync::Arc<DesktopBroker>,
+}
+impl DesktopBrokers {
+    pub(crate) fn new() -> Result<Self, reqwest::Error> {
+        Ok(Self {
+            browser: std::sync::Arc::new(DesktopBroker::new(Kind::Browser)?),
+            computer: std::sync::Arc::new(DesktopBroker::new(Kind::Computer)?),
+        })
+    }
+    pub(crate) fn get(&self, kind: Kind) -> &DesktopBroker {
+        match kind {
+            Kind::Browser => &self.browser,
+            Kind::Computer => &self.computer,
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registration_errors_preserve_existing_public_broker_messages() {
+        let token = "a".repeat(32);
+        for (kind, endpoint, expected) in [
+            (
+                Kind::Browser,
+                "invalid",
+                "Browser Broker endpoint must be a valid loopback HTTP URL.",
+            ),
+            (
+                Kind::Browser,
+                "https://127.0.0.1:12345/",
+                "Browser Broker endpoint must use loopback HTTP.",
+            ),
+            (
+                Kind::Browser,
+                "http://127.0.0.1/",
+                "Browser Broker endpoint must use an explicit loopback port.",
+            ),
+            (
+                Kind::Browser,
+                "http://127.0.0.1:12345/?q=1",
+                "Browser Broker endpoint cannot contain credentials, query parameters, or a fragment.",
+            ),
+            (
+                Kind::Computer,
+                "invalid",
+                "Computer Broker endpoint is invalid.",
+            ),
+            (
+                Kind::Computer,
+                "https://127.0.0.1:12345/",
+                "Computer Broker endpoint must be an explicit loopback HTTP URL.",
+            ),
+        ] {
+            let broker = DesktopBroker::new(kind).unwrap();
+            let error = broker
+                .register(&json!({"endpoint":endpoint,"token":token}))
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                format!("{}_broker_invalid_registration", kind.prefix())
+            );
+            assert_eq!(error.message, expected);
+        }
+        for kind in [Kind::Browser, Kind::Computer] {
+            let broker = DesktopBroker::new(kind).unwrap();
+            let error = broker.register(&json!({"endpoint":"http://127.0.0.1:12345/","token":"a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})).unwrap_err();
+            assert_eq!(
+                error.message,
+                format!("{} Broker credential is invalid.", kind.title())
+            );
+        }
+    }
+
+    #[test]
+    fn expired_computer_registration_releases_its_old_generation() {
+        let broker = DesktopBroker::new(Kind::Computer).unwrap();
+        let owner = uuid::Uuid::new_v4().to_string();
+        let token = "a".repeat(32);
+        broker.register(&json!({"endpoint":"http://127.0.0.1:12345/","token":token,"ownerId":owner,"generation":2})).unwrap();
+        broker
+            .state
+            .lock()
+            .unwrap()
+            .active
+            .as_mut()
+            .unwrap()
+            .last_seen -= Duration::from_secs(21);
+        broker.register(&json!({"endpoint":"http://127.0.0.1:12345/","token":token,"ownerId":owner,"generation":1})).unwrap();
+        assert!(broker.is_available());
+    }
+
     #[test]
     fn revoked_owner_cannot_refresh_and_old_owner_cannot_replace_current_desktop() {
         let broker = DesktopBroker::new(Kind::Browser).unwrap();

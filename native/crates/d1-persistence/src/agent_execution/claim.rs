@@ -262,43 +262,46 @@ async fn claim_run(
         .as_ref()
         .map(|row| row.try_get::<String, _>("status"))
         .transpose()?;
-    let cancellation = if error_code.as_deref() == Some("cancel_requested") {
-        Some(
-            run.try_get::<Option<String>, _>("error")?
-                .unwrap_or_else(|| "Cancelled due to budget pause".into()),
-        )
-    } else if agent_status
-        .as_deref()
-        .is_none_or(|status| matches!(status, "paused" | "terminated" | "pending_approval"))
-    {
-        Some("Cancelled because the agent is not invokable".into())
-    } else if let Some(issue) = issue.as_ref() {
-        if let Some(issue) = issue.as_ref() {
-            let status: String = issue.try_get("status")?;
-            let fenced: bool = sqlx::query_scalar(
-                "SELECT COALESCE(r.created_at<=i.execution_cancellation_at,false)
+    let cancellation =
+        if !super::goal_producer_is_current(&mut tx, &org, &agent_id, &wake_payload).await? {
+            Some("Cancelled because the Goal owner or lifecycle changed before execution".into())
+        } else if error_code.as_deref() == Some("cancel_requested") {
+            Some(
+                run.try_get::<Option<String>, _>("error")?
+                    .unwrap_or_else(|| "Cancelled due to budget pause".into()),
+            )
+        } else if agent_status
+            .as_deref()
+            .is_none_or(|status| matches!(status, "paused" | "terminated" | "pending_approval"))
+        {
+            Some("Cancelled because the agent is not invokable".into())
+        } else if let Some(issue) = issue.as_ref() {
+            if let Some(issue) = issue.as_ref() {
+                let status: String = issue.try_get("status")?;
+                let fenced: bool = sqlx::query_scalar(
+                    "SELECT COALESCE(r.created_at<=i.execution_cancellation_at,false)
                  FROM heartbeat_runs r JOIN issues i ON i.org_id=r.org_id AND i.id=$3::uuid
                  WHERE r.org_id=$1::uuid AND r.id=$2::uuid",
-            )
-            .bind(&org)
-            .bind(&run_id)
-            .bind(issue_id.as_deref())
-            .fetch_one(&mut *tx)
-            .await?;
-            (fenced
-                || (matches!(status.as_str(), "done" | "cancelled")
-                    && !context::comment_mention(
-                        reason.as_deref(),
-                        &context_snapshot,
-                        &wake_payload,
-                    )))
-            .then(|| "Cancelled because the linked issue is no longer actionable".into())
+                )
+                .bind(&org)
+                .bind(&run_id)
+                .bind(issue_id.as_deref())
+                .fetch_one(&mut *tx)
+                .await?;
+                (fenced
+                    || (matches!(status.as_str(), "done" | "cancelled")
+                        && !context::comment_mention(
+                            reason.as_deref(),
+                            &context_snapshot,
+                            &wake_payload,
+                        )))
+                .then(|| "Cancelled because the linked issue is no longer actionable".into())
+            } else {
+                Some("Cancelled because the linked issue no longer exists".into())
+            }
         } else {
-            Some("Cancelled because the linked issue no longer exists".into())
-        }
-    } else {
-        None
-    };
+            None
+        };
     if let Some(cancellation) = cancellation {
         cancel_queued(&mut tx, &org, &run_id, &wakeup_id, &agent_id, &cancellation).await?;
         tx.commit().await?;

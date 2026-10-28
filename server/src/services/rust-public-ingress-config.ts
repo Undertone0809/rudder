@@ -1,5 +1,6 @@
 import { homedir, hostname, userInfo } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { LocalAccountAuthOptions } from "../bootstrap/auth-runtime.js";
 
 export type RustBrowserSessionAuth = Readonly<{
@@ -113,6 +114,9 @@ export function resolveNativeChatProviderHostFields(): Readonly<Record<string, s
 
 export type RustPublicIngressOptions = {
   browserSessionAuth?: RustBrowserSessionAuth;
+  /** Trusted launcher facts consumed by Rust execution and OAuth policy. */
+  publicApiUrl?: string;
+  authPublicBaseUrl?: string;
   nativeChatHost?: RustNativeChatHost;
   listenAddr: string;
   nodeUpstream: string;
@@ -276,6 +280,24 @@ export function createFoundationChildEnvironment(input: {
     RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
+    // Existing generic Agent runtimes inherit operator variables. Transport the
+    // raw facts separately; Rust selects/filters child environments. Chat's
+    // narrower LocalHostContext environment contract is unchanged.
+    ...(input.publicIngress?.identityAuth ? {
+      RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS: JSON.stringify([
+        resolve(dirname(fileURLToPath(import.meta.url)), "../../resources/bundled-skills"),
+        resolve(process.cwd(), "server/resources/bundled-skills"),
+      ]),
+      RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT: JSON.stringify(Object.fromEntries(
+        Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      )),
+      ...(input.publicIngress.publicApiUrl ? {
+        RUDDER_NATIVE_HOST_API_URL: input.publicIngress.publicApiUrl,
+      } : {}),
+      ...(input.publicIngress.authPublicBaseUrl ? {
+        RUDDER_NATIVE_HOST_AUTH_PUBLIC_BASE_URL: input.publicIngress.authPublicBaseUrl,
+      } : {}),
+    } : {}),
     ...(process.env.RUDDER_HOME !== undefined
       ? { RUDDER_NATIVE_HOST_RUDDER_HOME: process.env.RUDDER_HOME }
       : {}),

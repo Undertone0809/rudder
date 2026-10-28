@@ -50,9 +50,16 @@ pub async fn admit(
     validate_request(actor, request)?;
     let org = claim::canonical_id(&request.organization_id)?;
     let agent_id = claim::canonical_id(&request.agent_id)?;
-    let payload = request.payload.clone().unwrap_or_else(|| json!({}));
+    let mut payload = request.payload.clone().unwrap_or_else(|| json!({}));
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(super::GOAL_PRODUCER_KEY.into(), json!("agent_wakeup_v1"));
+    }
+    let mut supplied_context = request.context_snapshot.clone();
+    if let Some(object) = supplied_context.as_object_mut() {
+        object.remove(super::GOAL_PRODUCER_KEY);
+    }
     let mut snapshot = context::enrich_wake_context(
-        request.context_snapshot.clone(),
+        supplied_context,
         &payload,
         &request.source,
         request.trigger_detail.as_deref(),

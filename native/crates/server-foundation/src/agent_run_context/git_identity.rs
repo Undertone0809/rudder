@@ -115,7 +115,7 @@ pub(super) async fn prepare(
     if cancelled.load(Ordering::Acquire) {
         return Err(ContextError::Cancelled);
     }
-    let mut source_env = std::env::vars().collect::<BTreeMap<_, _>>();
+    let mut source_env = host.environment.clone();
     source_env.insert(
         "HOME".into(),
         host.operator_home.to_string_lossy().into_owned(),
@@ -177,11 +177,12 @@ mod tests {
 }
 
 pub(super) async fn apply_repository_policy(
+    host: &AgentRunContextHost,
     cwd: &Path,
     env: &mut BTreeMap<String, String>,
 ) -> Result<(), ContextError> {
     let cwd = cwd.to_path_buf();
-    let source_env = std::env::vars().collect::<BTreeMap<_, _>>();
+    let source_env = host.environment.clone();
     let repository = tokio::task::spawn_blocking(move || {
         configured(&cwd, &source_env, "--local", Source::Repository).is_some()
     })

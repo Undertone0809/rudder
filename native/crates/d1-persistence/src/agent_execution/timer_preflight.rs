@@ -193,7 +193,7 @@ pub(crate) async fn recovery_candidates(
     org: &str,
     agent_id: &str,
 ) -> Result<Vec<PendingTimerWakeup>, AgentExecutionError> {
-    let rows=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(w) FROM agent_wakeup_requests w WHERE org_id=$1::uuid AND agent_id=$2::uuid AND execution_authority='native_rust' AND status IN ('queued','deferred_issue_execution') AND run_id IS NULL AND requested_at<=statement_timestamp() ORDER BY requested_at ASC LIMIT 25")
+    let rows=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(w) FROM agent_wakeup_requests w WHERE org_id=$1::uuid AND agent_id=$2::uuid AND execution_authority='native_rust' AND NOT COALESCE((reason='goal_started' AND payload->>'event'='goal_started' AND payload->>'taskKey' LIKE 'goal:%:goal_started:%' AND payload->>'_rudderExecutionProducer' IS NULL),false) AND status IN ('queued','deferred_issue_execution') AND run_id IS NULL AND requested_at<=statement_timestamp() ORDER BY requested_at ASC LIMIT 25")
         .bind(org).bind(agent_id).fetch_all(&mut **tx).await?;
     let mut candidates = Vec::with_capacity(rows.len());
     for row in rows {
