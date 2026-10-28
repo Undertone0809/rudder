@@ -5,6 +5,8 @@ use super::super::RuntimeError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+mod transport;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeChatProtocolPhase {
@@ -83,6 +85,10 @@ pub enum NativeChatProvider {
     ClaudeLocal,
     OpenCodeLocal,
     CursorLocal,
+    Process,
+    Http,
+    HermesGateway,
+    OpenClawGateway,
 }
 
 /// Provider-native opaque session selectors. These wrappers deliberately do
@@ -315,6 +321,10 @@ pub struct NativeChatProtocolCheckpoint {
     cursor_session: Option<CursorSessionSelector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cursor_prompt_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_request_id: Option<String>,
 }
 
 impl NativeChatProtocolCheckpoint {
@@ -354,6 +364,8 @@ impl NativeChatProtocolCheckpoint {
             opencode_prompt_request_id: None,
             cursor_session: None,
             cursor_prompt_request_id: None,
+            transport_session: None,
+            transport_request_id: None,
         };
         state.validate()?;
         Ok(state)
@@ -560,6 +572,14 @@ impl NativeChatProtocolCheckpoint {
     }
 
     pub fn validate(&self) -> Result<(), RuntimeError> {
+        if self.provider().is_transport() {
+            return self.validate_transport();
+        }
+        if self.transport_session.is_some() || self.transport_request_id.is_some() {
+            return Err(RuntimeError::invalid(
+                "transport identity belongs to another provider",
+            ));
+        }
         if self.claude_combined_input && self.provider != Some(NativeChatProvider::ClaudeLocal) {
             return Err(RuntimeError::invalid(
                 "Claude combined input belongs to another provider",

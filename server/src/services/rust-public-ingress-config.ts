@@ -113,6 +113,8 @@ export function resolveNativeChatProviderHostFields(): Readonly<Record<string, s
 }
 
 export type RustPublicIngressOptions = {
+  /** Existing configured cadence; Rust owns scheduled producers. */
+  scheduler?: { enabled: boolean; intervalMs: number };
   browserSessionAuth?: RustBrowserSessionAuth;
   /** Trusted launcher facts consumed by Rust execution and OAuth policy. */
   publicApiUrl?: string;
@@ -316,6 +318,7 @@ export function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...(input.publicIngress.scheduler ? { RUDDER_NATIVE_SCHEDULER: JSON.stringify(input.publicIngress.scheduler) } : {}),
       RUDDER_NATIVE_DEPLOYMENT_MODE: input.publicIngress.deploymentMode ?? "authenticated",
       ...(input.publicIngress.privateHostGate
         ? { RUDDER_NATIVE_PRIVATE_HOST_GATE: JSON.stringify(input.publicIngress.privateHostGate) }

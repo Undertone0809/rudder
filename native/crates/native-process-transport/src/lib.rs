@@ -446,6 +446,27 @@ mod tests {
             4,
             "claim-random".into(),
         );
+        assert!(permit.matches_connection_claim(
+            "run-3",
+            "attempt-7",
+            "owner-secret",
+            4,
+            "claim-random"
+        ));
+        assert!(!permit.matches_connection_claim(
+            "run-3",
+            "attempt-7",
+            "owner-secret",
+            4,
+            "different-claim"
+        ));
+        assert!(!permit.matches_connection_claim(
+            "run-3",
+            "attempt-7",
+            "owner-secret",
+            5,
+            "claim-random"
+        ));
         let identity = identity_for(&connection, Some(permit)).unwrap();
         assert!(identity.matches_connection_claim(
             "run-3",

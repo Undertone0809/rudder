@@ -128,6 +128,27 @@ impl NativeChatExecutionPrincipal {
             fence,
         })
     }
+    pub(crate) fn from_continuation(
+        actor: &impl NativeChatExecutionActor,
+        previous: &ExecutionFence,
+        next: ExecutionFence,
+    ) -> Option<Self> {
+        if !actor.matches_execution_fence(previous)
+            || previous.identity().organization_id != next.identity().organization_id
+            || previous.identity().conversation_id != next.identity().conversation_id
+            || previous.identity().run_id != next.identity().run_id
+            || previous.identity().agent_id != next.identity().agent_id
+            || next.identity().run_attempt_epoch <= previous.identity().run_attempt_epoch
+        {
+            return None;
+        }
+        Some(Self {
+            actor: actor.actor().clone(),
+            organization_id: actor.organization_id().into(),
+            local_implicit: actor.is_local_implicit(),
+            fence: next,
+        })
+    }
 }
 
 impl NativeChatExecutionActor for NativeChatExecutionPrincipal {

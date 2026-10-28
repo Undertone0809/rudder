@@ -94,7 +94,7 @@ pub(crate) async fn resolve_pi_config(
         .ok_or_else(|| invalid("Chat conversation has no selected Agent"))?;
     let agent_id: String = row.try_get("agent_id")?;
     let agent_status: String = row.try_get("agent_status")?;
-    let runtime_type: String = row.try_get("agent_runtime_type")?;
+    let runtime_type = host.attempt_runtime(row.try_get("agent_runtime_type")?);
     if conversation_kind != "chat"
         || conversation_status != "active"
         || selected_agent != agent_id
@@ -107,6 +107,7 @@ pub(crate) async fn resolve_pi_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Agent runtime configuration is malformed"))?;
+    let config = host.attempt_config(config);
     let object = config
         .as_object()
         .ok_or_else(|| invalid("Pi Agent runtime configuration must be an object"))?;
@@ -165,7 +166,7 @@ pub(crate) async fn resolve_pi_config(
     let (timeout, cleanup_grace) = numeric_policy(object)?;
     validate_disabled_capabilities(object)?;
 
-    let model_override: Option<String> = row.try_get("model_override")?;
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
     let configured_model = bounded_string(object.get("model"), "model")?;
     let model = model_override
         .filter(|value| !value.trim().is_empty())
@@ -174,7 +175,7 @@ pub(crate) async fn resolve_pi_config(
     let (provider, model_id) = split_provider_model(&model)?;
 
     let configured_thinking = bounded_string(object.get("thinking"), "thinking")?;
-    let chat_thinking: Option<String> = row.try_get("effort_override")?;
+    let chat_thinking: Option<String> = host.attempt_chat_override(row.try_get("effort_override")?);
     let thinking = chat_thinking
         .filter(|value| !value.trim().is_empty())
         .or(configured_thinking);
@@ -313,7 +314,7 @@ pub(crate) async fn resolve_pi_config(
         },
         // The common carrier keeps these fields for source compatibility. Pi
         // execution must use `pi`; its IDs never enter Codex request fields.
-        executable: pi.node_executable.clone(),
+        executable: Some(pi.node_executable.clone()),
         cwd,
         model: Some(model),
         reasoning_effort: thinking,
@@ -336,6 +337,8 @@ pub(crate) async fn resolve_pi_config(
         claude: None,
         cursor: None,
         opencode: None,
+        transport: None,
+        model_attempt: None,
     })
 }
 

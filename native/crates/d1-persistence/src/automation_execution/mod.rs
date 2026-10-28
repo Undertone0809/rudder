@@ -1,5 +1,7 @@
 //! Native Automation trigger admission and execution production. These rows
 //! retain their existing public contracts; Agent and Chat workers own execution.
+mod chat_output;
+pub use chat_output::reconcile_chat_outputs;
 mod dispatch;
 mod schedule;
 mod terminal;

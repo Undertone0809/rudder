@@ -93,7 +93,7 @@ mod tests {
                 instructions_revision: "sha256:instructions".into(),
                 capability_revision: "sha256:capabilities".into(),
             },
-            executable: "/opt/codex".into(),
+            executable: Some("/opt/codex".into()),
             cwd: "/workspace/project".into(),
             model: Some("custom/provider-model".into()),
             reasoning_effort: Some("high".into()),
@@ -116,6 +116,8 @@ mod tests {
             claude: None,
             cursor: None,
             opencode: None,
+            transport: None,
+            model_attempt: None,
         }
     }
 

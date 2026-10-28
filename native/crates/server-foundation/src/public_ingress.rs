@@ -308,6 +308,8 @@ impl PublicIngressRuntime {
         let local_account_lifecycle_enabled = config.local_account_auth.is_some();
         let goal_run_runtime = config.native_chat_runtime.clone();
         let automation_runtime = config.native_chat_runtime.clone();
+        let automation_scheduler = config.scheduler;
+        let automation_storage = config.issue_asset_storage.clone();
         let goal_run_identity = config.identity_auth.clone();
         let config_identity = config.identity_auth.clone();
         let local_implicit_enabled = config
@@ -498,7 +500,7 @@ impl PublicIngressRuntime {
         };
         let automation_worker = match (&foundation.database, agent_run_host.as_ref()) {
             (DatabaseState::Configured(pool), Some(host)) => Some(crate::automation_worker::AutomationWorker::start(
-                pool.clone(), automation_runtime, foundation.native_chat_worker.clone(), &host.environment,
+                pool.clone(), automation_runtime, foundation.native_chat_worker.clone(), automation_scheduler, automation_storage.map(|value|value as std::sync::Arc<dyn rudder_d1_persistence::issue_core_writes::IssueAssetStorage>), host.environment.get("RUDDER_ATTACHMENT_MAX_BYTES").and_then(|v|v.trim().parse::<f64>().ok()).filter(|v|v.is_finite()&&*v!=0.0).unwrap_or(10.0*1024.0*1024.0),
             )),
             _ => None,
         };

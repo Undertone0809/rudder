@@ -7,7 +7,6 @@ use crate::{
 use rudder_d1_persistence::{automation_execution, native_chat};
 use sqlx::PgPool;
 use std::{
-    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -25,18 +24,12 @@ impl AutomationWorker {
         pool: PgPool,
         runtime: Option<NativeChatPublicRuntime>,
         supervisor: Option<Supervisor>,
-        environment: &BTreeMap<String, String>,
+        scheduler: Option<crate::public_ingress_config::NativeSchedulerConfig>,
+        storage: Option<Arc<dyn rudder_d1_persistence::issue_core_writes::IssueAssetStorage>>,
+        attachment_max_bytes: f64,
     ) -> Self {
-        let enabled = environment
-            .get("HEARTBEAT_SCHEDULER_ENABLED")
-            .is_none_or(|v| v != "false");
-        let interval = environment
-            .get("HEARTBEAT_SCHEDULER_INTERVAL_MS")
-            .and_then(|v| v.trim().parse::<f64>().ok())
-            .filter(|v| v.is_finite() && *v != 0.0)
-            .unwrap_or(30_000.0)
-            .max(10_000.0);
-        let interval = Duration::from_secs_f64(interval / 1000.0);
+        let enabled = scheduler.is_some_and(|v| v.enabled);
+        let interval = Duration::from_millis(scheduler.map(|v| v.interval_ms).unwrap_or(30_000));
         let shutdown = Arc::new(AtomicBool::new(false));
         let control = shutdown.clone();
         let task = tokio::spawn(async move {
@@ -85,7 +78,13 @@ impl AutomationWorker {
                         }
                     }
                 }
-                if let Err(error) = automation_execution::reconcile_chat_runs(&pool).await {
+                if let Err(error) = automation_execution::reconcile_chat_outputs(
+                    &pool,
+                    storage.as_deref(),
+                    attachment_max_bytes,
+                )
+                .await
+                {
                     tracing::warn!(event="native_automation_chat_backlink_pending",error=%error);
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;

@@ -258,7 +258,10 @@ fn codex_reader_launch(
     let profile_home = text(&profile_home)?;
     Ok((
         ProcessLaunch {
-            executable: text(host.codex_executable())?,
+            executable: text(
+                host.codex_executable()
+                    .ok_or("historical_profile_unavailable")?,
+            )?,
             argv: if plan.profile_id().ends_with(":operator-default") {
                 vec!["app-server".into()]
             } else {

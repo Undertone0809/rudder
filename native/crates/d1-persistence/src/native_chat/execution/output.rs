@@ -228,7 +228,7 @@ pub async fn record_visible_output(
           CASE WHEN octet_length(body)<=$4 THEN body END AS body,
           (structured_payload IS NULL OR structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS plain
          FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid
-          AND run_id=$3::uuid AND role='assistant' ORDER BY id LIMIT 2 FOR UPDATE",
+          AND run_id=$3::uuid AND role='assistant' AND superseded_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE",
     )
     .bind(id.organization_id)
     .bind(id.conversation_id)

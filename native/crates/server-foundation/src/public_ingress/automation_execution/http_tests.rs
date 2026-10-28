@@ -1,5 +1,7 @@
 //! Public listener -> Automation receipt -> existing generic queue -> owned
 //! process cleanup -> native Issue/Automation readback, with no Node fallback.
+use serde_json::Value;
+
 #[path = "../../../../d1-persistence/tests/support/mod.rs"]
 mod support;
 use super::*;
@@ -146,6 +148,10 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
         )
         .unwrap(),
     );
+    config.scheduler = Some(crate::public_ingress_config::NativeSchedulerConfig {
+        enabled: true,
+        interval_ms: 10_000,
+    });
     config.agent_run_host = Some(host);
     let runtime = PublicIngressRuntime::bind(config, app.clone()).unwrap();
     let base = format!("http://{}", runtime.bound_addr());

@@ -4,7 +4,7 @@ use super::*;
 use crate::native_session_auth::NativeIngressIdentity;
 use futures_util::StreamExt;
 use rudder_d1_persistence::{automation_execution as domain, automation_management::Actor};
-use serde_json::{Value, json};
+use serde_json::json;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Endpoint {

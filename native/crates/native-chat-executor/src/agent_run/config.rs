@@ -88,7 +88,7 @@ pub fn resolve_agent_process(
     )
 }
 
-fn resolve(
+pub(crate) fn resolve(
     runtime: &str,
     agent_id: &str,
     session_params: Option<&Value>,

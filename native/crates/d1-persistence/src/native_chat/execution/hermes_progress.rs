@@ -116,7 +116,7 @@ pub async fn record_hermes_progress(
         "SELECT id::text,status,kind,body,
            (structured_payload IS NULL OR structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS plain
          FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid
-           AND run_id=$3::uuid AND role='assistant' ORDER BY id LIMIT 2 FOR UPDATE",
+           AND run_id=$3::uuid AND role='assistant' AND superseded_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE",
     )
     .bind(identity.organization_id)
     .bind(identity.conversation_id)

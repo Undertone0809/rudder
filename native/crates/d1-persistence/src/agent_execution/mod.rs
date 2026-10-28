@@ -8,6 +8,7 @@ mod admission;
 mod analytics;
 mod approvals;
 pub use admission::{AgentExecutionActor, AgentRunAdmission, AgentWakeRequest, admit};
+pub(crate) use approvals::insert_runtime_approval;
 pub use approvals::{RuntimeApproval, create_runtime_approval, read_runtime_approval};
 pub mod attempts;
 mod budget;

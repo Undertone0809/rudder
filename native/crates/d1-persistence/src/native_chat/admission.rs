@@ -5,8 +5,8 @@ use crate::native_chat::config::{LocalHostContext, resolve_native_config};
 use crate::runtime_bindings;
 use rudder_runtime_core::native_chat::{
     ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector,
-    NativeChatProtocolCheckpoint, NativeChatProtocolStart, OpenCodeSessionSelector,
-    PiSessionSelector,
+    NativeChatProtocolCheckpoint, NativeChatProtocolStart, NativeChatProvider,
+    OpenCodeSessionSelector, PiSessionSelector,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
@@ -248,16 +248,6 @@ pub async fn record_dispatch_unavailable(
         || attempt.try_get::<i32, _>("attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("generation_attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("connection_epoch")? != 1
-        || !matches!(
-            attempt.try_get::<String, _>("runtime_type")?.as_str(),
-            "codex_local"
-                | "hermes_local"
-                | "pi_local"
-                | "claude_local"
-                | "cursor"
-                | "cursor_local"
-                | "opencode_local"
-        )
         || !matches!(phase.as_str(), "no_thread_request" | "thread_known")
         || checkpoint.get("phase").and_then(Value::as_str) != Some(phase.as_str())
         || match attempt.try_get::<String, _>("runtime_type")?.as_str() {
@@ -278,7 +268,15 @@ pub async fn record_dispatch_unavailable(
             "cursor" | "cursor_local" => {
                 checkpoint.get("provider").and_then(Value::as_str) != Some("cursor_local")
             }
-            _ => true,
+            runtime => {
+                checkpoint.get("provider").and_then(Value::as_str)
+                    != Some(match runtime {
+                        "http" => "http",
+                        "hermes_gateway" => "hermes_gateway",
+                        "openclaw_gateway" => "open_claw_gateway",
+                        _ => "process",
+                    })
+            }
         }
         || attempt
             .try_get::<Option<String>, _>("provider_turn_id")?
@@ -831,6 +829,32 @@ pub(super) async fn submit_into_transaction(
                 json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
             )
         }
+        (runtime, state, session)
+            if matches!(state, "pending" | "open") && config.transport.is_some() =>
+        {
+            let provider = match runtime {
+                "http" => NativeChatProvider::Http,
+                "hermes_gateway" => NativeChatProvider::HermesGateway,
+                "openclaw_gateway" => NativeChatProvider::OpenClawGateway,
+                _ => NativeChatProvider::Process,
+            };
+            let checkpoint =
+                NativeChatProtocolCheckpoint::new_transport(provider, session.map(str::to_owned));
+            (
+                checkpoint,
+                if session.is_some() {
+                    "explicit"
+                } else {
+                    "none"
+                },
+                if session.is_some() {
+                    "same_session"
+                } else {
+                    "fresh"
+                },
+                json!({"kind":if session.is_some(){"resume"}else{"fresh"},"reuseScope":if session.is_some(){"explicit"}else{"none"},"sourceRunId":null,"sessionId":session,"sessionParams":null}),
+            )
+        }
         _ => return Err(http(409, "Native Chat segment cannot admit new input")),
     };
 
@@ -884,6 +908,31 @@ pub(super) async fn submit_into_transaction(
         "turnVariant": turn_variant,
         "stream": true,
     });
+    let needs_handoff:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND source_boundary_ref='native_chat_model_fallback' AND status IN ('closed','superseded'))")
+        .bind(organization_id).bind(conversation_id).fetch_one(&mut **tx).await?;
+    if needs_handoff && binding.state == "pending" && config.transport.is_none() {
+        let history=sqlx::query_as::<_,(String,String)>("SELECT role,body FROM (SELECT role,body,created_at,id FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id<>$3::uuid AND superseded_at IS NULL AND role IN ('user','assistant') AND octet_length(body)<=80000 ORDER BY created_at DESC,id DESC LIMIT 12) m ORDER BY created_at,id")
+            .bind(organization_id).bind(conversation_id).bind(&message_id).fetch_all(&mut **tx).await?;
+        if !history.is_empty() {
+            let mut prompt =
+                String::from("Conversation history after a configured runtime/model transition:\n");
+            for (role, text) in history {
+                prompt.push_str(&format!("\n{role}:\n{text}\n"));
+            }
+            prompt.push_str(&format!("\nLatest user message:\n{body}"));
+            let delivery_fingerprint = validation::fingerprint(&prompt);
+            context_snapshot["nativeChatHistoryHandoff"] = json!({"sourceMessageId":message_id,"prompt":prompt,"fingerprint":delivery_fingerprint});
+            context_snapshot["nativeChatDeliveryFingerprint"] = json!(delivery_fingerprint);
+        }
+    }
+    if let Some(attempt) = &config.model_attempt {
+        context_snapshot["nativeChatModelAttemptIndex"] = json!(attempt.index);
+        context_snapshot["nativeChatModelPlanRevision"] = json!(attempt.plan_revision);
+    }
+    if !message_activity {
+        context_snapshot["automationArtifactSource"] =
+            json!({"runtimeType":runtime_type,"codexHome":config.profile.home,"cwd":config.cwd});
+    }
     if runtime_type == "hermes_local" {
         let adapter_revision = config
             .hermes
@@ -1226,13 +1275,13 @@ async fn persisted_user_message(
         "SELECT CASE WHEN octet_length(m.body)<=262144
            AND m.role='user' AND m.kind='message' AND m.status='completed'
            AND m.approval_id IS NULL
-           AND (m.structured_payload IS NULL OR m.structured_payload IN ('null'::jsonb,'{}'::jsonb))
+           AND (m.structured_payload IS NULL OR m.structured_payload IN ('null'::jsonb,'{}'::jsonb) OR EXISTS(SELECT 1 FROM heartbeat_runs h JOIN automation_runs ar ON ar.org_id=h.org_id AND ar.id::text=h.context_snapshot->>'automationRunId' WHERE h.org_id=m.org_id AND h.id=m.run_id AND ar.started_chat_message_id=m.id AND ar.linked_chat_conversation_id=m.conversation_id AND h.context_snapshot->'automationSourcePayload'=m.structured_payload))
            AND NOT EXISTS(SELECT 1 FROM chat_attachments a
              WHERE a.org_id=m.org_id AND a.message_id=m.id)
          THEN jsonb_build_object(
            'id',m.id,'orgId',m.org_id,'conversationId',m.conversation_id,
            'role',m.role,'kind',m.kind,'status',m.status,'body',m.body,
-           'structuredPayload',NULL,'approvalId',NULL,'approval',NULL,'attachments','[]'::jsonb,
+           'structuredPayload',m.structured_payload,'approvalId',NULL,'approval',NULL,'attachments','[]'::jsonb,
            'runId',m.run_id,'generationId',$4::uuid,'replyingAgentId',m.replying_agent_id,
            'chatTurnId',m.chat_turn_id,'turnVariant',m.turn_variant,
            'supersededAt',m.superseded_at,'createdAt',m.created_at,'updatedAt',m.updated_at)

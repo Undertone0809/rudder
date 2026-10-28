@@ -54,6 +54,13 @@ impl OpenCodeLocalConfig {
         self.executable.as_deref()
     }
 
+    pub fn append_system_instructions(&mut self, section: &str) {
+        self.system_instructions = Some(match self.system_instructions.take() {
+            Some(value) => format!("{value}\n\n{section}"),
+            None => section.into(),
+        });
+    }
+
     pub fn system_instructions(&self) -> Option<&str> {
         self.system_instructions.as_deref()
     }
@@ -124,7 +131,7 @@ pub(crate) async fn resolve_opencode_config(
         .try_get::<Option<String>, _>("preferred_agent_id")?
         .or(row.try_get::<Option<String>, _>("routed_agent_id")?);
     let agent_id: String = row.try_get("agent_id")?;
-    let runtime_type: String = row.try_get("agent_runtime_type")?;
+    let runtime_type = host.attempt_runtime(row.try_get("agent_runtime_type")?);
     let agent_status: String = row.try_get("agent_status")?;
     if row.try_get::<String, _>("conversation_kind")? != "chat"
         || row.try_get::<String, _>("conversation_status")? != "active"
@@ -143,6 +150,7 @@ pub(crate) async fn resolve_opencode_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Agent runtime configuration is malformed"))?;
+    let config = host.attempt_config(config);
     let object = config
         .as_object()
         .ok_or_else(|| invalid("OpenCode Agent configuration must be an object"))?;
@@ -238,15 +246,15 @@ pub(crate) async fn resolve_opencode_config(
         .as_deref()
         .map(operator_profile_revision)
         .transpose()?;
-    let model_override: Option<String> = row.try_get("model_override")?;
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
     let model = model_override
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(object.get("model"), "model")?);
     if let Some(model) = model.as_deref() {
         validate_model(model)?;
     }
-    let variant = row
-        .try_get::<Option<String>, _>("effort_override")?
+    let variant = host
+        .attempt_chat_override(row.try_get::<Option<String>, _>("effort_override")?)
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(object.get("variant"), "variant")?);
     if let Some(variant) = &variant {
@@ -387,7 +395,7 @@ pub(crate) async fn resolve_opencode_config(
         },
         // The historical carrier remains populated for source compatibility;
         // OpenCode execution must read only the provider extension below.
-        executable: host.codex_executable().to_path_buf(),
+        executable: host.opencode_executable().map(Path::to_path_buf),
         cwd,
         model,
         reasoning_effort: variant,
@@ -409,6 +417,8 @@ pub(crate) async fn resolve_opencode_config(
         pi: None,
         claude: None,
         cursor: None,
+        transport: None,
+        model_attempt: None,
         opencode: Some(opencode),
     })
 }

@@ -19,7 +19,7 @@ pub(in crate::native_chat::execution) async fn fail_existing_projection(
            AND g.conversation_id=m.conversation_id
          JOIN chat_messages s ON s.org_id=g.org_id AND s.id=g.source_message_id
          WHERE m.org_id=$1::uuid AND m.conversation_id=$2::uuid
-           AND m.run_id=$3::uuid AND m.role='assistant'
+           AND m.run_id=$3::uuid AND m.role='assistant' AND m.superseded_at IS NULL
          ORDER BY m.id LIMIT 2 FOR UPDATE OF m",
     )
     .bind(id.organization_id)
@@ -78,7 +78,7 @@ pub(in crate::native_chat::execution) async fn fail_existing_projection(
     let updated = sqlx::query(
         "UPDATE chat_messages SET status='failed',updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid
-           AND run_id=$4::uuid AND role='assistant' AND status='streaming'",
+           AND run_id=$4::uuid AND role='assistant' AND superseded_at IS NULL AND status='streaming'",
     )
     .bind(id.organization_id)
     .bind(id.conversation_id)

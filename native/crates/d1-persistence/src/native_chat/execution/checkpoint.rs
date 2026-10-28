@@ -750,7 +750,7 @@ pub async fn current_stopping_checkpoint(
     Ok(result)
 }
 
-fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
+pub(super) fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
     CheckpointSnapshot {
         provider: checkpoint.provider(),
         phase: checkpoint.phase(),
@@ -767,5 +767,7 @@ fn snapshot(checkpoint: &NativeChatProtocolCheckpoint) -> CheckpointSnapshot {
         opencode_prompt_request_id: checkpoint.opencode_prompt_request_id().map(str::to_owned),
         cursor_session: checkpoint.cursor_session().cloned(),
         cursor_prompt_request_id: checkpoint.cursor_prompt_request_id().map(str::to_owned),
+        transport_session: checkpoint.transport_session().map(str::to_owned),
+        transport_request_id: checkpoint.transport_request_id().map(str::to_owned),
     }
 }

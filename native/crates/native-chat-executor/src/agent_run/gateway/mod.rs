@@ -7,7 +7,6 @@ use super::{
     AgentRunApprovalChoice, AgentRunExecutionObservation, AgentRunExecutionState, AgentRunOutput,
     AgentRunRequest, projection,
 };
-use rudder_d1_persistence::agent_execution::AgentRunClaim;
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
@@ -76,15 +75,15 @@ impl Output {
     }
 }
 pub(super) async fn execute(
-    claim: &AgentRunClaim,
+    claim: &super::RuntimeTransportTarget,
     input: &AgentRunRequest,
 ) -> AgentRunExecutionObservation {
     let previous_session = claim
-        .session_params_before
+        .session_params
         .as_ref()
         .and_then(|v| super::session::normalize_agent_session(&claim.runtime_type, v))
         .and_then(|v| v["sessionId"].as_str().map(str::to_owned))
-        .or_else(|| claim.session_id_before.clone());
+        .or_else(|| claim.session_id.clone());
     let request = Request {
         run_id: claim.run_id.clone(),
         prompt: input.prompt.clone(),
@@ -164,6 +163,7 @@ pub(super) async fn execute(
                 events: output.events,
                 cleanup_proof: None,
             };
+            observation.result["requestOutcome"] = json!("provider_terminal");
             if let Ok(approval) = request.observed_approval.lock() {
                 observation.result["approval"] = approval.clone();
             }

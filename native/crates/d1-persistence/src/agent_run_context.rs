@@ -283,7 +283,7 @@ pub async fn resolve_agent_run_config(
     })
 }
 
-fn resolve_nested_config<'a>(
+pub(crate) fn resolve_nested_config<'a>(
     tx: &'a mut Transaction<'_, Postgres>,
     org: &'a str,
     value: &'a mut Value,

@@ -307,7 +307,7 @@ pub async fn authorize_effect(
             // value loaded before the indeterminate checkpoint.
             let source = sqlx::query(
                 "SELECT m.id::text AS message_id, m.client_mutation_fingerprint,
-                        m.structured_payload IS NULL AS supported_payload,
+                        m.structured_payload AS source_payload,
                         NOT EXISTS (
                           SELECT 1 FROM chat_attachments ca
                           WHERE ca.org_id=m.org_id AND ca.conversation_id=m.conversation_id
@@ -340,10 +340,18 @@ pub async fn authorize_effect(
             let stored_message_id: String = source.try_get("message_id")?;
             let stored_fingerprint: Option<String> =
                 source.try_get("client_mutation_fingerprint")?;
-            let supported_payload: bool = source.try_get("supported_payload")?;
+            let source_payload: Option<serde_json::Value> = source.try_get("source_payload")?;
+            let supported_payload = crate::native_chat::automation::supported_source_payload(
+                &mut tx,
+                &fence.organization_id,
+                &fence.run_id,
+                &stored_message_id,
+                source_payload.as_ref(),
+            )
+            .await?;
             let has_no_attachments: bool = source.try_get("has_no_attachments")?;
             if stored_message_id != source_message_id
-                || stored_fingerprint.as_deref() != Some(input_fingerprint)
+                || stored_fingerprint.as_deref() != Some(input.source_fingerprint())
                 || !supported_payload
                 || !has_no_attachments
             {
@@ -465,7 +473,7 @@ pub async fn authorize_effect(
             }
             let source = sqlx::query(
                 "SELECT m.id::text AS message_id, m.client_mutation_fingerprint,
-                        m.structured_payload IS NULL AS supported_payload,
+                        m.structured_payload AS source_payload,
                         NOT EXISTS (SELECT 1 FROM chat_attachments ca
                           WHERE ca.org_id=m.org_id AND ca.conversation_id=m.conversation_id
                             AND ca.message_id=m.id) AS has_no_attachments
@@ -495,8 +503,17 @@ pub async fn authorize_effect(
                 || source
                     .try_get::<Option<String>, _>("client_mutation_fingerprint")?
                     .as_deref()
-                    != Some(input_fingerprint)
-                || !source.try_get::<bool, _>("supported_payload")?
+                    != Some(input.source_fingerprint())
+                || !crate::native_chat::automation::supported_source_payload(
+                    &mut tx,
+                    &fence.organization_id,
+                    &fence.run_id,
+                    source_message_id,
+                    source
+                        .try_get::<Option<serde_json::Value>, _>("source_payload")?
+                        .as_ref(),
+                )
+                .await?
                 || !source.try_get::<bool, _>("has_no_attachments")?
             {
                 return Err(http(
@@ -545,7 +562,7 @@ pub async fn authorize_effect(
             }
             let source = sqlx::query(
                 "SELECT m.id::text AS message_id, m.client_mutation_fingerprint,
-                        m.structured_payload IS NULL AS supported_payload,
+                        m.structured_payload AS source_payload,
                         NOT EXISTS (SELECT 1 FROM chat_attachments ca
                           WHERE ca.org_id=m.org_id AND ca.conversation_id=m.conversation_id
                             AND ca.message_id=m.id) AS has_no_attachments
@@ -575,8 +592,17 @@ pub async fn authorize_effect(
                 || source
                     .try_get::<Option<String>, _>("client_mutation_fingerprint")?
                     .as_deref()
-                    != Some(input_fingerprint)
-                || !source.try_get::<bool, _>("supported_payload")?
+                    != Some(input.source_fingerprint())
+                || !crate::native_chat::automation::supported_source_payload(
+                    &mut tx,
+                    &fence.organization_id,
+                    &fence.run_id,
+                    source_message_id,
+                    source
+                        .try_get::<Option<serde_json::Value>, _>("source_payload")?
+                        .as_ref(),
+                )
+                .await?
                 || !source.try_get::<bool, _>("has_no_attachments")?
             {
                 return Err(http(
@@ -652,7 +678,7 @@ pub async fn authorize_effect(
             }
             let source = sqlx::query(
                 "SELECT m.id::text AS message_id, m.client_mutation_fingerprint,
-                        m.structured_payload IS NULL AS supported_payload,
+                        m.structured_payload AS source_payload,
                         NOT EXISTS (SELECT 1 FROM chat_attachments ca
                           WHERE ca.org_id=m.org_id AND ca.conversation_id=m.conversation_id
                             AND ca.message_id=m.id) AS has_no_attachments
@@ -674,8 +700,17 @@ pub async fn authorize_effect(
                 || source
                     .try_get::<Option<String>, _>("client_mutation_fingerprint")?
                     .as_deref()
-                    != Some(input_fingerprint)
-                || !source.try_get::<bool, _>("supported_payload")?
+                    != Some(input.source_fingerprint())
+                || !crate::native_chat::automation::supported_source_payload(
+                    &mut tx,
+                    &fence.organization_id,
+                    &fence.run_id,
+                    source_message_id,
+                    source
+                        .try_get::<Option<serde_json::Value>, _>("source_payload")?
+                        .as_ref(),
+                )
+                .await?
                 || !source.try_get::<bool, _>("has_no_attachments")?
             {
                 return Err(http(

@@ -563,6 +563,7 @@ describe("rust foundation bridge lifecycle", () => {
       nodeUpstream: "http://127.0.0.1:3101",
       authorizationKey: "0123456789abcdef0123456789abcdef",
       trustedProxies: "192.0.2.1,::1",
+      scheduler: { enabled: false, intervalMs: 42000 },
       sessionAuth: {
         kind: "better_auth" as const,
         secret: "test-session-secret",
@@ -584,6 +585,7 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
       RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
+      RUDDER_NATIVE_SCHEDULER: JSON.stringify(publicIngress.scheduler),
       RUDDER_NATIVE_SESSION_AUTH_MODE: "required",
       RUDDER_NATIVE_SESSION_AUTH_KIND: "better_auth",
       RUDDER_NATIVE_SESSION_AUTH_SECRET: publicIngress.sessionAuth.secret,

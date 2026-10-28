@@ -126,20 +126,7 @@ pub(crate) fn configure(
                 .as_ref()
                 .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
         });
-    let has_opencode = opencode.is_some();
     let has_pi = pi_node.is_some() && pi_cli_entry.is_some();
-    let Some(host_executable) = preferred_native_executable(
-        codex.clone(),
-        hermes.clone(),
-        has_pi.then(|| pi_node.clone()).flatten(),
-        claude.clone(),
-        cursor.clone(),
-    )
-    .or_else(|| opencode.clone())
-    .or_else(|| has_opencode.then(|| current.clone()))
-    .or_else(|| has_pi.then(|| current.clone())) else {
-        return Ok(config);
-    };
     let host_name = if cfg!(windows) {
         "rudder-process-host.exe"
     } else {
@@ -161,7 +148,7 @@ pub(crate) fn configure(
     let runtime_root = owned_directory(&native_root.join("runtime"))?;
     let isolated_home = owned_directory(&native_root.join("isolated-home"))?;
     let previous_documents = operator_home.join("Documents/Rudder");
-    let mut host = LocalHostContext::from_rust_host(
+    let mut host = LocalHostContext::from_runtime_host(
         format!("local:{}", installation.instance_id),
         instance,
         workspace,
@@ -169,14 +156,19 @@ pub(crate) fn configure(
         installation.friendly_workspace_home,
         profiles,
         operator_home.clone(),
-        // LocalHostContext retains a Codex executable carrier for source
-        // compatibility. When only Hermes is installed, its path is an
-        // unavailable-Codex sentinel; Hermes resolution never consults it.
-        host_executable,
+        codex.clone(),
     )
     .map_err(|_| invalid_at("invalid native host paths or identity"))?
     .with_executable_search_path(installation.executable_search_path.clone())
     .map_err(|_| invalid_at("invalid executable search path"))?;
+    let environment = crate::optional_env("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT")?
+        .map(|raw| {
+            serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
+                .map_err(|_| invalid_at("invalid captured operator environment"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    host = host.with_runtime_environment(environment);
     host = host.with_opencode_operator_profile_supported(opencode_operator_profile_supported);
     if codex.is_some() {
         host = host.with_native_codex_profile();
@@ -250,7 +242,8 @@ pub(crate) fn agent_execution_host(
     config: &mut PublicIngressConfig,
     brokers: std::sync::Arc<crate::desktop_broker::DesktopBrokers>,
 ) -> Result<Option<std::sync::Arc<crate::agent_run_context::AgentRunContextHost>>, ConfigError> {
-    let Some(raw_environment) = crate::optional_env("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT")? else {
+    let Some(raw_environment) = crate::optional_env("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT")?
+    else {
         return Ok(None);
     };
     let Some(raw_installation) = crate::optional_env("RUDDER_NATIVE_CHAT_HOST")? else {
@@ -258,12 +251,20 @@ pub(crate) fn agent_execution_host(
     };
     let installation: Installation = serde_json::from_str(&raw_installation)
         .map_err(|_| invalid_at("invalid installation shape"))?;
-    let environment: std::collections::BTreeMap<String, String> = serde_json::from_str(&raw_environment)
-        .map_err(|_| invalid_at("invalid operator environment facts"))?;
-    let current = std::env::current_exe().map_err(|_| invalid_at("native executable unavailable"))?;
-    let binary_directory = current.parent().ok_or_else(|| invalid_at("native executable unavailable"))?;
+    let environment: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(&raw_environment)
+            .map_err(|_| invalid_at("invalid operator environment facts"))?;
+    let current =
+        std::env::current_exe().map_err(|_| invalid_at("native executable unavailable"))?;
+    let binary_directory = current
+        .parent()
+        .ok_or_else(|| invalid_at("native executable unavailable"))?;
     let sibling = |name: &str| {
-        let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+        let file = if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        };
         canonical_executable(&binary_directory.join(file))
             .ok_or_else(|| invalid_at("required native execution binary unavailable"))
     };
@@ -281,44 +282,73 @@ pub(crate) fn agent_execution_host(
         .ok_or_else(|| invalid_at("public API URL unavailable"))?;
     let api = url::Url::parse(&api_url).map_err(|_| invalid_at("invalid public API URL"))?;
     let oauth_redirect_uri = if config.deployment_mode == "local_trusted" {
-        let port = api.port_or_known_default().ok_or_else(|| invalid_at("invalid public API port"))?;
+        let port = api
+            .port_or_known_default()
+            .ok_or_else(|| invalid_at("invalid public API port"))?;
         format!("http://127.0.0.1:{port}/api/mcp/oauth/callback")
     } else {
         // Invalid/missing authenticated OAuth configuration disables OAuth use,
         // as before, rather than preventing non-OAuth runtimes from starting.
         crate::optional_env("RUDDER_NATIVE_HOST_AUTH_PUBLIC_BASE_URL")?
             .and_then(|base| url::Url::parse(&base).ok())
-            .filter(|base| base.scheme() == "https" && base.username().is_empty()
-                && base.password().is_none() && base.query().is_none() && base.fragment().is_none())
+            .filter(|base| {
+                base.scheme() == "https"
+                    && base.username().is_empty()
+                    && base.password().is_none()
+                    && base.query().is_none()
+                    && base.fragment().is_none()
+            })
             .and_then(|base| base.join("/api/mcp/oauth/callback").ok())
-            .map(|base| base.to_string()).unwrap_or_default()
+            .map(|base| base.to_string())
+            .unwrap_or_default()
     };
     if config.managed_mcp_host.is_none() {
         config.managed_mcp_host = Some(std::sync::Arc::new(crate::managed_mcp_runtime::Host {
-            deployment_mode: config.deployment_mode.clone(), process_host: process_host.clone(),
-            runtime_root: runtime_root.clone(), environment: environment.clone(), oauth_redirect_uri,
+            deployment_mode: config.deployment_mode.clone(),
+            process_host: process_host.clone(),
+            runtime_root: runtime_root.clone(),
+            environment: environment.clone(),
+            oauth_redirect_uri,
         }));
     }
     let bundled_skills_root = crate::optional_env("RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS")?
         .map(|raw| serde_json::from_str::<Vec<PathBuf>>(&raw))
-        .transpose().map_err(|_| invalid_at("invalid bundled skill roots"))?
-        .unwrap_or_default().into_iter().find_map(|root| {
-            root.is_dir().then(|| root.canonicalize().ok()).flatten()
-        });
-    let process_cwd = PathBuf::from(crate::optional_env("RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY")?
-        .ok_or_else(|| invalid_at("operator working directory unavailable"))?);
+        .transpose()
+        .map_err(|_| invalid_at("invalid bundled skill roots"))?
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|root| root.is_dir().then(|| root.canonicalize().ok()).flatten());
+    let process_cwd = PathBuf::from(
+        crate::optional_env("RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY")?
+            .ok_or_else(|| invalid_at("operator working directory unavailable"))?,
+    );
     let hostname = crate::optional_env("RUDDER_NATIVE_HOST_HOSTNAME")?
         .ok_or_else(|| invalid_at("operator hostname unavailable"))?;
-    Ok(Some(std::sync::Arc::new(crate::agent_run_context::AgentRunContextHost {
-        deployment_mode: config.deployment_mode.clone(), desktop_brokers: brokers,
-        workspace: rudder_d1_persistence::agent_core::OrganizationWorkspaceHost {
-            instance_root: instance.to_string_lossy().into_owned(),
-            workspace_home: workspace.to_string_lossy().into_owned(),
-            previous_documents_root: operator_home.join("Documents/Rudder").to_string_lossy().into_owned(),
-            friendly_workspace_home: installation.friendly_workspace_home, hostname,
-        }, operator_home, process_cwd, executable_search_path: installation.executable_search_path,
-        runtime_root, rudder_cli, process_host, api_url, bundled_skills_root, environment,
-    })))
+    Ok(Some(std::sync::Arc::new(
+        crate::agent_run_context::AgentRunContextHost {
+            deployment_mode: config.deployment_mode.clone(),
+            desktop_brokers: brokers,
+            workspace: rudder_d1_persistence::agent_core::OrganizationWorkspaceHost {
+                instance_root: instance.to_string_lossy().into_owned(),
+                workspace_home: workspace.to_string_lossy().into_owned(),
+                previous_documents_root: operator_home
+                    .join("Documents/Rudder")
+                    .to_string_lossy()
+                    .into_owned(),
+                friendly_workspace_home: installation.friendly_workspace_home,
+                hostname,
+            },
+            operator_home,
+            process_cwd,
+            executable_search_path: installation.executable_search_path,
+            runtime_root,
+            rudder_cli,
+            process_host,
+            api_url,
+            bundled_skills_root,
+            environment,
+        },
+    )))
 }
 
 fn executable(name: &str, search: &str) -> Option<PathBuf> {
@@ -327,6 +357,7 @@ fn executable(name: &str, search: &str) -> Option<PathBuf> {
         .find_map(|directory| canonical_executable(&directory.join(name)))
 }
 
+#[cfg(test)]
 fn preferred_native_executable(
     codex: Option<PathBuf>,
     hermes: Option<PathBuf>,

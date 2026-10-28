@@ -121,48 +121,61 @@ pub(crate) fn execute_turn(
     authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
 ) -> Result<OpenCodeExecutionObservation, HostExecutionFailure<OpenCodeExecutionError>> {
-    if !config.endpoint_is_valid()
-        || timeout.is_zero()
-        || timeout > MAX_TURN_TIMEOUT
-        || !paths.process_host.is_file()
-        || !paths.runtime_root.is_dir()
-        || !paths.isolated_home.is_dir()
-        || run_id.is_empty()
-        || attempt_id.is_empty()
-        || owner_token.is_empty()
-    {
-        return Err(OpenCodeExecutionError::InvalidConfiguration.into());
-    }
-    // Validate the provider selection before launching any child. A malformed
-    // model must never create an owned Server that can only be cleaned up via
-    // an unproven Drop path.
-    let timeout = config
-        .timeout_sec
-        .filter(|seconds| *seconds > 0)
-        .map(Duration::from_secs)
-        .map_or(timeout, |configured| timeout.min(configured));
-    let deadline = Instant::now() + timeout;
-    let mut model = config.model.as_deref().map(parse_model).transpose()?;
-    if let Some(model) = model.as_mut() {
-        model.variant = config.variant.clone();
-    }
-    // The persisted provider-native session locator is also validated before
-    // launch. This keeps corrupt durable state from starting a Server that
-    // cannot produce a terminal turn receipt.
-    let existing_session = authority.existing_session().map(str::to_owned);
-    if let Some(value) = existing_session.as_deref() {
-        OpenCodeSessionSelector::from_persisted(value)
-            .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
-    }
-    // Foundation may use a LocalRuntime owned by its listener thread. Its
-    // runtime cannot spawn local HTTP tasks on this blocking worker, even with
-    // a LocalSet entered. Own a current-thread runtime here and keep its one
-    // LocalSet alive during client construction, polling and drop. D1 authority
-    // retains its separate caller runtime.
-    let http_runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| OpenCodeExecutionError::HttpRuntimeUnavailable)?;
+    let prepared = (|| -> Result<_, OpenCodeExecutionError> {
+        if !config.endpoint_is_valid()
+            || timeout.is_zero()
+            || timeout > MAX_TURN_TIMEOUT
+            || !paths.process_host.is_file()
+            || !paths.runtime_root.is_dir()
+            || !paths.isolated_home.is_dir()
+            || run_id.is_empty()
+            || attempt_id.is_empty()
+            || owner_token.is_empty()
+        {
+            return Err(OpenCodeExecutionError::InvalidConfiguration.into());
+        }
+        // Validate the provider selection before launching any child. A malformed
+        // model must never create an owned Server that can only be cleaned up via
+        // an unproven Drop path.
+        let timeout = config
+            .timeout_sec
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .map_or(timeout, |configured| timeout.min(configured));
+        let deadline = Instant::now() + timeout;
+        let mut model = config.model.as_deref().map(parse_model).transpose()?;
+        if let Some(model) = model.as_mut() {
+            model.variant = config.variant.clone();
+        }
+        // The persisted provider-native session locator is also validated before
+        // launch. This keeps corrupt durable state from starting a Server that
+        // cannot produce a terminal turn receipt.
+        let existing_session = authority.existing_session().map(str::to_owned);
+        if let Some(value) = existing_session.as_deref() {
+            OpenCodeSessionSelector::from_persisted(value)
+                .map_err(|_| OpenCodeExecutionError::InvalidSession)?;
+        }
+        // Foundation may use a LocalRuntime owned by its listener thread. Its
+        // runtime cannot spawn local HTTP tasks on this blocking worker, even with
+        // a LocalSet entered. Own a current-thread runtime here and keep its one
+        // LocalSet alive during client construction, polling and drop. D1 authority
+        // retains its separate caller runtime.
+        let http_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| OpenCodeExecutionError::HttpRuntimeUnavailable)?;
+        Ok((model, existing_session, http_runtime, timeout, deadline))
+    })();
+    let (model, existing_session, http_runtime, timeout, deadline) = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: None,
+                unspent_launch_permit: Some(permit),
+            });
+        }
+    };
     let runtime = &http_runtime;
     let local = LocalSet::new();
     let _runtime_guard = runtime.enter();
@@ -186,6 +199,7 @@ pub(crate) fn execute_turn(
         let cleanup = cleanup_result.ok();
         let _ = authority.cleanup_tick(Instant::now() + CLEANUP_OPERATION_TIMEOUT);
         return Err(HostExecutionFailure {
+            unspent_launch_permit: None,
             error: OpenCodeExecutionError::Persistence(error),
             cleanup: cleanup.map(Box::new),
         });
@@ -337,12 +351,14 @@ pub(crate) fn execute_turn(
         Ok(cleanup) if cleanup.connection_receipt_id() == connection_id => cleanup,
         Ok(_) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error: OpenCodeExecutionError::CleanupUnavailable,
                 cleanup: None,
             });
         }
         Err(error) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error,
                 cleanup: None,
             });
@@ -352,6 +368,7 @@ pub(crate) fn execute_turn(
         Ok(result) => result,
         Err(error) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error,
                 cleanup: Some(Box::new(cleanup)),
             });
@@ -364,12 +381,14 @@ pub(crate) fn execute_turn(
         Ok(connection) if connection.connection_receipt_id() == connection_id => connection,
         Ok(_) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error: OpenCodeExecutionError::CleanupUnavailable,
                 cleanup: Some(Box::new(cleanup)),
             });
         }
         Err(error) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error: OpenCodeExecutionError::Persistence(error),
                 cleanup: Some(Box::new(cleanup)),
             });

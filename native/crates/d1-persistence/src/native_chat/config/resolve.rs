@@ -30,7 +30,7 @@ pub struct RuntimeBindingIdentity {
 
 pub struct ResolvedCodexConfig {
     pub identity: RuntimeBindingIdentity,
-    pub executable: PathBuf,
+    pub executable: Option<PathBuf>,
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
@@ -68,6 +68,9 @@ pub struct ResolvedCodexConfig {
     /// Provider-native OpenCode Server configuration. OpenCode Session and
     /// Message identities must remain separate from Codex Thread/Turn fields.
     pub opencode: Option<super::OpenCodeLocalConfig>,
+    pub transport: Option<super::TransportConfig>,
+    #[doc(hidden)]
+    pub model_attempt: Option<super::ResolvedModelAttempt>,
 }
 
 /// Resolve the selected Agent and all identity-bearing runtime inputs from the
@@ -80,6 +83,10 @@ pub(crate) async fn resolve_codex_config(
     conversation_id: &str,
     host: &LocalHostContext,
 ) -> std::result::Result<ResolvedCodexConfig, super::Error> {
+    let executable = host
+        .codex_executable()
+        .ok_or_else(|| unsupported("the installed Codex executable is unavailable"))?
+        .to_path_buf();
     let organization_id =
         super::super::validation::canonical_uuid(organization_id, "organization id")?;
     let conversation_id =
@@ -141,7 +148,7 @@ pub(crate) async fn resolve_codex_config(
     if matches!(agent_status.as_str(), "terminated" | "pending_approval") {
         return Err(invalid("selected Agent is unavailable"));
     }
-    let runtime_type: String = row.try_get("agent_runtime_type")?;
+    let runtime_type = host.attempt_runtime(row.try_get("agent_runtime_type")?);
     if runtime_type != "codex_local" {
         return Err(super::unsupported(
             "only the local Codex runtime is supported",
@@ -151,8 +158,10 @@ pub(crate) async fn resolve_codex_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Agent runtime configuration is malformed"))?;
-    let model_override: Option<String> = row.try_get("model_override")?;
-    let effort_override: Option<String> = row.try_get("effort_override")?;
+    let config = host.attempt_config(config);
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
+    let effort_override: Option<String> =
+        host.attempt_chat_override(row.try_get("effort_override")?);
     let plan_mode: bool = row.try_get("plan_mode")?;
     let native_managed_profile = host.uses_native_codex_profile();
     let settings = runtime::parse_agent_config_with_profile_defaults(
@@ -167,7 +176,7 @@ pub(crate) async fn resolve_codex_config(
         let canonical = configured_command
             .canonicalize()
             .map_err(|_| super::unsupported("configured Codex command is unavailable"))?;
-        if canonical != host.codex_executable() {
+        if canonical != executable {
             return Err(super::unsupported(
                 "configured Codex command does not match the installed executable",
             ));
@@ -287,7 +296,7 @@ pub(crate) async fn resolve_codex_config(
             instructions_revision: instructions.revision,
             capability_revision,
         },
-        executable: host.codex_executable().to_path_buf(),
+        executable: Some(executable),
         cwd,
         model: settings.model,
         reasoning_effort: settings.effort,
@@ -310,6 +319,8 @@ pub(crate) async fn resolve_codex_config(
         claude: None,
         cursor: None,
         opencode: None,
+        transport: None,
+        model_attempt: None,
     })
 }
 

@@ -29,8 +29,21 @@ pub async fn create_runtime_approval(
     if !active {
         return Err(http(409, "Runtime approval owner is no longer active"));
     }
+    let approval =
+        insert_runtime_approval(&mut tx, claim, runtime_type, request_key, payload).await?;
+    tx.commit().await?;
+    Ok(approval)
+}
+
+pub(crate) async fn insert_runtime_approval(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    claim: &AgentRunObserver,
+    runtime_type: &str,
+    request_key: &str,
+    payload: &Value,
+) -> Result<RuntimeApproval, AgentExecutionError> {
     let existing=sqlx::query("SELECT id::text AS id,status FROM approvals WHERE org_id=$1::uuid AND requested_by_agent_id=$2::uuid AND type='agent_runtime' AND payload->>'nativeApprovalRequestKey'=$3 ORDER BY created_at LIMIT 1")
-        .bind(&claim.organization_id).bind(&claim.agent_id).bind(request_key).fetch_optional(&mut *tx).await?;
+        .bind(&claim.organization_id).bind(&claim.agent_id).bind(request_key).fetch_optional(&mut **tx).await?;
     if let Some(existing) = existing {
         return Ok(RuntimeApproval {
             id: existing.try_get("id")?,
@@ -44,11 +57,10 @@ pub async fn create_runtime_approval(
     payload["nativeAttemptId"] = json!(claim.attempt_id);
     payload["nativeApprovalRequestKey"] = json!(request_key);
     let id:String=sqlx::query_scalar("INSERT INTO approvals(org_id,type,requested_by_agent_id,requested_by_user_id,status,payload,decision_note,decided_by_user_id,decided_at) VALUES($1::uuid,'agent_runtime',$2::uuid,NULL,'pending',$3::jsonb,NULL,NULL,NULL) RETURNING id::text")
-        .bind(&claim.organization_id).bind(&claim.agent_id).bind(payload).fetch_one(&mut *tx).await?;
-    mark_native_write(&mut tx).await?;
+        .bind(&claim.organization_id).bind(&claim.agent_id).bind(payload).fetch_one(&mut **tx).await?;
+    mark_native_write(tx).await?;
     sqlx::query("INSERT INTO heartbeat_run_events(org_id,run_id,agent_id,seq,event_type,stream,level,message,payload,idempotency_key) SELECT $1::uuid,$2::uuid,$3::uuid,COALESCE((SELECT max(seq) FROM heartbeat_run_events WHERE run_id=$2::uuid),0)+1,'approval.requested','system','info','agent runtime approval requested',$4::jsonb,$5 ON CONFLICT(run_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING")
-        .bind(&claim.organization_id).bind(&claim.run_id).bind(&claim.agent_id).bind(json!({"approvalId":id,"type":"agent_runtime"})).bind(format!("approval-requested:{request_key}")).execute(&mut *tx).await?;
-    tx.commit().await?;
+        .bind(&claim.organization_id).bind(&claim.run_id).bind(&claim.agent_id).bind(json!({"approvalId":id,"type":"agent_runtime"})).bind(format!("approval-requested:{request_key}")).execute(&mut **tx).await?;
     Ok(RuntimeApproval {
         id,
         status: "pending".into(),

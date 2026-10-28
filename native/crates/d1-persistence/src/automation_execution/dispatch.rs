@@ -102,6 +102,11 @@ pub(super) async fn dispatch(
                 sqlx::query("RELEASE SAVEPOINT automation_execution_dispatch")
                     .execute(&mut **tx)
                     .await?;
+                if mode == "chat_output" {
+                    crate::native_chat::persist_automation_dispatch_failure(tx, &producer, &reason)
+                        .await
+                        .map_err(|e| http(500, e.to_string()))?;
+                }
                 sqlx::query("UPDATE automation_runs SET status='failed',failure_reason=$3,completed_at=statement_timestamp(),updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
                     .bind(&org).bind(&run_id).bind(reason).execute(&mut **tx).await?;
                 "failed"

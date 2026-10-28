@@ -85,7 +85,7 @@ pub(crate) async fn resolve_hermes_config(
     let resolved_agent_id: String = row.try_get("agent_id")?;
     if row.try_get::<String, _>("conversation_kind")? != "chat"
         || row.try_get::<String, _>("conversation_status")? != "active"
-        || row.try_get::<String, _>("agent_runtime_type")? != "hermes_local"
+        || host.attempt_runtime(row.try_get::<String, _>("agent_runtime_type")?) != "hermes_local"
         || matches!(
             row.try_get::<String, _>("agent_status")?.as_str(),
             "terminated" | "pending_approval"
@@ -106,8 +106,9 @@ pub(crate) async fn resolve_hermes_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Agent runtime configuration is malformed"))?;
-    let model_override: Option<String> = row.try_get("model_override")?;
-    let chat_effort: Option<String> = row.try_get("effort_override")?;
+    let config = host.attempt_config(config);
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
+    let chat_effort: Option<String> = host.attempt_chat_override(row.try_get("effort_override")?);
     let settings = parse_runtime_settings(
         &config,
         model_override,
@@ -234,10 +235,7 @@ pub(crate) async fn resolve_hermes_config(
     };
     Ok(super::ResolvedCodexConfig {
         identity,
-        executable: host
-            .hermes_executable()
-            .expect("checked above")
-            .to_path_buf(),
+        executable: host.hermes_executable().map(Path::to_path_buf),
         cwd,
         model,
         reasoning_effort: effort,
@@ -276,6 +274,8 @@ pub(crate) async fn resolve_hermes_config(
         claude: None,
         cursor: None,
         opencode: None,
+        transport: None,
+        model_attempt: None,
     })
 }
 

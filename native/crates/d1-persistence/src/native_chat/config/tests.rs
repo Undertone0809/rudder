@@ -919,7 +919,7 @@ async fn resolver_uses_locked_chat_agent_exact_issue_workspace_and_read_only_man
         Some(WORKSPACE)
     );
     assert_eq!(resolved.cwd, issue_cwd);
-    assert_eq!(resolved.executable, executable);
+    assert_eq!(resolved.executable, Some(executable));
     assert_eq!(resolved.model.as_deref(), Some("vendor/custom-text-model"));
     assert_eq!(resolved.reasoning_effort.as_deref(), Some("ultra"));
     assert!(!resolved.plan_mode);

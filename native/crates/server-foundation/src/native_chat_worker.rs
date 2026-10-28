@@ -647,6 +647,9 @@ fn run(
         Ok(rudder_native_chat_executor::NativeExecutionObservation::OpenCode(observation)) => {
             return finish_opencode_observation(handle, &pool, observation);
         }
+        Ok(rudder_native_chat_executor::NativeExecutionObservation::Transport(observation)) => {
+            return finish_transport_observation(handle, &pool, observation);
+        }
         Err(failure) => {
             tracing::warn!(
                 run_id = %key.run_id,
@@ -674,6 +677,30 @@ fn run(
                         failure.process_quiescent(),
                     ),
                 ));
+            }
+            if failure.is_definitive_failure()
+                && failure.process_disposition()
+                    == rudder_native_chat_executor::ProcessDisposition::NotLaunched
+                && let (Some(fence), Some(permit)) =
+                    (failure.fence(), failure.unspent_launch_permit())
+            {
+                let result = handle.block_on(tokio::time::timeout(
+                    Duration::from_secs(5),
+                    execution::finalize_before_launch_failure(
+                        &pool,
+                        execution_actor,
+                        fence,
+                        permit,
+                    ),
+                ));
+                return Completion {
+                    status: if matches!(result, Ok(Ok(_))) {
+                        Status::FinalizationCommitted
+                    } else {
+                        Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+                    },
+                    quiescent: true,
+                };
             }
             if failure.process_disposition()
                 == rudder_native_chat_executor::ProcessDisposition::CleanupProven
@@ -1431,3 +1458,62 @@ fn finish_hermes_observation(
 #[cfg(test)]
 #[path = "native_chat_worker_tests.rs"]
 mod tests;
+
+/// The same Native Chat owner finalizes the existing process/request transports.
+/// Request cleanup proves local I/O settlement and never a remote process exit.
+fn finish_transport_observation(
+    handle: &tokio::runtime::Handle,
+    pool: &PgPool,
+    observation: rudder_native_chat_executor::NativeTransportObservation,
+) -> Completion {
+    let rudder_native_chat_executor::NativeTransportObservation {
+        execution_principal,
+        fence,
+        turn,
+        cleanup,
+        stop,
+        terminal_ready,
+    } = observation;
+    let Some(cleanup) = cleanup else {
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            quiescent: false,
+        };
+    };
+    if !terminal_ready {
+        handle.block_on(record_finalization_failure(
+            pool,
+            &execution_principal,
+            &fence,
+            "transport_terminal_unresolved",
+        ));
+        return Completion {
+            status: Status::Unresolved(UnresolvedReason::FinalizationUnresolved),
+            quiescent: cleanup.matches(&fence),
+        };
+    }
+    let committed = handle.block_on(tokio::time::timeout(Duration::from_secs(5), async {
+        let stop = if stop.is_some() {
+            stop
+        } else {
+            execution::observe_stop(pool, &execution_principal, &fence).await?
+        };
+        execution::finalize_transport(
+            pool,
+            &execution_principal,
+            &fence,
+            &turn,
+            &cleanup,
+            stop.as_ref(),
+        )
+        .await
+    }));
+    Completion {
+        status: if matches!(committed, Ok(Ok(_))) {
+            Status::FinalizationCommitted
+        } else {
+            Status::Unresolved(UnresolvedReason::FinalizationUnresolved)
+        },
+        quiescent: true,
+    }
+}

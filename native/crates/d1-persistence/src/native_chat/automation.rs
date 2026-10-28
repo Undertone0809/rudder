@@ -129,18 +129,16 @@ pub(crate) async fn admit(
         },
     )
     .await?;
+    let source_payload = json!({"eventType":"automation_run_input","automationChatRun":{"automationId":automation["id"],"automationTitle":title,"runId":producer.run_id(),"links":{"automation":format!("/automations/{}",automation["id"].as_str().unwrap_or_default()),"chat":format!("/messenger/chat/{conversation}")},"status":"running","source":producer.source(),"triggerId":producer.trigger_id()},"guidance":{"intent":"execute_existing_automation","mayCreateAutomation":false}});
     sqlx::query("UPDATE heartbeat_runs SET context_snapshot=context_snapshot||$3::jsonb WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(org).bind(receipt["runId"].as_str())
-        .bind(json!({"automationId":automation["id"],"automationRunId":producer.run_id(),"triggerId":producer.trigger_id(),"source":producer.source(),"automationInput":producer.payload()}))
+        .bind(json!({"automationId":automation["id"],"automationRunId":producer.run_id(),"triggerId":producer.trigger_id(),"source":producer.source(),"automationInput":producer.payload(),"automationSourcePayload":source_payload}))
         .execute(&mut **tx).await?;
     let message = receipt["userMessageId"]
         .as_str()
         .ok_or_else(|| http(500, "Automation Chat source receipt is incomplete"))?;
-    // Ordinary Native Chat freezes a plain source message. Automation origin
-    // remains in the immutable Run context; typed source/result projection is
-    // a separate compatibility requirement, never a relaxation of public input.
-    sqlx::query("UPDATE chat_messages SET chat_turn_id=COALESCE(chat_turn_id,gen_random_uuid()) WHERE org_id=$1::uuid AND id=$2::uuid")
-        .bind(org).bind(message).execute(&mut **tx).await?;
+    sqlx::query("UPDATE chat_messages SET chat_turn_id=COALESCE(chat_turn_id,gen_random_uuid()),structured_payload=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(org).bind(message).bind(&source_payload).execute(&mut **tx).await?;
     sqlx::query("UPDATE automation_runs SET linked_chat_conversation_id=$3::uuid,started_chat_message_id=$4::uuid,last_chat_message_id=$4::uuid,updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(org).bind(producer.run_id()).bind(&conversation).bind(message).execute(&mut **tx).await?;
     let audit = ActivityActor {
@@ -175,13 +173,6 @@ pub(crate) async fn admit(
         )
         .await?;
     }
-    let created_at: String = sqlx::query_scalar(
-        "SELECT created_at::text FROM chat_conversations WHERE org_id=$1::uuid AND id=$2::uuid",
-    )
-    .bind(org)
-    .bind(&conversation)
-    .fetch_one(&mut **tx)
-    .await?;
     crate::product_analytics::write_product_analytics_event(tx,crate::product_analytics::ProductAnalyticsEvent{
         org_id:Some(org),event_name:"chat_created",occurred_at:None,source_transition:"chat.automation.create",confidence:"exact",actor_type:"automation",actor_id:Some("automation-chat-output"),entity_type:Some("chat"),entity_id:Some(&conversation),work_surface:Some("chat"),work_id:Some(&conversation),work_cycle_id:None,root_run_id:None,run_id:None,completion_revision:None,origin:"automation",dedupe_key:&format!("chat_created:{conversation}"),properties:&json!({"creation_path":"automation","initial_role":"user","plan_mode":false}),
     }).await.map_err(|error|match error{crate::StoreError::Database(error)=>super::Error::Database(error),_=>http(500,"Automation Chat analytics could not be recorded")})?;
@@ -211,4 +202,92 @@ pub async fn list_automation_jobs(pool: &PgPool) -> Result<Vec<AutomationChatJob
             })
         })
         .collect()
+}
+
+/// A nonplain source is accepted only when the private Automation producer
+/// persisted this exact payload on this exact Run/source/generation join.
+/// Public submit has no way to mint the origin snapshot or AutomationRun link.
+pub(crate) async fn supported_source_payload(
+    tx: &mut Transaction<'_, Postgres>,
+    org: &str,
+    run: &str,
+    message: &str,
+    payload: Option<&Value>,
+) -> Result<bool> {
+    let Some(payload) = payload.filter(|v| !v.is_null()) else {
+        return Ok(true);
+    };
+    if payload["eventType"] != "automation_run_input" {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM heartbeat_runs h JOIN chat_generations g ON g.org_id=h.org_id AND g.id=h.chat_generation_id JOIN automation_runs ar ON ar.org_id=h.org_id AND ar.linked_chat_conversation_id=g.conversation_id AND ar.started_chat_message_id=g.source_message_id WHERE h.org_id=$1::uuid AND h.id=$2::uuid AND g.source_message_id=$3::uuid AND h.context_snapshot->>'automationRunId'=ar.id::text AND h.context_snapshot->>'automationId'=ar.automation_id::text AND h.context_snapshot->'automationSourcePayload'=$4::jsonb)")
+        .bind(org).bind(run).bind(message).bind(payload).fetch_one(&mut **tx).await?)
+}
+
+/// Trusted system context; the submitted body and fingerprint remain unchanged.
+pub async fn automation_instruction_context(
+    pool: &PgPool,
+    org: &str,
+    run: &str,
+) -> Result<Option<String>> {
+    let row=sqlx::query("SELECT ar.id::text AS automation_run_id FROM heartbeat_runs h JOIN chat_generations g ON g.org_id=h.org_id AND g.id=h.chat_generation_id JOIN chat_messages m ON m.org_id=g.org_id AND m.id=g.source_message_id JOIN automation_runs ar ON ar.org_id=h.org_id AND ar.linked_chat_conversation_id=g.conversation_id AND ar.started_chat_message_id=m.id WHERE h.org_id=$1::uuid AND h.id=$2::uuid AND h.context_snapshot->>'automationRunId'=ar.id::text AND h.context_snapshot->>'automationId'=ar.automation_id::text AND m.structured_payload=h.context_snapshot->'automationSourcePayload'")
+        .bind(org).bind(run).fetch_optional(pool).await?;
+    let Some(row) = row else { return Ok(None) };
+    let automation_run: String = row.try_get("automation_run_id")?;
+    Ok(Some(format!(
+        "Automation execution context:\nTreat messages with structuredPayload.eventType = \"automation_run_input\" as system-scheduled execution instructions for an already-created automation, even though they are stored with role \"user\" for chat transcript continuity. Execute the current automation; do not create another automation from its schedule or instructions. guidance.intent=execute_existing_automation; guidance.mayCreateAutomation=false.\nFor an ordinary final answer emit RUDDER_RESULT_BEGIN on its own line, then the answer, then RUDDER_RESULT_END. For ask_user, issue_proposal or operation_proposal emit __RUDDER_RESULT_{automation_run}__ immediately followed by JSON {{\"kind\":\"ask_user|issue_proposal|operation_proposal\",\"body\":\"final answer\",\"structuredPayload\":{{}}}}. Output nothing after the final block/JSON."
+    )))
+}
+
+/// The legacy output contract keeps an owned transcript even when preparation
+/// fails before a provider is launched. No Generation/Run proof is invented.
+pub(crate) async fn persist_dispatch_failure(
+    tx: &mut Transaction<'_, Postgres>,
+    producer: &LockedAutomationDispatch,
+    reason: &str,
+) -> Result<()> {
+    let a = producer.automation();
+    let org = producer.org();
+    let conversation = Uuid::new_v4().to_string();
+    let turn = Uuid::new_v4().to_string();
+    let title = a["title"].as_str().unwrap_or("New chat");
+    let agent = a["assigneeAgentId"].as_str();
+    let base = a["description"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(title.trim());
+    let mut prompt = format!(
+        "{base}\n\nAutomation: {title}\nTrigger source: {}",
+        producer.source()
+    );
+    if producer
+        .payload()
+        .as_object()
+        .is_some_and(|v| !v.is_empty())
+    {
+        prompt.push_str(&format!("\nTrigger payload: {}", producer.payload()));
+    }
+    let metadata = json!({"automationId":a["id"],"automationTitle":title,"runId":producer.run_id(),"links":{"automation":format!("/automations/{}",a["id"].as_str().unwrap_or_default()),"chat":format!("/messenger/chat/{conversation}")}});
+    let mut source = metadata.clone();
+    source["status"] = json!("running");
+    source["source"] = json!(producer.source());
+    source["triggerId"] = json!(producer.trigger_id());
+    sqlx::query(
+        "SELECT set_config('rudder.native_chat_write','native_chat:automation_failure',true)",
+    )
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("INSERT INTO chat_conversations(id,org_id,title,preferred_agent_id,issue_creation_mode,plan_mode) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'manual_approval',false)").bind(&conversation).bind(org).bind(title).bind(agent).execute(&mut **tx).await?;
+    if let Some(project) = a["projectId"].as_str() {
+        sqlx::query("INSERT INTO chat_context_links(org_id,conversation_id,entity_type,entity_id) SELECT $1::uuid,$2::uuid,'project',id::text FROM projects WHERE org_id=$1::uuid AND id=$3::uuid").bind(org).bind(&conversation).bind(project).execute(&mut **tx).await?;
+    }
+    let user:String=sqlx::query_scalar("INSERT INTO chat_messages(org_id,conversation_id,role,kind,status,body,structured_payload,chat_turn_id) VALUES($1::uuid,$2::uuid,'user','message','completed',$3,$4,$5::uuid) RETURNING id::text").bind(org).bind(&conversation).bind(prompt.trim()).bind(json!({"eventType":"automation_run_input","automationChatRun":source,"guidance":{"intent":"execute_existing_automation","mayCreateAutomation":false}})).bind(&turn).fetch_one(&mut **tx).await?;
+    let mut failure = metadata;
+    failure["eventType"] = json!("automation_chat_run_result");
+    failure["status"] = json!("failed");
+    failure["failureReason"] = json!(reason);
+    let assistant:String=sqlx::query_scalar("INSERT INTO chat_messages(org_id,conversation_id,role,kind,status,body,structured_payload,chat_turn_id,replying_agent_id) VALUES($1::uuid,$2::uuid,'assistant','message','failed','Automation chat run failed before it produced a final response.',$3,$4::uuid,$5::uuid) RETURNING id::text").bind(org).bind(&conversation).bind(failure).bind(turn).bind(agent).fetch_one(&mut **tx).await?;
+    sqlx::query("UPDATE automation_runs SET linked_chat_conversation_id=$3::uuid,started_chat_message_id=$4::uuid,terminal_chat_message_id=$5::uuid,last_chat_message_id=$5::uuid WHERE org_id=$1::uuid AND id=$2::uuid").bind(org).bind(producer.run_id()).bind(&conversation).bind(user).bind(assistant).execute(&mut **tx).await?;
+    Ok(())
 }

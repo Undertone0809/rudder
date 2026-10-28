@@ -6,6 +6,10 @@ mod claude;
 mod cursor;
 mod goal;
 mod hermes;
+mod model_continuation;
+mod native_transport;
+pub use native_transport::NativeTransportObservation;
+mod automation_context;
 pub mod messenger_title;
 mod native_turn;
 mod opencode;
@@ -119,6 +123,7 @@ pub struct HostPaths {
 pub(crate) struct HostExecutionFailure<E> {
     pub(crate) error: E,
     pub(crate) cleanup: Option<Box<rudder_native_process_transport::HostCleanupProof>>,
+    pub(crate) unspent_launch_permit: Option<rudder_codex_app_server::ConnectionLaunchPermit>,
 }
 
 impl<E> From<E> for HostExecutionFailure<E> {
@@ -126,6 +131,7 @@ impl<E> From<E> for HostExecutionFailure<E> {
         Self {
             error,
             cleanup: None,
+            unspent_launch_permit: None,
         }
     }
 }
@@ -229,6 +235,7 @@ pub enum NativeExecutionObservation {
     Cursor(CursorNativeExecutionObservation),
     /// OpenCode owns Server Session and assistant message identities.
     OpenCode(OpenCodeNativeExecutionObservation),
+    Transport(NativeTransportObservation),
 }
 
 /// Claude provider receipt paired with the D1 claim fence.
@@ -356,6 +363,7 @@ struct ExecutionFailureEvidence {
     hermes_prompt_error_after_cancel_receipt: Option<HermesPromptErrorAfterCancel>,
     pi_cleanup_receipt: Option<rudder_pi_rpc::PiCleanupReceipt>,
     host_cleanup_proof: Option<rudder_native_process_transport::HostCleanupProof>,
+    unspent_launch_permit: Option<rudder_codex_app_server::ConnectionLaunchPermit>,
 }
 
 impl fmt::Debug for ExecutionFailure {
@@ -461,6 +469,12 @@ impl ExecutionFailure {
     pub fn host_cleanup_proof(&self) -> Option<&rudder_native_process_transport::HostCleanupProof> {
         self.0.host_cleanup_proof.as_ref()
     }
+    pub fn unspent_launch_permit(
+        &self,
+    ) -> Option<&rudder_codex_app_server::ConnectionLaunchPermit> {
+        self.0.unspent_launch_permit.as_ref()
+    }
+
     pub fn into_error(self) -> Error {
         self.0.error
     }
@@ -504,6 +518,7 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
     }
 
@@ -522,7 +537,24 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
+    }
+
+    fn before_launch_with_permit(
+        error: Error,
+        principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        permit: rudder_codex_app_server::ConnectionLaunchPermit,
+    ) -> Self {
+        let matches = fence.matches_unspent_launch_permit(&permit);
+        let mut failure = Self::before_launch(error, principal, fence);
+        if matches {
+            failure.0.unspent_launch_permit = Some(permit);
+        } else {
+            failure.0.process = ProcessDisposition::Unresolved;
+        }
+        failure
     }
 
     fn after_claim(
@@ -548,6 +580,7 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
     }
 
@@ -574,6 +607,7 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
     }
 
@@ -626,6 +660,7 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: cleanup_receipt,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
     }
 
@@ -669,6 +704,7 @@ impl ExecutionFailure {
             hermes_prompt_error_after_cancel_receipt: None,
             pi_cleanup_receipt: None,
             host_cleanup_proof: None,
+            unspent_launch_permit: None,
         }))
     }
 }
@@ -734,7 +770,8 @@ where
         | NativeExecutionObservation::Pi(_)
         | NativeExecutionObservation::Claude(_)
         | NativeExecutionObservation::Cursor(_)
-        | NativeExecutionObservation::OpenCode(_) => Err(ExecutionFailure::not_launched(
+        | NativeExecutionObservation::OpenCode(_)
+        | NativeExecutionObservation::Transport(_) => Err(ExecutionFailure::not_launched(
             Error::UnsupportedConfiguration,
         )),
     }
@@ -753,9 +790,55 @@ pub fn run_observed_native_with_request_actor_on_blocking_thread<A>(
 where
     A: NativeChatActor,
 {
-    run_observed_native_with_request_actor_on_blocking_thread_impl(
-        handle, pool, actor, host, paths, request, true,
-    )
+    let deadline = Instant::now() + request.timeout;
+    let mut observed = run_observed_native_with_request_actor_on_blocking_thread_impl(
+        handle,
+        pool,
+        actor,
+        host,
+        paths,
+        ExecutionRequest {
+            organization_id: request.organization_id,
+            run_id: request.run_id,
+            attempt_id: request.attempt_id,
+            timeout: request.timeout,
+            cancelled: request.cancelled,
+        },
+        true,
+    );
+    loop {
+        if request.cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return observed;
+        }
+        let next = match &observed {
+            Ok(observation) => {
+                model_continuation::next(handle, pool, observation, host, paths, deadline)
+            }
+            Err(failure) => {
+                model_continuation::before_launch(handle, pool, failure, host, deadline)
+            }
+        };
+        let Some(claimed) = next else { return observed };
+        let run = claimed.fence.identity().run_id.to_owned();
+        let attempt = claimed.fence.identity().attempt_id.to_owned();
+        // The old move-only permit, when present, is retired before a new
+        // provider can launch. D1 has already advanced its durable fence.
+        drop(observed);
+        observed = run_claimed_native(
+            handle,
+            pool,
+            claimed,
+            host,
+            paths,
+            ExecutionRequest {
+                organization_id: request.organization_id,
+                run_id: &run,
+                attempt_id: &attempt,
+                timeout: deadline.saturating_duration_since(Instant::now()),
+                cancelled: request.cancelled,
+            },
+        );
+    }
 }
 
 fn run_observed_native_with_request_actor_on_blocking_thread_impl<A>(
@@ -797,29 +880,10 @@ where
                         "Native Chat execution was cancelled".into(),
                     ));
                 }
-                match config.identity.runtime_type.as_str() {
-                    "codex_local" => profile::validate(config, paths),
-                    "hermes_local" if allow_hermes => hermes::validate_config(config, host, paths),
-                    "pi_local" => pi::validate_config(config, host, paths),
-                    "claude_local" if allow_hermes => config
-                        .claude
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or(Error::UnsupportedConfiguration),
-                    "cursor" | "cursor_local" if allow_hermes => config
-                        .cursor
-                        .as_ref()
-                        .map(|_| ())
-                        .ok_or(Error::UnsupportedConfiguration),
-                    "opencode_local" if allow_hermes => config
-                        .opencode
-                        .as_ref()
-                        .filter(|value| value.executable().is_some())
-                        .map(|_| ())
-                        .ok_or(Error::UnsupportedConfiguration),
-                    _ => Err(Error::UnsupportedConfiguration),
+                if allow_hermes {
+                    return Ok(());
                 }
-                .map_err(|_| {
+                validate_claimed_config(config, host, paths, allow_hermes).map_err(|_| {
                     runtime_bindings::Error::Http(
                         409,
                         "Native Chat runtime configuration is unsupported".into(),
@@ -829,11 +893,81 @@ where
         ),
     )
     .map_err(ExecutionFailure::not_launched)?;
-    let (execution_principal, claimed_fence, claimed_config, connection_launch_permit) =
-        claimed.into_execution_parts();
-    // Request authentication has served its sole purpose. Every continuation
-    // below is fenced by the principal minted in the same D1 claim transaction.
+    // Request credentials end at the first claim. Continuations keep only
+    // the move-only execution principal and newly minted launch capability.
     drop(actor);
+    run_claimed_native(handle, pool, claimed, host, paths, request)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_claimed_native(
+    handle: &Handle,
+    pool: &PgPool,
+    claimed: execution::ClaimedExecution,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    request: ExecutionRequest<'_>,
+) -> std::result::Result<NativeExecutionObservation, ExecutionFailure> {
+    let deadline = Instant::now() + request.timeout;
+    let (execution_principal, claimed_fence, mut claimed_config, connection_launch_permit) =
+        claimed.into_execution_parts();
+    let automation_context = match db(
+        handle,
+        deadline,
+        rudder_d1_persistence::native_chat::automation_instruction_context(
+            pool,
+            request.organization_id,
+            request.run_id,
+        ),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(ExecutionFailure::before_launch_with_permit(
+                error,
+                execution_principal,
+                claimed_fence,
+                connection_launch_permit,
+            ));
+        }
+    };
+    if let Err(error) = validate_claimed_config(&claimed_config, host, paths, true) {
+        return Err(ExecutionFailure::before_launch_with_permit(
+            error,
+            execution_principal,
+            claimed_fence,
+            connection_launch_permit,
+        ));
+    }
+    if let Some(context) = automation_context {
+        if let Err(error) = automation_context::append(
+            &mut claimed_config,
+            &context,
+            paths,
+            request.run_id,
+            request.attempt_id,
+        ) {
+            return Err(ExecutionFailure::before_launch_with_permit(
+                error,
+                execution_principal,
+                claimed_fence,
+                connection_launch_permit,
+            ));
+        }
+    }
+    if claimed_config.transport.is_some() {
+        return native_transport::run_claimed(
+            handle,
+            pool,
+            execution_principal,
+            claimed_fence,
+            claimed_config,
+            connection_launch_permit,
+            request.cancelled,
+            deadline,
+            paths,
+        )
+        .map(NativeExecutionObservation::Transport);
+    }
     if claimed_config.identity.runtime_type == "hermes_local" {
         return hermes::run_claimed(
             handle,
@@ -879,10 +1013,11 @@ where
         ) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                return Err(ExecutionFailure::before_launch(
+                return Err(ExecutionFailure::before_launch_with_permit(
                     error,
                     execution_principal,
                     claimed_fence,
+                    connection_launch_permit,
                 ));
             }
         };
@@ -1065,6 +1200,7 @@ where
                         ProviderObservation::Claude(observation)
                     })
                     .map_err(|failure| HostExecutionFailure {
+                        unspent_launch_permit: failure.unspent_launch_permit,
                         error: Error::ClaudeTransport(failure.error),
                         cleanup: failure.cleanup,
                     })
@@ -1079,10 +1215,11 @@ where
                 ) {
                     Ok(authority) => authority,
                     Err(error) => {
-                        return Err(ExecutionFailure::before_launch(
+                        return Err(ExecutionFailure::before_launch_with_permit(
                             Error::Persistence(error),
                             execution_principal,
                             claimed_fence,
+                            connection_launch_permit,
                         ));
                     }
                 };
@@ -1105,6 +1242,7 @@ where
                 result
                     .map(ProviderObservation::Cursor)
                     .map_err(|failure| HostExecutionFailure {
+                        unspent_launch_permit: failure.unspent_launch_permit,
                         error: Error::CursorTransport(failure.error),
                         cleanup: failure.cleanup,
                     })
@@ -1119,10 +1257,11 @@ where
                 ) {
                     Ok(authority) => authority,
                     Err(error) => {
-                        return Err(ExecutionFailure::before_launch(
+                        return Err(ExecutionFailure::before_launch_with_permit(
                             Error::Persistence(error),
                             execution_principal,
                             claimed_fence,
+                            connection_launch_permit,
                         ));
                     }
                 };
@@ -1144,6 +1283,7 @@ where
                 result
                     .map(ProviderObservation::OpenCode)
                     .map_err(|failure| HostExecutionFailure {
+                        unspent_launch_permit: failure.unspent_launch_permit,
                         error: Error::OpenCodeExecution(failure.error.diagnostic_code()),
                         cleanup: failure.cleanup,
                     })
@@ -1175,12 +1315,23 @@ where
                     observation,
                 }),
             ),
-            Err(failure) => Err(ExecutionFailure::after_claim_host(
-                failure.error,
-                execution_principal,
-                claimed_fence,
-                failure.cleanup,
-            )),
+            Err(failure) => {
+                if let Some(permit) = failure.unspent_launch_permit {
+                    Err(ExecutionFailure::before_launch_with_permit(
+                        Error::UnsupportedConfiguration,
+                        execution_principal,
+                        claimed_fence,
+                        permit,
+                    ))
+                } else {
+                    Err(ExecutionFailure::after_claim_host(
+                        failure.error,
+                        execution_principal,
+                        claimed_fence,
+                        failure.cleanup,
+                    ))
+                }
+            }
         };
     }
 
@@ -1195,6 +1346,37 @@ where
         deadline,
         paths,
     )
+}
+
+fn validate_claimed_config(
+    config: &ResolvedCodexConfig,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    allow_hermes: bool,
+) -> Result<()> {
+    match config.identity.runtime_type.as_str() {
+        "codex_local" => profile::validate(config, paths),
+        "hermes_local" if allow_hermes => hermes::validate_config(config, host, paths),
+        "pi_local" => pi::validate_config(config, host, paths),
+        "claude_local" if allow_hermes => config
+            .claude
+            .as_ref()
+            .map(|_| ())
+            .ok_or(Error::UnsupportedConfiguration),
+        "cursor" | "cursor_local" if allow_hermes => config
+            .cursor
+            .as_ref()
+            .map(|_| ())
+            .ok_or(Error::UnsupportedConfiguration),
+        "opencode_local" if allow_hermes => config
+            .opencode
+            .as_ref()
+            .filter(|value| value.executable().is_some())
+            .map(|_| ())
+            .ok_or(Error::UnsupportedConfiguration),
+        _ if allow_hermes && config.transport.is_some() => Ok(()),
+        _ => Err(Error::UnsupportedConfiguration),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1223,10 +1405,11 @@ fn run_codex_claimed(
     })() {
         Ok(value) => value,
         Err(error) => {
-            return Err(ExecutionFailure::before_launch(
+            return Err(ExecutionFailure::before_launch_with_permit(
                 error,
                 execution_principal,
                 claimed_fence,
+                connection_launch_permit,
             ));
         }
     };
@@ -1366,7 +1549,12 @@ fn process_launch(
     env.insert("CODEX_HOME".into(), utf8(&config.profile.home)?);
     env.insert("PATH".into(), config.executable_search_path.clone());
     Ok(ProcessLaunch {
-        executable: utf8(&config.executable)?,
+        executable: utf8(
+            config
+                .executable
+                .as_deref()
+                .ok_or(Error::UnsupportedConfiguration)?,
+        )?,
         // Keep extensions in the selected Codex profile active. Native
         // execution validates the effective policy after `config/read` and
         // lets the App Server inherit it; it never rewrites the profile or

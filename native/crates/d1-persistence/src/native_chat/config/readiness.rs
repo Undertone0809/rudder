@@ -47,9 +47,12 @@ fn check_codex(
     config: &Value,
     host: &LocalHostContext,
 ) -> Result<NativeRuntimeConfigReadiness, NativeRuntimeConfigError> {
+    let executable = host
+        .codex_executable()
+        .ok_or(NativeRuntimeConfigError::RuntimeUnavailable)?;
     if !host.uses_native_codex_profile()
         || !host.has_trusted_executable_search_path()
-        || !is_executable(host.codex_executable())
+        || !is_executable(executable)
     {
         return Err(NativeRuntimeConfigError::RuntimeUnavailable);
     }
@@ -66,7 +69,7 @@ fn check_codex(
         let configured = command
             .canonicalize()
             .map_err(|_| NativeRuntimeConfigError::ConfigurationRejected)?;
-        if configured != host.codex_executable() {
+        if configured != executable {
             return Err(NativeRuntimeConfigError::ConfigurationRejected);
         }
     }

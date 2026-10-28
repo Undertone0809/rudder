@@ -29,7 +29,15 @@ pub struct PublicIngressConfig {
     pub(crate) private_host_gate: Option<crate::private_host_gate::NativePrivateHostGate>,
     pub(crate) issue_asset_storage: Option<Arc<NativeIssueAssetStorage>>,
     pub(crate) managed_mcp_host: Option<Arc<crate::managed_mcp_runtime::Host>>,
+    pub(crate) scheduler: Option<NativeSchedulerConfig>,
     pub(crate) agent_run_host: Option<Arc<crate::agent_run_context::AgentRunContextHost>>,
+}
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeSchedulerConfig {
+    pub enabled: bool,
+    pub interval_ms: u64,
 }
 
 /// Trusted installation context required by the explicitly enabled public
@@ -448,6 +456,24 @@ impl PublicIngressConfig {
                 let mut config = Self::new(listen, &upstream, &key).map_err(|error| {
                     crate::ConfigError::invalid("RUDDER_NATIVE_PUBLIC_INGRESS", &error.to_string())
                 })?;
+                config.scheduler = crate::optional_env("RUDDER_NATIVE_SCHEDULER")?
+                    .map(|raw| {
+                        let value: NativeSchedulerConfig =
+                            serde_json::from_str(&raw).map_err(|_| {
+                                crate::ConfigError::invalid(
+                                    "RUDDER_NATIVE_SCHEDULER",
+                                    "expected configured enabled/intervalMs facts",
+                                )
+                            })?;
+                        if value.interval_ms < 10_000 {
+                            return Err(crate::ConfigError::invalid(
+                                "RUDDER_NATIVE_SCHEDULER",
+                                "configured interval must be at least 10000ms",
+                            ));
+                        }
+                        Ok(value)
+                    })
+                    .transpose()?;
                 config.deployment_mode = deployment_mode;
                 config.forwarding_policy = policy;
                 config.session_auth = session_auth;
@@ -514,6 +540,7 @@ impl PublicIngressConfig {
             issue_asset_storage: None,
             managed_mcp_host: None,
             agent_run_host: None,
+            scheduler: None,
         })
     }
 
