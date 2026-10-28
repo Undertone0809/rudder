@@ -197,6 +197,13 @@ async fn public_approval_lifecycle_comments_and_domain_effects_run_without_node(
     for path in [&host.operator_home, &host.runtime_root] {
         std::fs::create_dir_all(path).unwrap();
     }
+    for path in [
+        &host.workspace.instance_root,
+        &host.workspace.workspace_home,
+        &host.workspace.previous_documents_root,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
     let mut config = PublicIngressConfig::new(
         "127.0.0.1:0".parse().unwrap(),
         &upstream,

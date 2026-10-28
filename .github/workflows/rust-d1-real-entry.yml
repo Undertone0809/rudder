@@ -113,12 +113,26 @@ jobs:
           RUDDER_NATIVE_HOST_RUDDER_HOME: ${{ runner.temp }}/rudder-public-workflow/instance-home
           RUDDER_NATIVE_HOST_INSTANCE_ID: ci-public-workflow
           RUDDER_NATIVE_HOST_HOSTNAME: ci-public-workflow-host
+          RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
+          RUDDER_SECRETS_PROVIDER: local_encrypted
+          RUDDER_SECRETS_MASTER_KEY_FILE: ${{ runner.temp }}/rudder-approval-public/synthetic-master.key
+          RUN_LOG_BASE_PATH: ${{ runner.temp }}/rudder-approval-public/run-logs
+          TMPDIR: ${{ runner.temp }}/rudder-approval-public/tmp
         run: |
           set -euo pipefail
           mkdir -p "$RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME" \
-            "$RUDDER_NATIVE_HOST_HOME_DIRECTORY" "$RUDDER_NATIVE_HOST_RUDDER_HOME"
+            "$RUDDER_NATIVE_HOST_HOME_DIRECTORY" "$RUDDER_NATIVE_HOST_RUDDER_HOME" \
+            "$TMPDIR" "$RUN_LOG_BASE_PATH"
           pnpm --filter @rudderhq/db migrate \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          approval_case=public_ingress::tests::approval_write_http_tests::public_approval_lifecycle_comments_and_domain_effects_run_without_node
+          approval_log="$RUNNER_TEMP/rudder-approval-public/http-workflow.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib "$approval_case" \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee "$approval_log" | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          grep -Fx 'running 1 test' "$approval_log"
+          grep -E '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$approval_log"
           cargo test --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation-core --lib \
             public_ingress::tests::issue_core_http_tests::public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallback \
