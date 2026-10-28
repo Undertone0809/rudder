@@ -4662,7 +4662,7 @@
     },
     {
       "path": "server/src/routes/agents.ts",
-      "sha256": "dd20993bd45dd18cac08963f0cfe01d14d78048dd99ea75786ff0172b95c2bd7",
+      "sha256": "aff093d6d9ba1fa5d7919ac17e577e90f6e6d76e946fa1ae2dd514a56f13976f",
       "families": [
         "http_middleware_and_auth",
         "identity_and_sessions",
@@ -59055,36 +59055,8 @@
   },
   "reviewed_node_changes": [
     {
-      "path": "server/src/routes/issues.ts",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "retirement_criterion": "Remove legacy backend paths after complete Rust default/no-Node acceptance.",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/messenger_writes.rs; native/crates/server-foundation/src/messenger_state; native/crates/native-chat-executor/src/messenger_title",
-      "scope": "Omit only POST /api/issues/:id/read, POST /api/issues/:id/follow and DELETE /api/issues/:id/follow under the existing Rust public-ingress guard. Preserve the Label write guards already present in the comparison base.",
-      "compatibility_boundary": "Only registration guards change; unchanged legacy bodies remain ingress-off compatibility debt. Rust owns selected personal-state writes, authorization and receipts; no fallback.",
-      "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger-public-writes-stage-r1/stage-review.md (sha256=8ce08958a21e679bd0f686059aee4f289e7dcf9b0ec9896d313e652512db899c; verdict=accept; frozen b132 source-stage)",
-      "review_status": "reviewed",
-      "base_sha256": "0d163de6541e5fd658caf8a0ace6961f47f7558c5900af5bd2b1f57e72585157",
-      "head_sha256": "6e43df8f601b03f0c5d0193d8fce626854b763398a33879174ef684553f5cca3"
-    },
-    {
-      "path": "server/src/routes/messenger.ts",
-      "base_sha256": "035e1ede79e3b2fff6ec30173db3d3e92571afc7485352e722950458fb6ed2a5",
-      "head_sha256": "d6069fde217baccd6898b1079fb5a81eccc144e24d6531449f95b5196a04a2b0",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/messenger_writes.rs; native/crates/server-foundation/src/messenger_state; native/crates/native-chat-executor/src/messenger_title",
-      "scope": "Omit 17 Messenger mutation handlers and the retired Saved View POST under the existing publicIngressEnabled flag.",
-      "compatibility_boundary": "Registration guards only; Rust owns selected validation, personal-state mutations, title execution and transactional receipts. No Node business addition or native-failure fallback.",
-      "retirement_criterion": "Remove remaining compatibility paths after complete Rust default/no-Node acceptance.",
-      "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger-public-writes-stage-r1/stage-review.md (sha256=8ce08958a21e679bd0f686059aee4f289e7dcf9b0ec9896d313e652512db899c; verdict=accept; frozen b132 source-stage)",
-      "review_status": "reviewed"
-    },
-    {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "base_sha256": "cebe66e1eb8c071df1ccbd67dafa22bb05cbc045daa9d74a57b91140f57aebe1",
+      "base_sha256": "9331b3d2a5a51361ab4bc4ac0fcf99a9f7932ce02a880f37e7d9c742c1391d62",
       "head_sha256": "b31c529abcb7c60742f762c6f4bdecf023156960d2fef44b3f24495b4bbe2273",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
@@ -59169,7 +59141,7 @@
     {
       "path": "server/src/routes/agents.ts",
       "base_sha256": "20f3329206dddc81eb6734275ba8f2f81c772838ad851310fb2571a63b5da599",
-      "head_sha256": "dd20993bd45dd18cac08963f0cfe01d14d78048dd99ea75786ff0172b95c2bd7",
+      "head_sha256": "aff093d6d9ba1fa5d7919ac17e577e90f6e6d76e946fa1ae2dd514a56f13976f",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution",
@@ -59279,7 +59251,7 @@
       "review_status": "reviewed",
       "mount_expression": "agentCoreRoutes( rustFoundationBridge, resolveBrowserCapabilityDeployment(db), nativeAgentCorePaths, )",
       "id": "rust-native-agent-core-handler-v1",
-      "mount_source_sha256": "dd20993bd45dd18cac08963f0cfe01d14d78048dd99ea75786ff0172b95c2bd7",
+      "mount_source_sha256": "aff093d6d9ba1fa5d7919ac17e577e90f6e6d76e946fa1ae2dd514a56f13976f",
       "mount_guard": "nativeAgentCorePaths",
       "order_before": "agent_core_compatibility_handlers"
     },
