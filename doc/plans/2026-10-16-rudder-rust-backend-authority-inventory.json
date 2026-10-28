@@ -4359,7 +4359,7 @@
     },
     {
       "path": "server/src/bootstrap/public-ingress-startup.ts",
-      "sha256": "b0f5fba621011b2d3687b47acc9baa11de467ecb423c5ff06781f388cb1f1314",
+      "sha256": "89026af9316debfb9d141256fbf6113e92629c2b5dd72813c01ebebaa0585079",
       "families": [
         "http_middleware_and_auth",
         "public_http_and_routes",
@@ -4442,7 +4442,7 @@
     },
     {
       "path": "server/src/index.ts",
-      "sha256": "4b62cf49e24ef08185bbbc0f3bed3e93aef3bc5296415ed93c1394177bc327a1",
+      "sha256": "4040b449cf52bbbf1701e185fbaa159d9e6eafed2bf647f3117437ca0025ef29",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -4724,7 +4724,7 @@
     },
     {
       "path": "server/src/routes/automations.ts",
-      "sha256": "306f0dd17f52837ad847a13e8f27a1643a271f82492cbd9d70ef3a0136b2b036",
+      "sha256": "374f80e2c23c618c318a3ede917fcd07961cb145f46140d434293d4d5c6270f7",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -5478,7 +5478,7 @@
     },
     {
       "path": "server/src/services/automations.ts",
-      "sha256": "b3e5c8feb5f78188813e362f987bf81f97ea8aa691cac7ad1881d20cea166843",
+      "sha256": "e57b9f9f9b522f40a020a5159e0e2b646fa5511cdc3b80e5251ec7e2c01c434e",
       "families": [
         "database_queries_and_writers",
         "server_lifecycle_and_workers"
@@ -6959,7 +6959,7 @@
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "b31c529abcb7c60742f762c6f4bdecf023156960d2fef44b3f24495b4bbe2273",
+      "sha256": "930f9aa06fb96d482a6525a89fc933672853d2d344815d5c54e838278a80d1aa",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -15505,7 +15505,7 @@
       "type": "listener_start",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1248,
+      "line": 1250,
       "signature": "server/src/index.ts|listener|server|ingress.nodeListenPort",
       "receiver": "server",
       "expression": "ingress.nodeListenPort"
@@ -15550,7 +15550,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1303,
+      "line": 1305,
       "signature": "server/src/index.ts|supervisor-own|http-ingress",
       "receiver": "supervisor",
       "resource": "http-ingress"
@@ -15595,7 +15595,7 @@
       "type": "runtime_resource_ownership",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1361,
+      "line": 1363,
       "signature": "server/src/index.ts|supervisor-own|process-signal-listeners",
       "receiver": "supervisor",
       "resource": "process-signal-listeners"
@@ -15623,7 +15623,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1029,
+      "line": 1031,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void heartbeat .tickTimers(new Date()) .then((result) => { if (result.enqueued > 0) { logger.i… [sha256:836394bb771c6983d27882ad1a77902f9b5b4b9d448a4d8b3ab46fc1871ff562]",
       "receiver": null,
       "method": "setInterval",
@@ -15633,7 +15633,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1101,
+      "line": 1103,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledBackup(); }",
       "receiver": null,
       "method": "setInterval",
@@ -15643,7 +15643,7 @@
       "type": "worker_schedule_candidate",
       "family": "server_lifecycle_and_workers",
       "source": "server/src/index.ts",
-      "line": 1234,
+      "line": 1236,
       "signature": "server/src/index.ts|worker-schedule-candidate|setInterval|() => { void runScheduledWorkspaceBackups(\"running\"); }",
       "receiver": null,
       "method": "setInterval",
@@ -59057,15 +59057,15 @@
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
       "base_sha256": "9331b3d2a5a51361ab4bc4ac0fcf99a9f7932ce02a880f37e7d9c742c1391d62",
-      "head_sha256": "b31c529abcb7c60742f762c6f4bdecf023156960d2fef44b3f24495b4bbe2273",
+      "head_sha256": "930f9aa06fb96d482a6525a89fc933672853d2d344815d5c54e838278a80d1aa",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution",
-      "scope": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged. Execution environment activates only with explicit nativeChatHost installation facts; auth-only ingress keeps selected API/auth URLs without creating an execution host.",
-      "compatibility_boundary": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged. Execution environment activates only with explicit nativeChatHost installation facts; auth-only ingress keeps selected API/auth URLs without creating an execution host.",
-      "retirement_criterion": "Remove legacy Node handlers and the raw-fact/frame transport when remaining legacy domain producers and Node launcher retire after final default no-Node-backend acceptance.",
-      "reviewer": "/root/messenger_merge_review",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-startup-rebind-r2.md sha256=23b335bb4fda47c74f7b468dabda3c6182fc07228b2c249bf7617ea5ca5c61a7; corrected startup stage accepted, PAV/final publication pending",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution; native/crates/server-foundation/src/public_ingress/automation_execution.rs; native/crates/server-foundation/src/automation_worker.rs; native/crates/d1-persistence/src/automation_execution; native/crates/d1-persistence/src/native_chat",
+      "scope": "Add typed optional scheduler facts and serialize as RUDDER_NATIVE_SCHEDULER only; preserve inherited C auth-only execution-host activation/filtered-environment transport boundary.",
+      "compatibility_boundary": "Add typed optional scheduler facts and serialize as RUDDER_NATIVE_SCHEDULER only; preserve inherited C auth-only execution-host activation/filtered-environment transport boundary.",
+      "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance; inherited C review: /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-startup-rebind-r2.md sha256=23b335bb4fda47c74f7b468dabda3c6182fc07228b2c249bf7617ea5ca5c61a7; corrected startup stage accepted, PAV/final publication pending",
       "review_status": "reviewed"
     },
     {
@@ -59085,15 +59085,15 @@
     {
       "path": "server/src/bootstrap/public-ingress-startup.ts",
       "base_sha256": "0df378ac886369f522dc998257a2ee58679310ed95acc5843dc1b828425ced1b",
-      "head_sha256": "b0f5fba621011b2d3687b47acc9baa11de467ecb423c5ff06781f388cb1f1314",
+      "head_sha256": "89026af9316debfb9d141256fbf6113e92629c2b5dd72813c01ebebaa0585079",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution",
-      "scope": "Transport existing resolved public API URL and auth public base URL installation facts to Rust; no authentication or domain decisions added.",
-      "compatibility_boundary": "Transport existing resolved public API URL and auth public base URL installation facts to Rust; no authentication or domain decisions added.",
-      "retirement_criterion": "Remove legacy Node handlers and the raw-fact/frame transport when remaining legacy domain producers and Node launcher retire after final default no-Node-backend acceptance.",
-      "reviewer": "/root/generic_execution_stage_review",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution; native/crates/server-foundation/src/public_ingress/automation_execution.rs; native/crates/server-foundation/src/automation_worker.rs; native/crates/d1-persistence/src/automation_execution; native/crates/d1-persistence/src/native_chat",
+      "scope": "Pass existing configured scheduler enabled/intervalMs facts into Rust ingress options. Rust owns cadence and dispatch; no Node policy or permission decision added.",
+      "compatibility_boundary": "Pass existing configured scheduler enabled/intervalMs facts into Rust ingress options. Rust owns cadence and dispatch; no Node policy or permission decision added.",
+      "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance; inherited C review: /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
       "review_status": "reviewed"
     },
     {
@@ -59113,15 +59113,15 @@
     {
       "path": "server/src/index.ts",
       "base_sha256": "c9765482067498cb3ef43a878f7b6199097b578b641e05cb76679118c1ebbfc0",
-      "head_sha256": "4b62cf49e24ef08185bbbc0f3bed3e93aef3bc5296415ed93c1394177bc327a1",
+      "head_sha256": "4040b449cf52bbbf1701e185fbaa159d9e6eafed2bf647f3117437ca0025ef29",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution",
-      "scope": "Under native identity omit the old Node LiveEvent WebSocket listener; keep explicit ingress-off compatibility unchanged.",
-      "compatibility_boundary": "Under native identity omit the old Node LiveEvent WebSocket listener; keep explicit ingress-off compatibility unchanged.",
-      "retirement_criterion": "Remove legacy Node handlers and the raw-fact/frame transport when remaining legacy domain producers and Node launcher retire after final default no-Node-backend acceptance.",
-      "reviewer": "/root/generic_execution_stage_review",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution; native/crates/server-foundation/src/public_ingress/automation_execution.rs; native/crates/server-foundation/src/automation_worker.rs; native/crates/d1-persistence/src/automation_execution; native/crates/d1-persistence/src/native_chat",
+      "scope": "Pass native identity mode into Automation service as nativeExecution so existing Node scheduled producer does no work when Rust worker owns cadence; preserve inherited C LiveEvent ownership fence.",
+      "compatibility_boundary": "Pass native identity mode into Automation service as nativeExecution so existing Node scheduled producer does no work when Rust worker owns cadence; preserve inherited C LiveEvent ownership fence.",
+      "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance; inherited C review: /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
       "review_status": "reviewed"
     },
     {
@@ -59234,6 +59234,34 @@
       "retirement_criterion": "Remove legacy Node handlers and the raw-fact/frame transport when remaining legacy domain producers and Node launcher retire after final default no-Node-backend acceptance.",
       "reviewer": "/root/generic_execution_stage_review",
       "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/routes/automations.ts",
+      "base_sha256": "306f0dd17f52837ad847a13e8f27a1643a271f82492cbd9d70ef3a0136b2b036",
+      "head_sha256": "374f80e2c23c618c318a3ede917fcd07961cb145f46140d434293d4d5c6270f7",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/automation_execution.rs; native/crates/server-foundation/src/automation_worker.rs; native/crates/d1-persistence/src/automation_execution; native/crates/d1-persistence/src/native_chat",
+      "scope": "Omit manual POST /api/automations/:id/run and public POST /api/automation-triggers/public/:publicId/fire registrations when nativeAutomationReads/publicIngressEnabled is active; unchanged ingress-off handlers retained.",
+      "compatibility_boundary": "Omit manual POST /api/automations/:id/run and public POST /api/automation-triggers/public/:publicId/fire registrations when nativeAutomationReads/publicIngressEnabled is active; unchanged ingress-off handlers retained.",
+      "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance",
+      "review_status": "reviewed"
+    },
+    {
+      "path": "server/src/services/automations.ts",
+      "base_sha256": "b3e5c8feb5f78188813e362f987bf81f97ea8aa691cac7ad1881d20cea166843",
+      "head_sha256": "e57b9f9f9b522f40a020a5159e0e2b646fa5511cdc3b80e5251ec7e2c01c434e",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/automation_execution.rs; native/crates/server-foundation/src/automation_worker.rs; native/crates/d1-persistence/src/automation_execution; native/crates/d1-persistence/src/native_chat",
+      "scope": "Installation negative fence only: reject Node runAutomation/firePublicTrigger and stop Node tickScheduledTriggers dispatch when nativeExecution; five blank lines removed with exact non-whitespace equivalence proof. Rust owns admissions, public webhook authorization and schedule cursor.",
+      "compatibility_boundary": "Installation negative fence only: reject Node runAutomation/firePublicTrigger and stop Node tickScheduledTriggers dispatch when nativeExecution; five blank lines removed with exact non-whitespace equivalence proof. Rust owns admissions, public webhook authorization and schedule cursor.",
+      "retirement_criterion": "Remove legacy Node producers/routes after exact default-path Rust acceptance and complete no-Node-backend retirement; retained ingress-off compatibility bodies remain explicit debt.",
+      "reviewer": "independent exact-candidate Node boundary reviewer",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation-execution-source-r1/d-cheap-gates-r2/d-node-boundary-review-r1.md sha256=7b804011fded825d8365e2cc39649ed443a9eb48ad93adfb232c8bc1e645e58a; verdict=accept; exact Node source boundary only, not Rust runtime/PAV/final acceptance",
       "review_status": "reviewed"
     }
   ],
