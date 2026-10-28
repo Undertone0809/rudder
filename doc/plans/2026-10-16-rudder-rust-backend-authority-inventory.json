@@ -59042,22 +59042,7 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "server/src/routes/issues.ts",
-      "base_sha256": "511624fb7c5c909dcca065322bcc6501ad006e635dd5b8d24dd7ce160a425d34",
-      "head_sha256": "0d163de6541e5fd658caf8a0ace6961f47f7558c5900af5bd2b1f57e72585157",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "rust_authority": "native/crates/server-foundation/src/public_ingress/label_writes.rs; native/crates/d1-persistence/src/label_writes.rs",
-      "scope": "Omit POST /api/orgs/:orgId/labels, PATCH /api/labels/:labelId and DELETE /api/labels/:labelId under the existing native public-ingress guard.",
-      "compatibility_boundary": "Registration guard only; unchanged legacy bodies remain ingress-off debt. Rust owns validation, native auth, CRUD, cascades and atomic activity/outbox receipts. No hidden fallback.",
-      "retirement_criterion": "Remove remaining legacy backend paths after complete Rust default/no-Node acceptance.",
-      "reviewer": "/root/ci_unblock_review_luna",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/label-public-writes-stage-r1/stage-review.md (sha256=09fee0609a551719292f554b8afb67ac58422cfdb4dc2fb26a0e80cfe00fe6aa; verdict=accept; source checkpoint0596733583aaee5ff458c44a2673de257dc7ff51)",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_node_changes": [],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {

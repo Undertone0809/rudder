@@ -101,6 +101,19 @@ New or modified Node sources still require fresh, matching base/head hashes
 and boundary review. Do not remove persistent `reviewed_transport_admissions`
 records while their exact admitted mounts remain present.
 
+The managed MCP runtime negative-fence admission replaces one existing
+`managedMcpConnectionRoutes` mount with the same arguments plus
+`nativeRuntime: Boolean(opts.rustPublicIngress?.identityAuth)`. The checker pins
+the complete cutover caller and connection-router module hashes, its original
+options, order, import and Rust owner. Only that caller may use the replacement
+as the existing Goal router's preceding anchor; the main anchor remains valid.
+Long inventory expressions match their full content hash, never a display
+prefix. A matching reviewed transport record and current base/head Node review
+are still required. This admits removal of the Node MCP runtime handler only;
+connection management, OAuth management and their legacy business logic remain
+visible migration debt. It does not establish backend completion or allow a
+Node fallback when the Rust runtime fails.
+
 The trusted-base checker pins two
 separate middleware admission capabilities: the exact Rust-signed native-session
 proof mount and the exact Rust-signed native-identity proof mount. Each
