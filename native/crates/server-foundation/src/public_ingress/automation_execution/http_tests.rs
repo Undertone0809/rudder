@@ -47,6 +47,7 @@ async fn settled_native_run(pool: &sqlx::PgPool, issue: &str) -> String {
 #[actix_web::test]
 #[ignore = "requires disposable PostgreSQL188, isolated logs/secrets and prebuilt RUDDER_TEST_PROCESS_HOST"]
 async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and_owned_worker() {
+    crate::init_tracing();
     assert!(std::env::var_os("RUN_LOG_BASE_PATH").is_some());
     assert!(std::env::var_os("RUDDER_SECRETS_MASTER_KEY_FILE").is_some());
     let db = support::Database::start().await;
@@ -269,7 +270,7 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
         Value::Null,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{readback}");
     assert_eq!(readback["status"], "succeeded");
     let (status, updated) = call(
         &client,
