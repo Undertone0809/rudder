@@ -4,10 +4,16 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 
 The release model is now commit-driven:
 
-1. Every successful `Test` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
+1. Every successful `Test` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip canary]`.
 2. Stable releases are manually promoted from a chosen tested commit SHA.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
+
+`[skip canary]` is reserved for an explicitly active stable-release repair or
+the generated post-stable version handoff. Ordinary product, migration and
+maintenance PRs must follow the automatic canary path. The legacy
+`[skip release]` marker has no effect on automatic canaries; inherited markers
+in merged PR messages must not silently suppress product releases.
 
 Database compatibility is checked before publication. For the locked source,
 preflight verifies migration-manifest immutability, and all four
@@ -36,7 +42,7 @@ Important constraints:
 - canary publishes derive the next prerelease from the committed stable version
 - after publishing stable `X.Y.Z`, the workflow opens/reuses a PR for the public
   package version bump, for example `X.Y.Z -> X.Y.(Z+1)`, marks the maintenance
-  commit `[skip release]`, and explicitly dispatches Test for it; the release
+  commit `[skip canary]`, and explicitly dispatches Test for it; the release
   operator merges through protected `main` after required checks pass
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
@@ -121,7 +127,7 @@ Use this model for an explicit stable release:
    integrates the drafts.
 3. Require successful exact-source Test, stable preflight, immutable npm/tag
    checks, and package validation before publication.
-4. Use `[skip release]` on release-only candidate repair commits after the
+4. Use `[skip canary]` on release-only candidate repair commits after the
    stable campaign starts, unless a canary is explicitly required. This keeps
    exact-source Test while suppressing a duplicate automatic canary release.
 5. Run one production stable execution with the full 40-character source SHA.
@@ -224,7 +230,7 @@ npm version or rebuilds Desktop assets.
 
 ### Canary
 
-Every successful `Test` workflow for a `main` push starts the canary path inside [`.github/workflows/release.yml`](../../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
+Every successful `Test` workflow for a `main` push starts the canary path inside [`.github/workflows/release.yml`](../../.github/workflows/release.yml), unless the head commit message contains `[skip canary]`.
 
 It:
 
@@ -333,7 +339,7 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
-- proposes the next canary/stable base through a `[skip release]` PR and
+- proposes the next canary/stable base through a `[skip canary]` PR and
   dispatches Test on that maintenance branch with the immutable bump SHA, unless
   `main` already advanced; the release operator completes protected PR merge
   and verifies merged `main` CI

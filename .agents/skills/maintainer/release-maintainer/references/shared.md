@@ -76,7 +76,7 @@ early.
   the unified Release uploads its own verified Desktop artifacts and explicitly
   dispatches only the post-stable Test handoff.
 - After a stable campaign begins, release-only candidate repairs use
-  `[skip release]` unless canary publication is explicitly required. Confirm CI
+  `[skip canary]` unless canary publication is explicitly required. Confirm CI
   for the repair SHA and confirm the automatic Release workflow was skipped.
 
 ## Progressive Qualification And Candidate Identity

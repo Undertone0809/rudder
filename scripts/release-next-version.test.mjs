@@ -293,7 +293,12 @@ describe("next release version handoff", () => {
     expect(handoffMatrix).toContain(`candidateFingerprint: "${compatibilityFingerprint()}"`);
     expect(handoffMatrix).toContain(`fingerprint: "${compatibilityFingerprint()}"`);
     expect(exec("git", ["show", "-s", "--format=%s", remoteHead], repo).trim()).toBe(
-      "chore(release): start v0.5.2 [skip release]",
+      "chore(release): start v0.5.2 [skip canary]",
+    );
+    const createCall = readFileSync(calls, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line)).find((args) => args[1] === "create");
+    expect(createCall[createCall.indexOf("--title") + 1]).toBe(
+      "chore(release): start v0.5.2 [skip canary]",
     );
     expect(readFileSync(outputFile, "utf8")).toContain("action=proposed");
     expect(readFileSync(outputFile, "utf8")).toContain("branch=codex/release-v0.5.2");

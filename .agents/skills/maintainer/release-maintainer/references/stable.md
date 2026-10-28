@@ -47,7 +47,7 @@ The standard sequence is:
    `npx @rudderhq/cli@latest start --no-open` path and the resulting persistent
    `rudder start --no-open` command;
 7. remove obsolete canary GitHub Releases/tags at or below the stable base;
-8. open or reuse the next-patch `[skip release]` PR and dispatch CI for its
+8. open or reuse the next-patch `[skip canary]` PR and dispatch CI for its
    immutable handoff SHA; merge through the protected PR flow after checks pass,
    then verify the merged `main` CI. A proposed PR is pending integration.
 
