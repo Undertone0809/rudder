@@ -718,6 +718,7 @@ describe("rust foundation bridge lifecycle", () => {
         RUDDER_NATIVE_DATABASE_REQUIRED: "true",
         RUDDER_NATIVE_DATABASE_URL: "postgres://bridge-test",
         RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
+        ...(process.env.PATH !== undefined ? { PATH: process.env.PATH } : {}),
         RUDDER_NATIVE_HOST_HOME_DIRECTORY: homedir(),
         RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
         RUDDER_NATIVE_HOST_HOSTNAME: hostname(),

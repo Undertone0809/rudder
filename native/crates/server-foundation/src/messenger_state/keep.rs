@@ -91,8 +91,8 @@ async fn placement(tx: &mut Tx<'_>, s: &Scope<'_>, k: &Keep) -> Result<Option<Va
     };
     let (key, title) = match anchor {
         Anchor::Chat { conversation_id } => {
-            let title=sqlx::query_scalar::<_,String>("SELECT title FROM chat_conversations WHERE id=$1::uuid AND org_id=$2::uuid AND messenger_visible=true AND status<>'archived'")
-                .bind(conversation_id).bind(s.org).fetch_optional(&mut **tx).await?.ok_or(Error::Http(404,"Messenger Chat anchor not found"))?;
+            let title=sqlx::query_scalar::<_,String>("SELECT title FROM chat_conversations WHERE id=$1::uuid AND org_id=$2::uuid AND messenger_visible=true AND status<>'archived' AND (conversation_kind<>'side_chat' OR created_by_user_id=$3)")
+                .bind(conversation_id).bind(s.org).bind(s.user).fetch_optional(&mut **tx).await?.ok_or(Error::Http(404,"Messenger Chat anchor not found"))?;
             (
                 format!("chat:{conversation_id}"),
                 if title.trim().is_empty() {

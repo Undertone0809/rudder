@@ -16,7 +16,12 @@ pub(super) struct AuditContext {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "operation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(super) enum Command {
     SavedViewList {
         query: ListQuery,
@@ -57,6 +62,32 @@ pub(super) enum Command {
     GroupEntryRemove {
         #[serde(rename = "itemKey")]
         item_key: String,
+    },
+    GroupMerge {
+        name: String,
+        icon: Option<String>,
+        item_keys: Vec<String>,
+        anchor_item_key: Option<String>,
+    },
+    GroupReorder {
+        group_ids: Vec<String>,
+    },
+    GroupEntryAssign {
+        group_id: String,
+        item_key: String,
+    },
+    GroupEntryReorder {
+        group_id: String,
+        item_keys: Vec<String>,
+    },
+    ThreadRead {
+        thread_key: String,
+        read_at: Option<String>,
+        chat_latest: bool,
+    },
+    DismissUnreads,
+    IssueRead {
+        issue_id: String,
     },
     ThreadUserState {
         #[serde(rename = "threadKey")]
@@ -380,6 +411,27 @@ impl Request {
             }
             Command::GroupDelete { .. } | Command::GroupSeparate { .. } => true,
             Command::GroupEntryRemove { .. } => true,
+            Command::GroupMerge {
+                name,
+                icon,
+                item_keys,
+                anchor_item_key,
+            } => {
+                text(name, 1, 80)
+                    && icon.as_ref().is_none_or(|s| text(s, 1, 24))
+                    && (1..=50).contains(&item_keys.len())
+                    && anchor_item_key
+                        .as_ref()
+                        .is_none_or(|key| item_keys.contains(key))
+            }
+            Command::GroupReorder { group_ids } => {
+                group_ids.len() <= 200 && group_ids.iter().all(|id| uuid(id))
+            }
+            Command::GroupEntryAssign { .. }
+            | Command::GroupEntryReorder { .. }
+            | Command::ThreadRead { .. }
+            | Command::DismissUnreads => true,
+            Command::IssueRead { issue_id } => uuid(issue_id),
             Command::ThreadUserState { .. } => true,
             Command::IssueFollow { issue_id } | Command::IssueUnfollow { issue_id } => {
                 uuid(issue_id)

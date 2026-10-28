@@ -185,7 +185,9 @@ fn read_envelopes(
             Envelope::Stdout(bytes) if handshake.load(Ordering::Acquire) => {
                 queue.emit(InputEvent::Stdout(bytes))?
             }
-            Envelope::Stderr if handshake.load(Ordering::Acquire) => (),
+            Envelope::Stderr(bytes) if handshake.load(Ordering::Acquire) => {
+                queue.emit(InputEvent::Stderr(bytes))?
+            }
             _ => return Err(invalid()),
         }
     }
@@ -195,7 +197,7 @@ enum Envelope {
     Handshake(Value),
     Lifecycle(Value),
     Stdout(Vec<u8>),
-    Stderr,
+    Stderr(Vec<u8>),
 }
 
 fn decode(frame: &[u8], request_id: &str, owner_token: &str) -> io::Result<Envelope> {
@@ -263,7 +265,7 @@ fn decode(frame: &[u8], request_id: &str, owner_token: &str) -> io::Result<Envel
             Ok(if kind == "stdout" {
                 Envelope::Stdout(bytes)
             } else {
-                Envelope::Stderr
+                Envelope::Stderr(bytes)
             })
         }
         _ => Err(invalid()),
@@ -328,6 +330,15 @@ fn kill_then_reap(mut child: Child) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn mux_preserves_stderr_bytes_without_decoding_utf8_fragments() {
+        let frame = json!({"muxVersion":1,"type":"stderr","encoding":"hex","data":"61e4b8ad0a"});
+        match decode(&serde_json::to_vec(&frame).unwrap(), "request", "owner").unwrap() {
+            Envelope::Stderr(bytes) => assert_eq!(bytes, "a中\n".as_bytes()),
+            _ => panic!("stderr stream identity was lost"),
+        }
+    }
 
     #[test]
     fn mux_rejects_identity_version_shape_and_byte_corruption() {

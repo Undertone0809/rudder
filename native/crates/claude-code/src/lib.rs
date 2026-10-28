@@ -1124,7 +1124,21 @@ impl ClaudeTransport {
         if flush_pending {
             self.flush_pending()?;
         }
-        match self.host.receive(timeout).map_err(map_host_error)? {
+        let deadline = std::time::Instant::now() + timeout;
+        let event = loop {
+            let event = self
+                .host
+                .receive(remaining(deadline))
+                .map_err(map_host_error)?;
+            if !matches!(event, HostEvent::Stderr(_)) {
+                break event;
+            }
+            if remaining(deadline).is_zero() {
+                return Err(ClaudeError::Timeout);
+            }
+        };
+        match event {
+            HostEvent::Stderr(_) => unreachable!("stderr was filtered by the bounded receive loop"),
             HostEvent::Failure => Err(ClaudeError::Closed),
             HostEvent::Lifecycle(value) => {
                 if value.get("type").and_then(Value::as_str) == Some("terminal") {

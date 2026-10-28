@@ -5,6 +5,14 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+actix-codec = "=0.5.4"
+actix-http = "=3.19.0"
+awc = { version = "=3.10.0", default-features = false, features = ["rustls-0_23-webpki-roots"] }
+base64 = "0.22"
+futures-util = "0.3"
+ring = "=0.17.14"
+regex = { package = "regex-lite", version = "=0.1.9" }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 rudder-auth-core = { path = "../auth-core" }
 rudder-claude-code = { path = "../claude-code" }
 rudder-codex-app-server = { path = "../codex-app-server" }
@@ -20,11 +28,12 @@ serde_json = "1.0"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
 tracing = "0.1"
-tokio = { version = "1.47", features = ["rt", "time"] }
+tokio = { version = "1.47", features = ["rt", "time", "net", "io-util"] }
 url = "2.5"
 uuid = { version = "1", default-features = false, features = ["v4"] }
 
 [dev-dependencies]
+actix-web = { version = "=4.17.0", default-features = false, features = ["macros"] }
 sha2 = "0.10"
 tempfile = "3.27"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }

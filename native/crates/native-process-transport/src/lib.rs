@@ -54,12 +54,14 @@ pub struct HostConnection {
 pub enum HostEvent {
     Lifecycle(serde_json::Value),
     Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
     Failure,
 }
 
 enum InputEvent {
     Lifecycle(serde_json::Value),
     Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
     Failure,
 }
 
@@ -127,8 +129,8 @@ impl LifecycleSink for HostEvents {
     }
 }
 
-struct HostStdout(Arc<EventQueue>, usize);
-impl Write for HostStdout {
+struct HostOutput(Arc<EventQueue>, usize, bool);
+impl Write for HostOutput {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.1 == 0 {
             return Err(io::Error::new(
@@ -137,7 +139,11 @@ impl Write for HostStdout {
             ));
         }
         for chunk in bytes.chunks(self.1) {
-            self.0.emit(InputEvent::Stdout(chunk.to_vec()))?;
+            self.0.emit(if self.2 {
+                InputEvent::Stderr(chunk.to_vec())
+            } else {
+                InputEvent::Stdout(chunk.to_vec())
+            })?;
         }
         Ok(bytes.len())
     }
@@ -221,7 +227,8 @@ impl OwnedHost {
         });
         let (commands, input) = mpsc::sync_channel(COMMAND_CAPACITY);
         let sink = Arc::new(HostEvents(Arc::clone(&queue)));
-        let output = Box::new(HostStdout(Arc::clone(&queue), stdout_chunk_bytes));
+        let output = Box::new(HostOutput(Arc::clone(&queue), stdout_chunk_bytes, false));
+        let stderr = Box::new(HostOutput(Arc::clone(&queue), stdout_chunk_bytes, true));
         let host_queue = Arc::clone(&queue);
         let host_request = request_id.clone();
         let host_owner = owner_token.clone();
@@ -229,7 +236,7 @@ impl OwnedHost {
             Some(executable) => {
                 external::run(executable, input, host_queue, &host_request, &host_owner)
             }
-            None => run_host(input, sink, output, Box::new(io::sink())),
+            None => run_host(input, sink, output, stderr),
         });
         Ok(Self {
             commands: Some(commands),
@@ -280,6 +287,7 @@ impl OwnedHost {
                 Ok(HostEvent::Lifecycle(value))
             }
             InputEvent::Stdout(bytes) => Ok(HostEvent::Stdout(bytes)),
+            InputEvent::Stderr(bytes) => Ok(HostEvent::Stderr(bytes)),
             InputEvent::Failure => Ok(HostEvent::Failure),
         }
     }

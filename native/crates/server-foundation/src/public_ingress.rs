@@ -33,6 +33,7 @@ mod goal_writes;
 mod issue_core;
 mod label_writes;
 mod messenger_reads;
+mod messenger_writes;
 mod native_chat;
 mod observational_reads;
 mod organization_mutations;
@@ -790,6 +791,9 @@ async fn proxy_request(
     }
     if request_reads::is_reserved_path(request.uri().path(), request.method()) {
         return request_reads::dispatch_alias(state, request, payload).await;
+    }
+    if messenger_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return messenger_writes::handle(state, request, payload).await;
     }
     if messenger_reads::is_reserved_path(request.uri().path(), request.method()) {
         return messenger_reads::dispatch(state, request, payload).await;

@@ -1,9 +1,14 @@
 //! Private board-user state authority. All placement mutations share the legacy
 //! owner-before-group advisory-lock order, including Node's source cleanup.
 mod audit;
+mod group_operations;
 mod groups;
 mod keep;
 mod protocol;
+mod public_write;
+mod read_state;
+mod titles;
+pub(crate) use public_write::execute as public_write;
 mod saved_views;
 mod store;
 #[cfg(test)]
@@ -110,12 +115,32 @@ pub(crate) async fn public_read(
     }
 }
 
-fn error_response(error: Error) -> HttpResponse {
+pub(crate) fn error_response(error: Error) -> HttpResponse {
     let (status, message) = match error {
         Error::Http(status, message) => (status, message),
         Error::Database(error) => {
             tracing::warn!(error = %error, "native Messenger state failed");
             (500, "Internal server error")
+        }
+        Error::Snapshot(error) => {
+            return match error {
+                rudder_d1_persistence::messenger_reads::Error::Http(status, message) => {
+                    HttpResponse::build(StatusCode::from_u16(status).unwrap())
+                        .json(serde_json::json!({"error":message}))
+                }
+                _ => HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"error":"Internal server error"})),
+            };
+        }
+        Error::Secrets(error) => {
+            return match error {
+                rudder_d1_persistence::secrets::SecretsError::Http(status, message) => {
+                    HttpResponse::build(StatusCode::from_u16(status).unwrap())
+                        .json(serde_json::json!({"error":message}))
+                }
+                _ => HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"error":"Internal server error"})),
+            };
         }
         Error::Json(error) => {
             tracing::warn!(error = %error, "native Messenger projection failed");

@@ -505,6 +505,7 @@ impl PiRpcTransport {
                     }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
+                Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => return Err(PiTransportError::Closed),
                 Err(HostError::Timeout) => return Err(PiTransportError::Timeout),
                 Err(HostError::OutputOverflow) => return Err(PiTransportError::OutputOverflow),
@@ -608,6 +609,7 @@ impl PiRpcTransport {
                     }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
+                Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => {
                     self.host_failure = true;
                     return Err(PiTransportError::Closed);
@@ -781,6 +783,7 @@ impl PiRpcTransport {
             match self.host.receive(receive_timeout) {
                 Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value)?,
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
+                Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => return Err(PiTransportError::Closed),
                 Err(HostError::Timeout) if Instant::now() < deadline => continue,
                 Err(HostError::Timeout) => return Err(PiTransportError::Timeout),
@@ -860,6 +863,7 @@ impl PiRpcTransport {
                     }
                 }
                 Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes)?,
+                Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => return Err(PiTransportError::Closed),
                 Err(HostError::Timeout) => return Err(PiTransportError::WriteIndeterminate),
                 Err(HostError::OutputOverflow) => return Err(PiTransportError::OutputOverflow),

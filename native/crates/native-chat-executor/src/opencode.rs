@@ -620,7 +620,7 @@ impl OpenCodeServerHost {
                         _ => {}
                     }
                 }
-                Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Stdout(_)) | Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => return Err(OpenCodeExecutionError::ServerNotReady),
                 Err(HostError::Timeout) => {}
                 Err(error) => return Err(OpenCodeExecutionError::Host(error)),
@@ -677,7 +677,9 @@ impl OpenCodeServerHost {
                         .take_cleanup_proof()
                         .ok_or(OpenCodeExecutionError::CleanupUnavailable);
                 }
-                Ok(HostEvent::Lifecycle(_)) | Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Lifecycle(_))
+                | Ok(HostEvent::Stdout(_))
+                | Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => {
                     return Err(OpenCodeExecutionError::CleanupUnavailable);
                 }
@@ -699,7 +701,9 @@ impl OpenCodeServerHost {
                         .take_cleanup_proof()
                         .ok_or(OpenCodeExecutionError::CleanupUnavailable);
                 }
-                Ok(HostEvent::Lifecycle(_)) | Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Lifecycle(_))
+                | Ok(HostEvent::Stdout(_))
+                | Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => {
                     return Err(OpenCodeExecutionError::CleanupUnavailable);
                 }
@@ -858,7 +862,7 @@ mod tests {
                     break;
                 }
                 HostEvent::Failure => panic!("owned host failed before spawn"),
-                HostEvent::Lifecycle(_) | HostEvent::Stdout(_) => {}
+                HostEvent::Lifecycle(_) | HostEvent::Stdout(_) | HostEvent::Stderr(_) => {}
             }
         }
         let mut server = OpenCodeServerHost {

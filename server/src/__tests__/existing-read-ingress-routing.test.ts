@@ -42,7 +42,7 @@ describe("last existing Rust reads public cutover", () => {
     const routes = [calendar, secrets, messenger, organizations, agents].flatMap((router) => router.stack.flatMap((layer) => layer.route ? [layer.route] : []));
     expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/sources" && route.methods.post)).toBe(false);
     expect(routes.some((route) => route.path === "/orgs/:orgId/calendar/google/config" && route.methods.get)).toBe(true);
-    expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/groups" && route.methods.post)).toBe(true);
+    expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/groups" && route.methods.post)).toBe(false);
     expect(routes.some((route) => route.path === "/:orgId/workspace/backups/:backupId/restore" && route.methods.post)).toBe(true);
     expect(routes.some((route) => route.path === "/agent-runs/:runId/retry" && route.methods.post)).toBe(true);
   });

@@ -570,6 +570,7 @@ impl CursorAcpTransport {
         match self.host.receive(timeout) {
             Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
             Ok(HostEvent::Stdout(bytes)) => self.decode_stdout(&bytes),
+            Ok(HostEvent::Stderr(_)) => Ok(()),
             Ok(HostEvent::Failure) => {
                 self.host_failure = true;
                 Err(CursorAcpTransportError::Closed)
@@ -590,7 +591,7 @@ impl CursorAcpTransport {
     fn receive_cleanup_host(&mut self, timeout: Duration) -> Result<(), CursorAcpTransportError> {
         match self.host.receive(timeout) {
             Ok(HostEvent::Lifecycle(value)) => self.observe_lifecycle(&value),
-            Ok(HostEvent::Stdout(_)) => Ok(()),
+            Ok(HostEvent::Stdout(_)) | Ok(HostEvent::Stderr(_)) => Ok(()),
             Ok(HostEvent::Failure) => {
                 self.host_failure = true;
                 Err(CursorAcpTransportError::Closed)
@@ -650,6 +651,7 @@ impl CursorAcpTransport {
             Ok(HostEvent::Stdout(bytes)) => {
                 self.decode_stdout_with_observer(&bytes, observe, retained_outside)
             }
+            Ok(HostEvent::Stderr(_)) => Ok(()),
             Ok(HostEvent::Failure) => {
                 self.host_failure = true;
                 Err(CursorAcpTransportError::Closed)
@@ -876,6 +878,7 @@ impl CursorAcpTransport {
                 self.decode_stdout_with_observer(&bytes, observe, 0)?;
                 Ok(false)
             }
+            HostEvent::Stderr(_) => Ok(false),
             HostEvent::Failure => Err(CursorAcpTransportError::Closed),
         }
     }
@@ -1085,7 +1088,7 @@ mod tests {
                         )
                     })
                 }
-                Ok(HostEvent::Stdout(_)) => {}
+                Ok(HostEvent::Stdout(_)) | Ok(HostEvent::Stderr(_)) => {}
                 Ok(HostEvent::Failure) => panic!("synthetic child host failed"),
                 Err(HostError::Timeout) => continue,
                 Err(error) => panic!("owned host remains readable through terminal: {error:?}"),

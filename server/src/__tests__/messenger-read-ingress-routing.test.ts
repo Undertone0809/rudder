@@ -12,7 +12,7 @@ vi.mock("../services/product-intelligence.js", () => ({ productIntelligenceServi
 const shapes = ["groups", "threads", "chat/:conversationId", "issues", "approvals", "system/:threadKind"];
 
 describe("native Messenger read ingress", () => {
-  it("omits all six Node GET/HEAD handlers and preserves writes and the existing Saved View cutover", async () => {
+  it("omits all six Node GET/HEAD handlers and preserves the existing Saved View cutover alongside native writes", async () => {
     const db = new Proxy({} as Db, { get() { throw new Error("Node DB executed"); } });
     const bridge = { publicIngressEnabled: true } as RustFoundationBridge;
     const router = messengerRoutes(db, bridge);
@@ -25,7 +25,7 @@ describe("native Messenger read ingress", () => {
     expect(legacyRead).not.toHaveBeenCalled();
     const routes = router.stack.flatMap((layer) => layer.route ? [layer.route] : []);
     for (const path of ["/orgs/:orgId/messenger/groups", "/orgs/:orgId/messenger/groups/merge", "/orgs/:orgId/messenger/threads/:threadKey/read", "/orgs/:orgId/messenger/unreads/dismiss", "/orgs/:orgId/messenger/saved-views/keep"]) {
-      expect(routes.some((route) => route.path === path && route.methods.post), path).toBe(true);
+      expect(routes.some((route) => route.path === path && route.methods.post), path).toBe(false);
     }
     expect(routes.some((route) => route.path === "/orgs/:orgId/messenger/saved-views" && route.methods.get)).toBe(false);
   });

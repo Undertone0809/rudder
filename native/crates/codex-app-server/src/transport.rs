@@ -382,6 +382,7 @@ impl OwnedTransport {
                 HostError::OutputOverflow => TransportError::OutputOverflow,
             })?;
             match event {
+                HostEvent::Stderr(_) => {}
                 HostEvent::Failure => return Err(TransportError::Closed),
                 HostEvent::Stdout(bytes) => self.messages.extend(self.decoder.push(&bytes)?),
                 HostEvent::Lifecycle(value) => {

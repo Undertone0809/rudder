@@ -100,7 +100,7 @@ enum Endpoint {
     },
 }
 
-enum IssuePathLookup {
+pub(super) enum IssuePathLookup {
     Found { issue_id: String, org_id: String },
     Missing,
     Ambiguous,
@@ -1196,7 +1196,7 @@ fn actor_org_id(identity: &NativeIngressIdentity) -> Option<&str> {
     }
 }
 
-async fn resolve_issue_path_reference(
+pub(super) async fn resolve_issue_path_reference(
     pool: &sqlx::PgPool,
     raw: &str,
     scoped_org: Option<&str>,

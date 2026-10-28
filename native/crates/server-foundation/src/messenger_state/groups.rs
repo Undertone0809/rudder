@@ -53,7 +53,7 @@ pub(super) async fn remove(
         )
         .await?;
     }
-    // This direct legacy activity intentionally never emitted activity.logged.
+    // Native mutation authority commits the durable event with its activity.
     audit::activity(
         tx,
         s,
@@ -63,7 +63,7 @@ pub(super) async fn remove(
             entity_id: id,
             details: json!({"source":source}),
             idempotency_key: Some(&format!("messenger-custom-group-removed:{}:{id}", s.user)),
-            event: false,
+            event: true,
         },
     )
     .await?;
