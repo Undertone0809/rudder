@@ -150,7 +150,7 @@ async fn execute(
     if let Some(response) = agent_run_context_mismatch_response(&request, &identity) {
         return response;
     }
-    if let Some(response) = agent_cli_context_mismatch_response(&request, &identity) {
+    if let Some(response) = agent_core::agent_cli_context_mismatch_response(&request, &identity) {
         return response;
     }
     let Some((actor, session)) = agent_core::actor_and_session(&identity) else {
@@ -200,10 +200,12 @@ async fn execute(
             else {
                 return HttpResponse::NotFound().json(json!({"error":"Approval not found"}));
             };
-            match sqlx::query_scalar::<_, String>("SELECT org_id::text FROM approvals WHERE id=$1")
-                .bind(id)
-                .fetch_optional(pool)
-                .await
+            match sqlx::query_scalar::<_, String>(
+                "SELECT org_id::text FROM approvals WHERE id=$1::uuid",
+            )
+            .bind(id.to_string())
+            .fetch_optional(pool)
+            .await
             {
                 Ok(Some(org)) => org,
                 Ok(None) => {

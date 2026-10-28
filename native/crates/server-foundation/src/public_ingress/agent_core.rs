@@ -743,7 +743,7 @@ async fn execute(
 /// Match the legacy Agent CLI context guard before native AgentCore mutations.
 /// The header is an execution-context assertion, not an authority source: a
 /// bearer key still identifies its own Agent and cannot act as another one.
-fn agent_cli_context_mismatch_response(
+pub(super) fn agent_cli_context_mismatch_response(
     request: &HttpRequest,
     identity: &NativeIngressIdentity,
 ) -> Option<HttpResponse> {

@@ -29,28 +29,25 @@ pub(super) async fn apply(
     staged_assets: &mut Vec<String>,
     post_commit: &mut ApprovalPostCommit,
 ) -> Result<()> {
-    match approval.value()["type"].as_str() {
-        Some("hire_agent" | "chat_operation") => {
-            let agent = crate::agent_core::apply_approved_agent_change(
-                tx,
-                approval,
-                context.actor,
-                context.agent_host,
-                approved,
-            )
-            .await?;
-            if agent.is_some() {
-                sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(approval.organization_id()).execute(&mut **tx).await?;
-            }
-            if approved
-                && approval.value()["type"] == "hire_agent"
-                && !approval.value()["payload"]["agentId"].is_string()
-            {
-                post_commit.created_agent_id =
-                    agent.and_then(|agent| agent["id"].as_str().map(str::to_owned));
-            }
+    if let Some("hire_agent" | "chat_operation") = approval.value()["type"].as_str() {
+        let agent = crate::agent_core::apply_approved_agent_change(
+            tx,
+            approval,
+            context.actor,
+            context.agent_host,
+            approved,
+        )
+        .await?;
+        if agent.is_some() {
+            sqlx::query("UPDATE organization_mutation_state SET mutation_version=mutation_version+1,updated_at=now() WHERE org_id=$1::uuid").bind(approval.organization_id()).execute(&mut **tx).await?;
         }
-        _ => {}
+        if approved
+            && approval.value()["type"] == "hire_agent"
+            && !approval.value()["payload"]["agentId"].is_string()
+        {
+            post_commit.created_agent_id =
+                agent.and_then(|agent| agent["id"].as_str().map(str::to_owned));
+        }
     }
     if !approved {
         return Ok(());
