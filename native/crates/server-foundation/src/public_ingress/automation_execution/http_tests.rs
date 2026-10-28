@@ -250,6 +250,14 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(replay["id"], run["id"]);
+    // Public Issue fields cannot mint the private Automation provenance.
+    let (status, forged) = call(&client, &base, token, Method::POST,
+        &format!("/api/orgs/{}/issues", support::ORG),
+        json!({"title":"Untrusted Automation origin","status":"backlog","originKind":"automation_execution","originId":automation,"originRunId":run["id"]})).await;
+    assert_eq!(status, StatusCode::CREATED, "{forged}");
+    assert_eq!(forged["originKind"], "manual");
+    assert!(forged["originId"].is_null());
+    assert!(forged["originRunId"].is_null());
     let issue = run["linkedIssueId"].as_str().unwrap();
     let native_run = settled_native_run(&db.pool, issue).await;
     let (status, readback) = call(

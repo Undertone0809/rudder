@@ -150,6 +150,7 @@ struct IssueCreateContext<'a> {
     asset_storage: Option<&'a dyn IssueAssetStorage>,
     staged_asset_objects: &'a mut Vec<String>,
     wakeup_context_source: &'static str,
+    automation_dispatch: Option<&'a crate::automation_execution::LockedAutomationDispatch>,
 }
 
 struct IssueDescriptionAssetStageInput<'a> {
@@ -248,6 +249,7 @@ pub async fn apply_issue_core_write(
                             asset_storage,
                             staged_asset_objects: &mut staged_asset_objects,
                             wakeup_context_source: "issue.create",
+                            automation_dispatch: None,
                         },
                     )
                     .await?;
@@ -401,8 +403,6 @@ pub(crate) async fn create_automation_execution_issue(
         "description":automation["description"], "status":"todo",
         "priority":automation["priority"], "assigneeAgentId":automation["assigneeAgentId"],
         "assigneeAgentRuntimeOverrides":automation["assigneeAgentRuntimeOverrides"],
-        "originKind":"automation_execution", "originId":automation["id"],
-        "originRunId":producer.run_id(),
     });
     lock_organization(tx, producer.org()).await?;
     let mut staged = Vec::new();
@@ -418,6 +418,7 @@ pub(crate) async fn create_automation_execution_issue(
             asset_storage: None,
             staged_asset_objects: &mut staged,
             wakeup_context_source: "automation.dispatch",
+            automation_dispatch: Some(producer),
         },
     )
     .await
@@ -434,6 +435,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
         asset_storage,
         staged_asset_objects,
         wakeup_context_source,
+        automation_dispatch,
     } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
@@ -562,6 +564,14 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             "agent_issue_creation",
             Some(request_id.to_owned()),
             run_id.map(ToOwned::to_owned),
+        )
+    } else if let Some(producer) = automation_dispatch {
+        // Only the private locked producer supplies Automation provenance.
+        // Public Issue JSON cannot claim this origin or its Run linkage.
+        (
+            "automation_execution",
+            Some(required_text(producer.automation(), "id")?),
+            Some(producer.run_id().to_owned()),
         )
     } else {
         ("manual", None, None)

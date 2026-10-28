@@ -279,6 +279,13 @@ async fn settle_output(
     if snapshot["automationOutputSettled"] == true {
         return Ok(());
     }
+    // The proven terminal result may need a missing-message or attachment write
+    // before its final projection. Mark this same Rust transaction first.
+    sqlx::query(
+        "SELECT set_config('rudder.native_chat_write','native_chat:automation_output',true)",
+    )
+    .execute(&mut **tx)
+    .await?;
     let automation_run: String = row.try_get("automation_run_id")?;
     let automation: String = row.try_get("automation_id")?;
     let title: String = row.try_get("title")?;
@@ -464,11 +471,6 @@ async fn settle_output(
     } else {
         reply.payload["automationChatRun"] = json!({"automationId":automation,"automationTitle":title,"runId":automation_run,"status":if status=="cancelled"{"stopped"}else{result_status},"links":{"automation":format!("/automations/{automation}"),"chat":format!("/messenger/chat/{conversation}")}})
     }
-    sqlx::query(
-        "SELECT set_config('rudder.native_chat_write','native_chat:automation_output',true)",
-    )
-    .execute(&mut **tx)
-    .await?;
     sqlx::query("UPDATE chat_messages SET kind=$4,status=$5,body=$6,structured_payload=$7,approval_id=$8::uuid,updated_at=statement_timestamp() WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id=$3::uuid")
         .bind(org).bind(&conversation).bind(&message).bind(&reply.kind).bind(if status=="cancelled"&&failure.is_none(){"stopped"}else{result_status}).bind(reply.body).bind(reply.payload).bind(approval).execute(&mut **tx).await?;
     sqlx::query("UPDATE heartbeat_runs SET context_snapshot=(context_snapshot-'automationGeneratedAttachments')||$3::jsonb WHERE org_id=$1::uuid AND id=$2::uuid").bind(org).bind(run).bind(json!({"automationOutputSettled":true,"automationOutputFailure":failure,"automationOutputFallbackAccepted":fallback_accepted})).execute(&mut **tx).await?;
