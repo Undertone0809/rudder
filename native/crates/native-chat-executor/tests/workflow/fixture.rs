@@ -154,9 +154,17 @@ impl FixtureHost {
             .expect("make Hermes fixture executable");
 
         let python = bin.join("python3");
+        let resolved_python = python_executable();
+        let quote =
+            |path: &std::path::Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+        // PATH is deliberately restricted in the trusted launch. Resolve the
+        // test interpreter before that boundary, just like the Codex fixture,
+        // instead of silently selecting a different system interpreter.
         let python_shim = format!(
-            "#!/bin/sh\nPYTHONPATH='{}' exec python3 \"$@\"\n",
-            install.display()
+            "#!/bin/sh\nprintf '%s\\n' launching > {}\nPYTHONPATH={} exec {} \"$@\"\n",
+            quote(&self.probe_path("python-launching")),
+            quote(&install),
+            quote(&resolved_python),
         );
         fs::write(&python, python_shim).expect("write Hermes fixture Python shim");
         fs::set_permissions(&python, fs::Permissions::from_mode(0o700))
@@ -200,6 +208,7 @@ mode = home.joinpath("mode.txt").read_text(encoding="utf-8").strip()
 session = "550e8400-e29b-41d4-a716-446655440000"
 
 def main(argv=None):
+    started_at = time.monotonic()
     from acp_adapter.session import SessionManager
     home.joinpath("provider-started").write_text("started", encoding="utf-8")
     events = home.joinpath("provider-events.jsonl")
@@ -210,11 +219,13 @@ def main(argv=None):
     def out(value):
         sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
         sys.stdout.flush()
+    def record(message):
+        with events.open("a", encoding="utf-8") as log:
+            log.write(json.dumps({{"received": message, "elapsedMs": int((time.monotonic() - started_at) * 1000)}}) + "\n")
     manager = SessionManager()
     for raw in sys.stdin:
         message = json.loads(raw)
-        with events.open("a", encoding="utf-8") as log:
-            log.write(json.dumps({{"received": message}}) + "\n")
+        record(message)
         method = message.get("method")
         if method == "initialize":
             out({{"jsonrpc":"2.0","id":message["id"],"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":True}}}}}})
@@ -235,6 +246,7 @@ def main(argv=None):
                 out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"tool_call","toolCallId":"fixture-tool","title":"Running read-only fixture","rawInput":{{"private":"raw input sentinel"}}}}}}}})
                 home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
                 cancel = json.loads(sys.stdin.readline())
+                record(cancel)
                 assert cancel.get("method") == "session/cancel"
                 out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"late ignored text"}}}}}}}})
                 out({{"jsonrpc":"2.0","id":message["id"],"error":{{"code":-32603,"message":"private error sentinel","data":{{"private":"private error data sentinel"}}}}}})
@@ -242,6 +254,7 @@ def main(argv=None):
                 out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"unflushed thought"}}}}}}}})
                 home.joinpath("progress-pending").write_text("pending", encoding="utf-8")
                 cancel = json.loads(sys.stdin.readline())
+                record(cancel)
                 assert cancel.get("method") == "session/cancel"
                 out({{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":session,"update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"late assistant chunk"}}}}}}}})
                 out({{"jsonrpc":"2.0","id":message["id"],"result":{{"stopReason":"cancelled","userMessageId":user_id}}}})
@@ -394,6 +407,37 @@ def main(argv=None):
     pub(crate) fn probe_path(&self, name: &str) -> PathBuf {
         self.root.path().join("isolated-home").join(name)
     }
+
+    pub(crate) fn hermes_phase_summary(&self) -> String {
+        let methods = fs::read_to_string(self.probe_path("provider-events.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter_map(|event| match event["received"]["method"].as_str() {
+                Some(
+                    method @ ("initialize" | "initialized" | "session/new" | "session/load"
+                    | "session/set_model" | "session/prompt" | "session/cancel"),
+                ) => Some((method.to_owned(), event["elapsedMs"].as_u64())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let marker_ms = |name| {
+            fs::metadata(self.probe_path(name))
+                .and_then(|metadata| metadata.modified())
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|time| time.as_millis())
+        };
+        format!(
+            "python_launching_ms={:?}, provider_started_ms={:?}, session_created_ms={:?}, progress_pending_ms={:?}, provider_stopped_ms={:?}, methods_elapsed_ms={methods:?}",
+            marker_ms("python-launching"),
+            marker_ms("provider-started"),
+            marker_ms("session-new-count"),
+            marker_ms("progress-pending"),
+            marker_ms("provider-stopped"),
+        )
+    }
 }
 
 fn python_executable() -> PathBuf {
@@ -412,6 +456,29 @@ fn python_executable() -> PathBuf {
     )
     .canonicalize()
     .expect("canonical Python interpreter")
+}
+
+#[test]
+#[ignore = "requires Python 3; validates the opt-in Hermes fixture interpreter"]
+fn hermes_fixture_uses_the_resolved_python_under_the_trusted_search_path() {
+    let expected = python_executable();
+    let mut host = FixtureHost::new("hermes-stop-prompt-error");
+    host.enable_hermes_runtime();
+    let shim = host.root.path().join("hermes-install/venv/bin/python3");
+    let output = Command::new(shim)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .expect("run the synthetic Hermes interpreter with its trusted PATH");
+    assert!(output.status.success(), "Hermes fixture Python must start");
+    let actual = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
+        .canonicalize()
+        .expect("canonical fixture interpreter");
+    assert_eq!(
+        actual, expected,
+        "Hermes must use the same resolved interpreter as the other synthetic providers"
+    );
 }
 
 pub(crate) fn verified_actor() -> VerifiedActor {

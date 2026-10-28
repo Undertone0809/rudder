@@ -583,10 +583,11 @@ async fn correlated_prompt_error_after_stop_terminalizes_without_claiming_provid
     };
     if let Some(completed) = completed_before_progress {
         match completed {
-            Ok((Err(failure), _host)) => panic!(
-                "synthetic Hermes did not reach progress before completion: code={}, process={:?}",
+            Ok((Err(failure), host)) => panic!(
+                "synthetic Hermes did not reach progress before completion: code={}, process={:?}, {}",
                 failure.diagnostic_code(),
-                failure.process_disposition()
+                failure.process_disposition(),
+                host.hermes_phase_summary()
             ),
             Ok((Ok(_), _host)) => {
                 panic!("synthetic Hermes completed successfully before the stop request")
@@ -616,7 +617,8 @@ async fn correlated_prompt_error_after_stop_terminalizes_without_claiming_provid
     .await
     .unwrap();
     assert_eq!(stop_receipt.outcome, StopOutcome::StopIntentRecorded);
-    let (result, _host) = worker.await.unwrap();
+    let (result, host) = worker.await.unwrap();
+    eprintln!("synthetic Hermes phases: {}", host.hermes_phase_summary());
     let failure = match result {
         Err(failure) => failure,
         Ok(_) => {
