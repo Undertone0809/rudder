@@ -486,7 +486,10 @@ impl ProviderHost {
         )
         .expect("attach non-contacted OpenCode endpoint");
         let context = if owned {
-            let executable = context.codex_executable().to_path_buf();
+            let executable = context
+                .codex_executable()
+                .expect("fixture configures Codex executable")
+                .to_path_buf();
             context.with_opencode_executable(executable).unwrap()
         } else {
             context
@@ -955,7 +958,11 @@ async fn opencode_operator_profile_requires_an_owned_host_and_respects_instructi
         assert_conflict(admit(&database.pool, &actor, &host, &chat, label).await);
         assert_eq!(row_counts(&database.pool, &chat).await, before);
     }
-    let executable = host.context.codex_executable().to_path_buf();
+    let executable = host
+        .context
+        .codex_executable()
+        .expect("fixture configures Codex executable")
+        .to_path_buf();
     host.context = host
         .context
         .with_opencode_executable(executable)
