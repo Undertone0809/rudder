@@ -25,12 +25,15 @@ async fn call(
     path: &str,
     input: Value,
 ) -> (StatusCode, Value) {
-    let mut response = client
-        .request(method, format!("{base}{path}"))
-        .insert_header(("authorization", format!("Bearer {token}")))
-        .send_json(&input)
-        .await
-        .unwrap();
+    let request = client
+        .request(method.clone(), format!("{base}{path}"))
+        .insert_header(("authorization", format!("Bearer {token}")));
+    let mut response = if matches!(method, Method::GET | Method::HEAD) {
+        request.send().await
+    } else {
+        request.send_json(&input).await
+    }
+    .unwrap();
     let status = response.status();
     let bytes = response.body().await.unwrap();
     (
