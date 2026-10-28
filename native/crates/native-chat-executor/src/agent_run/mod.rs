@@ -14,6 +14,10 @@ mod projection;
 mod session;
 mod transcript;
 
+pub(crate) use config::resolve as resolve_transport_process;
+pub(crate) use http::invoke as invoke_transport;
+pub(crate) use projection::parse as project_transport_process;
+
 pub use config::{AgentProcessLaunch, resolve_agent_process};
 pub use session::{agent_session_for_workspace, normalize_agent_session};
 pub use transcript::{parse_agent_provider_event, parse_agent_stdout_line};
@@ -31,6 +35,28 @@ use std::{
     },
     time::Duration,
 };
+
+/// Provider client identity shared by Heartbeat and Native Chat owners. This
+/// carries no launch capability, queue authority, lease, or admission decision.
+pub(crate) struct RuntimeTransportTarget {
+    pub runtime_type: String,
+    pub run_id: String,
+    pub agent_id: String,
+    pub session_id: Option<String>,
+    pub session_params: Option<Value>,
+}
+
+impl From<&AgentRunClaim> for RuntimeTransportTarget {
+    fn from(claim: &AgentRunClaim) -> Self {
+        Self {
+            runtime_type: claim.runtime_type.clone(),
+            run_id: claim.run_id.clone(),
+            agent_id: claim.agent_id.clone(),
+            session_id: claim.session_id_before.clone(),
+            session_params: claim.session_params_before.clone(),
+        }
+    }
+}
 
 /// These inputs must come from Foundation's persisted Run context preparation,
 /// never directly from a public invoke request. `config` is the effective Agent
@@ -132,7 +158,11 @@ pub struct AgentRunExecutionObservation {
 }
 
 impl AgentRunExecutionObservation {
-    fn failure(state: AgentRunExecutionState, code: &str, error: impl Into<String>) -> Self {
+    pub(crate) fn failure(
+        state: AgentRunExecutionState,
+        code: &str,
+        error: impl Into<String>,
+    ) -> Self {
         Self {
             state,
             error_code: Some(code.into()),

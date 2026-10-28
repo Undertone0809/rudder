@@ -15,8 +15,12 @@ const NATIVE_RUNTIMES: &[&str] = &[
     "cursor",
     "cursor_local",
     "opencode_local",
+    "process",
+    "http",
+    "openclaw_gateway",
+    "hermes_gateway",
 ];
-const LEGACY_RUNTIMES: &[&str] = &["process", "http", "openclaw_gateway", "hermes_gateway"];
+const LEGACY_RUNTIMES: &[&str] = &[];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SendAuthority {
@@ -195,7 +199,7 @@ async fn has_native_evidence(
                        AND (b.conversation_id=$2::uuid
                          OR (b.target_type='chat_conversation' AND b.target_id=$2))
                        AND b.runtime_type IN ('codex_local','hermes_local','pi_local',
-                                              'claude_local','cursor','cursor_local','opencode_local'))",
+                                              'claude_local','cursor','cursor_local','opencode_local','process','http','openclaw_gateway','hermes_gateway'))",
     )
     .bind(organization_id)
     .bind(conversation_id)
@@ -344,5 +348,6 @@ fn classify_runtime(runtime_type: &str) -> Result<SendAuthority> {
     if LEGACY_RUNTIMES.contains(&runtime_type) {
         return Ok(SendAuthority::Legacy);
     }
-    Err(http(409, "Selected Agent runtime is unsupported"))
+    // The existing registry uses the process adapter for unknown runtime names.
+    Ok(SendAuthority::Native)
 }

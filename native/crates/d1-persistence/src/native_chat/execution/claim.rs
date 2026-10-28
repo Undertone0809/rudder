@@ -22,10 +22,10 @@ use sqlx::{PgPool, Row};
 pub struct ClaimedExecution {
     pub fence: ExecutionFence,
     pub config: ResolvedCodexConfig,
-    execution_principal: NativeChatExecutionPrincipal,
+    pub(super) execution_principal: NativeChatExecutionPrincipal,
     /// One-use capability consumed by the executor when it launches the
     /// transport. It is intentionally neither cloneable nor serializable.
-    connection_launch_permit: ConnectionLaunchPermit,
+    pub(super) connection_launch_permit: ConnectionLaunchPermit,
 }
 
 impl ClaimedExecution {
@@ -187,7 +187,7 @@ pub async fn claim_with_preflight(
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
     let runtime_type = config.identity.runtime_type.as_str();
-    if !matches!(
+    let local_runtime = matches!(
         runtime_type,
         "codex_local"
             | "hermes_local"
@@ -196,7 +196,9 @@ pub async fn claim_with_preflight(
             | "cursor"
             | "cursor_local"
             | "opencode_local"
-    ) || (runtime_type == "hermes_local") != config.hermes.is_some()
+    );
+    if local_runtime == config.transport.is_some()
+        || (runtime_type == "hermes_local") != config.hermes.is_some()
         || (runtime_type == "pi_local") != config.pi.is_some()
         || (runtime_type == "claude_local") != config.claude.is_some()
         || matches!(runtime_type, "cursor" | "cursor_local") != config.cursor.is_some()
@@ -712,6 +714,36 @@ pub async fn claim_with_preflight(
                 && attempt_thread.is_none()
                 && attempt_turn.is_none()
         }
+        (runtime, state, session) if checkpoint.provider().is_transport() => {
+            checkpoint.provider().matches_runtime(runtime)
+                && checkpoint.transport_session() == session
+                && checkpoint.transport_request_id().is_none()
+                && checkpoint.thread_id().is_none()
+                && checkpoint.turn_id().is_none()
+                && attempt_thread.is_none()
+                && attempt_turn.is_none()
+                && phase.as_deref() == Some(checkpoint.phase().as_str())
+                && session_id_before.is_none()
+                && session_intent.get("sourceRunId") == Some(&serde_json::Value::Null)
+                && session_intent.get("sessionParams") == Some(&serde_json::Value::Null)
+                && match (state, session) {
+                    ("pending", None) => {
+                        checkpoint.phase() == NativeChatProtocolPhase::NoThreadRequest
+                            && session_reuse_scope == "none"
+                            && session_intent["kind"] == "fresh"
+                            && session_intent["reuseScope"] == "none"
+                            && session_intent["sessionId"].is_null()
+                    }
+                    ("open", Some(id)) => {
+                        checkpoint.phase() == NativeChatProtocolPhase::ThreadKnown
+                            && session_reuse_scope == "explicit"
+                            && session_intent["kind"] == "resume"
+                            && session_intent["reuseScope"] == "explicit"
+                            && session_intent["sessionId"].as_str() == Some(id)
+                    }
+                    _ => false,
+                }
+        }
         _ => false,
     };
     if checkpoint.revision() != 0 || !checkpoint_matches_binding {
@@ -999,7 +1031,7 @@ pub async fn claim_with_preflight(
     })
 }
 
-fn new_connection_claim_id() -> Result<String> {
+pub(super) fn new_connection_claim_id() -> Result<String> {
     let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes)
         .map_err(|_| http(500, "Native Chat connection claim could not be created"))?;

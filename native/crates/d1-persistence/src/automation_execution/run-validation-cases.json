@@ -1,0 +1,251 @@
+[
+  {
+    "input": {},
+    "output": {
+      "source": "manual"
+    }
+  },
+  {
+    "input": null,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "null",
+        "path": [],
+        "message": "Expected object, received null"
+      }
+    ]
+  },
+  {
+    "input": [],
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [],
+        "message": "Expected object, received array"
+      }
+    ]
+  },
+  {
+    "input": "x",
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "string",
+        "path": [],
+        "message": "Expected object, received string"
+      }
+    ]
+  },
+  {
+    "input": {
+      "source": null
+    },
+    "issues": [
+      {
+        "expected": "'manual' | 'api'",
+        "received": "null",
+        "code": "invalid_type",
+        "path": [
+          "source"
+        ],
+        "message": "Expected 'manual' | 'api', received null"
+      }
+    ]
+  },
+  {
+    "input": {
+      "source": "webhook"
+    },
+    "issues": [
+      {
+        "received": "webhook",
+        "code": "invalid_enum_value",
+        "options": [
+          "manual",
+          "api"
+        ],
+        "path": [
+          "source"
+        ],
+        "message": "Invalid enum value. Expected 'manual' | 'api', received 'webhook'"
+      }
+    ]
+  },
+  {
+    "input": {
+      "source": "api",
+      "extra": true
+    },
+    "output": {
+      "source": "api"
+    }
+  },
+  {
+    "input": {
+      "triggerId": null,
+      "payload": null,
+      "idempotencyKey": null
+    },
+    "output": {
+      "triggerId": null,
+      "payload": null,
+      "idempotencyKey": null,
+      "source": "manual"
+    }
+  },
+  {
+    "input": {
+      "triggerId": "10000000-0000-4000-8000-000000000001",
+      "payload": {
+        "nested": [
+          1,
+          true
+        ]
+      },
+      "idempotencyKey": "  fixture-key  "
+    },
+    "output": {
+      "triggerId": "10000000-0000-4000-8000-000000000001",
+      "payload": {
+        "nested": [
+          1,
+          true
+        ]
+      },
+      "idempotencyKey": "fixture-key",
+      "source": "manual"
+    }
+  },
+  {
+    "input": {
+      "triggerId": "bad"
+    },
+    "issues": [
+      {
+        "validation": "uuid",
+        "code": "invalid_string",
+        "message": "Invalid uuid",
+        "path": [
+          "triggerId"
+        ]
+      }
+    ]
+  },
+  {
+    "input": {
+      "payload": []
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [
+          "payload"
+        ],
+        "message": "Expected object, received array"
+      }
+    ]
+  },
+  {
+    "input": {
+      "payload": 2
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "number",
+        "path": [
+          "payload"
+        ],
+        "message": "Expected object, received number"
+      }
+    ]
+  },
+  {
+    "input": {
+      "idempotencyKey": 3
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "idempotencyKey"
+        ],
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  {
+    "input": {
+      "idempotencyKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "issues": [
+      {
+        "code": "too_big",
+        "maximum": 255,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at most 255 character(s)",
+        "path": [
+          "idempotencyKey"
+        ]
+      }
+    ]
+  },
+  {
+    "input": {
+      "source": 2,
+      "triggerId": 4,
+      "payload": [],
+      "idempotencyKey": false
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "triggerId"
+        ],
+        "message": "Expected string, received number"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [
+          "payload"
+        ],
+        "message": "Expected object, received array"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "boolean",
+        "path": [
+          "idempotencyKey"
+        ],
+        "message": "Expected string, received boolean"
+      },
+      {
+        "expected": "'manual' | 'api'",
+        "received": "number",
+        "code": "invalid_type",
+        "path": [
+          "source"
+        ],
+        "message": "Expected 'manual' | 'api', received number"
+      }
+    ]
+  }
+]

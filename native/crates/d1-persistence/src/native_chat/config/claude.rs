@@ -158,7 +158,7 @@ async fn resolve_claude_config_for_row(
     let agent_id: String = row.try_get("agent_id")?;
     if row.try_get::<String, _>("conversation_kind")? != "chat"
         || row.try_get::<String, _>("conversation_status")? != "active"
-        || row.try_get::<String, _>("agent_runtime_type")? != "claude_local"
+        || host.attempt_runtime(row.try_get::<String, _>("agent_runtime_type")?) != "claude_local"
         || matches!(
             row.try_get::<String, _>("agent_status")?.as_str(),
             "paused" | "terminated" | "pending_approval"
@@ -176,6 +176,7 @@ async fn resolve_claude_config_for_row(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Claude Agent runtime configuration is malformed"))?;
+    let config = host.attempt_config(config);
     let object = config
         .as_object()
         .ok_or_else(|| invalid("Claude Agent configuration must be an object"))?;
@@ -221,14 +222,15 @@ async fn resolve_claude_config_for_row(
         }
         Some(_) => return Err(invalid("Claude dangerouslySkipPermissions must be false")),
     };
-    let model_override: Option<String> = row.try_get("model_override")?;
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
     let model = model_override
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(object.get("model"), "model")?);
     if let Some(model) = &model {
         validate_model(model)?;
     }
-    let effort_override: Option<String> = row.try_get("effort_override")?;
+    let effort_override: Option<String> =
+        host.attempt_chat_override(row.try_get("effort_override")?);
     let effort = effort_override
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(
@@ -366,7 +368,7 @@ async fn resolve_claude_config_for_row(
     };
     Ok(super::ResolvedCodexConfig {
         identity,
-        executable: executable.to_path_buf(),
+        executable: Some(executable.to_path_buf()),
         cwd,
         model,
         reasoning_effort: effort,
@@ -387,6 +389,8 @@ async fn resolve_claude_config_for_row(
         hermes: None,
         pi: None,
         opencode: None,
+        transport: None,
+        model_attempt: None,
         claude: Some(ClaudeLocalConfig {
             home,
             agent_home,

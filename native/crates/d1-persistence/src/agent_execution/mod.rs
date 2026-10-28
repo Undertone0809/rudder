@@ -5,9 +5,11 @@
 //! terminal-effect consumer are installed together.
 
 mod admission;
+pub(crate) use admission::{admit_in_transaction, skip_unavailable_wakeup_in_transaction};
 mod analytics;
 mod approvals;
 pub use admission::{AgentExecutionActor, AgentRunAdmission, AgentWakeRequest, admit};
+pub(crate) use approvals::insert_runtime_approval;
 pub use approvals::{RuntimeApproval, create_runtime_approval, read_runtime_approval};
 pub mod attempts;
 mod budget;

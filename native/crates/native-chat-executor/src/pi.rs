@@ -177,10 +177,11 @@ pub(super) fn run_claimed(
     let (snapshot, launch) = match prepared {
         Ok(value) => value,
         Err(error) => {
-            return Err(ExecutionFailure::before_launch(
+            return Err(ExecutionFailure::before_launch_with_permit(
                 error,
                 execution_principal,
                 fence,
+                permit,
             ));
         }
     };

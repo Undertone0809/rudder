@@ -164,7 +164,7 @@ pub(super) async fn ensure_tx(
             agent_id, runtime_type, host_id, profile_id, workspace_binding_id,
             instructions_revision, capability_revision, continuity, binding_epoch, status)
          VALUES ($1::uuid, $2::uuid, 'chat_conversation', $2::uuid::text, $3, $4::uuid, $5, $6, $7,
-                 $8, $9, $10, 'native', 0, 'active')
+                 $8, $9, $10, 'native', (SELECT COALESCE(max(binding_epoch),-1)+1 FROM runtime_bindings WHERE org_id=$1::uuid AND conversation_id=$2::uuid), 'active')
          RETURNING id::text",
     )
     .bind(organization_id)

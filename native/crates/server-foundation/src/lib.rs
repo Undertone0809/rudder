@@ -69,6 +69,7 @@ pub(crate) mod agent_run_context;
 pub(crate) mod agent_run_worker;
 mod approval_reads;
 mod automation_reads;
+mod automation_worker;
 pub mod browser_auth;
 mod cost_reads;
 mod desktop_broker;

@@ -1025,7 +1025,9 @@ async function startServerRuntime(
   }, config.heartbeatSchedulerIntervalMs));
 
   if (config.heartbeatSchedulerEnabled) {
-    const automations = automationService(db as any);
+    const automations = automationService(db as any, {
+      nativeExecution: Boolean(ingress.appOptions.rustPublicIngress?.identityAuth),
+    });
     ownInterval("heartbeat-scheduler-interval", setInterval(() => {
       void heartbeat
         .tickTimers(new Date())

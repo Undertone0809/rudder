@@ -46,3 +46,6 @@ mod cursor_resume;
 
 #[path = "workflow/native_provider_stop.rs"]
 mod native_provider_stop;
+
+#[path = "workflow/transports.rs"]
+mod transports;

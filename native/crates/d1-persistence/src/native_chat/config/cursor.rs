@@ -85,7 +85,11 @@ pub(crate) async fn resolve_cursor_config(
     let agent_id: String = row.try_get("agent_id")?;
     if row.try_get::<String, _>("conversation_kind")? != "chat"
         || row.try_get::<String, _>("conversation_status")? != "active"
-        || row.try_get::<String, _>("agent_runtime_type")? != "cursor"
+        || !matches!(
+            host.attempt_runtime(row.try_get::<String, _>("agent_runtime_type")?)
+                .as_str(),
+            "cursor" | "cursor_local"
+        )
         || matches!(
             row.try_get::<String, _>("agent_status")?.as_str(),
             "terminated" | "pending_approval"
@@ -103,6 +107,7 @@ pub(crate) async fn resolve_cursor_config(
     let raw_config: String = row.try_get("agent_runtime_config")?;
     let config: Value = serde_json::from_str(&raw_config)
         .map_err(|_| invalid("Cursor Agent runtime configuration is malformed"))?;
+    let config = host.attempt_config(config);
     let object = config
         .as_object()
         .ok_or_else(|| invalid("Cursor Agent configuration must be an object"))?;
@@ -135,14 +140,15 @@ pub(crate) async fn resolve_cursor_config(
     validate_command(object.get("command"))?;
     let timeout_sec = optional_bounded_seconds(object.get("timeoutSec"), "timeoutSec", 3600)?;
     let grace_sec = optional_bounded_nonzero_seconds(object.get("graceSec"), "graceSec", 60)?;
-    let model_override: Option<String> = row.try_get("model_override")?;
+    let model_override: Option<String> = host.attempt_chat_override(row.try_get("model_override")?);
     let model = model_override
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(object.get("model"), "model")?);
     if let Some(model) = &model {
         validate_model(model)?;
     }
-    let effort_override: Option<String> = row.try_get("effort_override")?;
+    let effort_override: Option<String> =
+        host.attempt_chat_override(row.try_get("effort_override")?);
     let effort = effort_override
         .filter(|value| !value.trim().is_empty())
         .or(bounded_string(
@@ -297,11 +303,7 @@ pub(crate) async fn resolve_cursor_config(
     };
     Ok(super::ResolvedCodexConfig {
         identity,
-        executable: host
-            .cursor_runtime()
-            .expect("checked above")
-            .0
-            .to_path_buf(),
+        executable: host.cursor_runtime().map(|(path, _)| path.to_path_buf()),
         cwd,
         model: model.clone(),
         reasoning_effort: effort,
@@ -322,6 +324,8 @@ pub(crate) async fn resolve_cursor_config(
         hermes: None,
         pi: None,
         opencode: None,
+        transport: None,
+        model_attempt: None,
         claude: None,
         cursor: Some(CursorLocalConfig {
             home,

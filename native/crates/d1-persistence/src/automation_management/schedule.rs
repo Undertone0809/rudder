@@ -1,6 +1,6 @@
-//! Literal five-field cron contract used by Automation management only. The
-//! existing scheduler remains the sole dispatch owner. IANA rules come from
-//! chrono-tz, never process-local TZ or a reimplementation of timezone rules.
+//! Literal five-field cron contract shared by Automation management and
+//! execution. IANA rules come from chrono-tz, never process-local TZ or a
+//! parallel scheduler implementation.
 use super::*;
 use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
 use std::collections::BTreeSet;
@@ -189,12 +189,12 @@ fn zone(raw: &str) -> Result<Zone> {
         .map(Zone::Iana)
         .ok_or_else(invalid)
 }
-pub(super) fn stamp(ms: i64) -> Result<String> {
+pub(crate) fn stamp(ms: i64) -> Result<String> {
     DateTime::<Utc>::from_timestamp_millis(ms)
         .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .ok_or_else(|| http(500, "Internal server error"))
 }
-pub(super) fn next_tick(expression: &str, time_zone: &str, after: i64) -> Result<Option<i64>> {
+pub(crate) fn next_tick(expression: &str, time_zone: &str, after: i64) -> Result<Option<i64>> {
     // Legacy validates timezone before cron, even when both are invalid.
     let zone = zone(time_zone)?;
     let cron = parse(expression)?;

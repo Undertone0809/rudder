@@ -64,8 +64,22 @@ impl ExecutionFence {
         &self.run_owner_token
     }
 
-    /// Check the full private launch identity without exposing the random
-    /// claim ID. A Run/Attempt/owner/epoch match alone is not cleanup proof.
+    /// Match a still-owned launch capability to every private claim dimension.
+    /// This proves no launch; it does not create process cleanup evidence.
+    pub fn matches_unspent_launch_permit(
+        &self,
+        permit: &rudder_codex_app_server::ConnectionLaunchPermit,
+    ) -> bool {
+        let id = self.identity();
+        permit.matches_connection_claim(
+            id.run_id,
+            id.attempt_id,
+            self.run_execution_owner_token(),
+            id.connection_epoch,
+            &self.connection_claim_id,
+        )
+    }
+
     pub fn matches_cleanup_receipt(&self, cleanup: &CleanupReceipt) -> bool {
         let identity = self.identity();
         cleanup.matches_connection_claim(
@@ -156,6 +170,8 @@ pub struct CheckpointSnapshot {
     pub opencode_prompt_request_id: Option<String>,
     pub cursor_session: Option<CursorSessionSelector>,
     pub cursor_prompt_request_id: Option<String>,
+    pub transport_session: Option<String>,
+    pub transport_request_id: Option<String>,
 }
 
 impl fmt::Debug for CheckpointSnapshot {

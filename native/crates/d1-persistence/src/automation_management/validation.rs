@@ -184,6 +184,51 @@ fn overrides(errors: &mut Vec<Value>, out: &mut Map<String, Value>, body: &Map<S
     }
     out.insert("assigneeAgentRuntimeOverrides".into(), value.clone());
 }
+/// Existing runAutomationSchema, reused by the execution authority without
+/// extending the management command enum or weakening its seven operations.
+pub(crate) fn normalize_run_input(input: Value) -> Result<Value> {
+    let Some(body) = input.as_object() else {
+        let mut errors = Vec::new();
+        type_issue(&mut errors, Vec::new(), "object", Some(&input));
+        return Err(Error::Validation(json!(errors)));
+    };
+    let mut errors = Vec::new();
+    let mut out = Map::new();
+    reference(&mut errors, &mut out, body, "triggerId", false, true);
+    match body.get("payload") {
+        None => (),
+        Some(value) if value.is_null() || value.is_object() => {
+            out.insert("payload".into(), value.clone());
+        }
+        value => type_issue(&mut errors, vec![json!("payload")], "object", value),
+    }
+    string(
+        &mut errors,
+        &mut out,
+        body,
+        "idempotencyKey",
+        false,
+        true,
+        true,
+        None,
+        Some(255),
+    );
+    enumeration(
+        &mut errors,
+        &mut out,
+        body,
+        "source",
+        &["manual", "api"],
+        Some("manual"),
+        false,
+    );
+    if errors.is_empty() {
+        Ok(Value::Object(out))
+    } else {
+        Err(Error::Validation(json!(errors)))
+    }
+}
+
 pub fn normalize_input(operation: Operation, input: Value) -> Result<Value> {
     if matches!(operation, Operation::Delete | Operation::TriggerDelete) {
         return Ok(json!({}));

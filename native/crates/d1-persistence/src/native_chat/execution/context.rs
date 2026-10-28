@@ -200,7 +200,8 @@ async fn lock_execution(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let admitted_input_fingerprint = context_snapshot
-        .get("inputFingerprint")
+        .get("nativeChatDeliveryFingerprint")
+        .or_else(|| context_snapshot.get("inputFingerprint"))
         .and_then(Value::as_str)
         .map(str::to_owned);
     if run_agent_id != id.agent_id
@@ -281,7 +282,10 @@ async fn lock_execution(
     .ok_or_else(|| http(404, "Agent not found"))?;
     let agent_runtime: String = agent.try_get("agent_runtime_type")?;
     let agent_status: String = agent.try_get("status")?;
-    if agent_runtime != fence.runtime_type()
+    let expected_runtime = context_snapshot["nativeChatPrimaryRuntime"]
+        .as_str()
+        .unwrap_or(fence.runtime_type());
+    if agent_runtime != expected_runtime
         || matches!(agent_status.as_str(), "terminated" | "pending_approval")
     {
         return Err(http(409, "Native Chat Agent is not available"));
@@ -503,12 +507,28 @@ async fn lock_execution(
             }
             _ => false,
         };
+    let transport_identity_matches = checkpoint.provider().is_transport()
+        && checkpoint.provider().matches_runtime(fence.runtime_type())
+        && attempt_thread.is_none()
+        && attempt_turn.is_none()
+        && generation_thread.is_none()
+        && generation_turn.is_none()
+        && match (
+            segment_state.as_str(),
+            native_session_id.as_deref(),
+            checkpoint.transport_session(),
+        ) {
+            ("pending", None, None) => true,
+            ("open", Some(stored), Some(observed)) => stored == observed,
+            _ => false,
+        };
     if !codex_identity_matches
         && !hermes_identity_matches
         && !pi_identity_matches
         && !claude_identity_matches
         && !opencode_identity_matches
         && !cursor_identity_matches
+        && !transport_identity_matches
     {
         return Err(http(
             409,

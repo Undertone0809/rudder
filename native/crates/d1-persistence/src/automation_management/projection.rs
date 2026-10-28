@@ -12,7 +12,7 @@ fn snake(key: &str) -> String {
     }
     s
 }
-fn camel(key: &str) -> String {
+pub(crate) fn camel(key: &str) -> String {
     let mut out = String::new();
     let mut upper = false;
     for c in key.chars() {
@@ -34,10 +34,10 @@ fn table(trigger: bool) -> &'static str {
         "automations"
     }
 }
-pub(super) async fn automation(tx: &mut Tx<'_>, id: &str, lock: bool) -> Result<Option<Value>> {
+pub(crate) async fn automation(tx: &mut Tx<'_>, id: &str, lock: bool) -> Result<Option<Value>> {
     read(tx, id, false, lock).await
 }
-pub(super) async fn trigger(tx: &mut Tx<'_>, id: &str, lock: bool) -> Result<Option<Value>> {
+pub(crate) async fn trigger(tx: &mut Tx<'_>, id: &str, lock: bool) -> Result<Option<Value>> {
     read(tx, id, true, lock).await
 }
 async fn read(tx: &mut Tx<'_>, id: &str, trigger: bool, lock: bool) -> Result<Option<Value>> {

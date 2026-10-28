@@ -7,6 +7,8 @@ use url::Url;
 /// deserialized from a request, and intentionally has no `Debug` implementation.
 #[derive(Clone)]
 pub struct LocalHostContext {
+    environment: std::collections::BTreeMap<String, String>,
+    pub(super) model_attempt: Option<(String, serde_json::Value, bool)>,
     host_id: String,
     instance_root: PathBuf,
     workspace_home: PathBuf,
@@ -14,7 +16,7 @@ pub struct LocalHostContext {
     friendly_workspace_home: bool,
     managed_profiles_root: PathBuf,
     operator_home: PathBuf,
-    codex_executable: PathBuf,
+    codex_executable: Option<PathBuf>,
     executable_search_path: String,
     executable_search_path_trusted: bool,
     native_codex_profile: bool,
@@ -36,7 +38,7 @@ pub struct LocalHostContext {
 
 impl LocalHostContext {
     #[allow(clippy::too_many_arguments)]
-    pub fn from_rust_host(
+    pub fn from_runtime_host(
         host_id: String,
         instance_root: PathBuf,
         workspace_home: PathBuf,
@@ -44,7 +46,7 @@ impl LocalHostContext {
         friendly_workspace_home: bool,
         managed_profiles_root: PathBuf,
         operator_home: PathBuf,
-        codex_executable: PathBuf,
+        codex_executable: Option<PathBuf>,
     ) -> std::result::Result<Self, super::Error> {
         if host_id.is_empty()
             || host_id.len() > 128
@@ -55,6 +57,8 @@ impl LocalHostContext {
             return Err(invalid("invalid local host identity"));
         }
         Ok(Self {
+            environment: std::collections::BTreeMap::new(),
+            model_attempt: None,
             host_id,
             instance_root: canonical_directory(instance_root, "instance root")?,
             workspace_home: canonical_directory(workspace_home, "workspace home")?,
@@ -68,7 +72,9 @@ impl LocalHostContext {
                 "managed profile root",
             )?,
             operator_home: canonical_directory(operator_home, "operator home")?,
-            codex_executable: canonical_file(codex_executable, "Codex executable")?,
+            codex_executable: codex_executable
+                .map(|path| canonical_file(path, "Codex executable"))
+                .transpose()?,
             executable_search_path: "/usr/bin:/bin".into(),
             executable_search_path_trusted: false,
             native_codex_profile: false,
@@ -87,6 +93,65 @@ impl LocalHostContext {
             opencode_bearer_token: None,
             opencode_operator_profile_supported: true,
         })
+    }
+
+    pub(super) fn attempt_runtime(&self, persisted: String) -> String {
+        self.model_attempt
+            .as_ref()
+            .map(|v| v.0.clone())
+            .unwrap_or(persisted)
+    }
+
+    pub(super) fn attempt_config(&self, persisted: serde_json::Value) -> serde_json::Value {
+        self.model_attempt
+            .as_ref()
+            .map(|v| v.1.clone())
+            .unwrap_or(persisted)
+    }
+
+    pub(super) fn attempt_chat_override(&self, value: Option<String>) -> Option<String> {
+        if self.model_attempt.as_ref().is_some_and(|v| v.2) {
+            None
+        } else {
+            value
+        }
+    }
+
+    /// Compatibility constructor for callers with an installed Codex binary.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_rust_host(
+        host_id: String,
+        instance_root: PathBuf,
+        workspace_home: PathBuf,
+        previous_documents_root: PathBuf,
+        friendly_workspace_home: bool,
+        managed_profiles_root: PathBuf,
+        operator_home: PathBuf,
+        codex_executable: PathBuf,
+    ) -> Result<Self> {
+        Self::from_runtime_host(
+            host_id,
+            instance_root,
+            workspace_home,
+            previous_documents_root,
+            friendly_workspace_home,
+            managed_profiles_root,
+            operator_home,
+            Some(codex_executable),
+        )
+    }
+
+    /// Captured operator runtime environment, supplied only by trusted startup.
+    pub fn with_runtime_environment(
+        mut self,
+        environment: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.environment = environment;
+        self
+    }
+
+    pub fn environment(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.environment
     }
 
     /// Opt into the already-provisioned per-Agent Codex home under this
@@ -234,8 +299,8 @@ impl LocalHostContext {
         &self.host_id
     }
 
-    pub fn codex_executable(&self) -> &Path {
-        &self.codex_executable
+    pub fn codex_executable(&self) -> Option<&Path> {
+        self.codex_executable.as_deref()
     }
 
     pub fn hermes_executable(&self) -> Option<&Path> {

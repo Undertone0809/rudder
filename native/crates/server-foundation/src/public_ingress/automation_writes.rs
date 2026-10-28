@@ -1,5 +1,5 @@
-//! Seven Automation management writes. Run/fire and the scheduler retain their
-//! existing owner; selected writes have no Node callback or fallback.
+//! Seven Automation management writes. Run/fire use automation_execution;
+//! selected writes have no Node callback or fallback.
 use super::*;
 use crate::native_session_auth::NativeIngressIdentity;
 use actix_web::http::Method;

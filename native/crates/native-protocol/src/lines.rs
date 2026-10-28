@@ -1,7 +1,9 @@
 //! Bounded LF framing for native process protocols. Adapter parsing remains
 //! outside this module; records need not be JSON-RPC messages.
 
-pub const MAX_NATIVE_FRAME_BYTES: usize = 8 * 1024 * 1024;
+// One existing 10 MiB generated image occupies about 14 MiB as JSON/base64.
+// Chunk and queued-stream backpressure bounds remain unchanged.
+pub const MAX_NATIVE_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_NATIVE_CHUNK_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

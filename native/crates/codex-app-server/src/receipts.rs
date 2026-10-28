@@ -124,10 +124,15 @@ pub struct TurnReceipt {
     turn_id: String,
     status: TurnStatus,
     final_text: Option<String>,
+    generated_attachments: Vec<Value>,
     usage: Option<TurnUsage>,
 }
 
 impl TurnReceipt {
+    pub fn generated_attachments(&self) -> &[Value] {
+        &self.generated_attachments
+    }
+
     pub fn thread_id(&self) -> &str {
         &self.thread_id
     }
@@ -248,6 +253,8 @@ struct ActiveTurn {
     items: BTreeMap<String, String>,
     usage: Option<TurnUsage>,
     terminal: Option<(TurnStatus, Option<BTreeMap<String, String>>)>,
+    generated_attachments: BTreeMap<String, Value>,
+    generated_bytes: usize,
     agent_messages: BTreeMap<String, AgentMessageMetadata>,
     agent_metadata_incomplete: bool,
     final_answer_item_id: Option<String>,
@@ -303,7 +310,13 @@ impl TurnReceiptTracker {
         let bytes = serde_json::to_vec(&params)
             .map_err(|_| TransportError::InvalidTurnReceipt)?
             .len();
-        if bytes > MAX_EVENT_BYTES {
+        let image = method == "item/completed" && params["item"]["type"] == "image_generation_call";
+        let limit = if image {
+            rudder_native_protocol::lines::MAX_NATIVE_FRAME_BYTES
+        } else {
+            MAX_EVENT_BYTES
+        };
+        if bytes > limit {
             return Err(TransportError::InvalidTurnReceipt);
         }
         if let Some(active) = self.active.as_mut() {
@@ -323,7 +336,12 @@ impl TurnReceiptTracker {
             return Ok(());
         }
         if self.early.len() >= MAX_EARLY_EVENTS
-            || self.early_bytes.saturating_add(bytes) > MAX_EARLY_BYTES
+            || self.early_bytes.saturating_add(bytes)
+                > if image {
+                    rudder_native_protocol::lines::MAX_NATIVE_FRAME_BYTES
+                } else {
+                    MAX_EARLY_BYTES
+                }
         {
             return Err(TransportError::InvalidTurnReceipt);
         }
@@ -364,6 +382,8 @@ impl TurnReceiptTracker {
             items: BTreeMap::new(),
             usage: None,
             terminal: None,
+            generated_attachments: BTreeMap::new(),
+            generated_bytes: 0,
             agent_messages: BTreeMap::new(),
             agent_metadata_incomplete: false,
             final_answer_item_id: None,
@@ -441,6 +461,7 @@ impl TurnReceiptTracker {
             turn_id: active.turn_id,
             status,
             final_text,
+            generated_attachments: active.generated_attachments.into_values().collect(),
             usage: active.usage,
         });
         Ok(())
@@ -609,6 +630,36 @@ impl ActiveTurn {
         }
         let item = &params["item"];
         let id = required_locator(&item["id"])?;
+        if item["type"] == "image_generation_call" {
+            if let Some(encoded) = item["result"].as_str() {
+                let encoded = encoded.split_once(',').map_or(encoded, |(_, v)| v);
+                let encoded: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+                if !encoded.is_empty()
+                    && encoded
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"+/=".contains(&c))
+                    && !self.generated_attachments.contains_key(&id)
+                {
+                    self.generated_bytes = self.generated_bytes.saturating_add(encoded.len());
+                    if self.generated_bytes > rudder_native_protocol::lines::MAX_NATIVE_FRAME_BYTES
+                    {
+                        return Err(TransportError::InvalidTurnReceipt);
+                    }
+                    let safe: String = id
+                        .chars()
+                        .map(|c| {
+                            if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect();
+                    self.generated_attachments.insert(id.clone(),serde_json::json!({"source":"codex_image_generation","originalFilename":format!("{safe}.png"),"contentType":"image/png","bodyBase64":encoded,"toolCallId":id}));
+                }
+            }
+            return Ok(());
+        }
         if item["type"] != "agentMessage" {
             if self.final_answer_item_id.as_deref() == Some(id.as_str())
                 || self.agent_messages.contains_key(&id)
@@ -1018,6 +1069,34 @@ mod tests {
 
     fn delta(thread: &str, turn: &str, id: &str, text: &str) -> Value {
         json!({"threadId":thread,"turnId":turn,"itemId":id,"delta":text})
+    }
+
+    #[test]
+    fn generated_image_receipt_keeps_normal_and_ten_mib_images_correlated() {
+        for bytes in [12usize, 10 * 1024 * 1024] {
+            let mut tracker = tracker();
+            tracker
+                .begin_turn("thread-1".into(), "turn-1".into())
+                .unwrap();
+            let encoded = "A".repeat(bytes.div_ceil(3) * 4);
+            tracker.observe("item/completed",json!({"threadId":"other","turnId":"turn-1","item":{"id":"wrong","type":"image_generation_call","result":"AAAA"}})).unwrap();
+            let image = json!({"threadId":"thread-1","turnId":"turn-1","item":{"id":"image-1","type":"image_generation_call","result":encoded}});
+            tracker.observe("item/completed", image.clone()).unwrap();
+            tracker.observe("item/completed", image).unwrap();
+            tracker
+                .observe("turn/completed", terminal("thread-1", "turn-1"))
+                .unwrap();
+            tracker.finish().unwrap();
+            let receipt = tracker.take().unwrap();
+            assert_eq!(receipt.generated_attachments().len(), 1);
+            assert_eq!(
+                receipt.generated_attachments()[0]["bodyBase64"]
+                    .as_str()
+                    .unwrap()
+                    .len(),
+                bytes.div_ceil(3) * 4
+            );
+        }
     }
 
     #[test]

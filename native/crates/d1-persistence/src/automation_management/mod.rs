@@ -1,8 +1,8 @@
-//! Automation definition/trigger management. Execution and scheduling retain
-//! their existing owner; these seven commands never dispatch agent work.
+//! Automation definition/trigger management. These seven commands never
+//! dispatch work; native execution and scheduling live in automation_execution.
 mod definitions;
-mod projection;
-mod schedule;
+pub(crate) mod projection;
+pub(crate) mod schedule;
 mod secrets;
 mod triggers;
 mod validation;
@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 pub use validation::normalize_input;
+pub(crate) use validation::normalize_run_input;
 type Tx<'a> = Transaction<'a, Postgres>;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -252,7 +253,7 @@ pub async fn execute(
     tx.commit().await?;
     Ok(result)
 }
-async fn board_can_assign(tx: &mut Tx<'_>, org: &str, actor: &Actor<'_>) -> Result<()> {
+pub(crate) async fn board_can_assign(tx: &mut Tx<'_>, org: &str, actor: &Actor<'_>) -> Result<()> {
     if actor.kind != "user" || actor.local_implicit {
         return Ok(());
     }

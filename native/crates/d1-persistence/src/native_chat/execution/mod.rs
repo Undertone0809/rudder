@@ -6,6 +6,7 @@
 mod checkpoint;
 mod claim;
 mod context;
+mod continuation;
 mod diagnostic;
 mod effect;
 mod finalization;
@@ -15,7 +16,15 @@ mod native_stopping;
 mod output;
 mod stopping;
 mod submission;
+mod transport;
+mod transport_approval;
 mod types;
+pub use transport_approval::{create_transport_approval, read_transport_approval};
+
+pub use transport::{
+    TransportCleanupProof, TransportInvocation, TransportRequestProof, TransportTurnReceipt,
+    prepare_transport_invocation, record_transport_terminal,
+};
 
 pub use checkpoint::{
     CheckpointReceipt, CheckpointTransition, EffectKind, EffectPermit, advance_checkpoint,
@@ -27,12 +36,14 @@ pub use effect::{
     AuthorizedEffect, EffectDispatch, authorize_effect, prepare_claude_combined_input,
 };
 pub use finalization::{
-    NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, finalize, finalize_failed,
-    finalize_hermes, finalize_hermes_failed, finalize_hermes_prompt_error_stopped,
-    finalize_hermes_stopped, finalize_hermes_stopped_before_submission, finalize_native,
-    finalize_native_stopped, finalize_native_stopped_before_submission,
-    finalize_output_limit_failure, finalize_pi, finalize_pi_stopped,
-    finalize_pi_stopped_before_submission, finalize_stopped, finalize_stopped_before_submission,
+    NativeProviderKind, NativeProviderStatus, NativeProviderTurnReceipt, ProviderCleanup,
+    ProviderTurn, continue_after_terminal, continue_before_launch, finalize,
+    finalize_before_launch_failure, finalize_failed, finalize_hermes, finalize_hermes_failed,
+    finalize_hermes_prompt_error_stopped, finalize_hermes_stopped,
+    finalize_hermes_stopped_before_submission, finalize_native, finalize_native_stopped,
+    finalize_native_stopped_before_submission, finalize_output_limit_failure, finalize_pi,
+    finalize_pi_stopped, finalize_pi_stopped_before_submission, finalize_stopped,
+    finalize_stopped_before_submission, finalize_transport,
 };
 pub use hermes_progress::{HermesProgressCommit, record_hermes_progress};
 pub use lease::{LeaseReceipt, renew_lease};
@@ -43,7 +54,10 @@ pub use stopping::{
     advance_stopping_hermes_turn, bind_stopping_connection, observe_stop, renew_stopping_lease,
     reserve_interrupt,
 };
-pub use submission::{SubmissionInput, load_submission, validate_submission_source};
+pub use submission::{
+    SubmissionInput, TransportChatContext, load_submission, load_transport_chat_context,
+    validate_submission_source,
+};
 pub use types::{CheckpointSnapshot, ExecutionFence, ExecutionIdentity};
 
 use crate::runtime_bindings::Error;

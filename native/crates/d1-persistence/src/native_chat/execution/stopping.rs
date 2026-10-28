@@ -561,7 +561,7 @@ pub(super) async fn frozen_message(
     .bind(&fence.generation_id)
     .fetch_one(&mut **tx)
     .await?;
-    let rows=sqlx::query("SELECT id::text,status,CASE WHEN octet_length(body)<=524288 THEN body END AS body,(structured_payload IS NULL OR structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS supported FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND run_id=$3::uuid AND role='assistant' ORDER BY id LIMIT 2 FOR UPDATE")
+    let rows=sqlx::query("SELECT id::text,status,CASE WHEN octet_length(body)<=524288 THEN body END AS body,(structured_payload IS NULL OR structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS supported FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND run_id=$3::uuid AND role='assistant' AND superseded_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE")
         .bind(&fence.organization_id).bind(&fence.conversation_id).bind(&fence.run_id).fetch_all(&mut **tx).await?;
     if rows.len() > 1 {
         return Err(http(409, "Frozen assistant projection is ambiguous"));
@@ -598,7 +598,7 @@ pub(super) async fn require_empty_frozen_prefix(
                 g.accepted_through_seq AS generation_cutoff,g.frozen_body_hash AS generation_hash,
                 EXISTS(SELECT 1 FROM chat_messages m
                        WHERE m.org_id=a.org_id AND m.conversation_id=g.conversation_id
-                         AND m.run_id=$4::uuid AND m.role='assistant') AS has_assistant_projection
+                         AND m.run_id=$4::uuid AND m.role='assistant' AND m.superseded_at IS NULL) AS has_assistant_projection
          FROM chat_control_actions a JOIN chat_generations g
            ON g.org_id=a.org_id AND g.id=a.expected_generation_id
          WHERE a.org_id=$1::uuid AND a.id=$2::uuid AND a.expected_generation_id=$3::uuid",

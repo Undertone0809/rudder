@@ -14,16 +14,12 @@ use sqlx::Row;
 /// binding may be created for any configured local provider, but it must not
 /// admit input if the worker has no Rust execution branch for that provider.
 fn supports_native_chat_runtime(runtime_type: &str) -> bool {
-    matches!(
-        runtime_type,
-        "codex_local"
-            | "hermes_local"
-            | "claude_local"
-            | "cursor"
-            | "cursor_local"
-            | "opencode_local"
-            | "pi_local"
-    )
+    // The established adapter registry treats an unrecognized nonempty type as
+    // a configured process transport. Config resolution still requires its
+    // command before this binding may admit a turn.
+    !runtime_type.trim().is_empty()
+        && runtime_type.len() <= 128
+        && !runtime_type.chars().any(char::is_control)
 }
 
 fn valid_open_session(runtime_type: &str, session_id: &str) -> bool {
@@ -43,7 +39,11 @@ fn valid_open_session(runtime_type: &str, session_id: &str) -> bool {
                 && session_id.len() <= 256
                 && !session_id.chars().any(char::is_control)
         }
-        _ => false,
+        _ => {
+            !session_id.trim().is_empty()
+                && session_id.len() <= 4096
+                && !session_id.chars().any(char::is_control)
+        }
     }
 }
 
@@ -167,10 +167,15 @@ mod tests {
             "cursor_local",
             "opencode_local",
             "pi_local",
+            "process",
+            "http",
+            "hermes_gateway",
+            "openclaw_gateway",
+            "custom_process_runtime",
         ] {
             assert!(supports_native_chat_runtime(runtime), "{runtime}");
         }
-        for runtime in ["process", "openclaw_gateway", "gemini_cli", ""] {
+        for runtime in ["", "\n", "bad\0runtime"] {
             assert!(!supports_native_chat_runtime(runtime), "{runtime}");
         }
     }
@@ -193,5 +198,15 @@ mod tests {
         assert!(!valid_open_session("claude_local", "not-a-uuid"));
         assert!(!valid_open_session("opencode_local", "not-a-session"));
         assert!(!valid_open_session("pi_local", "\n"));
+        for runtime in [
+            "process",
+            "http",
+            "hermes_gateway",
+            "openclaw_gateway",
+            "custom",
+        ] {
+            assert!(valid_open_session(runtime, "opaque-session"));
+            assert!(!valid_open_session(runtime, "\n"));
+        }
     }
 }

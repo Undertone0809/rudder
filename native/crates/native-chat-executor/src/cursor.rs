@@ -214,64 +214,68 @@ pub(crate) fn execute_turn(
     authority: &mut NativeTurnAuthority<'_>,
     timeout: Duration,
 ) -> Result<CursorExecutionObservation, HostExecutionFailure<CursorExecutionError>> {
-    if config.identity.runtime_type != "cursor" && config.identity.runtime_type != "cursor_local"
-        || timeout.is_zero()
-        || timeout > MAX_TURN_TIMEOUT
-        || !config.cwd.is_dir()
-        || !local.home.is_dir()
-        || local.instruction_agent_id != config.identity.agent_id
-        || local.instruction_revision != config.identity.instructions_revision
-        || !local.profile_revision_matches()
-        || !paths.process_host.is_file()
-        || !paths.runtime_root.is_dir()
-        || !paths.isolated_home.is_dir()
-        || local.timeout_sec.is_some_and(|seconds| seconds > 3600)
-        || local
-            .grace_sec
-            .is_some_and(|seconds| !(1..=60).contains(&seconds))
-        || run_id.is_empty()
-        || attempt_id.is_empty()
-        || owner_token.is_empty()
-    {
-        return Err(CursorExecutionError::InvalidConfiguration.into());
-    }
-    let timeout = local
-        .timeout_sec
-        .filter(|seconds| *seconds > 0)
-        .map(Duration::from_secs)
-        .map_or(timeout, |configured| timeout.min(configured));
-    let mut env = BTreeMap::new();
-    for (key, value) in &local.env {
-        if matches!(key.as_str(), "HOME" | "USERPROFILE")
-            || key.is_empty()
-            || key.contains('=')
-            || key.contains('\0')
-            || value.contains('\0')
+    let prepared = (|| -> Result<_, CursorExecutionError> {
+        if config.identity.runtime_type != "cursor"
+            && config.identity.runtime_type != "cursor_local"
+            || timeout.is_zero()
+            || timeout > MAX_TURN_TIMEOUT
+            || !config.cwd.is_dir()
+            || !local.home.is_dir()
+            || local.instruction_agent_id != config.identity.agent_id
+            || local.instruction_revision != config.identity.instructions_revision
+            || !local.profile_revision_matches()
+            || !paths.process_host.is_file()
+            || !paths.runtime_root.is_dir()
+            || !paths.isolated_home.is_dir()
+            || local.timeout_sec.is_some_and(|seconds| seconds > 3600)
+            || local
+                .grace_sec
+                .is_some_and(|seconds| !(1..=60).contains(&seconds))
+            || run_id.is_empty()
+            || attempt_id.is_empty()
+            || owner_token.is_empty()
         {
             return Err(CursorExecutionError::InvalidConfiguration.into());
         }
-        env.insert(key.clone(), value.clone());
-    }
-    env.insert("PATH".into(), local.executable_search_path.clone());
-    let instruction_rule = if local.managed_instruction_workspace {
-        Some(CursorManagedInstructionRule {
-            agent_id: local.instruction_agent_id.clone(),
-            revision: local.instruction_revision.clone(),
-            content: config.instruction_content.clone(),
-        })
-    } else {
-        if config
-            .instruction_content
-            .as_ref()
-            .is_some_and(|content| !content.is_empty())
-        {
-            return Err(CursorExecutionError::InvalidConfiguration.into());
+        let timeout = local
+            .timeout_sec
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .map_or(timeout, |configured| timeout.min(configured));
+        let mut env = BTreeMap::new();
+        for (key, value) in &local.env {
+            if matches!(key.as_str(), "HOME" | "USERPROFILE")
+                || key.is_empty()
+                || key.contains('=')
+                || key.contains('\0')
+                || value.contains('\0')
+            {
+                return Err(CursorExecutionError::InvalidConfiguration.into());
+            }
+            env.insert(key.clone(), value.clone());
         }
-        None
-    };
-    let mut transport = CursorAcpTransport::launch(
-        CursorAcpProcessLaunch {
-            executable: config.executable.clone(),
+        env.insert("PATH".into(), local.executable_search_path.clone());
+        let instruction_rule = if local.managed_instruction_workspace {
+            Some(CursorManagedInstructionRule {
+                agent_id: local.instruction_agent_id.clone(),
+                revision: local.instruction_revision.clone(),
+                content: config.instruction_content.clone(),
+            })
+        } else {
+            if config
+                .instruction_content
+                .as_ref()
+                .is_some_and(|content| !content.is_empty())
+            {
+                return Err(CursorExecutionError::InvalidConfiguration.into());
+            }
+            None
+        };
+        let launch = CursorAcpProcessLaunch {
+            executable: config
+                .executable
+                .clone()
+                .ok_or(CursorExecutionError::InvalidConfiguration)?,
             process_host: paths.process_host.clone(),
             runtime_root: paths.runtime_root.clone(),
             model: local.cli_model.clone(),
@@ -289,10 +293,21 @@ pub(crate) fn execute_turn(
             attempt_id: attempt_id.to_owned(),
             owner_token: owner_token.to_owned(),
             env,
-        },
-        permit,
-    )
-    .map_err(CursorExecutionError::from)?;
+        };
+        Ok((launch, timeout))
+    })();
+    let (launch, timeout) = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: None,
+                unspent_launch_permit: Some(permit),
+            });
+        }
+    };
+    let mut transport =
+        CursorAcpTransport::launch(launch, permit).map_err(CursorExecutionError::from)?;
     let connection = transport.connection_receipt();
     let deadline = Instant::now() + timeout;
     let result = (|| {
@@ -336,6 +351,7 @@ pub(crate) fn execute_turn(
         Ok((session, request_id, final_text, response, stop_reason, update_count)) => {
             let Some(cleanup) = cleanup else {
                 return Err(HostExecutionFailure {
+                    unspent_launch_permit: None,
                     error: CursorExecutionError::CleanupUnavailable,
                     cleanup: None,
                 });
@@ -344,6 +360,7 @@ pub(crate) fn execute_turn(
                 Ok(connection) => connection,
                 Err(error) => {
                     return Err(HostExecutionFailure {
+                        unspent_launch_permit: None,
                         error: CursorExecutionError::from(error),
                         cleanup: Some(Box::new(cleanup)),
                     });
@@ -362,6 +379,7 @@ pub(crate) fn execute_turn(
             })
         }
         Err(error) => Err(HostExecutionFailure {
+            unspent_launch_permit: None,
             error,
             cleanup: cleanup.map(Box::new),
         }),

@@ -49,6 +49,21 @@ impl ConnectionLaunchPermit {
             && self.owner_token == owner_token
     }
 
+    /// Read-only validation of an unused move-only launch capability. Unlike
+    /// a cleanup receipt this proves no connection consumed this exact permit.
+    pub fn matches_connection_claim(
+        &self,
+        run_id: &str,
+        attempt_id: &str,
+        owner_token: &str,
+        connection_epoch: i32,
+        claim_id: &str,
+    ) -> bool {
+        self.matches_launch(run_id, attempt_id, owner_token)
+            && self.connection_epoch == connection_epoch
+            && self.claim_id == claim_id
+    }
+
     pub(crate) fn into_identity(
         self,
         run_id: &str,

@@ -102,6 +102,7 @@ export async function preparePublicIngressStartup(
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
       deploymentMode: config.deploymentMode,
+      scheduler: { enabled: config.heartbeatSchedulerEnabled, intervalMs: config.heartbeatSchedulerIntervalMs },
       publicApiUrl,
       ...(config.authPublicBaseUrl ? { authPublicBaseUrl: config.authPublicBaseUrl } : {}),
       privateHostGate: {

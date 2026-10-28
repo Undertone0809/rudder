@@ -87,13 +87,14 @@ pub async fn read_turn(
     let source_id: String = generation.try_get("source_message_id")?;
     let rows = sqlx::query(
         "SELECT m.id::text,m.role,m.kind,m.status,
+          EXISTS(SELECT 1 FROM heartbeat_runs h JOIN automation_runs ar ON ar.org_id=h.org_id AND ar.id::text=h.context_snapshot->>'automationRunId' WHERE h.org_id=m.org_id AND h.id=$4::uuid AND ar.linked_chat_conversation_id=m.conversation_id AND ((ar.started_chat_message_id=m.id AND m.structured_payload=h.context_snapshot->'automationSourcePayload') OR (m.run_id=h.id AND m.role='assistant' AND h.context_snapshot->'automationOutputSettled'='true'::jsonb))) AS automation_projection,
           (m.structured_payload IS NULL OR m.structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS plain,
           m.approval_id IS NULL AS no_approval,
           NOT EXISTS(SELECT 1 FROM chat_attachments a WHERE a.org_id=m.org_id AND a.message_id=m.id) AS no_attachments,
           CASE WHEN octet_length(m.body)<=262144 THEN jsonb_build_object(
             'id',m.id,'orgId',m.org_id,'conversationId',m.conversation_id,
             'role',m.role,'kind',m.kind,'status',m.status,'body',m.body,
-            'structuredPayload',NULL,'approvalId',NULL,'approval',NULL,'attachments','[]'::jsonb,
+            'structuredPayload',m.structured_payload,'approvalId',m.approval_id,'approval',NULL,'attachments','[]'::jsonb,
             'runId',m.run_id,'generationId',$5::text,'replyingAgentId',m.replying_agent_id,
             'chatTurnId',m.chat_turn_id,'turnVariant',m.turn_variant,'supersededAt',m.superseded_at,
             'createdAt',m.created_at,'updatedAt',m.updated_at) END AS message
@@ -114,10 +115,12 @@ pub async fn read_turn(
         let id: String = row.try_get("id")?;
         let role: String = row.try_get("role")?;
         let status: String = row.try_get("status")?;
-        if row.try_get::<String, _>("kind")? != "message"
-            || !row.try_get::<bool, _>("plain")?
-            || !row.try_get::<bool, _>("no_approval")?
-            || !row.try_get::<bool, _>("no_attachments")?
+        let automation: bool = row.try_get("automation_projection")?;
+        if (!automation
+            && (row.try_get::<String, _>("kind")? != "message"
+                || !row.try_get::<bool, _>("plain")?
+                || !row.try_get::<bool, _>("no_approval")?
+                || !row.try_get::<bool, _>("no_attachments")?))
             || !matches!(
                 status.as_str(),
                 "streaming" | "completed" | "stopped" | "failed" | "interrupted"
@@ -128,9 +131,28 @@ pub async fn read_turn(
                 "Native Chat message requires an unsupported projection",
             ));
         }
-        let message: Value = row
+        let mut message: Value = row
             .try_get::<Option<Value>, _>("message")?
             .ok_or_else(|| http(422, "Native Chat message exceeds the read bound"))?;
+        if automation {
+            if let Some(approval) = message["approvalId"].as_str() {
+                let value: Option<Value> = sqlx::query_scalar(
+                    "SELECT to_jsonb(a) FROM approvals a WHERE org_id=$1::uuid AND id=$2::uuid",
+                )
+                .bind(org)
+                .bind(approval)
+                .fetch_optional(&mut *tx)
+                .await?;
+                message["approval"] = value.map(|v| camel_record(v)).unwrap_or(Value::Null);
+            }
+            let attachments:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(ca)||jsonb_build_object('provider',a.provider,'object_key',a.object_key,'content_type',a.content_type,'byte_size',a.byte_size,'sha256',a.sha256,'original_filename',a.original_filename,'created_by_agent_id',a.created_by_agent_id,'created_by_user_id',a.created_by_user_id,'content_path','/api/assets/'||a.id::text||'/content') FROM chat_attachments ca JOIN assets a ON a.org_id=ca.org_id AND a.id=ca.asset_id WHERE ca.org_id=$1::uuid AND ca.message_id=$2::uuid ORDER BY ca.created_at,ca.id").bind(org).bind(&id).fetch_all(&mut *tx).await?;
+            message["attachments"] = json!(
+                attachments
+                    .into_iter()
+                    .map(|v| camel_record(v))
+                    .collect::<Vec<_>>()
+            );
+        }
         if id == source_id && role == "user" {
             source = Some(message);
         } else if role == "assistant" && assistant.is_none() {
@@ -237,4 +259,16 @@ async fn read_legacy_turn_authority(
         "attemptEpoch": attempt_epoch,
         "controlVersion": control_version,
     }))
+}
+
+fn camel_record(value: Value) -> Value {
+    match value {
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (crate::automation_management::projection::camel(&key), value))
+                .collect(),
+        ),
+        other => other,
+    }
 }

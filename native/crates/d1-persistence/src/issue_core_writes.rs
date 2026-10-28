@@ -149,6 +149,8 @@ struct IssueCreateContext<'a> {
     input: &'a Value,
     asset_storage: Option<&'a dyn IssueAssetStorage>,
     staged_asset_objects: &'a mut Vec<String>,
+    wakeup_context_source: &'static str,
+    automation_dispatch: Option<&'a crate::automation_execution::LockedAutomationDispatch>,
 }
 
 struct IssueDescriptionAssetStageInput<'a> {
@@ -246,6 +248,8 @@ pub async fn apply_issue_core_write(
                             input,
                             asset_storage,
                             staged_asset_objects: &mut staged_asset_objects,
+                            wakeup_context_source: "issue.create",
+                            automation_dispatch: None,
                         },
                     )
                     .await?;
@@ -385,6 +389,41 @@ async fn cleanup_staged_issue_asset_objects(
     }
 }
 
+/// Existing Issue creation and assignment admission in the Automation's own
+/// transaction. The private producer proves its locked/authorized parent;
+/// public Issue inputs cannot construct this capability.
+pub(crate) async fn create_automation_execution_issue(
+    tx: &mut Tx<'_>,
+    producer: &crate::automation_execution::LockedAutomationDispatch,
+) -> Result<Value> {
+    let automation = producer.automation();
+    let input = json!({
+        "projectId":automation["projectId"], "goalId":automation["goalId"],
+        "parentId":automation["parentIssueId"], "title":automation["title"],
+        "description":automation["description"], "status":"todo",
+        "priority":automation["priority"], "assigneeAgentId":automation["assigneeAgentId"],
+        "assigneeAgentRuntimeOverrides":automation["assigneeAgentRuntimeOverrides"],
+    });
+    lock_organization(tx, producer.org()).await?;
+    let mut staged = Vec::new();
+    create_issue(
+        tx,
+        IssueCreateContext {
+            org: producer.org(),
+            actor_kind: "system",
+            actor_id: "automation-dispatch",
+            actor_agent_id: None,
+            run_id: None,
+            input: &input,
+            asset_storage: None,
+            staged_asset_objects: &mut staged,
+            wakeup_context_source: "automation.dispatch",
+            automation_dispatch: Some(producer),
+        },
+    )
+    .await
+}
+
 async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Result<Value> {
     let IssueCreateContext {
         org,
@@ -395,6 +434,8 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
         input,
         asset_storage,
         staged_asset_objects,
+        wakeup_context_source,
+        automation_dispatch,
     } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
@@ -523,6 +564,14 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             "agent_issue_creation",
             Some(request_id.to_owned()),
             run_id.map(ToOwned::to_owned),
+        )
+    } else if let Some(producer) = automation_dispatch {
+        // Only the private locked producer supplies Automation provenance.
+        // Public Issue JSON cannot claim this origin or its Run linkage.
+        (
+            "automation_execution",
+            Some(required_text(producer.automation(), "id")?),
+            Some(producer.run_id().to_owned()),
         )
     } else {
         ("manual", None, None)
@@ -811,7 +860,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             "assignment",
             "issue_assigned",
             "create",
-            "issue.create",
+            wakeup_context_source,
         ));
     }
     if matches!(issue["status"].as_str(), Some("in_review" | "blocked"))
@@ -2518,17 +2567,17 @@ async fn request_json(tx: &mut Tx<'_>, org: &str, request_id: &str) -> Result<Op
     .transpose()
 }
 
-struct IssueRunEvent<'a> {
-    run_id: &'a str,
-    agent_id: &'a str,
-    event_type: &'a str,
-    level: &'a str,
-    message: &'a str,
-    idempotency_key: &'a str,
-    payload: &'a Value,
+pub(crate) struct IssueRunEvent<'a> {
+    pub(crate) run_id: &'a str,
+    pub(crate) agent_id: &'a str,
+    pub(crate) event_type: &'a str,
+    pub(crate) level: &'a str,
+    pub(crate) message: &'a str,
+    pub(crate) idempotency_key: &'a str,
+    pub(crate) payload: &'a Value,
 }
 
-async fn append_issue_run_event(
+pub(crate) async fn append_issue_run_event(
     tx: &mut Tx<'_>,
     org: &str,
     event: IssueRunEvent<'_>,
@@ -2608,9 +2657,9 @@ fn normalize_blocker_text(value: &str) -> String {
         .to_owned()
 }
 
-fn redact_sensitive_text(value: &str) -> String {
+pub(crate) fn redact_sensitive_text(value: &str) -> String {
     let private_key = Regex::new(
-        r"-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----",
+        r"(?i)-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----",
     )
     .expect("private key redaction pattern is valid");
     let mut redacted = private_key
@@ -2621,11 +2670,17 @@ fn redact_sensitive_text(value: &str) -> String {
     let bearer = Regex::new(r"(?i)(bearer\s+)[^\s,;]+").expect("bearer redaction pattern is valid");
     redacted = bearer.replace_all(&redacted, "$1[REDACTED]").into_owned();
     let credentials = Regex::new(
-        r"(?i)((?:^|[?&\s])(?:api[-_]?key|access[-_]?token|token|code|secret|password|credential)\s*[=:]\s*)[^&\s,;\[]+",
+        r"(?i)((?:^|[?&\s])(?:api[-_]?key|access[-_]?token|token|code|secret|password|credential)\s*[=:]\s*)([^&\s,;]+)",
     )
     .expect("credential redaction pattern is valid");
     redacted = credentials
-        .replace_all(&redacted, "$1[REDACTED]")
+        .replace_all(&redacted, |captures: &regex_lite::Captures<'_>| {
+            if captures[2].to_ascii_uppercase().starts_with("[REDACTED_") {
+                captures[0].to_owned()
+            } else {
+                format!("{}[REDACTED]", &captures[1])
+            }
+        })
         .into_owned();
     let known_tokens = Regex::new(
         r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,})\b",
@@ -3742,6 +3797,22 @@ mod tests {
                 "Auth failed",
                 "Provide a replacement credential"
             )
+        );
+    }
+
+    #[test]
+    fn request_redaction_matches_node_private_keys_and_bracket_credentials() {
+        assert_eq!(
+            redact_sensitive_text(
+                "-----begin rsa private key-----\nsynthetic-secret\n-----end rsa private key-----"
+            ),
+            "[REDACTED_PRIVATE_KEY]"
+        );
+        assert_eq!(
+            redact_sensitive_text(
+                "password=[private-value] token=[REDACTED_OTP] code=123456 bearer synthetic"
+            ),
+            "password=[REDACTED] token=[REDACTED_OTP] code=[REDACTED_OTP] bearer [REDACTED]"
         );
     }
 

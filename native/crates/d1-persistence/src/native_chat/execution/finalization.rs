@@ -177,8 +177,10 @@ pub async fn finalize(
         ProviderCleanup::Codex(cleanup),
         None,
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Atomically project a terminal Hermes ACP answer and close the exact owned
@@ -199,8 +201,10 @@ pub async fn finalize_hermes(
         ProviderCleanup::Hermes(cleanup),
         None,
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Atomically project a terminal Pi session-tree answer and close the exact
@@ -221,8 +225,10 @@ pub async fn finalize_pi(
         ProviderCleanup::Pi(cleanup),
         None,
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Atomically project Claude Code or Cursor ACP terminal evidence. Provider
@@ -244,8 +250,10 @@ pub async fn finalize_native(
         ProviderCleanup::Host(cleanup),
         None,
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Finalize a native provider only after its actual terminal result and owned
@@ -267,8 +275,10 @@ pub async fn finalize_native_stopped(
         ProviderCleanup::Host(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 pub async fn finalize_pi_stopped(
@@ -287,8 +297,10 @@ pub async fn finalize_pi_stopped(
         ProviderCleanup::Pi(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Cleanup can settle a pre-input Stop only while the durable phase and empty
@@ -308,8 +320,10 @@ pub async fn finalize_native_stopped_before_submission(
         ProviderCleanup::Host(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 pub async fn finalize_pi_stopped_before_submission(
@@ -327,8 +341,10 @@ pub async fn finalize_pi_stopped_before_submission(
         ProviderCleanup::Pi(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 fn validate_native_receipt(turn: &NativeProviderTurnReceipt) -> Result<()> {
@@ -379,8 +395,10 @@ pub async fn finalize_stopped(
         ProviderCleanup::Codex(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Resolve operator Stop from a same-connection Hermes terminal and cleanup
@@ -401,8 +419,10 @@ pub async fn finalize_hermes_stopped(
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Resolve an exact operator Stop after the current prompt RPC ended with an
@@ -424,8 +444,10 @@ pub async fn finalize_hermes_prompt_error_stopped(
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Cancel a claimed execution only when the durable checkpoint proves the
@@ -447,8 +469,10 @@ pub async fn finalize_stopped_before_submission(
         ProviderCleanup::Codex(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Close a claimed Native execution when the provider never produced a
@@ -472,8 +496,10 @@ pub async fn finalize_failed(
         ProviderCleanup::Codex(cleanup),
         None,
         FinalizationMode::Failure,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Close only the executor's known pre-transaction output-limit rejection.
@@ -493,8 +519,10 @@ pub async fn finalize_output_limit_failure(
         ProviderCleanup::Codex(cleanup),
         None,
         FinalizationMode::OutputLimit,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Hermes counterpart of [`finalize_failed`].
@@ -512,8 +540,10 @@ pub async fn finalize_hermes_failed(
         ProviderCleanup::Hermes(cleanup),
         None,
         FinalizationMode::Failure,
+        None,
     )
     .await
+    .map(|value| value.result)
 }
 
 /// Resolve an unsubmitted Hermes Stop only from the exact owned host cleanup.
@@ -532,25 +562,53 @@ pub async fn finalize_hermes_stopped_before_submission(
         ProviderCleanup::Hermes(cleanup),
         Some(stop),
         FinalizationMode::Provider,
+        None,
     )
     .await
+    .map(|value| value.result)
+}
+
+pub async fn finalize_transport(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    turn: &super::TransportTurnReceipt,
+    cleanup: &super::TransportCleanupProof,
+    stop: Option<&super::StopIntent>,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(ProviderTurn::Transport(turn)),
+        ProviderCleanup::Transport(cleanup),
+        stop,
+        FinalizationMode::Provider,
+        None,
+    )
+    .await
+    .map(|value| value.result)
 }
 
 #[derive(Clone, Copy)]
-enum ProviderTurn<'a> {
+pub enum ProviderTurn<'a> {
     Codex(&'a TurnReceipt),
     Hermes(&'a HermesTurnReceipt),
     HermesPromptError(&'a HermesPromptErrorAfterCancel),
     Pi(&'a PiTurnReceipt),
     Native(&'a NativeProviderTurnReceipt),
+    Transport(&'a super::TransportTurnReceipt),
 }
 
 #[derive(Clone, Copy)]
-enum ProviderCleanup<'a> {
+pub enum ProviderCleanup<'a> {
+    /// Existing one-use claim capability, still owned before any launch.
+    Unlaunched(&'a rudder_codex_app_server::ConnectionLaunchPermit),
     Codex(&'a CleanupReceipt),
     Hermes(&'a HermesCleanupReceipt),
     Pi(&'a PiCleanupReceipt),
     Host(&'a HostCleanupProof),
+    Transport(&'a super::TransportCleanupProof),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -584,6 +642,11 @@ impl<'a> ProviderTurn<'a> {
                 NativeProviderStatus::Failed => TerminalStatus::Failed,
                 NativeProviderStatus::Interrupted => TerminalStatus::Interrupted,
             },
+            Self::Transport(turn) => match turn.status {
+                NativeProviderStatus::Completed => TerminalStatus::Completed,
+                NativeProviderStatus::Failed => TerminalStatus::Failed,
+                NativeProviderStatus::Interrupted => TerminalStatus::Interrupted,
+            },
         }
     }
 
@@ -594,6 +657,7 @@ impl<'a> ProviderTurn<'a> {
             Self::HermesPromptError(_) => None,
             Self::Pi(turn) => turn.final_text(),
             Self::Native(turn) => turn.final_text.as_deref(),
+            Self::Transport(turn) => turn.final_text.as_deref(),
         }
     }
 
@@ -621,6 +685,11 @@ impl<'a> ProviderTurn<'a> {
                 NativeProviderStatus::Failed => "failed",
                 NativeProviderStatus::Interrupted => "interrupted",
             },
+            Self::Transport(turn) => match turn.status {
+                NativeProviderStatus::Completed => "completed",
+                NativeProviderStatus::Failed => "failed",
+                NativeProviderStatus::Interrupted => "interrupted",
+            },
         }
     }
 
@@ -641,6 +710,7 @@ impl<'a> ProviderTurn<'a> {
                 "scope":"provider_reported",
                 "usage":usage,
             })),
+            Self::Transport(turn)=>turn.usage.clone().map(|usage|json!({"source":"provider_terminal_receipt","scope":"provider_reported","usage":usage})),
         }
     }
 
@@ -666,6 +736,10 @@ impl<'a> ProviderTurn<'a> {
                 provider: turn.provider,
                 session_id: &turn.session_id,
                 request_id: &turn.request_id,
+            },
+            Self::Transport(turn) => ProviderRetryPredicate::Transport {
+                request_id: &turn.request_id,
+                session_id: turn.session_id.as_deref(),
             },
         }
     }
@@ -746,6 +820,11 @@ impl<'a> ProviderTurn<'a> {
                             .claude_session()
                             .is_none_or(|s| s.as_str() == turn.session_id))
             }
+            Self::Transport(turn) => {
+                checkpoint.provider().is_transport()
+                    && checkpoint.transport_request_id() == Some(turn.request_id.as_str())
+                    && checkpoint.transport_session() == turn.session_id.as_deref()
+            }
         }
     }
 
@@ -766,6 +845,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Native(turn) => {
                 json!({"kind":match turn.provider { NativeProviderKind::Claude => "claude_turn", NativeProviderKind::Cursor => "cursor_turn", NativeProviderKind::OpenCode => "opencode_turn" },"sessionId":turn.session_id,"requestId":turn.request_id,"evidence":turn.evidence})
             }
+            Self::Transport(turn) => {
+                json!({"kind":"native_transport_request","sessionId":turn.session_id,"requestId":turn.request_id,"evidence":turn.evidence})
+            }
         }
     }
 
@@ -782,6 +864,7 @@ impl<'a> ProviderTurn<'a> {
                 turn.provider.runtime_type(),
                 turn.request_id
             )),
+            Self::Transport(turn) => Some(format!("transport-request:{}", turn.request_id)),
         }
     }
 
@@ -792,13 +875,14 @@ impl<'a> ProviderTurn<'a> {
             Self::HermesPromptError(error) => Some(error.user_message_id().to_owned()),
             Self::Pi(turn) => Some(turn.input_entry_id().to_owned()),
             Self::Native(turn) => Some(turn.request_id.clone()),
+            Self::Transport(turn) => Some(turn.request_id.clone()),
         }
     }
 
     fn evidence_facts(self) -> Value {
         match self {
             Self::Codex(turn) => {
-                json!({"provider":"codex_local","threadId":turn.thread_id(),"turnId":turn.turn_id()})
+                json!({"provider":"codex_local","threadId":turn.thread_id(),"turnId":turn.turn_id(),"generatedAttachmentsDigest":hash(&serde_json::to_string(turn.generated_attachments()).unwrap_or_default())})
             }
             Self::Hermes(turn) => {
                 json!({"provider":"hermes_local","sessionId":turn.session().as_str(),"requestId":turn.request_id(),
@@ -814,6 +898,9 @@ impl<'a> ProviderTurn<'a> {
             Self::Native(turn) => {
                 json!({"provider":turn.provider.runtime_type(),"sessionId":turn.session_id,"requestId":turn.request_id,"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text.as_deref().map(hash),"evidence":turn.evidence})
             }
+            Self::Transport(turn) => {
+                json!({"requestId":turn.request_id,"sessionId":turn.session_id,"providerStatus":self.provider_status(),"finalTextDigest":turn.final_text.as_deref().map(hash),"evidence":turn.evidence})
+            }
         }
     }
 }
@@ -821,10 +908,12 @@ impl<'a> ProviderTurn<'a> {
 impl<'a> ProviderCleanup<'a> {
     fn matches_claim(self, fence: &ExecutionFence) -> bool {
         match self {
+            Self::Unlaunched(permit) => fence.matches_unspent_launch_permit(permit),
             Self::Codex(cleanup) => fence.matches_cleanup_receipt(cleanup),
             Self::Hermes(cleanup) => fence.matches_hermes_cleanup_receipt(cleanup),
             Self::Pi(cleanup) => fence.matches_pi_cleanup_receipt(cleanup),
             Self::Host(cleanup) => fence.matches_host_cleanup_proof(cleanup),
+            Self::Transport(cleanup) => cleanup.matches(fence),
         }
     }
 
@@ -843,12 +932,19 @@ impl<'a> ProviderCleanup<'a> {
             // `matches_claim` above already binds HostCleanupProof to the
             // exact fence. The host lifecycle proof is provider independent.
             (Self::Host(_), ProviderTurn::Native(_)) => true,
+            (Self::Transport(proof), ProviderTurn::Transport(turn)) => match proof {
+                super::TransportCleanupProof::Process(_) => true,
+                super::TransportCleanupProof::Request(proof) => {
+                    proof.request_id() == turn.request_id
+                }
+            },
             _ => false,
         }
     }
 
     fn evidence_fingerprint(self) -> String {
         match self {
+            Self::Unlaunched(_) => "native-chat-unspent-launch-permit-v1".into(),
             Self::Codex(cleanup) => cleanup.evidence_fingerprint(),
             Self::Hermes(cleanup) => cleanup.evidence_fingerprint(),
             Self::Pi(cleanup) => cleanup.evidence_fingerprint(),
@@ -857,11 +953,18 @@ impl<'a> ProviderCleanup<'a> {
                 cleanup.connection_receipt_id(),
                 cleanup.connection_epoch().unwrap_or_default()
             ),
+            Self::Transport(proof) => {
+                format!("transport-settled:{}", proof.connection_receipt_id())
+            }
         }
     }
 }
 
 enum ProviderRetryPredicate<'a> {
+    Transport {
+        request_id: &'a str,
+        session_id: Option<&'a str>,
+    },
     Codex {
         thread_id: &'a str,
         turn_id: &'a str,
@@ -886,6 +989,88 @@ enum FinalizationMode {
     Provider,
     Failure,
     OutputLimit,
+    Unlaunched,
+}
+
+struct FinalizationResult {
+    result: Value,
+    continuation: Option<super::claim::ClaimedExecution>,
+}
+
+/// Try the configured next model only for a typed failed terminal paired with
+/// its exact settled cleanup. Ordinary success, Stop and unknown requests never
+/// create another attempt. No Run terminal state escapes this transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn continue_after_terminal(
+    pool: &PgPool,
+    actor: &crate::native_chat::NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    turn: ProviderTurn<'_>,
+    cleanup: ProviderCleanup<'_>,
+    host: &crate::native_chat::config::LocalHostContext,
+    preflight: impl Fn(&crate::native_chat::config::ResolvedCodexConfig) -> Result<()> + Sync,
+) -> Result<Option<super::claim::ClaimedExecution>> {
+    if turn.status() == TerminalStatus::Interrupted {
+        return Ok(None);
+    }
+    if let ProviderTurn::Native(receipt) = turn {
+        validate_native_receipt(receipt)?;
+    }
+    let value = finalize_inner(
+        pool,
+        actor,
+        fence,
+        Some(turn),
+        cleanup,
+        None,
+        FinalizationMode::Provider,
+        Some((host, &preflight)),
+    )
+    .await?;
+    Ok(value.continuation)
+}
+
+/// An unused exact claim permit proves this Attempt never created a provider
+/// connection. It is not a process-exit or remote cancellation receipt.
+pub async fn continue_before_launch(
+    pool: &PgPool,
+    actor: &crate::native_chat::NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    permit: &rudder_codex_app_server::ConnectionLaunchPermit,
+    host: &crate::native_chat::config::LocalHostContext,
+) -> Result<Option<super::claim::ClaimedExecution>> {
+    let value = finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Unlaunched(permit),
+        None,
+        FinalizationMode::Unlaunched,
+        Some((host, &|_| Ok(()))),
+    )
+    .await?;
+    Ok(value.continuation)
+}
+
+pub async fn finalize_before_launch_failure(
+    pool: &PgPool,
+    actor: &crate::native_chat::NativeChatExecutionPrincipal,
+    fence: &ExecutionFence,
+    permit: &rudder_codex_app_server::ConnectionLaunchPermit,
+) -> Result<Value> {
+    finalize_inner(
+        pool,
+        actor,
+        fence,
+        None,
+        ProviderCleanup::Unlaunched(permit),
+        None,
+        FinalizationMode::Unlaunched,
+        None,
+    )
+    .await
+    .map(|value| value.result)
 }
 
 async fn finalize_inner(
@@ -896,7 +1081,12 @@ async fn finalize_inner(
     cleanup: ProviderCleanup<'_>,
     stop: Option<&super::stopping::StopIntent>,
     mode: FinalizationMode,
-) -> Result<Value> {
+    continuation_host: Option<(
+        &crate::native_chat::config::LocalHostContext,
+        &(dyn Fn(&crate::native_chat::config::ResolvedCodexConfig) -> Result<()> + Sync),
+    )>,
+) -> Result<FinalizationResult> {
+    let unlaunched = mode == FinalizationMode::Unlaunched;
     let output_limit_failure = mode == FinalizationMode::OutputLimit;
     let forced_failure = mode != FinalizationMode::Provider;
     let id = fence.identity();
@@ -927,6 +1117,14 @@ async fn finalize_inner(
                     id.attempt_id,
                     fence.run_execution_owner_token(),
                 ),
+                ProviderTurn::Transport(_) => {
+                    rudder_runtime_core::native_chat::NativeChatProvider::Process
+                        .matches_runtime(fence.runtime_type())
+                        || matches!(
+                            fence.runtime_type(),
+                            "http" | "hermes_gateway" | "openclaw_gateway"
+                        )
+                }
                 ProviderTurn::Native(turn) => {
                     fence.runtime_type() == turn.provider.runtime_type()
                         || (turn.provider == NativeProviderKind::Cursor
@@ -1011,7 +1209,7 @@ async fn finalize_inner(
     let increment = turn.and_then(ProviderTurn::usage_json);
     let cost = json!({
         "status":"unknown",
-        "reason":if pre_submission_stop { "input_not_submitted_cost_not_established" } else { "provider_cost_not_reported" },
+        "reason":if pre_submission_stop || unlaunched { "input_not_submitted_cost_not_established" } else { "provider_cost_not_reported" },
     });
     // Bind retries to every authority dimension and every projected fact. Owner
     // capabilities are hashed into one fingerprint, never returned or logged.
@@ -1114,6 +1312,11 @@ async fn finalize_inner(
     } else {
         let turn = turn.ok_or_else(|| http(409, "Provider retry requires a Turn receipt"))?;
         match turn.retry_predicate() {
+            ProviderRetryPredicate::Transport{request_id,session_id}=>{
+                sqlx::query_scalar("SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r JOIN chat_generations g ON g.org_id=r.org_id AND g.id=r.chat_generation_id JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id AND a.id=$7::uuid WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.chat_conversation_id=$3::uuid AND g.id=$4::uuid AND r.execution_owner_token=$5 AND g.control_owner_token=$6 AND a.owner_token=$5 AND g.attempt_epoch=$8 AND a.generation_attempt_epoch=$8 AND a.attempt_epoch=$9 AND a.connection_epoch=$10 AND a.protocol_phase='execution_terminal_committed' AND a.checkpoint_json->>'transportRequestId'=$11 AND a.checkpoint_json->>'transportSession' IS NOT DISTINCT FROM $12")
+                    .bind(id.organization_id).bind(id.run_id).bind(id.conversation_id).bind(id.generation_id).bind(fence.run_execution_owner_token()).bind(fence.generation_control_owner_token()).bind(id.attempt_id).bind(id.generation_attempt_epoch).bind(id.run_attempt_epoch).bind(id.connection_epoch).bind(request_id).bind(session_id).fetch_optional(&mut *tx).await?.flatten()
+            }
+
             ProviderRetryPredicate::Codex { thread_id, turn_id } => {
                 sqlx::query_scalar(
                     "SELECT r.result_json->'nativeChatFinalization' FROM heartbeat_runs r
@@ -1236,14 +1439,24 @@ async fn finalize_inner(
             return Err(http(409, "Native Chat finalization receipt is invalid"));
         }
         tx.commit().await?;
-        return Ok(result);
+        return Ok(FinalizationResult {
+            result,
+            continuation: None,
+        });
     }
     let locked = if let Some(stop) = stop {
         super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?
     } else {
         lock_current_execution(&mut tx, actor, fence).await?
     };
-    let checkpoint_matches = if output_limit_failure {
+    let checkpoint_matches = if unlaunched {
+        matches!(
+            locked.checkpoint.phase(),
+            NativeChatProtocolPhase::NoThreadRequest
+                | NativeChatProtocolPhase::ThreadKnown
+                | NativeChatProtocolPhase::InputPreSubmission
+        )
+    } else if output_limit_failure {
         locked.checkpoint.phase() == NativeChatProtocolPhase::TurnKnown
     } else if forced_failure {
         locked.checkpoint.phase() != NativeChatProtocolPhase::ExecutionTerminalCommitted
@@ -1309,6 +1522,42 @@ async fn finalize_inner(
         super::super::budget::has_unsettleable_policy(&mut tx, id.organization_id, id.agent_id)
             .await?;
     let held = budget_held || unprojectable;
+    let next_config = if let Some((host, preflight)) = continuation_host {
+        // A concurrently accepted Stop wins before any fallback writes. The
+        // standard finalizer will consume that Stop with its original receipt.
+        if stop.is_some() || held || run_status == "cancelled" || (forced_failure && !unlaunched) {
+            return Ok(FinalizationResult {
+                result: Value::Null,
+                continuation: None,
+            });
+        }
+        let stop_pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_control_actions WHERE org_id=$1::uuid AND expected_generation_id=$2::uuid AND local_disposition IN ('stop_requested','stopping'))")
+            .bind(id.organization_id).bind(id.generation_id).fetch_one(&mut *tx).await?;
+        if stop_pending {
+            return Ok(FinalizationResult {
+                result: Value::Null,
+                continuation: None,
+            });
+        }
+        let Some(config) = super::continuation::next_config(
+            &mut tx,
+            fence,
+            host,
+            run_status == "failed",
+            turn.and_then(ProviderTurn::final_text),
+        )
+        .await?
+        else {
+            return Ok(FinalizationResult {
+                result: Value::Null,
+                continuation: None,
+            });
+        };
+        preflight(&config.config)?;
+        Some(config)
+    } else {
+        None
+    };
     let (chat_turn_id, turn_variant, model) = if pre_submission_stop || forced_failure {
         (None, 0, None)
     } else {
@@ -1333,7 +1582,7 @@ async fn finalize_inner(
     });
     // Codex `last` is the latest model-response increment, not a complete
     // user-turn total. Preserve it as observation without feeding Run counters.
-    let usage = if pre_submission_stop {
+    let usage = if pre_submission_stop || unlaunched {
         json!({"status":"unavailable", "reason":"input_not_submitted"})
     } else {
         json!({"status":"unavailable", "reason":"run_total_not_established",
@@ -1396,7 +1645,7 @@ async fn finalize_inner(
               CASE WHEN octet_length(body)<=$4 THEN body END AS body,
               (structured_payload IS NULL OR structured_payload IN ('null'::jsonb,'{}'::jsonb)) AS plain
              FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid
-              AND run_id=$3::uuid AND role='assistant'
+              AND run_id=$3::uuid AND role='assistant' AND superseded_at IS NULL
              ORDER BY id LIMIT 2 FOR UPDATE",
         )
         .bind(id.organization_id)
@@ -1446,6 +1695,7 @@ async fn finalize_inner(
                     return Err(http(409, "Pi live output projection is unsupported"));
                 }
                 (Some(ProviderTurn::Native(_)), ProviderCleanup::Host(_)) => {}
+                (Some(ProviderTurn::Transport(_)), ProviderCleanup::Transport(_)) => {}
                 _ => return Err(http(409, "Native Chat projection receipt is invalid")),
             }
             let status = match run_status {
@@ -1523,8 +1773,8 @@ async fn finalize_inner(
             Some(ProviderTurn::Hermes(_) | ProviderTurn::HermesPromptError(_))
         )
     {
-        let orphaned_progress: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid AND run_id=$3::uuid AND event_kind='transcript')")
-            .bind(id.organization_id).bind(id.generation_id).bind(id.run_id).fetch_one(&mut *tx).await?;
+        let orphaned_progress: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid AND run_id=$3::uuid AND attempt_epoch=$4 AND event_kind='transcript')")
+            .bind(id.organization_id).bind(id.generation_id).bind(id.run_id).bind(id.generation_attempt_epoch).fetch_one(&mut *tx).await?;
         if orphaned_progress {
             return Err(http(409, "Hermes progress lost its assistant projection"));
         }
@@ -1536,6 +1786,12 @@ async fn finalize_inner(
             turn.input_correlation_ref()
                 .or(locked.admitted_message_id.clone()),
             turn.selector(),
+        ),
+        None if unlaunched => (
+            "partial",
+            None,
+            None,
+            json!({"kind":"native_prelaunch_failure","inputDisposition":"not_submitted"}),
         ),
         None if forced_failure || output_limit_failure => (
             "partial",
@@ -1642,6 +1898,9 @@ async fn finalize_inner(
         result["providerCancelAcknowledged"] = json!(false);
         result["usageAvailable"] = json!(false);
     }
+    if unlaunched {
+        result["inputDisposition"] = json!("not_submitted");
+    }
     if output_limit_failure {
         result["inputDisposition"] = json!("unknown");
     } else if pre_submission_stop {
@@ -1653,14 +1912,76 @@ async fn finalize_inner(
          usage_delta_json=$6,cost_cents=NULL WHERE org_id=$1::uuid AND run_id=$2::uuid AND id=$3::uuid",
     ).bind(id.organization_id).bind(id.run_id).bind(id.attempt_id).bind(run_status)
         .bind(checkpoint).bind(&usage).execute(&mut *tx).await?;
+    if let Some(ProviderTurn::Codex(turn)) = turn {
+        if !turn.generated_attachments().is_empty() {
+            sqlx::query("UPDATE heartbeat_runs SET context_snapshot=context_snapshot||jsonb_build_object('automationGeneratedAttachments',COALESCE(context_snapshot->'automationGeneratedAttachments','[]'::jsonb)||$3::jsonb) WHERE org_id=$1::uuid AND id=$2::uuid AND context_snapshot ? 'automationRunId'").bind(id.organization_id).bind(id.run_id).bind(json!(turn.generated_attachments())).execute(&mut *tx).await?;
+        }
+    }
+    if let Some(ProviderTurn::Transport(turn)) = turn {
+        if let Some(files) = turn
+            .evidence
+            .get("generatedAttachments")
+            .filter(|v| v.is_array())
+        {
+            sqlx::query("UPDATE heartbeat_runs SET context_snapshot=context_snapshot||jsonb_build_object('automationGeneratedAttachments',COALESCE(context_snapshot->'automationGeneratedAttachments','[]'::jsonb)||$3::jsonb) WHERE org_id=$1::uuid AND id=$2::uuid AND context_snapshot ? 'automationRunId'")
+                .bind(id.organization_id).bind(id.run_id).bind(files).execute(&mut *tx).await?;
+        }
+    }
+    if let Some(config) = next_config {
+        // Preserve the settled failed receipt before replacing the two live
+        // owners. Attempt history retains its usage and sealed span.
+        let receipt = json!({"fingerprint":fingerprint,"result":result});
+        sqlx::query("INSERT INTO heartbeat_run_events(org_id,run_id,agent_id,seq,event_type,payload,idempotency_key) SELECT $1::uuid,$2::uuid,$3::uuid,COALESCE(max(seq),0)+1,'runtime.native_chat.attempt_settled',$4,$5 FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$2::uuid")
+            .bind(id.organization_id).bind(id.run_id).bind(id.agent_id).bind(receipt).bind(format!("native-attempt-settled:{}",id.attempt_id)).execute(&mut *tx).await?;
+        let continuation =
+            super::continuation::advance(&mut tx, actor, fence, config, &result).await?;
+        let audit = ActivityActor {
+            actor_type: if actor.actor().kind == "agent" {
+                "agent"
+            } else {
+                "user"
+            },
+            actor_id: actor.actor().id.clone(),
+            run_id: Some(id.run_id.into()),
+        };
+        let details = json!({"runId":id.run_id,"previousAttemptId":id.attempt_id,"attemptId":continuation.fence.identity().attempt_id,"runtimeType":continuation.fence.runtime_type()});
+        write_activity_options(
+            &mut tx,
+            ActivityWrite {
+                org: id.organization_id,
+                audit: &audit,
+                action: "runtime.native_chat.model_fallback_started",
+                entity_type: "heartbeat_run",
+                entity_id: id.run_id,
+                details: Some(&details),
+                options: ActivityOptions {
+                    agent_id: Some(id.agent_id),
+                    bind_run: true,
+                    ..Default::default()
+                },
+            },
+        )
+        .await?;
+        super::context::lock_current_execution(
+            &mut tx,
+            &continuation.execution_principal,
+            &continuation.fence,
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(FinalizationResult {
+            result,
+            continuation: Some(continuation),
+        });
+    }
     sqlx::query(
-        "UPDATE heartbeat_runs SET status=$3,finished_at=clock_timestamp(),process_exited_at=clock_timestamp(),
+        "UPDATE heartbeat_runs SET status=$3,finished_at=clock_timestamp(),process_exited_at=CASE WHEN $7 THEN clock_timestamp() ELSE process_exited_at END,
          running_substate=NULL,usage_json=$4,result_json=$5,native_admission_hold=$6,
          updated_at=clock_timestamp()
          WHERE org_id=$1::uuid AND id=$2::uuid",
     ).bind(id.organization_id).bind(id.run_id).bind(run_status).bind(&usage)
         .bind(json!({"nativeChatFinalization":{"version":1,"fingerprint":fingerprint,
-            "controlActionId":stop.map(|value| value.action_id.as_str()),"result":result}})).bind(held)
+            "controlActionId":stop.map(|value| value.action_id.as_str()),"result":result}})).bind(held).bind(!matches!(cleanup,ProviderCleanup::Unlaunched(_)|ProviderCleanup::Transport(super::TransportCleanupProof::Request(_))))
         .execute(&mut *tx).await?;
     sqlx::query(
         "UPDATE chat_generations SET status=$3,terminal_reason=$4,control_state='terminal',
@@ -1685,6 +2006,12 @@ async fn finalize_inner(
             .await?;
         } else if pre_submission_stop {
             match cleanup {
+                ProviderCleanup::Unlaunched(_) => {
+                    return Err(http(
+                        409,
+                        "Unlaunched failure cannot resolve an active Stop",
+                    ));
+                }
                 ProviderCleanup::Codex(cleanup) => {
                     super::stopping::resolve_action_pre_submission(
                         &mut tx, actor, fence, stop, cleanup, &result,
@@ -1698,6 +2025,18 @@ async fn finalize_inner(
                     .await?;
                 }
                 ProviderCleanup::Pi(cleanup) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        None,
+                        &result,
+                    )
+                    .await?;
+                }
+                ProviderCleanup::Transport(cleanup) => {
                     super::native_stopping::resolve_action_owned(
                         &mut tx,
                         actor,
@@ -1756,6 +2095,18 @@ async fn finalize_inner(
                         stop,
                         cleanup.connection_receipt_id(),
                         Some(ProviderTurn::Pi(turn).provider_status()),
+                        &result,
+                    )
+                    .await?;
+                }
+                (ProviderTurn::Transport(turn), ProviderCleanup::Transport(cleanup)) => {
+                    super::native_stopping::resolve_action_owned(
+                        &mut tx,
+                        actor,
+                        fence,
+                        stop,
+                        cleanup.connection_receipt_id(),
+                        Some(ProviderTurn::Transport(turn).provider_status()),
                         &result,
                     )
                     .await?;
@@ -1845,8 +2196,26 @@ async fn finalize_inner(
     sqlx::query("UPDATE heartbeat_runs SET execution_lease_expires_at=NULL WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(id.organization_id).bind(id.run_id).execute(&mut *tx).await?;
     super::super::auth::authorize_execution_org(&mut tx, actor, fence).await?;
+    crate::automation_execution::sync_chat_run(&mut tx, id.organization_id, id.run_id)
+        .await
+        .map_err(|error| match error {
+            crate::automation_execution::Error::Database(error) => {
+                crate::runtime_bindings::Error::Database(error)
+            }
+            _ => http(
+                500,
+                "Automation Chat terminal backlink could not be committed",
+            ),
+        })?;
+    sqlx::query("UPDATE runtime_bindings b SET status='closed',updated_at=clock_timestamp() FROM heartbeat_runs h WHERE b.org_id=$1::uuid AND b.id=$2::uuid AND h.org_id=b.org_id AND h.id=$3::uuid AND (COALESCE((h.context_snapshot->>'nativeChatModelAttemptIndex')::bigint,0)>0 OR h.context_snapshot->'nativeChatRepairAttempted'='true'::jsonb) AND b.status='active'")
+        .bind(id.organization_id).bind(&fence.binding_id).bind(id.run_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE native_segments s SET state='sealed',sealed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE s.org_id=$1::uuid AND s.binding_id=$2::uuid AND s.id=$3::uuid AND s.state IN ('pending','open') AND s.sealed_at IS NULL AND EXISTS(SELECT 1 FROM runtime_bindings b WHERE b.org_id=s.org_id AND b.id=s.binding_id AND b.status='closed' AND b.source_boundary_ref='native_chat_model_fallback')")
+        .bind(id.organization_id).bind(&fence.binding_id).bind(&fence.segment_id).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok(FinalizationResult {
+        result,
+        continuation: None,
+    })
 }
 
 fn hash(value: &str) -> String {

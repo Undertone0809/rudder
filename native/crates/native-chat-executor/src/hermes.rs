@@ -47,10 +47,13 @@ pub(super) fn validate_config(
         || local.executable_search_path != host.executable_search_path()
         || host
             .hermes_executable()
-            .is_none_or(|path| path != config.executable)
+            .is_none_or(|path| Some(path) != config.executable.as_deref())
         || !local.profile_revision_matches()
         || !local.instruction_adapter_matches(
-            &config.executable,
+            config
+                .executable
+                .as_deref()
+                .ok_or(Error::UnsupportedConfiguration)?,
             config
                 .instruction_content
                 .as_ref()
@@ -63,7 +66,10 @@ pub(super) fn validate_config(
         || config.cwd.canonicalize().as_ref().ok() != Some(&config.cwd)
         || !local.home.is_dir()
         || !config.cwd.is_dir()
-        || !config.executable.is_file()
+        || config
+            .executable
+            .as_ref()
+            .is_none_or(|path| !path.is_file())
     {
         return Err(Error::UnsupportedConfiguration);
     }
@@ -97,7 +103,10 @@ pub(super) fn run_claimed(
             return Err(Error::UnsupportedConfiguration);
         }
         if !local.instruction_adapter_matches(
-            &config.executable,
+            config
+                .executable
+                .as_deref()
+                .ok_or(Error::UnsupportedConfiguration)?,
             config
                 .instruction_content
                 .as_ref()
@@ -121,10 +130,11 @@ pub(super) fn run_claimed(
     let (snapshot, launch) = match prepared {
         Ok(value) => value,
         Err(error) => {
-            return Err(ExecutionFailure::before_launch(
+            return Err(ExecutionFailure::before_launch_with_permit(
                 error,
                 execution_principal,
                 fence,
+                permit,
             ));
         }
     };
@@ -702,7 +712,10 @@ fn hermes_launch(
         .as_ref()
         .ok_or(Error::UnsupportedConfiguration)?;
     Ok(HermesLaunch {
-        hermes_executable: config.executable.clone(),
+        hermes_executable: config
+            .executable
+            .clone()
+            .ok_or(Error::UnsupportedConfiguration)?,
         python_executable: local.instruction_python_executable.clone(),
         python_source_root: local.instruction_python_source_root.clone(),
         instruction_adapter_revision: local.instruction_adapter_revision.clone(),

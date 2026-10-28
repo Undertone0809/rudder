@@ -16,7 +16,8 @@ pub(super) async fn execute(
     claim: &AgentRunClaim,
     request: &AgentRunRequest,
 ) -> AgentRunExecutionObservation {
-    let mut pending = Box::pin(invoke(claim, request));
+    let target = super::RuntimeTransportTarget::from(claim);
+    let mut pending = Box::pin(invoke(&target, request));
     let started = tokio::time::Instant::now();
     let timeout = if claim.runtime_type == "http" {
         config::duration(&request.config, "timeoutMs", 0.0).map(|value| value / 1000)
@@ -127,7 +128,10 @@ pub(super) async fn execute(
     }
 }
 
-async fn invoke(claim: &AgentRunClaim, request: &AgentRunRequest) -> AgentRunExecutionObservation {
+pub(crate) async fn invoke(
+    claim: &super::RuntimeTransportTarget,
+    request: &AgentRunRequest,
+) -> AgentRunExecutionObservation {
     if claim.runtime_type != "http" {
         return super::gateway::execute(claim, request).await;
     }
@@ -172,35 +176,53 @@ async fn invoke(claim: &AgentRunClaim, request: &AgentRunRequest) -> AgentRunExe
         }
     }
     let response = async {
-        let mut response = outgoing.send().await.map_err(|e| e.to_string())?;
+        let mut response = outgoing.send().await.map_err(|e| {
+            (
+                e.to_string(),
+                if e.is_connect() {
+                    "not_sent"
+                } else {
+                    "unknown"
+                },
+            )
+        })?;
         if !response.status().is_success() {
-            return Err(format!(
-                "HTTP invoke failed with status {}",
-                response.status().as_u16()
+            return Err((
+                format!(
+                    "HTTP invoke failed with status {}",
+                    response.status().as_u16()
+                ),
+                "response_failed",
             ));
         }
         if response
             .content_length()
             .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
         {
-            return Err(format!(
-                "HTTP runtime response exceeded {MAX_RESPONSE_BYTES} bytes"
+            return Err((
+                format!("HTTP runtime response exceeded {MAX_RESPONSE_BYTES} bytes"),
+                "unknown",
             ));
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| (e.to_string(), "unknown"))?
+        {
             if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err(format!(
-                    "HTTP runtime response exceeded {MAX_RESPONSE_BYTES} bytes"
+                return Err((
+                    format!("HTTP runtime response exceeded {MAX_RESPONSE_BYTES} bytes"),
+                    "unknown",
                 ));
             }
             bytes.extend_from_slice(&chunk);
         }
-        Ok::<_, String>(String::from_utf8_lossy(&bytes).into_owned())
+        Ok::<_, (String, &str)>(String::from_utf8_lossy(&bytes).into_owned())
     }
     .await;
     match response {
-        Err(error) => {
+        Err((error, outcome)) => {
             let mut observation = AgentRunExecutionObservation::failure(
                 AgentRunExecutionState::Failed,
                 "http_invoke_failed",
@@ -212,6 +234,7 @@ async fn invoke(claim: &AgentRunClaim, request: &AgentRunRequest) -> AgentRunExe
                 observation.state = AgentRunExecutionState::Suspended;
                 observation.result = json!({"networkSuspension":network});
             }
+            observation.result["requestOutcome"] = json!(outcome);
             observation
         }
         Ok(raw) => {

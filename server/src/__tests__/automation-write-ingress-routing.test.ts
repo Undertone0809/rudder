@@ -1,4 +1,4 @@
-import { createAutomationSchema, createAutomationTriggerSchema, rotateAutomationTriggerSecretSchema, updateAutomationSchema, updateAutomationTriggerSchema } from "@rudderhq/shared";
+import { createAutomationSchema, createAutomationTriggerSchema, rotateAutomationTriggerSecretSchema, runAutomationSchema, updateAutomationSchema, updateAutomationTriggerSchema } from "@rudderhq/shared";
 import express from "express";
 import { readFileSync } from "node:fs";
 import request from "supertest";
@@ -43,8 +43,14 @@ describe("Automation management authority at public native ingress", () => {
     const response = await request(app(false))[method](path).send(body);
     expect(response.status).toBe(method === "delete" ? 204 : path.endsWith("/triggers") || path.endsWith("/automations") ? 201 : 200);
   });
-  it("leaves both Node execution entrypoints selected with their existing owner", async () => {
+  it("omits both execution entrypoints before Node authentication, lookup, dispatch and audit", async () => {
     const server = app(true);
+    expect((await request(server).post(`/api/automations/${id}/run`).send({ source: "manual" })).status).toBe(404);
+    expect((await request(server).post("/api/automation-triggers/public/synthetic/fire").send({ synthetic: true })).status).toBe(404);
+    for (const mock of Object.values(mocks)) expect(mock).not.toHaveBeenCalled();
+  });
+  it("retains both execution entrypoints only for explicit legacy ingress", async () => {
+    const server = app(false);
     expect((await request(server).post(`/api/automations/${id}/run`).send({})).status).toBe(202);
     expect((await request(server).post("/api/automation-triggers/public/synthetic/fire").send({ synthetic: true })).status).toBe(202);
     expect(mocks.runAutomation).toHaveBeenCalledOnce(); expect(mocks.firePublicTrigger).toHaveBeenCalledOnce();
@@ -57,6 +63,15 @@ const validationCases = JSON.parse(readFileSync(new URL("../../../native/crates/
 describe("Automation public validation oracle shared with Rust", () => {
   it.each(validationCases)("pins $operation body $input", ({ operation, input, output, issues }) => {
     const result = schemas[operation].safeParse(input);
+    if (issues) { expect(result.success).toBe(false); if (!result.success) expect(result.error.issues).toEqual(issues); }
+    else { expect(result.success).toBe(true); if (result.success) expect(result.data).toEqual(output); }
+  });
+});
+
+const runCases = JSON.parse(readFileSync(new URL("../../../native/crates/d1-persistence/src/automation_execution/run-validation-cases.json", import.meta.url), "utf8")) as Array<{ input: unknown; output?: unknown; issues?: unknown[] }>;
+describe("Automation execution validation oracle shared with Rust", () => {
+  it.each(runCases)("pins run body $input", ({ input, output, issues }) => {
+    const result = runAutomationSchema.safeParse(input);
     if (issues) { expect(result.success).toBe(false); if (!result.success) expect(result.error.issues).toEqual(issues); }
     else { expect(result.success).toBe(true); if (result.success) expect(result.data).toEqual(output); }
   });

@@ -5,8 +5,8 @@ use crate::native_chat::config::{LocalHostContext, resolve_native_config};
 use crate::runtime_bindings;
 use rudder_runtime_core::native_chat::{
     ClaudeSessionSelector, CursorSessionSelector, HermesSessionSelector,
-    NativeChatProtocolCheckpoint, NativeChatProtocolStart, OpenCodeSessionSelector,
-    PiSessionSelector,
+    NativeChatProtocolCheckpoint, NativeChatProtocolStart, NativeChatProvider,
+    OpenCodeSessionSelector, PiSessionSelector,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
@@ -248,16 +248,6 @@ pub async fn record_dispatch_unavailable(
         || attempt.try_get::<i32, _>("attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("generation_attempt_epoch")? != 1
         || attempt.try_get::<i32, _>("connection_epoch")? != 1
-        || !matches!(
-            attempt.try_get::<String, _>("runtime_type")?.as_str(),
-            "codex_local"
-                | "hermes_local"
-                | "pi_local"
-                | "claude_local"
-                | "cursor"
-                | "cursor_local"
-                | "opencode_local"
-        )
         || !matches!(phase.as_str(), "no_thread_request" | "thread_known")
         || checkpoint.get("phase").and_then(Value::as_str) != Some(phase.as_str())
         || match attempt.try_get::<String, _>("runtime_type")?.as_str() {
@@ -278,7 +268,15 @@ pub async fn record_dispatch_unavailable(
             "cursor" | "cursor_local" => {
                 checkpoint.get("provider").and_then(Value::as_str) != Some("cursor_local")
             }
-            _ => true,
+            runtime => {
+                checkpoint.get("provider").and_then(Value::as_str)
+                    != Some(match runtime {
+                        "http" => "http",
+                        "hermes_gateway" => "hermes_gateway",
+                        "openclaw_gateway" => "open_claw_gateway",
+                        _ => "process",
+                    })
+            }
         }
         || attempt
             .try_get::<Option<String>, _>("provider_turn_id")?
@@ -448,6 +446,7 @@ pub(super) async fn submit(
             body,
             fingerprint: &fingerprint,
             initial_draft_snapshot: None,
+            message_activity: true,
             host,
         },
     )
@@ -466,6 +465,9 @@ pub(super) struct AdmissionInput<'a> {
     /// choices. This is separate from the canonical body fingerprint consumed
     /// by the execution source reader and normal message reconciliation.
     pub initial_draft_snapshot: Option<&'a Value>,
+    /// Internal producers may write their existing source activity pair in
+    /// this same transaction. This field never comes from a public wire DTO.
+    pub message_activity: bool,
     pub host: &'a LocalHostContext,
 }
 
@@ -477,6 +479,17 @@ pub(super) async fn submit_in_transaction<'a>(
     actor: &impl NativeChatActor,
     input: AdmissionInput<'_>,
 ) -> Result<(auth::Tx<'a>, Value)> {
+    let receipt = submit_into_transaction(&mut tx, actor, input).await?;
+    Ok((tx, receipt))
+}
+
+/// Share the existing admission body with trusted transactional producers.
+/// Public commands keep the same owning wrapper, actor checks and writes.
+pub(super) async fn submit_into_transaction(
+    tx: &mut auth::Tx<'_>,
+    actor: &impl NativeChatActor,
+    input: AdmissionInput<'_>,
+) -> Result<Value> {
     let AdmissionInput {
         organization_id,
         conversation_id,
@@ -484,14 +497,15 @@ pub(super) async fn submit_in_transaction<'a>(
         body,
         fingerprint,
         initial_draft_snapshot,
+        message_activity,
         host,
     } = input;
-    auth::preauthorize_org(&mut tx, actor, organization_id).await?;
-    runtime_bindings::lock_native_chat_target_tx(&mut tx, organization_id, conversation_id).await?;
+    auth::preauthorize_org(tx, actor, organization_id).await?;
+    runtime_bindings::lock_native_chat_target_tx(tx, organization_id, conversation_id).await?;
     // The target lock can wait. Do not hold a credential or membership lock
     // across that wait: once serialized, lock and revalidate the exact browser
     // proof and authorization rows before any admission reads or writes.
-    auth::authorize_org(&mut tx, actor, organization_id).await?;
+    auth::authorize_org(tx, actor, organization_id).await?;
 
     // Read only enough target state to authorize a safe idempotency lookup.
     // Duplicate requests return before resolving current config so a retry
@@ -504,7 +518,7 @@ pub(super) async fn submit_in_transaction<'a>(
     )
     .bind(organization_id)
     .bind(conversation_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| http(404, "Chat conversation not found"))?;
     let target_kind: String = target_hint.try_get("conversation_kind")?;
@@ -517,7 +531,7 @@ pub(super) async fn submit_in_transaction<'a>(
         .ok_or_else(|| http(409, "Chat conversation has no selected Agent"))?;
     auth::authorize_agent_actor(actor, &selected_agent_hint)?;
     runtime_bindings::authorize_chat_target_read_tx(
-        &mut tx,
+        tx,
         actor,
         organization_id,
         conversation_id,
@@ -526,7 +540,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .await?;
 
     if let Some(receipt) = lookup_existing_receipt(
-        &mut tx,
+        tx,
         organization_id,
         conversation_id,
         client_mutation_id,
@@ -539,8 +553,7 @@ pub(super) async fn submit_in_transaction<'a>(
         // before returning the durable receipt. This path deliberately skips
         // Issue/config/budget work so a retry remains valid after config
         // changes while a reassigned Agent cannot read its old receipt.
-        let conversation =
-            auth::lock_conversation(&mut tx, organization_id, conversation_id).await?;
+        let conversation = auth::lock_conversation(tx, organization_id, conversation_id).await?;
         if conversation.kind != "chat" {
             return Err(http(404, "Ordinary Chat conversation not found"));
         }
@@ -551,31 +564,23 @@ pub(super) async fn submit_in_transaction<'a>(
             .ok_or_else(|| http(409, "Chat conversation has no selected Agent"))?;
         auth::authorize_agent_actor(actor, selected_agent_id)?;
         runtime_bindings::authorize_chat_target_read_tx(
-            &mut tx,
+            tx,
             actor,
             organization_id,
             conversation_id,
             selected_agent_id,
         )
         .await?;
-        auth::authorize_org(&mut tx, actor, organization_id).await?;
-        return Ok((tx, receipt.json()));
+        auth::authorize_org(tx, actor, organization_id).await?;
+        return Ok(receipt.json());
     }
 
     let hinted_issue_id: Option<String> = target_hint.try_get("primary_issue_id")?;
-    locks::verify_selected_agent_hint(
-        &mut tx,
-        organization_id,
-        conversation_id,
-        &selected_agent_hint,
-    )
-    .await?;
-    let locked_issue_id = locks::lock_primary_issue_path_before_conversation(
-        &mut tx,
-        organization_id,
-        conversation_id,
-    )
-    .await?;
+    locks::verify_selected_agent_hint(tx, organization_id, conversation_id, &selected_agent_hint)
+        .await?;
+    let locked_issue_id =
+        locks::lock_primary_issue_path_before_conversation(tx, organization_id, conversation_id)
+            .await?;
     if hinted_issue_id != locked_issue_id {
         return Err(http(409, "Chat primary Issue changed"));
     }
@@ -583,7 +588,7 @@ pub(super) async fn submit_in_transaction<'a>(
     // New admission follows the FK-safe Project→Workspace→Issue→Conversation
     // row order. The mutation lookup is repeated after the Conversation lock
     // before configuration or any write in case another writer raced us.
-    let conversation = auth::lock_conversation(&mut tx, organization_id, conversation_id).await?;
+    let conversation = auth::lock_conversation(tx, organization_id, conversation_id).await?;
     let selected_agent_id = conversation
         .preferred_agent_id
         .as_deref()
@@ -597,7 +602,7 @@ pub(super) async fn submit_in_transaction<'a>(
     }
     auth::authorize_agent_actor(actor, selected_agent_id)?;
     runtime_bindings::authorize_chat_target_read_tx(
-        &mut tx,
+        tx,
         actor,
         organization_id,
         conversation_id,
@@ -606,7 +611,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .await?;
 
     if let Some(receipt) = lookup_existing_receipt(
-        &mut tx,
+        tx,
         organization_id,
         conversation_id,
         client_mutation_id,
@@ -614,46 +619,46 @@ pub(super) async fn submit_in_transaction<'a>(
     )
     .await?
     {
-        auth::authorize_org(&mut tx, actor, organization_id).await?;
-        return Ok((tx, receipt.json()));
+        auth::authorize_org(tx, actor, organization_id).await?;
+        return Ok(receipt.json());
     }
 
     if conversation.status != "active" {
         return Err(http(409, "Chat conversation is not active"));
     }
-    if has_active_or_held_chat(&mut tx, organization_id, conversation_id).await? {
+    if has_active_or_held_chat(tx, organization_id, conversation_id).await? {
         return Err(http(
             409,
             "Chat has an active or unreconciled operation; reconcile it before sending another message",
         ));
     }
 
-    if has_unresolved_legacy_queue(&mut tx, organization_id, conversation_id).await? {
+    if has_unresolved_legacy_queue(tx, organization_id, conversation_id).await? {
         return Err(http(
             409,
             "Chat has unresolved queued input; finish or reconcile it before Native Chat admission",
         ));
     }
 
-    if has_unresolved_legacy_input(&mut tx, organization_id, conversation_id).await? {
+    if has_unresolved_legacy_input(tx, organization_id, conversation_id).await? {
         return Err(http(
             409,
             "Chat has unresolved legacy input; finish or reconcile it before Native Chat admission",
         ));
     }
 
-    let config = resolve_native_config(&mut tx, organization_id, conversation_id, host).await?;
+    let config = resolve_native_config(tx, organization_id, conversation_id, host).await?;
     if config.identity.agent_id != selected_agent_id {
         return Err(http(409, "Resolved Native Chat Agent changed"));
     }
-    budget::ensure_not_blocked(&mut tx, organization_id, selected_agent_id).await?;
+    budget::ensure_not_blocked(tx, organization_id, selected_agent_id).await?;
 
     // Enable only this Rust-owned transaction's guarded persistence writes.
     // From here through message, binding, Run, Attempt, and audit creation,
     // any failure rolls the entire admission back.
     sqlx::query("SELECT set_config('rudder.native_chat_write', $1, true)")
         .bind(NATIVE_WRITE_MARKER)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // Ensure the immutable binding and its current segment in this same
@@ -661,7 +666,7 @@ pub(super) async fn submit_in_transaction<'a>(
     // source message, Generation, Run, or Attempt.
     let identity = binding_identity(&config);
     let binding = runtime_bindings::ensure_native_chat_binding_tx(
-        &mut tx,
+        tx,
         actor,
         organization_id,
         conversation_id,
@@ -700,7 +705,7 @@ pub(super) async fn submit_in_transaction<'a>(
         .bind(selected_agent_id)
         .bind(&binding.segment_id)
         .bind(session_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         checkpoint
             .and_then(|value| value.get("piSession").cloned())
@@ -824,6 +829,32 @@ pub(super) async fn submit_in_transaction<'a>(
                 json!({"kind":"resume","reuseScope":"explicit","sourceRunId":null,"sessionId":session_id,"sessionParams":null}),
             )
         }
+        (runtime, state, session)
+            if matches!(state, "pending" | "open") && config.transport.is_some() =>
+        {
+            let provider = match runtime {
+                "http" => NativeChatProvider::Http,
+                "hermes_gateway" => NativeChatProvider::HermesGateway,
+                "openclaw_gateway" => NativeChatProvider::OpenClawGateway,
+                _ => NativeChatProvider::Process,
+            };
+            let checkpoint =
+                NativeChatProtocolCheckpoint::new_transport(provider, session.map(str::to_owned));
+            (
+                checkpoint,
+                if session.is_some() {
+                    "explicit"
+                } else {
+                    "none"
+                },
+                if session.is_some() {
+                    "same_session"
+                } else {
+                    "fresh"
+                },
+                json!({"kind":if session.is_some(){"resume"}else{"fresh"},"reuseScope":if session.is_some(){"explicit"}else{"none"},"sourceRunId":null,"sessionId":session,"sessionParams":null}),
+            )
+        }
         _ => return Err(http(409, "Native Chat segment cannot admit new input")),
     };
 
@@ -839,7 +870,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .bind(body)
     .bind(client_mutation_id)
     .bind(fingerprint)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     let message_id: String = message.try_get("id")?;
     let turn_variant: i32 = message.try_get("turn_variant")?;
@@ -858,11 +889,11 @@ pub(super) async fn submit_in_transaction<'a>(
     .bind(&message_id)
     .bind(turn_variant)
     .bind(runtime_type)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     let owner_token: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
     let mut context_snapshot = json!({
         "scene": "chat",
@@ -877,6 +908,31 @@ pub(super) async fn submit_in_transaction<'a>(
         "turnVariant": turn_variant,
         "stream": true,
     });
+    let needs_handoff:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND source_boundary_ref='native_chat_model_fallback' AND status IN ('closed','superseded'))")
+        .bind(organization_id).bind(conversation_id).fetch_one(&mut **tx).await?;
+    if needs_handoff && binding.state == "pending" && config.transport.is_none() {
+        let history=sqlx::query_as::<_,(String,String)>("SELECT role,body FROM (SELECT role,body,created_at,id FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND id<>$3::uuid AND superseded_at IS NULL AND role IN ('user','assistant') AND octet_length(body)<=80000 ORDER BY created_at DESC,id DESC LIMIT 12) m ORDER BY created_at,id")
+            .bind(organization_id).bind(conversation_id).bind(&message_id).fetch_all(&mut **tx).await?;
+        if !history.is_empty() {
+            let mut prompt =
+                String::from("Conversation history after a configured runtime/model transition:\n");
+            for (role, text) in history {
+                prompt.push_str(&format!("\n{role}:\n{text}\n"));
+            }
+            prompt.push_str(&format!("\nLatest user message:\n{body}"));
+            let delivery_fingerprint = validation::fingerprint(&prompt);
+            context_snapshot["nativeChatHistoryHandoff"] = json!({"sourceMessageId":message_id,"prompt":prompt,"fingerprint":delivery_fingerprint});
+            context_snapshot["nativeChatDeliveryFingerprint"] = json!(delivery_fingerprint);
+        }
+    }
+    if let Some(attempt) = &config.model_attempt {
+        context_snapshot["nativeChatModelAttemptIndex"] = json!(attempt.index);
+        context_snapshot["nativeChatModelPlanRevision"] = json!(attempt.plan_revision);
+    }
+    if !message_activity {
+        context_snapshot["automationArtifactSource"] =
+            json!({"runtimeType":runtime_type,"codexHome":config.profile.home,"cwd":config.cwd});
+    }
     if runtime_type == "hermes_local" {
         let adapter_revision = config
             .hermes
@@ -947,7 +1003,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .bind(context_snapshot.to_string())
     .bind(format!("native-chat:{generation_id}"))
     .bind(session_intent.to_string())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     let checkpoint = checkpoint.map_err(|error| {
@@ -981,19 +1037,19 @@ pub(super) async fn submit_in_transaction<'a>(
     } else {
         None
     })
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     sqlx::query("UPDATE chat_messages SET run_id=$1::uuid, updated_at=clock_timestamp() WHERE org_id=$2::uuid AND id=$3::uuid")
         .bind(&run_id)
         .bind(organization_id)
         .bind(&message_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     sqlx::query("UPDATE chat_conversations SET last_message_at=clock_timestamp(), updated_at=clock_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(organization_id)
         .bind(conversation_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     sqlx::query(
@@ -1005,7 +1061,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .bind(&generation_id)
     .bind(json!({ "runId": run_id, "attemptId": attempt_id }).to_string())
     .bind(&run_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query(
         "INSERT INTO heartbeat_run_events
@@ -1017,7 +1073,7 @@ pub(super) async fn submit_in_transaction<'a>(
     .bind(&run_id)
     .bind(selected_agent_id)
     .bind(json!({ "generationId": generation_id, "attemptId": attempt_id }).to_string())
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     let activity_details = json!({
@@ -1039,27 +1095,29 @@ pub(super) async fn submit_in_transaction<'a>(
         actor_id: actor.actor().id.clone(),
         run_id: Some(run_id.clone()),
     };
-    write_activity_options(
-        &mut tx,
-        ActivityWrite {
-            org: organization_id,
-            audit: &audit,
-            action: "chat.message_added",
-            entity_type: "chat",
-            entity_id: conversation_id,
-            details: Some(&activity_details),
-            options: ActivityOptions {
-                agent_id: (actor.actor().kind == "agent").then_some(selected_agent_id),
-                bind_run: false,
-                ..Default::default()
+    if message_activity {
+        write_activity_options(
+            tx,
+            ActivityWrite {
+                org: organization_id,
+                audit: &audit,
+                action: "chat.message_added",
+                entity_type: "chat",
+                entity_id: conversation_id,
+                details: Some(&activity_details),
+                options: ActivityOptions {
+                    agent_id: (actor.actor().kind == "agent").then_some(selected_agent_id),
+                    bind_run: false,
+                    ..Default::default()
+                },
             },
-        },
-    )
-    .await?;
+        )
+        .await?;
+    }
 
-    auth::authorize_org(&mut tx, actor, organization_id).await?;
+    auth::authorize_org(tx, actor, organization_id).await?;
     let source_message = persisted_user_message(
-        &mut tx,
+        tx,
         organization_id,
         conversation_id,
         &message_id,
@@ -1067,25 +1125,22 @@ pub(super) async fn submit_in_transaction<'a>(
         &run_id,
     )
     .await?;
-    Ok((
-        tx,
-        AdmissionReceipt {
-            conversation_id: conversation_id.to_owned(),
-            user_message_id: message_id,
-            source_message,
-            generation_id,
-            generation_status: "starting".into(),
-            attempt_epoch: 1,
-            execution_owner_live: Some(false),
-            runtime_terminal: false,
-            run_id,
-            run_status: "running".into(),
-            attempt_id,
-            held: false,
-            replayed: false,
-        }
-        .json(),
-    ))
+    Ok(AdmissionReceipt {
+        conversation_id: conversation_id.to_owned(),
+        user_message_id: message_id,
+        source_message,
+        generation_id,
+        generation_status: "starting".into(),
+        attempt_epoch: 1,
+        execution_owner_live: Some(false),
+        runtime_terminal: false,
+        run_id,
+        run_status: "running".into(),
+        attempt_id,
+        held: false,
+        replayed: false,
+    }
+    .json())
 }
 
 pub(super) async fn lookup_existing_receipt(
@@ -1220,13 +1275,13 @@ async fn persisted_user_message(
         "SELECT CASE WHEN octet_length(m.body)<=262144
            AND m.role='user' AND m.kind='message' AND m.status='completed'
            AND m.approval_id IS NULL
-           AND (m.structured_payload IS NULL OR m.structured_payload IN ('null'::jsonb,'{}'::jsonb))
+           AND (m.structured_payload IS NULL OR m.structured_payload IN ('null'::jsonb,'{}'::jsonb) OR EXISTS(SELECT 1 FROM heartbeat_runs h JOIN automation_runs ar ON ar.org_id=h.org_id AND ar.id::text=h.context_snapshot->>'automationRunId' WHERE h.org_id=m.org_id AND h.id=m.run_id AND ar.started_chat_message_id=m.id AND ar.linked_chat_conversation_id=m.conversation_id AND h.context_snapshot->'automationSourcePayload'=m.structured_payload))
            AND NOT EXISTS(SELECT 1 FROM chat_attachments a
              WHERE a.org_id=m.org_id AND a.message_id=m.id)
          THEN jsonb_build_object(
            'id',m.id,'orgId',m.org_id,'conversationId',m.conversation_id,
            'role',m.role,'kind',m.kind,'status',m.status,'body',m.body,
-           'structuredPayload',NULL,'approvalId',NULL,'approval',NULL,'attachments','[]'::jsonb,
+           'structuredPayload',m.structured_payload,'approvalId',NULL,'approval',NULL,'attachments','[]'::jsonb,
            'runId',m.run_id,'generationId',$4::uuid,'replyingAgentId',m.replying_agent_id,
            'chatTurnId',m.chat_turn_id,'turnVariant',m.turn_variant,
            'supersededAt',m.superseded_at,'createdAt',m.created_at,'updatedAt',m.updated_at)

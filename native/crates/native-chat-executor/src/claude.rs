@@ -122,120 +122,137 @@ pub(crate) fn execute_turn(
     ) -> Result<bool, ClaudeExecutionError>,
     timeout: Duration,
 ) -> Result<ClaudeExecutionObservation, HostExecutionFailure<ClaudeExecutionError>> {
-    if config.identity.runtime_type != "claude_local"
-        || timeout.is_zero()
-        || timeout > MAX_TURN_TIMEOUT
-        || !config.cwd.is_dir()
-        || !local.home.is_dir()
-        || !local.profile_revision_matches()
-        || !paths.process_host.is_file()
-        || !paths.runtime_root.is_dir()
-        || !paths.isolated_home.is_dir()
-        || run_id.is_empty()
-        || attempt_id.is_empty()
-        || owner_token.is_empty()
-    {
-        return Err(ClaudeExecutionError::InvalidConfiguration.into());
-    }
-    if local
-        .grace_sec
-        .is_some_and(|seconds| !(1..=60).contains(&seconds))
-        || local
-            .max_turns_per_run
-            .is_some_and(|turns| !(1..=1000).contains(&turns))
-    {
-        return Err(ClaudeExecutionError::InvalidConfiguration.into());
-    }
-    let timeout = local
-        .timeout_sec
-        .filter(|seconds| *seconds > 0)
-        .map(Duration::from_secs)
-        .map_or(timeout, |configured| timeout.min(configured));
+    let prepared = (|| -> Result<_, ClaudeExecutionError> {
+        if config.identity.runtime_type != "claude_local"
+            || timeout.is_zero()
+            || timeout > MAX_TURN_TIMEOUT
+            || !config.cwd.is_dir()
+            || !local.home.is_dir()
+            || !local.profile_revision_matches()
+            || !paths.process_host.is_file()
+            || !paths.runtime_root.is_dir()
+            || !paths.isolated_home.is_dir()
+            || run_id.is_empty()
+            || attempt_id.is_empty()
+            || owner_token.is_empty()
+        {
+            return Err(ClaudeExecutionError::InvalidConfiguration.into());
+        }
+        if local
+            .grace_sec
+            .is_some_and(|seconds| !(1..=60).contains(&seconds))
+            || local
+                .max_turns_per_run
+                .is_some_and(|turns| !(1..=1000).contains(&turns))
+        {
+            return Err(ClaudeExecutionError::InvalidConfiguration.into());
+        }
+        let timeout = local
+            .timeout_sec
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .map_or(timeout, |configured| timeout.min(configured));
 
-    let has_context_sections = instruction_context_sections
-        .iter()
-        .any(|section| !section.trim().is_empty());
-    let generated_instruction_file = if include_goal_runtime_prefix || has_context_sections {
-        Some(write_combined_instruction_context(
-            paths,
-            config,
-            local,
-            instruction_context_sections,
-            include_goal_runtime_prefix,
-        )?)
-    } else {
-        None
-    };
+        let has_context_sections = instruction_context_sections
+            .iter()
+            .any(|section| !section.trim().is_empty());
+        let generated_instruction_file = if include_goal_runtime_prefix || has_context_sections {
+            Some(write_combined_instruction_context(
+                paths,
+                config,
+                local,
+                instruction_context_sections,
+                include_goal_runtime_prefix,
+            )?)
+        } else {
+            None
+        };
 
-    let profile = if local.profile_id == "operator-default" {
-        ClaudeRuntimeProfile::operator_default(config.operator_home.clone())
-    } else {
-        ClaudeRuntimeProfile::new(config.operator_home.clone(), local.home.clone())
-    }
-    .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
-    let mut env = profile
-        .environment()
+        let profile = if local.profile_id == "operator-default" {
+            ClaudeRuntimeProfile::operator_default(config.operator_home.clone())
+        } else {
+            ClaudeRuntimeProfile::new(config.operator_home.clone(), local.home.clone())
+        }
         .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
-    for (key, value) in &local.env {
-        if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
-            || key.is_empty()
-            || key.contains('=')
-            || key.contains('\0')
-            || value.contains('\0')
-        {
-            return Err(ClaudeExecutionError::InvalidConfiguration.into());
+        let mut env = profile
+            .environment()
+            .map_err(|_| ClaudeExecutionError::InvalidConfiguration)?;
+        for (key, value) in &local.env {
+            if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
+                || key.is_empty()
+                || key.contains('=')
+                || key.contains('\0')
+                || value.contains('\0')
+            {
+                return Err(ClaudeExecutionError::InvalidConfiguration.into());
+            }
+            env.insert(key.clone(), value.clone());
         }
-        env.insert(key.clone(), value.clone());
-    }
-    // Agent-controlled runtime environment cannot forge Rudder Agent JWT
-    // authentication. The context bridge may re-add this exact key only after
-    // signing it from trusted identity/run state.
-    env.remove("RUDDER_API_KEY");
-    for (key, value) in extra_env {
-        if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
-            || key.is_empty()
-            || key.contains('=')
-            || key.contains('\0')
-            || value.contains('\0')
-        {
-            return Err(ClaudeExecutionError::InvalidConfiguration.into());
+        // Agent-controlled runtime environment cannot forge Rudder Agent JWT
+        // authentication. The context bridge may re-add this exact key only after
+        // signing it from trusted identity/run state.
+        env.remove("RUDDER_API_KEY");
+        for (key, value) in extra_env {
+            if matches!(key.as_str(), "HOME" | "USERPROFILE" | "CLAUDE_CONFIG_DIR")
+                || key.is_empty()
+                || key.contains('=')
+                || key.contains('\0')
+                || value.contains('\0')
+            {
+                return Err(ClaudeExecutionError::InvalidConfiguration.into());
+            }
+            env.insert(key.clone(), value.clone());
         }
-        env.insert(key.clone(), value.clone());
-    }
-    env.insert("PATH".into(), local.executable_search_path.clone());
-    let session = match existing_session {
-        Some(value) => ClaudeSessionMode::Resume {
-            session_id: ClaudeSessionSelector::parse(value).map_err(ClaudeExecutionError::from)?,
-        },
-        None => ClaudeSessionMode::New {
-            session_id: Some(ClaudeSessionSelector::new()),
-        },
-    };
-    let mut invocation = ClaudeInvocation::new(session);
-    invocation.model = config.model.clone();
-    invocation.effort = config.reasoning_effort.clone();
-    invocation.permission_mode = local.permission_mode.clone();
-    invocation.max_turns = local.max_turns_per_run;
-    invocation.append_system_prompt_file = generated_instruction_file
-        .as_ref()
-        .map(|file| file.path.clone())
-        .or_else(|| {
-            claude_instruction_entry_path(
-                config.instruction_source_path.as_deref(),
-                &config.instruction_entry_file,
-                config.instruction_content.is_some(),
-            )
-        });
-    let launch = ClaudeLaunch {
-        executable: config.executable.clone(),
-        cwd: config.cwd.clone(),
-        env,
-        process_host: paths.process_host.clone(),
-        runtime_root: paths.runtime_root.clone(),
-        run_id: run_id.to_owned(),
-        attempt_id: attempt_id.to_owned(),
-        owner_token: owner_token.to_owned(),
-        invocation,
+        env.insert("PATH".into(), local.executable_search_path.clone());
+        let session = match existing_session {
+            Some(value) => ClaudeSessionMode::Resume {
+                session_id: ClaudeSessionSelector::parse(value)
+                    .map_err(ClaudeExecutionError::from)?,
+            },
+            None => ClaudeSessionMode::New {
+                session_id: Some(ClaudeSessionSelector::new()),
+            },
+        };
+        let mut invocation = ClaudeInvocation::new(session);
+        invocation.model = config.model.clone();
+        invocation.effort = config.reasoning_effort.clone();
+        invocation.permission_mode = local.permission_mode.clone();
+        invocation.max_turns = local.max_turns_per_run;
+        invocation.append_system_prompt_file = generated_instruction_file
+            .as_ref()
+            .map(|file| file.path.clone())
+            .or_else(|| {
+                claude_instruction_entry_path(
+                    config.instruction_source_path.as_deref(),
+                    &config.instruction_entry_file,
+                    config.instruction_content.is_some(),
+                )
+            });
+        let launch = ClaudeLaunch {
+            executable: config
+                .executable
+                .clone()
+                .ok_or(ClaudeExecutionError::InvalidConfiguration)?,
+            cwd: config.cwd.clone(),
+            env,
+            process_host: paths.process_host.clone(),
+            runtime_root: paths.runtime_root.clone(),
+            run_id: run_id.to_owned(),
+            attempt_id: attempt_id.to_owned(),
+            owner_token: owner_token.to_owned(),
+            invocation,
+        };
+        Ok((launch, generated_instruction_file, timeout))
+    })();
+    let (launch, _generated_instruction_file, timeout) = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(HostExecutionFailure {
+                error,
+                cleanup: None,
+                unspent_launch_permit: Some(permit),
+            });
+        }
     };
     let mut transport = ClaudeTransport::launch_for_execution(launch, permit)
         .map_err(ClaudeExecutionError::from)?;
@@ -329,6 +346,7 @@ pub(crate) fn execute_turn(
         Ok(turn) => turn,
         Err(error) => {
             return Err(HostExecutionFailure {
+                unspent_launch_permit: None,
                 error,
                 cleanup: cleanup.map(Box::new),
             });

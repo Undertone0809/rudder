@@ -126,20 +126,7 @@ pub(crate) fn configure(
                 .as_ref()
                 .and_then(|_| url::Url::parse("http://127.0.0.1:0/").ok())
         });
-    let has_opencode = opencode.is_some();
     let has_pi = pi_node.is_some() && pi_cli_entry.is_some();
-    let Some(host_executable) = preferred_native_executable(
-        codex.clone(),
-        hermes.clone(),
-        has_pi.then(|| pi_node.clone()).flatten(),
-        claude.clone(),
-        cursor.clone(),
-    )
-    .or_else(|| opencode.clone())
-    .or_else(|| has_opencode.then(|| current.clone()))
-    .or_else(|| has_pi.then(|| current.clone())) else {
-        return Ok(config);
-    };
     let host_name = if cfg!(windows) {
         "rudder-process-host.exe"
     } else {
@@ -161,7 +148,7 @@ pub(crate) fn configure(
     let runtime_root = owned_directory(&native_root.join("runtime"))?;
     let isolated_home = owned_directory(&native_root.join("isolated-home"))?;
     let previous_documents = operator_home.join("Documents/Rudder");
-    let mut host = LocalHostContext::from_rust_host(
+    let mut host = LocalHostContext::from_runtime_host(
         format!("local:{}", installation.instance_id),
         instance,
         workspace,
@@ -169,14 +156,19 @@ pub(crate) fn configure(
         installation.friendly_workspace_home,
         profiles,
         operator_home.clone(),
-        // LocalHostContext retains a Codex executable carrier for source
-        // compatibility. When only Hermes is installed, its path is an
-        // unavailable-Codex sentinel; Hermes resolution never consults it.
-        host_executable,
+        codex.clone(),
     )
     .map_err(|_| invalid_at("invalid native host paths or identity"))?
     .with_executable_search_path(installation.executable_search_path.clone())
     .map_err(|_| invalid_at("invalid executable search path"))?;
+    let environment = crate::optional_env("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT")?
+        .map(|raw| {
+            serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
+                .map_err(|_| invalid_at("invalid captured operator environment"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    host = host.with_runtime_environment(environment);
     host = host.with_opencode_operator_profile_supported(opencode_operator_profile_supported);
     if codex.is_some() {
         host = host.with_native_codex_profile();
@@ -365,6 +357,7 @@ fn executable(name: &str, search: &str) -> Option<PathBuf> {
         .find_map(|directory| canonical_executable(&directory.join(name)))
 }
 
+#[cfg(test)]
 fn preferred_native_executable(
     codex: Option<PathBuf>,
     hermes: Option<PathBuf>,

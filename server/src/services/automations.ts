@@ -72,14 +72,14 @@ type Actor = { agentId?: string | null; userId?: string | null };
 type AutomationRow = typeof automations.$inferSelect;
 type ChatAssistantService = ReturnType<typeof chatAssistantService>;
 type AutomationServiceDeps = {
+  /** Installation-level negative fence; Rust owns execution and cadence. */
+  nativeExecution?: boolean;
   heartbeat?: IssueAssignmentWakeupDeps;
   chatAssistant?: Pick<ChatAssistantService, "enrichConversation" | "streamChatAssistantReply">;
   storage?: StorageService;
   autoStartChatOutputRuns?: boolean;
 };
-
 const CHAT_OUTPUT_STALE_RUN_MS = 30 * 60 * 1000;
-
 function toAutomation(row: AutomationRow): Automation {
   return {
     ...row,
@@ -1950,8 +1950,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         },
       };
     },
-
     runAutomation: async (id: string, input: RunAutomation) => {
+      if (deps.nativeExecution) throw conflict("Automation execution is owned by Rust");
       const automation = await getAutomationById(id);
       if (!automation) throw notFound("Automation not found");
       if (automation.status !== "active") throw conflict("Automation is not active");
@@ -1966,7 +1966,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         idempotencyKey: input.idempotencyKey,
       });
     },
-
     firePublicTrigger: async (publicId: string, input: {
       authorizationHeader?: string | null;
       signatureHeader?: string | null;
@@ -1975,6 +1974,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       rawBody?: Buffer | null;
       payload?: Record<string, unknown> | null;
     }) => {
+      if (deps.nativeExecution) throw conflict("Automation execution is owned by Rust");
       const trigger = await db
         .select()
         .from(automationTriggers)
@@ -2113,8 +2113,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           : null,
       }));
     },
-
     tickScheduledTriggers: async (now: Date = new Date()) => {
+      if (deps.nativeExecution) return { triggered: 0 };
       const due = await db
         .select({
           trigger: automationTriggers,

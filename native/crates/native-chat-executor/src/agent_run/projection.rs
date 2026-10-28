@@ -36,7 +36,7 @@ fn num(value: &Value, keys: &[&str]) -> f64 {
         .unwrap_or_default()
 }
 
-pub(super) fn parse(
+pub(crate) fn parse(
     runtime: &str,
     config: &Value,
     launch: &AgentProcessLaunch,
