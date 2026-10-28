@@ -79,9 +79,7 @@ type AutomationServiceDeps = {
   storage?: StorageService;
   autoStartChatOutputRuns?: boolean;
 };
-
 const CHAT_OUTPUT_STALE_RUN_MS = 30 * 60 * 1000;
-
 function toAutomation(row: AutomationRow): Automation {
   return {
     ...row,
@@ -1952,7 +1950,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         },
       };
     },
-
     runAutomation: async (id: string, input: RunAutomation) => {
       if (deps.nativeExecution) throw conflict("Automation execution is owned by Rust");
       const automation = await getAutomationById(id);
@@ -1969,7 +1966,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         idempotencyKey: input.idempotencyKey,
       });
     },
-
     firePublicTrigger: async (publicId: string, input: {
       authorizationHeader?: string | null;
       signatureHeader?: string | null;
@@ -2117,7 +2113,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           : null,
       }));
     },
-
     tickScheduledTriggers: async (now: Date = new Date()) => {
       if (deps.nativeExecution) return { triggered: 0 };
       const due = await db
