@@ -1700,7 +1700,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     assert_eq!(admitted_wakeup.2, "issue_comment_mentioned");
     assert_eq!(admitted_wakeup.4["issueId"], comment_wakeup_issue_id);
     assert_eq!(admitted_wakeup.4["commentId"], admitted_comment_id);
-    assert_eq!(admitted_wakeup.5, "legacy_ts");
+    assert_eq!(admitted_wakeup.5, "native_rust");
     let comment_wakeup_request_id = admitted_wakeup.0;
     let comment_wakeup_run_id = admitted_wakeup.3;
 
@@ -1824,7 +1824,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
             "queued".to_owned(),
             "assignment".to_owned(),
             "issue_checked_out".to_owned(),
-            "legacy_ts".to_owned(),
+            "native_rust".to_owned(),
             "queued".to_owned(),
         )
     );
@@ -1884,7 +1884,7 @@ async fn public_issue_reads_and_agent_board_checkout_use_rust_without_node_fallb
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(member_queue_authority, "legacy_ts");
+    assert_eq!(member_queue_authority, "native_rust");
 
     let paused_checkout = client
         .post(format!("{base}/api/issues/{paused_issue_id}/checkout"))
