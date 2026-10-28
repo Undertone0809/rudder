@@ -43,6 +43,7 @@ pub mod issue_lifecycle_analytics;
 pub(crate) mod issue_messenger_cleanup;
 pub mod issue_metadata_reads;
 pub mod issue_work_products;
+pub mod label_writes;
 pub mod legacy_read_json;
 mod links;
 pub mod messenger_reads;

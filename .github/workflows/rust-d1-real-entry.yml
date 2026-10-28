@@ -183,6 +183,12 @@ jobs:
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::label_writes::http_tests::native_label_writes_preserve_validation_scope_receipts_revocation_rollback_and_no_fallback \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
       - name: Verify Rust Messenger writes and ephemeral title processes
         env:
           RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: ${{ runner.temp }}/rudder-public-workflow/workspaces
