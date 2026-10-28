@@ -48,7 +48,7 @@ async fn settled_native_run(pool: &sqlx::PgPool, issue: &str) -> String {
     }}).await.expect("actual generic execution and owned cleanup settle")
 }
 #[actix_web::test]
-#[ignore = "requires disposable PostgreSQL188, isolated logs/secrets and prebuilt RUDDER_TEST_PROCESS_HOST"]
+#[ignore = "requires disposable PostgreSQL with current journal, isolated logs/secrets and prebuilt RUDDER_TEST_PROCESS_HOST"]
 async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and_owned_worker() {
     crate::init_tracing();
     assert!(std::env::var_os("RUN_LOG_BASE_PATH").is_some());
@@ -239,6 +239,58 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     let (status,definition)=call(&client,&base,token,Method::POST,&format!("/api/orgs/{}/automations",support::ORG),json!({"title":"Synthetic end-to-end automation","description":"Complete isolated fixture work","assigneeAgentId":agent,"outputMode":"track_issue"})).await;
     assert_eq!(status, StatusCode::CREATED, "{definition}");
     let automation = definition["id"].as_str().unwrap();
+    let foreign_user = "automation-execution-foreign-fixture";
+    let foreign_token = "pcp_board_synthetic_automation_foreign_fixture";
+    sqlx::query("INSERT INTO \"user\"(id,name,email,created_at,updated_at) VALUES($1,'Foreign Automation fixture','automation-foreign@example.test',now(),now())")
+        .bind(foreign_user).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO organization_memberships(org_id,principal_type,principal_id,membership_role,status) VALUES($1::uuid,'user',$2,'member','active')")
+        .bind(support::OTHER).bind(foreign_user).execute(&db.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO board_api_keys(user_id,name,key_hash) VALUES($1,'Foreign fixture',$2)",
+    )
+    .bind(foreign_user)
+    .bind(hash_token(foreign_token))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let other_agent = Uuid::new_v4().to_string();
+    let other_agent_token = "pcp_synthetic_automation_non_assignee_fixture";
+    sqlx::query("INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,agent_runtime_config) VALUES($1::uuid,$2::uuid,'Non-assignee fixture','general','idle','process','{}'::jsonb)")
+        .bind(&other_agent).bind(support::ORG).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_api_keys(org_id,agent_id,name,key_hash) VALUES($1::uuid,$2::uuid,'Non-assignee fixture',$3)")
+        .bind(support::ORG).bind(&other_agent).bind(hash_token(other_agent_token)).execute(&db.pool).await.unwrap();
+    let domain_counts = "SELECT
+        (SELECT count(*) FROM automation_runs WHERE org_id=$1::uuid),
+        (SELECT count(*) FROM issues WHERE org_id=$1::uuid),
+        (SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid),
+        (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid)";
+    let before_denials: (i64, i64, i64, i64) = sqlx::query_as(domain_counts)
+        .bind(support::ORG)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    for denied_token in [foreign_token, other_agent_token] {
+        let (status, denied) = call(
+            &client,
+            &base,
+            denied_token,
+            Method::POST,
+            &format!("/api/automations/{automation}/run"),
+            json!({"source":"api","idempotencyKey":"denied-public-run"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+        let after_denial: (i64, i64, i64, i64) = sqlx::query_as(domain_counts)
+            .bind(support::ORG)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after_denial, before_denials,
+            "denied public run creates no work"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
     let (status, run) = call(
         &client,
         &base,

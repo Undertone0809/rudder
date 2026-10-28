@@ -2594,10 +2594,10 @@ mod tests {
     mod observational_read_http_tests;
     #[path = "organization_reads_http_tests.rs"]
     mod organization_reads_http_tests;
-    #[path = "request_write_http_tests.rs"]
-    mod request_write_http_tests;
     #[path = "request_read_http_tests.rs"]
     mod request_read_http_tests;
+    #[path = "request_write_http_tests.rs"]
+    mod request_write_http_tests;
     #[path = "run_read_http_tests.rs"]
     mod run_read_http_tests;
 

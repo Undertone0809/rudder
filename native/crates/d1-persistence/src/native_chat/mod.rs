@@ -13,8 +13,12 @@ use crate::runtime_bindings::IdentityInput;
 
 mod actor;
 mod automation;
-pub(crate) use automation::{admit as admit_automation,persist_dispatch_failure as persist_automation_dispatch_failure};
-pub use automation::{automation_instruction_context, AutomationChatActor, AutomationChatJob, list_automation_jobs};
+pub use automation::{
+    AutomationChatActor, AutomationChatJob, automation_instruction_context, list_automation_jobs,
+};
+pub(crate) use automation::{
+    admit as admit_automation, persist_dispatch_failure as persist_automation_dispatch_failure,
+};
 mod admission;
 pub use admission::DispatchUnavailableRequest;
 mod auth;
