@@ -34,6 +34,27 @@ records. Retire only the already-landed `reviewed_node_changes` entries, as the
 existing CLI lifecycle regression requires; preserve source inventories,
 transport admissions and checker enforcement.
 
+## 2026-10-28: Keep qualification and publication on supported runner images
+
+The restored main Test `40642026483` automatically started Release
+`40648135955`, including its deliberate legacy-marker regression fixture.
+Preflight selected `0.7.24-canary.50`; npm, Linux, Windows and macOS Intel
+candidates passed. The remaining Apple Silicon candidate stayed queued on
+`macos-14` for more than 90 minutes.
+
+[GitHub's retirement notice](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/)
+sets November 2, 2026 as the removal date, with earlier brownouts and possible
+capacity reductions. The queue alone does not prove its cause, but an image
+scheduled for removal cannot support a durable release path. Move the canonical
+Test and Release ARM jobs to the supported `macos-15` label together, retain
+`macos-15-intel` for x64, and preserve the migration, package and public-install
+gates. Contract coverage must reject retiring labels on both paths.
+
+An obsolete candidate may be cancelled before publication after checking npm,
+the remote tag and GitHub Release state. A replacement workflow/source needs
+its own immutable qualification and candidate; passing artifacts from the old
+workflow must not be relabeled as a candidate for the new source.
+
 ## 2026-10-13 audit scope
 
 Inspected public main `93faca8b2352cad0331db54794b6895630ad2ecc`: contributor

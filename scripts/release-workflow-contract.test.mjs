@@ -187,9 +187,26 @@ describe("unified delivery workflows", () => {
     expect(testWorkflow).toContain("pnpm test:docs-search");
     expect(testWorkflow).toContain("node scripts/docs-content-map.mjs integrity");
     const desktop = workflowJob(testWorkflow, "desktop-packaged-smoke");
-    expect(desktop).toContain("runs-on: macos-14");
+    expect(desktop).toContain("runs-on: macos-15\n");
     expect(desktop).toContain("pnpm desktop:dist");
     expect(desktop).toContain("--mode=packaged --scenario=account-gate");
+  });
+
+  it("pins supported macOS runners across qualification, candidates, and public installs", () => {
+    for (const workflow of [testWorkflow, releaseWorkflow]) {
+      expect(workflow.match(/\bmacos-14\b/g)).toBeNull();
+    }
+    for (const jobName of ["native-foundations", "server-foundation-artifacts"]) {
+      const job = workflowJob(testWorkflow, jobName);
+      expect(job).toMatch(/- runner: macos-15\n\s+target: aarch64-apple-darwin\n/);
+      expect(job).toMatch(/- runner: macos-15-intel\n\s+target: x86_64-apple-darwin\n/);
+    }
+    const desktop = workflowJob(releaseWorkflow, "desktop-candidate");
+    expect(desktop).toMatch(/platform: macos\n\s+arch: arm64\n\s+runner: macos-15\n\s+native_target: aarch64-apple-darwin\n/);
+    expect(desktop).toMatch(/platform: macos\n\s+arch: x64\n\s+runner: macos-15-intel\n\s+native_target: x86_64-apple-darwin\n/);
+    for (const jobName of ["canary-install", "stable-install"]) {
+      expect(workflowJob(releaseWorkflow, jobName)).toMatch(/label: macOS arm64\n\s+runner: macos-15\n/);
+    }
   });
 
   it("builds npm and four Desktop candidates before either publish job", () => {

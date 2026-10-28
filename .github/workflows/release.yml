@@ -499,7 +499,7 @@ jobs:
             native_target: x86_64-apple-darwin
           - platform: macos
             arch: arm64
-            runner: macos-14
+            runner: macos-15
             native_target: aarch64-apple-darwin
           - platform: windows
             arch: x64
@@ -1717,7 +1717,7 @@ jobs:
           - label: Windows x64
             runner: windows-latest
           - label: macOS arm64
-            runner: macos-14
+            runner: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -1803,7 +1803,7 @@ jobs:
           - label: Windows x64
             runner: windows-latest
           - label: macOS arm64
-            runner: macos-14
+            runner: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
