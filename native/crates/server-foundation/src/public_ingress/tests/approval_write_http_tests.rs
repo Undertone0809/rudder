@@ -607,6 +607,25 @@ async fn public_approval_lifecycle_comments_and_domain_effects_run_without_node(
             200,
         )
         .await;
+        if target == "agent" {
+            let title: String = sqlx::query_scalar(
+                "SELECT title FROM agents WHERE org_id=$1::uuid AND id=$2::uuid",
+            )
+            .bind(&org)
+            .bind(&agent)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(title, "Approved title");
+        } else if patch.get("name").is_some() {
+            let name: String =
+                sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1::uuid")
+                    .bind(&org)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(name, "Approved organization");
+        }
         if patch.get("brandColor").is_some() {
             post(
                 &client,
