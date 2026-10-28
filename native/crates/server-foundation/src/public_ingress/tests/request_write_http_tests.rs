@@ -19,6 +19,11 @@ fn runtime(database_url: Option<String>, upstream: &str) -> (Arc<AppState>, Publ
         })
         .unwrap(),
     );
+    let runtime = PublicIngressRuntime::bind(ingress_config(upstream), state.clone()).unwrap();
+    (state, runtime)
+}
+
+fn ingress_config(upstream: &str) -> PublicIngressConfig {
     let mut config =
         PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), upstream, INTERNAL).unwrap();
     config.identity_auth = Some(
@@ -35,8 +40,7 @@ fn runtime(database_url: Option<String>, upstream: &str) -> (Arc<AppState>, Publ
         NativeSessionAuthConfig::new(NativeSessionAuthKind::BetterAuth, SECRET, false, INTERNAL)
             .unwrap(),
     );
-    let runtime = PublicIngressRuntime::bind(config, state.clone()).unwrap();
-    (state, runtime)
+    config
 }
 async fn post(
     client: &awc::Client,
@@ -71,6 +75,187 @@ async fn seed_issue_request(
 async fn request_state(pool: &PgPool, id: &str) -> (String, String, i64) {
     sqlx::query_as("SELECT r.status,i.status,(SELECT count(*) FROM agent_wakeup_requests w WHERE w.org_id=r.org_id AND (w.idempotency_key='assistance-request:'||r.id::text||':resolved' OR w.payload->>'requestId'=r.id::text)) FROM requests r JOIN issues i ON i.id=r.issue_id AND i.org_id=r.org_id WHERE r.id=$1::uuid")
         .bind(id).fetch_one(pool).await.unwrap()
+}
+
+#[actix_web::test]
+#[ignore = "requires migrated disposable RUDDER_NATIVE_AUTH_TEST_DATABASE_URL, isolated RUN_LOG_BASE_PATH and frozen RUDDER_TEST_PROCESS_HOST"]
+async fn public_assistance_resolution_executes_owned_process_and_settles_native_run() {
+    use crate::agent_run_context::AgentRunContextHost;
+    use rudder_d1_persistence::agent_core::OrganizationWorkspaceHost;
+    use std::{collections::BTreeMap, path::PathBuf};
+
+    assert!(
+        env::var_os("RUN_LOG_BASE_PATH").is_some(),
+        "runner supplies isolated log root shared by native writer and public reader"
+    );
+    let pool = super::disposable_native_auth_pool().await;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("cwd");
+    let operator = root.path().join("operator");
+    let runtime_root = root.path().join("runtime");
+    for directory in [&cwd, &operator, &runtime_root] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    let suffix = Uuid::new_v4().simple().to_string();
+    let org: String = sqlx::query_scalar("INSERT INTO organizations(url_key,name,issue_prefix) VALUES($1,'Request worker workflow',$2) RETURNING id::text")
+        .bind(format!("request-worker-{suffix}")).bind(format!("RE{}",&suffix[..6])).fetch_one(&pool).await.unwrap();
+    let user = format!("request-worker-{suffix}");
+    sqlx::query(r#"INSERT INTO "user"(id,name,email,created_at,updated_at) VALUES($1,'Request worker operator',$2,now(),now())"#)
+        .bind(&user).bind(format!("{user}@invalid.test")).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO organization_memberships(org_id,principal_type,principal_id,status) VALUES($1::uuid,'user',$2,'active')")
+        .bind(&org).bind(&user).execute(&pool).await.unwrap();
+    let token = format!("request-worker-token-{suffix}");
+    sqlx::query(
+        "INSERT INTO board_api_keys(user_id,name,key_hash) VALUES($1,'Request worker operator',$2)",
+    )
+    .bind(&user)
+    .bind(crate::native_bearer_auth::hash_token(&token))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let agent: String = sqlx::query_scalar("INSERT INTO agents(org_id,name,role,status,agent_runtime_type,agent_runtime_config) VALUES($1::uuid,'Request process worker','engineer','idle','process',$2) RETURNING id::text")
+        .bind(&org).bind(json!({"command":"/bin/sh","args":["-c","printf 'request-owned-process-complete\\n'; printf 'owned-request-proof\\n' > request-worker-proof.txt"],"cwd":cwd})).fetch_one(&pool).await.unwrap();
+    let (issue, request) = seed_issue_request(&pool, &org, &agent, "blocked", None).await;
+    let node_requests = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream = format!("http://{}", listener.local_addr().unwrap());
+    let node = HttpServer::new({
+        let hits = node_requests.clone();
+        move || {
+            let hits = hits.clone();
+            App::new().default_service(web::to(move || {
+                let hits = hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    HttpResponse::Ok().json(json!({"unexpectedNode":true}))
+                }
+            }))
+        }
+    })
+    .workers(1)
+    .disable_signals()
+    .listen(listener)
+    .unwrap()
+    .run();
+    let node_control = node.handle();
+    let node_task = actix_web::rt::spawn(node);
+    let state = Arc::new(
+        AppState::new(ServerConfig {
+            database_url: Some(env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL").unwrap()),
+            actor_envelope_key: Some(
+                SigningKey::new(b"request-write-synthetic-native-envelope-key").unwrap(),
+            ),
+            workers: 1,
+            ..ServerConfig::default()
+        })
+        .unwrap(),
+    );
+    let mut config = ingress_config(&upstream);
+    config.agent_run_host = Some(Arc::new(AgentRunContextHost {
+        workspace: OrganizationWorkspaceHost {
+            instance_root: root.path().display().to_string(),
+            workspace_home: root.path().join("workspaces").display().to_string(),
+            previous_documents_root: root.path().join("old-documents").display().to_string(),
+            friendly_workspace_home: false,
+            hostname: "request-worker-fixture".into(),
+        },
+        operator_home: operator,
+        process_cwd: cwd.clone(),
+        executable_search_path: "/usr/bin:/bin".into(),
+        environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+        runtime_root,
+        rudder_cli: PathBuf::from("/usr/bin/false"),
+        process_host: env::var_os("RUDDER_TEST_PROCESS_HOST")
+            .map(PathBuf::from)
+            .expect("frozen native process host"),
+        api_url: "http://127.0.0.1:1".into(),
+        deployment_mode: "local_trusted".into(),
+        bundled_skills_root: None,
+        desktop_brokers: state.desktop_brokers.clone(),
+    }));
+    let native = PublicIngressRuntime::bind(config, state.clone()).unwrap();
+    let base = format!("http://{}", native.bound_addr());
+    let control = native.control();
+    let native_task = actix_web::rt::spawn(native.run());
+    let client = awc::Client::default();
+    let (status, resolved) = post(
+        &client,
+        &base,
+        &request,
+        "resolve",
+        &token,
+        json!({"resolution":"answered","response":"Human access granted"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    assert_eq!(resolved["status"], "resolved");
+    let run = resolved["wakeRunId"]
+        .as_str()
+        .expect("resolution admits a native Run");
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let mut response = client.get(format!("{base}/api/agent-runs/{run}"))
+                .insert_header((header::AUTHORIZATION, format!("Bearer {token}"))).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let current: Value = response.json().await.unwrap();
+            assert!(!matches!(current["status"].as_str(), Some("failed" | "cancelled")), "{current}");
+            let clean: bool = sqlx::query_scalar("SELECT process_exited_at IS NOT NULL AND NOT terminal_effects_pending FROM heartbeat_runs WHERE id=$1::uuid")
+                .bind(run).fetch_one(&pool).await.unwrap();
+            if current["status"] == "succeeded" && clean { break; }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    }).await.expect("public Request Run succeeds after owned process cleanup");
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("request-worker-proof.txt")).unwrap(),
+        "owned-request-proof\n"
+    );
+    let mut log = client
+        .get(format!("{base}/api/agent-runs/{run}/log"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(log.status(), StatusCode::OK);
+    assert!(
+        String::from_utf8_lossy(&log.body().await.unwrap())
+            .contains("request-owned-process-complete")
+    );
+    let mut read = client
+        .get(format!("{base}/api/requests/{request}"))
+        .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    let read: Value = read.json().await.unwrap();
+    assert_eq!(read["status"], "resolved");
+    assert_eq!(read["response"], "Human access granted");
+    assert_eq!(
+        request_state(&pool, &request).await,
+        ("resolved".into(), "in_progress".into(), 1)
+    );
+    let linkage: (String, String, String, String) = sqlx::query_as("SELECT r.execution_authority,w.execution_authority,w.run_id::text,r.context_snapshot->>'requestId' FROM heartbeat_runs r JOIN agent_wakeup_requests w ON w.id=r.wakeup_request_id AND w.org_id=r.org_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid AND r.agent_id=$3::uuid AND r.context_snapshot->>'issueId'=$4 AND w.idempotency_key=$5")
+        .bind(&org).bind(run).bind(&agent).bind(&issue).bind(format!("assistance-request:{request}:resolved")).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        linkage,
+        (
+            "native_rust".into(),
+            "native_rust".into(),
+            run.into(),
+            request.clone()
+        )
+    );
+    let audit: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND idempotency_key=$2),(SELECT count(*) FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id WHERE a.org_id=$1::uuid AND a.idempotency_key=$2)")
+        .bind(&org).bind(format!("request-resolved:{request}")).fetch_one(&pool).await.unwrap();
+    assert_eq!(audit, (1, 1));
+    assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+    control.stop(true).await;
+    native_task.await.unwrap().unwrap();
+    state.live_event_publisher.close();
+    node_control.stop(true).await;
+    node_task.await.unwrap().unwrap();
+    // Preserve these unique fixture rows in the disposable database for readback.
+    pool.close().await;
 }
 
 #[actix_web::test]
@@ -177,6 +362,11 @@ async fn native_assistance_writes_unblock_audit_wake_replay_and_fail_closed() {
     assert_eq!(repeated["response"], resolved["response"]);
     assert!(repeated["wakeRunId"].is_null());
     assert_eq!(
+        request_state(&pool, &request).await,
+        ("resolved".into(), "in_progress".into(), 1),
+        "same-resolution replay must not enqueue another wake"
+    );
+    assert_eq!(
         post(
             &client,
             &base,
@@ -197,6 +387,33 @@ async fn native_assistance_writes_unblock_audit_wake_replay_and_fail_closed() {
     );
     let counts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND idempotency_key=$2),(SELECT count(*) FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id WHERE a.org_id=$1::uuid AND a.idempotency_key=$2),(SELECT count(*) FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$3::uuid AND idempotency_key=$2)").bind(&org).bind(format!("request-resolved:{request}")).bind(&origin).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (1, 1, 1));
+    // The other actionable states keep their current status and use the same
+    // native admission when the human completed the requested action.
+    for issue_status in ["todo", "in_progress"] {
+        let (_, actionable) = seed_issue_request(&pool, &org, &agent, issue_status, None).await;
+        let (status, result) = post(
+            &client,
+            &base,
+            &actionable,
+            "resolve",
+            &token,
+            json!({"resolution":"action_completed","response":"Access granted"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(result["resolution"], "action_completed");
+        assert_eq!(
+            request_state(&pool, &actionable).await,
+            ("resolved".into(), issue_status.into(), 1)
+        );
+        let run = result["wakeRunId"]
+            .as_str()
+            .expect("actionable Issue must wake");
+        let actual: (String, Value) = sqlx::query_as("SELECT r.execution_authority,w.payload FROM heartbeat_runs r JOIN agent_wakeup_requests w ON w.id=r.wakeup_request_id AND w.org_id=r.org_id WHERE r.org_id=$1::uuid AND r.id=$2::uuid")
+            .bind(&org).bind(run).fetch_one(&pool).await.unwrap();
+        assert_eq!(actual.0, "native_rust");
+        assert_eq!(actual.1["expectedIssueStatus"], issue_status);
+    }
     // Cancel stays idempotent and never unblocks or wakes the linked Issue.
     let (_, cancel) = seed_issue_request(&pool, &org, &agent, "blocked", Some(&origin)).await;
     let (status, cancelled) = post(
@@ -283,6 +500,67 @@ async fn native_assistance_writes_unblock_audit_wake_replay_and_fail_closed() {
         request_state(&pool, &cannot).await,
         ("resolved".into(), "blocked".into(), 0)
     );
+    // An unavailable assignee rejects invocation after the human response is
+    // settled. Keep the Request, Issue, audit and terminal skipped wake durable.
+    for agent_status in ["terminated", "pending_approval"] {
+        let (issue, unavailable) =
+            seed_issue_request(&pool, &org, &agent, "blocked", Some(&origin)).await;
+        sqlx::query("UPDATE agents SET status=$2 WHERE id=$1::uuid")
+            .bind(&agent)
+            .bind(agent_status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, error) = post(
+            &client,
+            &base,
+            &unavailable,
+            "resolve",
+            &token,
+            body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{error}");
+        assert_eq!(
+            error,
+            json!({"error":"Agent is not invokable in its current state","details":{"status":agent_status}})
+        );
+        assert_eq!(
+            request_state(&pool, &unavailable).await,
+            ("resolved".into(), "in_progress".into(), 1)
+        );
+        let wake: Value = sqlx::query_scalar("SELECT jsonb_build_object('status',status,'reason',reason,'authority',execution_authority,'runId',run_id,'claimedAt',claimed_at,'finished',finished_at IS NOT NULL,'error',error,'payload',payload) FROM agent_wakeup_requests WHERE org_id=$1::uuid AND idempotency_key=$2")
+            .bind(&org).bind(format!("assistance-request:{unavailable}:resolved")).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            wake,
+            json!({"status":"skipped","reason":"agent.unavailable","authority":"native_rust","runId":null,"claimedAt":null,"finished":true,"error":null,"payload":{"requestId":unavailable,"issueId":issue,"resolution":"answered","expectedAssigneeAgentId":agent,"expectedIssueStatus":"in_progress","_rudderExecutionProducer":"agent_wakeup_v1"}})
+        );
+        let effects: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND idempotency_key=$2),(SELECT count(*) FROM organization_mutation_outbox o JOIN activity_log a ON a.id=o.activity_id WHERE a.org_id=$1::uuid AND a.idempotency_key=$2),(SELECT count(*) FROM heartbeat_run_events WHERE org_id=$1::uuid AND run_id=$3::uuid AND idempotency_key=$2 AND payload->>'wakeIntentQueued'='true'),(SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid AND context_snapshot->>'requestId'=$4)")
+            .bind(&org).bind(format!("request-resolved:{unavailable}")).bind(&origin).bind(&unavailable).fetch_one(&pool).await.unwrap();
+        assert_eq!(effects, (1, 1, 1, 0));
+        let (status, repeated) = post(
+            &client,
+            &base,
+            &unavailable,
+            "resolve",
+            &token,
+            json!({"resolution":"answered","response":"different response"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(repeated["response"], "bearer [REDACTED]");
+        assert!(repeated["wakeRunId"].is_null());
+        assert_eq!(
+            request_state(&pool, &unavailable).await,
+            ("resolved".into(), "in_progress".into(), 1)
+        );
+        assert_eq!(node_requests.load(Ordering::SeqCst), 0);
+        sqlx::query("UPDATE agents SET status='idle' WHERE id=$1::uuid")
+            .bind(&agent)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     let (_, superseded) = seed_issue_request(&pool, &org, &agent, "blocked", None).await;
     sqlx::query("UPDATE requests SET status='superseded',blocker_fingerprint='old-fingerprint',metadata='{\"supersededReason\":\"blocker_changed\"}' WHERE id=$1::uuid").bind(&superseded).execute(&pool).await.unwrap();
     let (_, old) = post(&client, &base, &superseded, "resolve", &token, body.clone()).await;
@@ -330,19 +608,21 @@ async fn native_assistance_writes_unblock_audit_wake_replay_and_fail_closed() {
         );
     }
     let foreign_request:String=sqlx::query_scalar("INSERT INTO requests(org_id,kind,subtype,title,prompt) VALUES($1::uuid,'assistance','issue_blocker','Foreign','Hidden') RETURNING id::text").bind(&foreign).fetch_one(&pool).await.unwrap();
-    assert_eq!(
-        post(
-            &client,
-            &base,
-            &foreign_request,
-            "resolve",
-            &token,
-            body.clone()
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
+    for action in ["resolve", "cancel"] {
+        assert_eq!(
+            post(
+                &client,
+                &base,
+                &foreign_request,
+                action,
+                &token,
+                body.clone()
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+    }
     let approval:String=sqlx::query_scalar("INSERT INTO approvals(org_id,type,status,payload) VALUES($1::uuid,'hire_agent','pending','{}') RETURNING id::text").bind(&org).fetch_one(&pool).await.unwrap();
     assert_eq!(
         post(&client, &base, &approval, "resolve", &token, body.clone())

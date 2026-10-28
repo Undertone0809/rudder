@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use rudder_d1_persistence::request_writes::{
     self, REQUEST_WRITE_SCOPE, RequestWriteError, RequestWriteOperation,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 fn endpoint(path: &str, method: &Method) -> Option<(String, RequestWriteOperation)> {
@@ -166,7 +166,7 @@ pub(super) async fn dispatch_alias(
     let verified = ActorEnvelope::new(
         actor.clone(),
         REQUEST_WRITE_SCOPE,
-        session_id,
+        session_id.clone(),
         1,
         ACTOR_ENVELOPE_AUDIENCE,
         request.method().as_str(),

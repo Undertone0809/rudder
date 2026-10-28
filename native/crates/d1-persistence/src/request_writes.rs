@@ -327,22 +327,46 @@ pub async fn execute(
             idempotency_key: Some(format!("assistance-request:{request_id}:resolved")),
             context_snapshot: context.clone(),
         };
-        let admitted = agent_execution::admit_in_transaction(
-            &mut tx,
-            &AgentExecutionActor {
-                actor_type: "user",
-                actor_id: actor.actor().id.clone(),
-                run_id: None,
-            },
-            &wake,
-            &org,
-            agent_id,
-            issue_id.as_deref(),
-            context,
-            &wake_payload,
-            agent,
-        )
-        .await?;
+        let execution_actor = AgentExecutionActor {
+            actor_type: "user",
+            actor_id: actor.actor().id.clone(),
+            run_id: None,
+        };
+        let agent_status: String = agent.try_get("status")?;
+        let admitted = if matches!(agent_status.as_str(), "terminated" | "pending_approval") {
+            // The existing Request workflow settles the human response before
+            // wakeup rejects an unavailable Agent. Preserve those durable
+            // effects and a terminal skipped wake in this same transaction.
+            let mut skipped_payload = wake_payload.clone();
+            skipped_payload.as_object_mut().unwrap().remove("response");
+            invocation_error = Some(AgentExecutionError::Http(
+                409,
+                "Agent is not invokable in its current state".into(),
+                Some(json!({"status":agent_status})),
+            ));
+            agent_execution::skip_unavailable_wakeup_in_transaction(
+                &mut tx,
+                &execution_actor,
+                &wake,
+                &org,
+                agent_id,
+                &skipped_payload,
+            )
+            .await?
+        } else {
+            agent_execution::admit_in_transaction(
+                &mut tx,
+                &execution_actor,
+                &wake,
+                &org,
+                agent_id,
+                issue_id.as_deref(),
+                context,
+                &wake_payload,
+                agent,
+            )
+            .await?
+        };
         run_id = admitted.run_id;
         if let Some(block) = admitted.invocation_block {
             invocation_error = Some(AgentExecutionError::Http(
