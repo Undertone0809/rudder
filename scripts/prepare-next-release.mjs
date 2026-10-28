@@ -148,7 +148,7 @@ function ensurePullRequest(options, branch, version) {
     try {
       return run("gh", [
         "pr", "create", "--base", options.base, "--head", branch,
-        "--title", `chore(release): start v${version} [skip release]`,
+        "--title", `chore(release): start v${version} [skip canary]`,
         "--body-file", bodyFile,
       ], { capture: true });
     } catch (error) {
@@ -224,7 +224,7 @@ function main() {
       "--stable-version", options.stableVersion,
     ]);
     run("git", ["add", "-u"]);
-    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
+    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip canary]`]);
 
     const branch = `codex/release-v${decision.nextVersion}`;
     const expectedPatch = run("git", ["diff", "--binary", `${options.remote}/${options.base}`, "HEAD"], { capture: true });
