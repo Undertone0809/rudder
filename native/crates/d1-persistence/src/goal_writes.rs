@@ -800,6 +800,61 @@ pub(super) async fn public_goal(
     Ok(value)
 }
 
+/// Apply the contract selected by a locked Goal-change Approval. Reuse the
+/// Goal writer's field normalization and owner checks; an Approval cannot
+/// replace the current Owner or continuation.
+pub(crate) async fn apply_approved_goal_contract(
+    tx: &mut Transaction<'_, sqlx::Postgres>,
+    approval: &crate::approval_writes::LockedApproval,
+    goal_id: &str,
+    expected_revision: i32,
+    input: &Value,
+) -> Result<i32, StoreError> {
+    let org = approval.organization_id();
+    let current = lock_goal(tx, org, goal_id).await?;
+    if current.try_get::<String, _>("lifecycle")? != "active"
+        || current.try_get::<i32, _>("contract_revision")? != expected_revision
+    {
+        return Err(StoreError::GoalConflict);
+    }
+    let owner = current
+        .try_get::<Option<String>, _>("owner_agent_id_text")?
+        .ok_or(StoreError::GoalConflict)?;
+    require_invokable_owner(tx, org, &owner).await?;
+    let outcome = required_trimmed(input, "outcomeStatement")?;
+    let mode = required_enum(
+        input,
+        "objectiveMode",
+        &["target", "maximize", "maintain", "decide"],
+    )?;
+    let criteria = normalize_criteria(&required_array(input, "criteria")?)?;
+    let autonomy = object_or_default(input, "autonomyEnvelope")?;
+    let authorities = object_or_default(input, "humanAuthorities")?;
+    let policy = object_or_default(input, "evaluationPolicy")?;
+    let action = optional_date(input, "actionDeadline")?;
+    let evaluation = optional_date(input, "evaluationDeadline")?;
+    if let (Some(action), Some(evaluation)) = (&action, &evaluation) {
+        let action =
+            time::OffsetDateTime::parse(action, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| StoreError::InvalidInput)?;
+        let evaluation =
+            time::OffsetDateTime::parse(evaluation, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| StoreError::InvalidInput)?;
+        if evaluation < action {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    let revision = expected_revision
+        .checked_add(1)
+        .ok_or(StoreError::InvalidInput)?;
+    let changed=sqlx::query("UPDATE goals SET outcome_statement=$3,objective_mode=$4,criteria=$5::jsonb,autonomy_envelope=$6::jsonb,human_authorities=$7::jsonb,evaluation_policy=$8::jsonb,action_deadline=$9::timestamptz,evaluation_deadline=$10::timestamptz,contract_revision=$11,updated_at=now() WHERE org_id=$1::uuid AND id=$2::uuid AND contract_revision=$12 AND lifecycle='active'")
+        .bind(org).bind(goal_id).bind(outcome).bind(mode).bind(criteria.to_string()).bind(autonomy.to_string()).bind(authorities.to_string()).bind(policy.to_string()).bind(action).bind(evaluation).bind(revision).bind(expected_revision).execute(&mut **tx).await?.rows_affected();
+    if changed != 1 {
+        return Err(StoreError::GoalConflict);
+    }
+    Ok(revision)
+}
+
 async fn plan_view(
     tx: &mut Transaction<'_, sqlx::Postgres>,
     org: &str,

@@ -1,5 +1,5 @@
-//! Approval, association and label GET projections. Mutations retain their
-//! existing owner; every joined row is scoped to the authorized target org.
+//! Approval, association and label GET projections. The Approval writer shares
+//! this projection; every joined row is scoped to the authorized target org.
 use crate::{
     StoreError,
     request_reads::{redaction, timestamp},

@@ -21,6 +21,7 @@ mod agent_core;
 mod agent_execution;
 mod agent_runs;
 mod approval_reads;
+mod approval_writes;
 mod automation_reads;
 mod automation_writes;
 mod browser_session;
@@ -411,6 +412,32 @@ impl PublicIngressRuntime {
                     web::route()
                         .guard(guard::Any(guard::Get()).or(guard::Head()))
                         .to(project_reads::detail),
+                )
+                .route(
+                    "/api/orgs/{org_id}/approvals",
+                    web::post().to(approval_writes::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/approve",
+                    web::post().to(approval_writes::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/reject",
+                    web::post().to(approval_writes::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/request-revision",
+                    web::post().to(approval_writes::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/resubmit",
+                    web::post().to(approval_writes::dispatch_alias),
+                )
+                .route(
+                    "/api/approvals/{approval_id}/comments",
+                    web::route()
+                        .guard(guard::Any(guard::Get()).or(guard::Head()).or(guard::Post()))
+                        .to(approval_writes::dispatch_alias),
                 )
                 .route(
                     "/api/orgs/{org_id}/approvals",
@@ -848,6 +875,9 @@ async fn proxy_request(
     }
     if issue_core::is_reserved_path(request.uri().path(), request.method()) {
         return issue_core::dispatch_alias(state, proxy, request, payload).await;
+    }
+    if approval_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return approval_writes::dispatch_alias(state, request, payload).await;
     }
     if approval_reads::is_reserved_path(request.uri().path(), request.method()) {
         return approval_reads::dispatch_alias(state, request, payload).await;
@@ -2541,6 +2571,8 @@ mod tests {
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
+    #[path = "approval_write_http_tests.rs"]
+    mod approval_write_http_tests;
     #[path = "automation_read_http_tests.rs"]
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]

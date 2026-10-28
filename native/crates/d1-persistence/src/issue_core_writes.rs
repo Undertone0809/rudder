@@ -120,7 +120,7 @@ struct IssueMutationActor<'a> {
     run_id: Option<&'a str>,
 }
 
-struct IssueUpdatePostCommit {
+pub(crate) struct IssueUpdatePostCommit {
     org_id: String,
     issue_id: String,
     actor_kind: String,
@@ -149,6 +149,8 @@ struct IssueCreateContext<'a> {
     input: &'a Value,
     asset_storage: Option<&'a dyn IssueAssetStorage>,
     staged_asset_objects: &'a mut Vec<String>,
+    approved_chat: Option<&'a crate::approval_writes::LockedApproval>,
+    approved_chat_creator: Option<&'a str>,
 }
 
 struct IssueDescriptionAssetStageInput<'a> {
@@ -162,7 +164,7 @@ struct IssueDescriptionAssetStageInput<'a> {
 }
 
 impl IssueUpdatePostCommit {
-    async fn apply(&self, pool: &PgPool) -> std::result::Result<(), StoreError> {
+    pub(crate) async fn apply(&self, pool: &PgPool) -> std::result::Result<(), StoreError> {
         crate::issue_lifecycle_analytics::after_issue_update(
             pool,
             crate::issue_lifecycle_analytics::IssueUpdateAnalytics {
@@ -246,6 +248,8 @@ pub async fn apply_issue_core_write(
                             input,
                             asset_storage,
                             staged_asset_objects: &mut staged_asset_objects,
+                            approved_chat: None,
+                            approved_chat_creator: None,
                         },
                     )
                     .await?;
@@ -288,6 +292,7 @@ pub async fn apply_issue_core_write(
                         &id,
                         input,
                         comment_activity_details.as_ref(),
+                        None,
                     )
                     .await?;
                     let comment_wakeup_error = if let Some(wakeup) = comment_reopen_wakeup.as_ref()
@@ -373,7 +378,7 @@ pub async fn apply_issue_core_write(
     }
 }
 
-async fn cleanup_staged_issue_asset_objects(
+pub(crate) async fn cleanup_staged_issue_asset_objects(
     storage: &dyn IssueAssetStorage,
     org_id: &str,
     object_keys: &[String],
@@ -383,6 +388,78 @@ async fn cleanup_staged_issue_asset_objects(
             tracing::warn!(%error, org_id, object_key, "failed to clean up a staged Issue asset object");
         }
     }
+}
+
+/// The Approval domain has already checked the proposal and decision. Keep
+/// Issue validation, numbering, labels, asset handling and creation activity in
+/// the same existing writer as the direct public workflow.
+pub(crate) async fn create_approved_chat_issue(
+    tx: &mut Tx<'_>,
+    approval: &crate::approval_writes::LockedApproval,
+    context: &crate::approval_writes::ApprovalWriteContext<'_>,
+    input: &Value,
+    creator: Option<&str>,
+    staged_asset_objects: &mut Vec<String>,
+) -> Result<Value> {
+    crate::issue_input_validation::validate_nested_fields(input)
+        .map_err(|message| http(422, message))?;
+    if let Some(creator) = creator {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid AND id=$2::uuid)",
+        )
+        .bind(approval.organization_id())
+        .bind(creator)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !exists {
+            return Err(http(
+                422,
+                "Issue creator must belong to the same organization",
+            ));
+        }
+    }
+    create_issue(
+        tx,
+        IssueCreateContext {
+            org: approval.organization_id(),
+            actor_kind: "user",
+            actor_id: &context.actor.actor().id,
+            actor_agent_id: None,
+            run_id: None,
+            input,
+            asset_storage: context.asset_storage,
+            staged_asset_objects,
+            approved_chat: Some(approval),
+            approved_chat_creator: creator,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn reactivate_approved_issue(
+    tx: &mut Tx<'_>,
+    approval: &crate::approval_writes::LockedApproval,
+    actor_id: &str,
+    issue_id: &str,
+    status: &str,
+) -> Result<(Value, Option<IssueUpdatePostCommit>)> {
+    let actor = IssueMutationActor {
+        kind: "user",
+        id: actor_id,
+        agent_id: None,
+        run_id: None,
+    };
+    let result = update_issue(
+        tx,
+        approval.organization_id(),
+        &actor,
+        issue_id,
+        &json!({"status":status}),
+        None,
+        Some(approval),
+    )
+    .await?;
+    Ok(result)
 }
 
 async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Result<Value> {
@@ -395,6 +472,8 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
         input,
         asset_storage,
         staged_asset_objects,
+        approved_chat,
+        approved_chat_creator,
     } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
@@ -723,7 +802,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
     .await?;
     let id = Uuid::new_v4().to_string();
     let created_by_user_id = (actor_kind == "user").then_some(actor_id);
-    let created_by_agent_id = actor_agent_id;
+    let created_by_agent_id = approved_chat_creator.or(actor_agent_id);
     let staged_description_assets = stage_issue_description_assets(
         tx,
         IssueDescriptionAssetStageInput {
@@ -832,7 +911,9 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
             context_extra: None,
         });
     }
-    enqueue_issue_wakeups(tx, org, &id, actor_kind, actor_id, wakeups).await?;
+    if approved_chat.is_none() {
+        enqueue_issue_wakeups(tx, org, &id, actor_kind, actor_id, wakeups).await?;
+    }
     if let (Some(request_id), Some(agent_id), Some(run_id)) = (
         agent_issue_creation_request_id.as_deref(),
         actor_agent_id,
@@ -1111,6 +1192,7 @@ async fn update_issue(
     id: &str,
     input: &Value,
     comment_activity_details: Option<&Value>,
+    approved: Option<&crate::approval_writes::LockedApproval>,
 ) -> Result<(Value, Option<IssueUpdatePostCommit>)> {
     let actor_kind = actor.kind;
     let actor_id = actor.id;
@@ -1821,6 +1903,11 @@ async fn update_issue(
             Value::String("reviewed_issue_assignee_completion".to_owned()),
         );
     }
+    if let Some(approval) = approved {
+        metadata.insert("source".into(), json!("approval.approved"));
+        metadata.insert("approvalId".into(), json!(approval.id()));
+        metadata.insert("previousStatus".into(), json!(current_status));
+    }
     let details = issue_update_activity_details(&current_issue, &issue, metadata);
     let has_material_changes = issue_update_has_material_changes(&details);
     let has_field_changes = details
@@ -1997,7 +2084,9 @@ async fn update_issue(
             context_extra: None,
         });
     }
-    enqueue_issue_wakeups(tx, org, id, actor_kind, actor_id, wakeups).await?;
+    if approved.is_none() {
+        enqueue_issue_wakeups(tx, org, id, actor_kind, actor_id, wakeups).await?;
+    }
     let mut response = issue;
     response["comment"] = comment.unwrap_or(Value::Null);
     if let Some(block_audit) = block_audit {

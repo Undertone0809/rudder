@@ -145,6 +145,34 @@ async fn create(
     public_agent_create: bool,
 ) -> Result<Value> {
     let request = AgentCreateRequest::parse(input)?;
+    create_record(tx, ctx, request, public_agent_create).await
+}
+
+pub(super) async fn create_approved_hire(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    approval: &crate::approval_writes::LockedApproval,
+    request: AgentCreateRequest,
+) -> Result<Value> {
+    if approval.organization_id() != ctx.org
+        || approval.value()["type"] != "hire_agent"
+        || approval.value()["status"] != "approved"
+    {
+        return Err(http(403, "Approved hire authority required"));
+    }
+    let row = create_record(tx, ctx, request, false).await?;
+    // The legacy hire service always assigns the organization's managed MCP
+    // bindings, independently of the direct-create pilot feature flag.
+    super::managed_mcp::ensure_default_bindings_for_agent(tx, ctx.org, text(&row, "id")).await?;
+    Ok(row)
+}
+
+async fn create_record(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    request: AgentCreateRequest,
+    public_agent_create: bool,
+) -> Result<Value> {
     let config_source = request
         .node_owned
         .as_ref()
@@ -279,13 +307,7 @@ async fn create(
     }
 
     if request.budget_monthly_cents > 0 {
-        sqlx::query("INSERT INTO budget_policies(org_id,scope_type,scope_id,metric,window_kind,amount,warn_percent,hard_stop_enabled,notify_enabled,is_active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,'agent',$2::uuid,'billed_cents','calendar_month_utc',$3,80,true,true,true,$4,$4) ON CONFLICT(org_id,scope_type,scope_id,metric,window_kind) DO UPDATE SET amount=excluded.amount,warn_percent=excluded.warn_percent,hard_stop_enabled=excluded.hard_stop_enabled,notify_enabled=excluded.notify_enabled,is_active=true,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()")
-            .bind(ctx.org)
-            .bind(&id)
-            .bind(request.budget_monthly_cents as i32)
-            .bind(ctx.user())
-            .execute(&mut **tx)
-            .await?;
+        upsert_budget_policy(tx, ctx, &id, request.budget_monthly_cents).await?;
     }
 
     // The public Rust create path applies the existing managed MCP helper in
@@ -316,6 +338,18 @@ async fn create(
         Ok(value) => Ok(value),
         Err(error) => Err(error),
     }
+}
+
+pub(super) async fn upsert_budget_policy(
+    tx: &mut Tx<'_>,
+    ctx: &Context<'_>,
+    id: &str,
+    amount: i64,
+) -> Result<()> {
+    let amount = i32::try_from(amount).map_err(|_| http(422, "Invalid Agent budget"))?;
+    sqlx::query("INSERT INTO budget_policies(org_id,scope_type,scope_id,metric,window_kind,amount,warn_percent,hard_stop_enabled,notify_enabled,is_active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,'agent',$2::uuid,'billed_cents','calendar_month_utc',$3,80,true,true,true,$4,$4) ON CONFLICT(org_id,scope_type,scope_id,metric,window_kind) DO UPDATE SET amount=excluded.amount,warn_percent=excluded.warn_percent,hard_stop_enabled=excluded.hard_stop_enabled,notify_enabled=excluded.notify_enabled,is_active=true,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()")
+        .bind(ctx.org).bind(id).bind(amount).bind(ctx.user()).execute(&mut **tx).await?;
+    Ok(())
 }
 
 fn default_avatar_icon() -> Result<String> {

@@ -15,6 +15,7 @@ pub mod agent_issue_creation;
 pub mod agent_run_context;
 pub mod agent_run_workspace;
 pub mod approval_reads;
+pub mod approval_writes;
 pub mod automation_issue_finalization;
 pub mod automation_management;
 pub mod automation_reads;

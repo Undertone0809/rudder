@@ -1,5 +1,6 @@
 //! Agent directory, configuration, keys and runtime-state authority. The signed wrapper
 //! carries authenticated ingress facts; SQL determines all effective authority.
+mod approval;
 mod common;
 mod constants;
 mod detail;
@@ -14,6 +15,9 @@ mod skills;
 mod updates;
 mod validation;
 mod writes;
+pub(crate) use approval::{
+    apply_approved_agent_change, finish_approved_agent_create, normalize_hire_approval_payload,
+};
 use common::*;
 use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};

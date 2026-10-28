@@ -743,7 +743,7 @@ async fn execute(
 /// Match the legacy Agent CLI context guard before native AgentCore mutations.
 /// The header is an execution-context assertion, not an authority source: a
 /// bearer key still identifies its own Agent and cannot act as another one.
-fn agent_cli_context_mismatch_response(
+pub(super) fn agent_cli_context_mismatch_response(
     request: &HttpRequest,
     identity: &NativeIngressIdentity,
 ) -> Option<HttpResponse> {
@@ -1048,6 +1048,25 @@ pub(super) fn instance_root(org_id: &str) -> Result<String, ()> {
     Ok(host_paths::AgentHostFacts::resolve(org_id)?
         .instructions_host
         .instance_root)
+}
+
+pub(super) fn approval_host_request(
+    state: &IngressState,
+    org_id: &str,
+    local: bool,
+) -> Result<AgentCoreRequest, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let command = json!({
+        "operation":"create","orgId":org_id,"input":{},"localImplicit":local,
+        "homeDirectory":facts.home_directory,"processWorkingDirectory":facts.process_working_directory,
+        "canonicalLocale":"en-US","deploymentMode":state.config.deployment_mode,
+        "instructionsHost":{
+            "instanceRoot":facts.instructions_host.instance_root,"workspaceHome":facts.instructions_host.workspace_home,
+            "previousDocumentsRoot":facts.instructions_host.previous_documents_root,
+            "friendlyWorkspaceHome":facts.instructions_host.friendly_workspace_home,"hostname":facts.instructions_host.hostname,
+        }
+    });
+    AgentCoreRequest::parse(&serde_json::to_vec(&command).map_err(|_| ())?).map_err(|_| ())
 }
 
 pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
