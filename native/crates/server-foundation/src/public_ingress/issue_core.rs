@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-mod attachments;
+pub(super) mod attachments;
 mod comments;
 mod work_products;
 
@@ -792,7 +792,7 @@ async fn execute_issue_write(
 }
 
 #[allow(clippy::result_large_err)]
-async fn public_issue_actor(
+pub(super) async fn public_issue_actor(
     state: &IngressState,
     request: &HttpRequest,
 ) -> Result<(NativeIngressIdentity, ActorIdentity, String, Option<String>), HttpResponse> {

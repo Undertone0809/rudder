@@ -662,7 +662,7 @@ fn allowed_attachment_types() -> Vec<String> {
     }
 }
 
-fn is_allowed_content_type(content_type: &str) -> bool {
+pub(in crate::public_ingress) fn is_allowed_content_type(content_type: &str) -> bool {
     let content_type = content_type.to_ascii_lowercase();
     allowed_attachment_types().iter().any(|pattern| {
         if pattern == "*" {

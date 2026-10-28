@@ -2,6 +2,7 @@ import express from "express";
 import { Readable } from "node:stream";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nativeSessionAssertionMiddleware, signNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { assetRoutes } from "../routes/assets.js";
 import type { StorageService } from "../storage/types.js";
@@ -323,5 +324,35 @@ describe("GET /api/assets/:assetId/content", () => {
     expect(res.headers["content-disposition"]).toContain("attachment");
     expect(res.headers["content-security-policy"]).toContain("sandbox");
     expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
+  });
+});
+
+
+describe("native Asset private-hop negative fence", () => {
+  it("rejects all three legacy handlers before storage, reads, writes, or audit", async () => {
+    const storage = createStorageService();
+    const app = express();
+    const key = "asset-negative-fence-test-key";
+    app.use(nativeSessionAssertionMiddleware({ key }));
+    app.use("/api", assetRoutes({} as any, storage));
+    createAssetMock.mockClear();
+    getAssetByIdMock.mockClear();
+    logActivityMock.mockClear();
+    for (const [method, target] of [
+      ["POST", "/api/orgs/organization-1/assets/images"],
+      ["POST", "/api/orgs/organization-1/logo"],
+      ["GET", "/api/assets/asset-1/content"],
+      ["HEAD", "/API/ASSETS/asset-1/CONTENT/"],
+    ] as const) {
+      const proof = signNativeSessionAssertion({ key, method, target, identity: { kind: "local_implicit" } });
+      const result = await request(app)[method.toLowerCase() as "post" | "get" | "head"](target)
+        .set("x-rudder-native-session-proof", proof);
+      expect(result.status).toBe(404);
+    }
+    expect(createAssetMock).not.toHaveBeenCalled();
+    expect(getAssetByIdMock).not.toHaveBeenCalled();
+    expect(logActivityMock).not.toHaveBeenCalled();
+    expect(storage.putFile).not.toHaveBeenCalled();
+    expect(storage.getObject).not.toHaveBeenCalled();
   });
 });
