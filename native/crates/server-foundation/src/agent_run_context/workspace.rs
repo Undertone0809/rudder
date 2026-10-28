@@ -18,25 +18,9 @@ pub(crate) struct AgentWorkspacePreparation {
     pub repo_url: Option<String>,
     pub repo_ref: Option<String>,
     pub strategy: Value,
-    pub project_policy: Value,
     pub issue_settings: Value,
     pub runtime_service_intents: Vec<Value>,
     pub workspace_hints: Vec<Value>,
-    pub warnings: Vec<String>,
-}
-
-impl AgentWorkspacePreparation {
-    pub fn requires_realization(&self) -> bool {
-        self.mode == "isolated_workspace"
-            || self.mode == "operator_branch"
-            || self
-                .strategy
-                .get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|kind| kind != "project_primary")
-            || !self.runtime_service_intents.is_empty()
-            || self.execution_workspace_id.is_some()
-    }
 }
 
 pub(super) fn apply_policy(
@@ -126,6 +110,7 @@ fn normalize_mode(mode: &str) -> &str {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Select from the existing trusted workspace and session facts without a second wrapper.
 pub(super) fn select(
     resources: &AgentRunResources,
     context: &Value,
@@ -156,12 +141,13 @@ pub(super) fn select(
     let workspace_hints = rows.iter().map(|row|json!({"workspaceId":row["id"],"cwd":row["cwd"],"repoUrl":row["repoUrl"],"repoRef":row["repoRef"]})).collect();
     let mut warnings = Vec::new();
     let mut selected = None;
-    if let Some(preferred) = preferred {
-        if !rows.iter().any(|row| text(row, "id") == Some(preferred)) && !rows.is_empty() {
-            warnings.push(format!(
-                "Selected project workspace \"{preferred}\" is not available on this project."
-            ));
-        }
+    if let Some(preferred) = preferred
+        && !rows.iter().any(|row| text(row, "id") == Some(preferred))
+        && !rows.is_empty()
+    {
+        warnings.push(format!(
+            "Selected project workspace \"{preferred}\" is not available on this project."
+        ));
     }
     for row in &rows {
         if let Some(cwd) = text(row, "cwd").filter(|cwd| *cwd != "/__paperclip_repo_only__") {
@@ -209,10 +195,10 @@ pub(super) fn select(
     };
     // Adapter configured cwd takes precedence only over canonical Agent home.
     // Project/session selections remain authoritative as in all local adapters.
-    if source == "agent_home" {
-        if let Some(configured) = text(config, "cwd") {
-            cwd = expand(configured, &host.operator_home, &host.process_cwd);
-        }
+    if source == "agent_home"
+        && let Some(configured) = text(config, "cwd")
+    {
+        cwd = expand(configured, &host.operator_home, &host.process_cwd);
     }
     if !cwd.is_absolute() {
         return Err(ContextError::Invalid(
@@ -230,11 +216,6 @@ pub(super) fn select(
         repo_url: repo_url.map(str::to_owned),
         repo_ref: repo_ref.map(str::to_owned),
         strategy: config["workspaceStrategy"].clone(),
-        project_policy: resources
-            .project
-            .as_ref()
-            .map(|p| p["executionWorkspacePolicy"].clone())
-            .unwrap_or(Value::Null),
         issue_settings: issue["executionWorkspaceSettings"].clone(),
         runtime_service_intents: config["workspaceRuntime"]["services"]
             .as_array()
@@ -244,7 +225,6 @@ pub(super) fn select(
             .cloned()
             .collect(),
         workspace_hints,
-        warnings,
     })
 }
 fn expand(value: &str, home: &Path, cwd: &Path) -> PathBuf {

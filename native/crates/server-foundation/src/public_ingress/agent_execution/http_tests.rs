@@ -1,7 +1,6 @@
 //! Public listener -> native admission -> real owned process -> durable effects.
-#[path = "../../../../d1-persistence/tests/support/mod.rs"]
-mod support;
 use super::*;
+use crate::postgres_test_support as support;
 use crate::{agent_run_context::AgentRunContextHost, native_bearer_auth::hash_token};
 use actix_web::{App, HttpServer};
 use awc::ws::Frame;

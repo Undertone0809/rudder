@@ -92,29 +92,28 @@ pub(super) async fn request(
                 })?;
             let status = response.status().as_u16();
             let response_headers = response.headers().clone();
-            if [301, 302, 303, 307, 308].contains(&status) {
-                if let Some(location) = response
+            if [301, 302, 303, 307, 308].contains(&status)
+                && let Some(location) = response
                     .headers()
                     .get("location")
                     .and_then(|value| value.to_str().ok())
-                {
-                    if redirect == 3 {
-                        return Err(failed());
-                    }
-                    let next = target.join(location).map_err(|_| failed())?;
-                    security::parse_url(next.as_str())?;
-                    if next.origin() != origin {
-                        return Err(failed());
-                    }
-                    if status == 303 || ([301, 302].contains(&status) && method == Method::POST) {
-                        method = Method::GET;
-                        body = None;
-                        headers.remove("content-type");
-                        headers.remove("content-length");
-                    }
-                    target = next;
-                    continue;
+            {
+                if redirect == 3 {
+                    return Err(failed());
                 }
+                let next = target.join(location).map_err(|_| failed())?;
+                security::parse_url(next.as_str())?;
+                if next.origin() != origin {
+                    return Err(failed());
+                }
+                if status == 303 || ([301, 302].contains(&status) && method == Method::POST) {
+                    method = Method::GET;
+                    body = None;
+                    headers.remove("content-type");
+                    headers.remove("content-length");
+                }
+                target = next;
+                continue;
             }
             let event_stream = response
                 .headers()
@@ -136,10 +135,9 @@ pub(super) async fn request(
                         return Err(Error::Runtime("mcp_result_too_large"));
                     }
                     bytes.extend_from_slice(&chunk);
-                    if event_stream {
-                        if let Some(message) = id.and_then(|id| sse_message(&bytes, id)) {
-                            return Ok((bytes, Some(message)));
-                        }
+                    if event_stream && let Some(message) = id.and_then(|id| sse_message(&bytes, id))
+                    {
+                        return Ok((bytes, Some(message)));
                     }
                 }
                 let message = if event_stream {

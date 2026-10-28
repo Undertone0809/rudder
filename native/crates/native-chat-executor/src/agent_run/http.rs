@@ -49,25 +49,24 @@ pub(super) async fn execute(
             stop_reason.get_or_insert(AgentRunExecutionState::TimedOut);
             request.cancelled.store(true, Ordering::Release);
         }
-        match tokio::time::timeout(Duration::from_millis(100), pending.as_mut()).await {
-            Ok(mut observation) => {
-                if let Some(reason) = stop_reason {
-                    observation.state = reason;
-                    observation.error_code = Some(
-                        if reason == AgentRunExecutionState::TimedOut {
-                            "timeout"
-                        } else {
-                            "cancelled"
-                        }
-                        .into(),
-                    );
-                    if observation.error.is_none() {
-                        observation.error = Some("Agent Gateway execution stopped".into());
+        if let Ok(mut observation) =
+            tokio::time::timeout(Duration::from_millis(100), pending.as_mut()).await
+        {
+            if let Some(reason) = stop_reason {
+                observation.state = reason;
+                observation.error_code = Some(
+                    if reason == AgentRunExecutionState::TimedOut {
+                        "timeout"
+                    } else {
+                        "cancelled"
                     }
+                    .into(),
+                );
+                if observation.error.is_none() {
+                    observation.error = Some("Agent Gateway execution stopped".into());
                 }
-                return observation;
             }
-            Err(_) => (),
+            return observation;
         }
         if cancellation_poll.elapsed() >= Duration::from_millis(500) {
             cancellation_poll = tokio::time::Instant::now();

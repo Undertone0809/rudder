@@ -69,11 +69,22 @@ pub fn resolve_agent_runtime_instructions(
     let workspace = std::path::Path::new(&host.workspace_home);
     let previous = std::path::Path::new(&host.previous_documents_root);
     let agent_home = instructions::managed_agent_workspace_path(
-        instance, workspace, previous, host.friendly_workspace_home, org_id, agent,
+        instance,
+        workspace,
+        previous,
+        host.friendly_workspace_home,
+        org_id,
+        agent,
     )?;
     let value = instructions::resolve_readonly_for_runtime(
-        instance, workspace, previous, host.friendly_workspace_home, org_id,
-        agent, operator_home, cwd,
+        instance,
+        workspace,
+        previous,
+        host.friendly_workspace_home,
+        org_id,
+        agent,
+        operator_home,
+        cwd,
     )?;
     Ok(AgentRuntimeInstructions {
         agent_home,

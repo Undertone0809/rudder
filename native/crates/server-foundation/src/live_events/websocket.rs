@@ -195,10 +195,10 @@ impl Dedupe {
             return false;
         }
         self.order.push_back(key.into());
-        if self.order.len() > DEDUPE_WINDOW {
-            if let Some(oldest) = self.order.pop_front() {
-                self.keys.remove(&oldest);
-            }
+        if self.order.len() > DEDUPE_WINDOW
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.keys.remove(&oldest);
         }
         true
     }
@@ -310,41 +310,42 @@ async fn relay(
             break close(CloseCode::Policy, "account signed out");
         }
         tokio::select! {
-            _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
-            changed=subscription.shutdown.changed()=>{if changed.is_err()||*subscription.shutdown.borrow(){break close(CloseCode::Away,"server shutting down");}},
-            event=subscription.receiver.recv()=>{
-                let event=match event{Ok(event)=>event,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break close(CloseCode::Again,"live event subscriber fell behind; reconnect"),Err(tokio::sync::broadcast::error::RecvError::Closed)=>break close(CloseCode::Away,"server shutting down")};
-                // Only this read-only auth/visibility future is interruptible.
-                // A blocked SELECT must not hold the existing revocation close.
-                let access=tokio::select!{
-                    _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
-                    _=subscription.shutdown.changed()=>break close(CloseCode::Away,"server shutting down"),
-                    access=identity.authorized(&pool,&org,Some(&event))=>access,
-                };
-                match access{Ok(FrameAccess::Hidden)=>continue,Ok(FrameAccess::Revoked)=>break close(CloseCode::Policy,"authentication revoked"),Err(_)=>break close(CloseCode::Error,"live event authorization failed"),Ok(FrameAccess::Visible)=>{}}
-                if *subscription.shutdown.borrow(){break close(CloseCode::Away,"server shutting down");}
-                if is_revoked(&mut revocation){break close(CloseCode::Policy,"account signed out");}if !dedupe.admit(event.dedupe_key.as_deref()){continue;}
-                let text=match serde_json::to_string(event.as_ref()){Ok(text)=>text,Err(_)=>break close(CloseCode::Error,"live event encoding failed")};if session.text(text).await.is_err(){break None;}
-            },
-            _=ping.tick()=>{
-                if !alive{break close(CloseCode::Away,"heartbeat timed out");}
-                let access=tokio::select!{
-                    _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
-                    _=subscription.shutdown.changed()=>break close(CloseCode::Away,"server shutting down"),
-                    access=identity.authorized(&pool,&org,None)=>access,
-                };
-                match access{Ok(FrameAccess::Visible)=>{},Ok(_)=>break close(CloseCode::Policy,"authentication revoked"),Err(_)=>break close(CloseCode::Error,"live event authorization failed")}
-                alive=false;if session.ping(b"").await.is_err(){break None;}
-            },
-            message=stream.next()=>match message{
-                Some(Ok(Message::Pong(_)))=>alive=true,
-                Some(Ok(Message::Ping(bytes)))=>{if session.pong(&bytes).await.is_err(){break None;}},
-                Some(Ok(Message::Close(reason)))=>break reason,
-                Some(Ok(_))=>{}, // existing transport has no client command protocol
-                Some(Err(_))=>break close(CloseCode::Protocol,"invalid WebSocket frame"),
-                None=>break None,
-            }
-        }
+                   _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
+                   changed=subscription.shutdown.changed()=>{if changed.is_err()||*subscription.shutdown.borrow(){break close(CloseCode::Away,"server shutting down");}},
+                   event=subscription.receiver.recv()=>{
+                       let event=match event{Ok(event)=>event,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break close(CloseCode::Again,"live event subscriber fell behind; reconnect"),Err(tokio::sync::broadcast::error::RecvError::Closed)=>break close(CloseCode::Away,"server shutting down")};
+                       // Only this read-only auth/visibility future is interruptible.
+                       // A blocked SELECT must not hold the existing revocation close.
+                       let access=tokio::select!{
+                           _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
+                           _=subscription.shutdown.changed()=>break close(CloseCode::Away,"server shutting down"),
+                           access=identity.authorized(&pool,&org,Some(&event))=>access,
+                       };
+                       match access{Ok(FrameAccess::Hidden)=>continue,Ok(FrameAccess::Revoked)=>break close(CloseCode::Policy,"authentication revoked"),Err(_)=>break close(CloseCode::Error,"live event authorization failed"),Ok(FrameAccess::Visible)=>{}}
+                       if *subscription.shutdown.borrow(){break close(CloseCode::Away,"server shutting down");}
+                       if is_revoked(&mut revocation){break close(CloseCode::Policy,"account signed out");}
+        if !dedupe.admit(event.dedupe_key.as_deref()){continue;}
+                       let text=match serde_json::to_string(event.as_ref()){Ok(text)=>text,Err(_)=>break close(CloseCode::Error,"live event encoding failed")};if session.text(text).await.is_err(){break None;}
+                   },
+                   _=ping.tick()=>{
+                       if !alive{break close(CloseCode::Away,"heartbeat timed out");}
+                       let access=tokio::select!{
+                           _=revoked(&mut revocation)=>break close(CloseCode::Policy,"account signed out"),
+                           _=subscription.shutdown.changed()=>break close(CloseCode::Away,"server shutting down"),
+                           access=identity.authorized(&pool,&org,None)=>access,
+                       };
+                       match access{Ok(FrameAccess::Visible)=>{},Ok(_)=>break close(CloseCode::Policy,"authentication revoked"),Err(_)=>break close(CloseCode::Error,"live event authorization failed")}
+                       alive=false;if session.ping(b"").await.is_err(){break None;}
+                   },
+                   message=stream.next()=>match message{
+                       Some(Ok(Message::Pong(_)))=>alive=true,
+                       Some(Ok(Message::Ping(bytes)))=>{if session.pong(&bytes).await.is_err(){break None;}},
+                       Some(Ok(Message::Close(reason)))=>break reason,
+                       Some(Ok(_))=>{}, // existing transport has no client command protocol
+                       Some(Err(_))=>break close(CloseCode::Protocol,"invalid WebSocket frame"),
+                       None=>break None,
+                   }
+               }
     };
     let _ = session.close(reason).await; // Subscription Drop removes its listener.
 }

@@ -23,16 +23,19 @@ use std::time::Duration;
 use url::Url;
 
 mod board_auth;
+mod desktop_mcp_server;
 pub(crate) mod issue_transport_budget;
 mod managed_mcp_proxy;
-mod desktop_mcp_server;
 mod mcp_server;
 mod skill_cli;
 
+pub use desktop_mcp_server::{
+    BrowserLivenessGuard, run as run_desktop_mcp_server, start_browser_liveness,
+    tool_descriptors as desktop_mcp_tool_descriptors,
+};
 pub use managed_mcp_proxy::run as run_managed_mcp_proxy;
-pub use desktop_mcp_server::{run as run_desktop_mcp_server, tool_descriptors as desktop_mcp_tool_descriptors, start_browser_liveness, BrowserLivenessGuard};
-pub use rudder_agent_request_planner::desktop_contract::DesktopSurface;
 pub use mcp_server::{native_mcp_tool_descriptors, run as run_mcp_server};
+pub use rudder_agent_request_planner::desktop_contract::DesktopSurface;
 
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 10_000;
 const MIN_HTTP_TIMEOUT_MS: u64 = 50;

@@ -34,6 +34,47 @@ fn strings(value: &Value, key: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+// Keep the Agent adapter's managed-config isolation identical to cli-args.ts.
+// A value flag consumes the next argument even when it looks like another flag.
+fn sanitize_claude_extra_args(args: Vec<String>) -> Vec<String> {
+    const VALUE_FLAGS: &[&str] = &[
+        "--add-dir",
+        "--allowedTools",
+        "--allowed-tools",
+        "--disallowedTools",
+        "--disallowed-tools",
+        "--mcp-config",
+        "--permission-mode",
+        "--plugin-dir",
+        "--plugin-url",
+        "--setting-sources",
+        "--settings",
+        "--tools",
+    ];
+    const STANDALONE_FLAGS: &[&str] = &[
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions",
+        "--no-strict-mcp-config",
+        "--strict-mcp-config",
+    ];
+    let mut sanitized = Vec::new();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if VALUE_FLAGS.contains(&arg.as_str()) {
+            args.next();
+            continue;
+        }
+        if STANDALONE_FLAGS.contains(&arg.as_str())
+            || arg.split_once('=').is_some_and(|(flag, _)| {
+                VALUE_FLAGS.contains(&flag) || flag == "--strict-mcp-config"
+            })
+        {
+            continue;
+        }
+        sanitized.push(arg);
+    }
+    sanitized
+}
 pub(super) fn duration(value: &Value, key: &str, fallback: f64) -> Option<Duration> {
     let seconds = value[key]
         .as_f64()
@@ -119,6 +160,7 @@ fn resolve(
     let mut stdin = Some(request.prompt.clone());
     let command = match runtime {
         "claude_local" => {
+            extra = sanitize_claude_extra_args(extra);
             args.extend(
                 [
                     "--print",
@@ -504,12 +546,13 @@ mod tests {
         assert!(!cursor.args.iter().any(|arg| arg == "--file"));
     }
     #[test]
-    fn agent_configuration_keeps_existing_bypass_custom_args_and_process_fallback() {
+    fn agent_configuration_keeps_configured_bypass_managed_settings_and_process_fallback() {
         let root = tempfile::tempdir().unwrap();
-        let req = request(
-            json!({"command":"/bin/true","dangerouslySkipPermissions":true,"extraArgs":["--settings","custom.json"]}),
+        let mut req = request(
+            json!({"command":"/bin/true","dangerouslySkipPermissions":true,"settingsPath":"managed.json","extraArgs":["--settings","custom.json","--mcp-config=custom-mcp.json","--fixture"]}),
             root.path(),
         );
+        req.managed_args = vec!["--mcp-config".into(), "managed-mcp.json".into()];
         let claude = resolve("claude_local", "agent", None, None, &req).unwrap();
         assert!(
             claude
@@ -521,8 +564,17 @@ mod tests {
             claude
                 .args
                 .windows(2)
-                .any(|pair| pair == ["--settings", "custom.json"])
+                .any(|pair| pair == ["--settings", "managed.json"])
         );
+        assert!(!claude.args.iter().any(|arg| arg == "custom.json"));
+        assert!(!claude.args.iter().any(|arg| arg.contains("custom-mcp.json")));
+        assert!(
+            claude
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--mcp-config", "managed-mcp.json"])
+        );
+        assert!(claude.args.iter().any(|arg| arg == "--fixture"));
         let req = request(
             json!({"command":"/bin/true","args":["existing","arguments"]}),
             root.path(),
@@ -544,6 +596,92 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["-t", "terminal,file"])
         );
+    }
+    #[test]
+    fn claude_extra_args_match_node_managed_override_forms() {
+        for flag in [
+            "--add-dir",
+            "--allowedTools",
+            "--allowed-tools",
+            "--disallowedTools",
+            "--disallowed-tools",
+            "--mcp-config",
+            "--permission-mode",
+            "--plugin-dir",
+            "--plugin-url",
+            "--setting-sources",
+            "--settings",
+            "--tools",
+        ] {
+            for args in [
+                vec![flag.into(), "value".into(), "keep".into()],
+                vec![format!("{flag}=value"), "keep".into()],
+                vec![format!("{flag}="), "keep".into()],
+                vec![flag.into(), "--looks-like-a-flag".into(), "keep".into()],
+            ] {
+                assert_eq!(sanitize_claude_extra_args(args), ["keep"], "{flag}");
+            }
+            assert!(sanitize_claude_extra_args(vec![flag.into()]).is_empty());
+        }
+        for flag in [
+            "--allow-dangerously-skip-permissions",
+            "--dangerously-skip-permissions",
+            "--no-strict-mcp-config",
+            "--strict-mcp-config",
+            "--strict-mcp-config=false",
+        ] {
+            assert_eq!(
+                sanitize_claude_extra_args(vec![flag.into(), "keep".into()]),
+                ["keep"],
+                "{flag}"
+            );
+        }
+        let retained = [
+            "--Settings=value",
+            "--settings-other=value",
+            "--no-strict-mcp-config=false",
+            "--dangerously-skip-permissions=true",
+            "--allow-dangerously-skip-permissions=true",
+            "--model",
+            "custom-model",
+            "",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(sanitize_claude_extra_args(retained.clone()), retained);
+    }
+    #[test]
+    fn claude_extra_args_use_node_fallback_before_sanitizing() {
+        let root = tempfile::tempdir().unwrap();
+        for (extra, expected) in [
+            (json!([]), vec!["--legacy"]),
+            (json!([null, 1, false]), vec!["--legacy"]),
+            (json!("not-an-array"), vec!["--legacy"]),
+            (json!(["--preferred"]), vec!["--preferred"]),
+            (json!(["--settings=removed"]), vec![]),
+        ] {
+            let req = request(
+                json!({"command":"/bin/true","extraArgs":extra,"args":["--legacy"],"permissionMode":"plan"}),
+                root.path(),
+            );
+            let launch = resolve("claude_local", "agent", None, None, &req).unwrap();
+            assert_eq!(
+                launch.args,
+                [
+                    vec![
+                        "--print",
+                        "-",
+                        "--output-format",
+                        "stream-json",
+                        "--verbose",
+                        "--permission-mode",
+                        "plan"
+                    ],
+                    expected,
+                ]
+                .concat()
+            );
+        }
     }
     #[test]
     fn session_saved_for_another_workspace_is_not_resumed() {

@@ -1093,11 +1093,11 @@ pub(crate) fn materialize_for_claimed_run(
         row["agentRuntimeConfig"]["instructionsRootPath"] = json!(root);
         row["agentRuntimeConfig"]["instructionsEntryFile"] = json!(bundle.entry_file);
         row["agentRuntimeConfig"]["instructionsFilePath"] = json!(root.join(&bundle.entry_file));
-        if bundle.clear_legacy_prompt_template {
-            if let Some(config) = row["agentRuntimeConfig"].as_object_mut() {
-                config.remove("promptTemplate");
-                config.remove("bootstrapPromptTemplate");
-            }
+        if bundle.clear_legacy_prompt_template
+            && let Some(config) = row["agentRuntimeConfig"].as_object_mut()
+        {
+            config.remove("promptTemplate");
+            config.remove("bootstrapPromptTemplate");
         }
     }
     recover(host, &row, &home.to_string_lossy(), &cwd.to_string_lossy())?;

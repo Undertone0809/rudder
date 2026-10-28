@@ -1,7 +1,6 @@
 //! Actual disposable database + installed native-host context preparation.
-#[path = "../../../d1-persistence/tests/support/mod.rs"]
-mod support;
 use super::*;
+use crate::postgres_test_support as support;
 use rudder_d1_persistence::{
     agent_core::{NativeAgentAccess, NativeAgentAuthorizer},
     agent_execution::{self, AgentExecutionActor, AgentWakeRequest},
@@ -171,10 +170,9 @@ async fn ephemeral_service_and_failed_readiness_join_exact_owned_cleanup() {
         prepare_agent_run_invocation(&db.pool, &owned, &host, &identity, &cancel, Some(sender))
             .await
             .unwrap();
-    assert!(prepared.preparation_requirements.is_empty());
     assert_eq!(prepared.service_lease.references.len(), 1);
     let service = prepared.service_lease.references[0].clone();
-    let artifact = prepared.artifact_root.clone();
+    let artifact = prepared._artifacts.root.clone();
     let status: String = sqlx::query_scalar(
         "SELECT status FROM workspace_runtime_services WHERE org_id=$1::uuid AND id=$2::uuid",
     )
@@ -187,16 +185,13 @@ async fn ephemeral_service_and_failed_readiness_join_exact_owned_cleanup() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if let Some(rudder_native_chat_executor::agent_run::AgentRunOutput::Event {
-                event,
-                ..
+                event, ..
             }) = receiver.recv().await
-            {
-                if event["chunk"]
+                && event["chunk"]
                     .as_str()
                     .is_some_and(|v| v.contains("service started"))
-                {
-                    break;
-                }
+            {
+                break;
             }
         }
     })

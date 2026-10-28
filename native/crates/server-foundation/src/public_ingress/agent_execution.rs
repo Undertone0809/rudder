@@ -69,6 +69,7 @@ pub(super) fn endpoint_for_path(path: &str, method: &Method) -> Option<Endpoint>
 
 /// Select historical rows before consuming their bodies. Only explicitly legacy
 /// owners retain their registered transport during the migration.
+#[allow(clippy::result_large_err)] // Preserve the existing Actix HTTP error response contract.
 pub(super) async fn selects_native_run(
     state: &IngressState,
     request: &HttpRequest,
@@ -152,10 +153,11 @@ fn wake_validation(value: &Value) -> Result<(), Value> {
             ("idempotencyKey", "string"),
             ("forceFreshSession", "boolean"),
         ] {
-            if let Some(value) = object.get(key) {
-                if !value.is_null() && received(value) != expected {
-                    issues.push(wrong(expected, value, json!([key])));
-                }
+            if let Some(value) = object.get(key)
+                && !value.is_null()
+                && received(value) != expected
+            {
+                issues.push(wrong(expected, value, json!([key])));
             }
         }
     } else {
@@ -168,6 +170,7 @@ fn wake_validation(value: &Value) -> Result<(), Value> {
     }
 }
 
+#[allow(clippy::result_large_err)] // Preserve the existing Actix HTTP error response contract.
 fn wake_input(
     value: Value,
     org: String,

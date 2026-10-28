@@ -133,10 +133,11 @@ pub(super) fn parse(
             },
             "claude_local" | "cursor" => {
                 session = string(&event, &["session_id", "sessionId", "sessionID"]).or(session);
-                if kind == "system" && event["subtype"] == "init" {
-                    if let Some(value) = event["model"].as_str() {
-                        model = value.into();
-                    }
+                if kind == "system"
+                    && event["subtype"] == "init"
+                    && let Some(value) = event["model"].as_str()
+                {
+                    model = value.into();
                 }
                 if kind == "assistant" {
                     let message = &event["message"];
@@ -698,7 +699,7 @@ mod tests {
         let partial =
             json!({"type":"item.completed","item":{"type":"agent_message","text":"partial"}});
         assert_eq!(
-            observed("codex_local", &[partial.clone()], "", 0).state,
+            observed("codex_local", std::slice::from_ref(&partial), "", 0).state,
             AgentRunExecutionState::Failed
         );
         let failed = observed(

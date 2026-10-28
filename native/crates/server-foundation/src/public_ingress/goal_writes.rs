@@ -201,7 +201,10 @@ async fn execute(
     };
     if matches!(&endpoint, Endpoint::Start { .. }) && !native_goal_runtime_configured(&state) {
         if state.config.identity_auth.is_some() {
-            return state.foundation.json_error(StatusCode::SERVICE_UNAVAILABLE, "agent_execution_unavailable");
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_execution_unavailable",
+            );
         }
         return forward_legacy_body(state, proxy, request, body).await;
     }

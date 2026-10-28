@@ -157,6 +157,22 @@ pub(super) async fn prepare(
     append(env, "credential.helper", "!gh auth git-credential");
     Ok(())
 }
+pub(super) async fn apply_repository_policy(
+    host: &AgentRunContextHost,
+    cwd: &Path,
+    env: &mut BTreeMap<String, String>,
+) -> Result<(), ContextError> {
+    let cwd = cwd.to_path_buf();
+    let source_env = host.environment.clone();
+    let repository = tokio::task::spawn_blocking(move || {
+        configured(&cwd, &source_env, "--local", Source::Repository).is_some()
+    })
+    .await
+    .map_err(|_| ContextError::Invalid("Repository identity preparation owner stopped"))?;
+    policy(env, repository);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,20 +190,4 @@ mod tests {
         assert!(!env.contains_key("GIT_AUTHOR_NAME"));
         assert!(valid("Synthetic", "synthetic@example.test"));
     }
-}
-
-pub(super) async fn apply_repository_policy(
-    host: &AgentRunContextHost,
-    cwd: &Path,
-    env: &mut BTreeMap<String, String>,
-) -> Result<(), ContextError> {
-    let cwd = cwd.to_path_buf();
-    let source_env = host.environment.clone();
-    let repository = tokio::task::spawn_blocking(move || {
-        configured(&cwd, &source_env, "--local", Source::Repository).is_some()
-    })
-    .await
-    .map_err(|_| ContextError::Invalid("Repository identity preparation owner stopped"))?;
-    policy(env, repository);
-    Ok(())
 }

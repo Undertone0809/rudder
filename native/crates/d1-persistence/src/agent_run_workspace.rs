@@ -64,6 +64,7 @@ pub async fn begin_operation(
     tx.commit().await?;
     Ok(id)
 }
+#[allow(clippy::too_many_arguments)] // Persist one workspace-operation log receipt atomically.
 pub async fn finish_operation(
     pool: &PgPool,
     claim: &AgentRunClaim,

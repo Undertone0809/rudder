@@ -157,6 +157,7 @@ fn origin(value: &Value) -> Option<String> {
     let url = url::Url::parse(value.as_str()?).ok()?;
     Some(url.origin().ascii_serialization())
 }
+#[allow(clippy::too_many_arguments)] // Commit the existing action outcome and activity identity atomically.
 async fn record(
     pool: &PgPool,
     kind: Kind,

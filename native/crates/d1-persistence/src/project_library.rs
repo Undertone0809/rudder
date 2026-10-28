@@ -435,7 +435,7 @@ fn library_key_fields(
     } else if !name.is_empty() {
         name
     } else {
-        let id = js_trim(&project_id);
+        let id = js_trim(project_id);
         if id.is_empty()
             || !id
                 .bytes()

@@ -79,12 +79,10 @@ pub async fn admit(
         if runtime
             .as_ref()
             .is_some_and(super::timer_preflight::enabled)
-        {
-            if let Some(admission) =
+            && let Some(admission) =
                 super::pending::recover_for_timer(pool, &org, &agent_id).await?
-            {
-                return Ok(admission);
-            }
+        {
+            return Ok(admission);
         }
     }
     let mut tx = pool.begin().await?;

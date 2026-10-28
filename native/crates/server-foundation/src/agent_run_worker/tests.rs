@@ -1,8 +1,7 @@
 //! Real PostgreSQL + owned process fixture for the assembled internal driver.
-#[path = "../../../d1-persistence/tests/support/mod.rs"]
-mod support;
 use super::*;
 use crate::native_agent_jwt::NativeAgentJwtConfig;
+use crate::postgres_test_support as support;
 use rudder_d1_persistence::{
     agent_core::{NativeAgentAccess, NativeAgentAuthorizer, OrganizationWorkspaceHost},
     agent_execution::{AgentExecutionActor, AgentWakeRequest},

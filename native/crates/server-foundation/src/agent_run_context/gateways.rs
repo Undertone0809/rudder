@@ -250,10 +250,10 @@ fn tool_projection(context: &Value) -> Result<Value, ContextError> {
                 .or_else(|| text(entry, "id")),
             160,
         );
-        if kind == "tool_call" {
-            if let Some(id) = tool_call_id.as_ref() {
-                call_ids.insert(id.clone());
-            }
+        if kind == "tool_call"
+            && let Some(id) = tool_call_id.as_ref()
+        {
+            call_ids.insert(id.clone());
         }
         let content = text_from(
             entry

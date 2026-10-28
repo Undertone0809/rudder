@@ -135,6 +135,7 @@ async fn suspend(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)] // Validate the existing persisted waiting receipt without a second state wrapper.
 pub(crate) async fn validate_waiting(
     tx: &mut Transaction<'_, Postgres>,
     org: &str,

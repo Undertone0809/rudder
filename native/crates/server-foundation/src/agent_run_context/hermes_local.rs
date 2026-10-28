@@ -50,19 +50,18 @@ pub(super) fn prepare(
     } else {
         config["provider"] = json!(provider);
     }
-    if text(config, "toolsets").is_none() {
-        if let Some(values) = config["enabledToolsets"]
+    if text(config, "toolsets").is_none()
+        && let Some(values) = config["enabledToolsets"]
             .as_array()
             .filter(|values| values.iter().all(|v| v.is_string()))
-        {
-            config["toolsets"] = json!(
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-        }
+    {
+        config["toolsets"] = json!(
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
     }
     let api = config
         .get("paperclipApiUrl")
@@ -211,19 +210,17 @@ fn detect_model(content: &str) -> Option<(String, String)> {
         if active && indent == 0 && !trimmed.is_empty() && !trimmed.starts_with('#') {
             active = false;
         }
-        if active {
-            if let Some((key, value)) = trimmed.trim_start().split_once(':') {
-                let value = value
-                    .split('#')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .trim_matches(['\'', '"']);
-                match key.trim() {
-                    "default" => model = value.into(),
-                    "provider" => provider = value.into(),
-                    _ => (),
-                }
+        if active && let Some((key, value)) = trimmed.trim_start().split_once(':') {
+            let value = value
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_matches(['\'', '"']);
+            match key.trim() {
+                "default" => model = value.into(),
+                "provider" => provider = value.into(),
+                _ => (),
             }
         }
     }
@@ -241,12 +238,11 @@ fn resolve_provider(
     if let Some(provider) = explicit.filter(|value| VALID_PROVIDERS.contains(value)) {
         return provider.into();
     }
-    if let Some((detected_model, provider)) = detected {
-        if detected_model.eq_ignore_ascii_case(model)
-            && VALID_PROVIDERS.contains(&provider.as_str())
-        {
-            return provider.clone();
-        }
+    if let Some((detected_model, provider)) = detected
+        && detected_model.eq_ignore_ascii_case(model)
+        && VALID_PROVIDERS.contains(&provider.as_str())
+    {
+        return provider.clone();
     }
     let lower = model.to_ascii_lowercase();
     let bare = lower.rsplit('/').next().unwrap_or(&lower);

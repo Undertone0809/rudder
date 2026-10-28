@@ -179,6 +179,7 @@ async fn complete_chat_output(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)] // Keep the transaction-bound audit identity and payload together.
 pub(super) async fn audit(
     tx: &mut Transaction<'_, Postgres>,
     run: &TerminalRun,
@@ -250,10 +251,10 @@ pub(super) async fn process_loss_retry(
             {
                 return Ok(());
             }
-            if let Some(active) = issue.try_get::<Option<String>, _>("execution_run_id")? {
-                if active != run.id {
-                    return Err(http(409, "Issue already has an active execution run"));
-                }
+            if let Some(active) = issue.try_get::<Option<String>, _>("execution_run_id")?
+                && active != run.id
+            {
+                return Err(http(409, "Issue already has an active execution run"));
             }
         }
     }

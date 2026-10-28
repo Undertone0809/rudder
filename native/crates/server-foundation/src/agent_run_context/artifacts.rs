@@ -364,6 +364,7 @@ fn copy_tree(
 
 /// Provider-specific managed files refer to the native CLI and inherit the
 /// per-run credential from its parent environment. Tokens never enter files.
+#[allow(clippy::too_many_arguments)] // Keep one resolved invocation and its owned materialization inputs together.
 pub(super) fn provision_core_mcp(
     runtime: &str,
     config: &mut Value,

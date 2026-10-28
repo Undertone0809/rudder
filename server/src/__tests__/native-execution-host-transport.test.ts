@@ -46,6 +46,8 @@ describe("native execution transport facts", () => {
   it("binds the fixed private live transport identity to frame bytes and organization", () => {
     const input = { organizationId: "fixture-org", body: Buffer.from('{"orgId":"fixture-org"}'), secret: "fixture-secret", nonce: "fixture-nonce", requestId: "fixture-request", nowSeconds: 1000 };
     const signed = createRustLiveEventTransportEnvelope(input);
+    // Same fixed envelope is checked by Rust's ActorEnvelope signing test.
+    expect(signed.signature).toBe("d66e58e1091fc31e3aa6b91e9c50f38a2b90edee0645b8f5952473cb2707c649");
     expect(signed).toMatchObject({ actor: { kind: "system", id: "node-live-events-transport" }, action: "live.events.forward", method: "POST", path: "/internal/live-events/forward", organizationId: "fixture-org" });
     expect(createRustLiveEventTransportEnvelope(input)).toEqual(signed);
     expect(createRustLiveEventTransportEnvelope({ ...input, body: Buffer.from('{}') }).signature).not.toBe(signed.signature);
