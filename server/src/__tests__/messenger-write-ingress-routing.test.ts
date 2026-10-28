@@ -36,7 +36,8 @@ describe("native Messenger personal-state ingress", () => {
     expect(forbiddenNode).not.toHaveBeenCalled();
     const routes = issues.stack.flatMap((layer) => layer.route ? [layer.route] : []);
     expect(routes.some((route) => route.path === "/issues/:id/approvals" && route.methods.post)).toBe(true);
-    expect(routes.some((route) => route.path === "/orgs/:orgId/labels" && route.methods.post)).toBe(true);
+    // Label writes are already native-owned in the merged comparison base.
+    expect(routes.some((route) => route.path === "/orgs/:orgId/labels" && route.methods.post)).toBe(false);
   });
 
   it.each([undefined, false])("preserves the legacy writes when publicIngressEnabled is %s", (publicIngressEnabled) => {

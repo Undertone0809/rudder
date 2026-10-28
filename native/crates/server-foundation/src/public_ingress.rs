@@ -31,6 +31,7 @@ mod existing_reads;
 mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
+mod label_writes;
 mod messenger_reads;
 mod messenger_writes;
 mod native_chat;
@@ -769,6 +770,9 @@ async fn proxy_request(
     }
     if project_reads::is_reserved_path(request.uri().path(), request.method()) {
         return project_reads::dispatch_alias(state, request, payload).await;
+    }
+    if label_writes::is_reserved_path(request.uri().path(), request.method()) {
+        return label_writes::handle(state, request, payload).await;
     }
     if issue_core::is_reserved_path(request.uri().path(), request.method()) {
         return issue_core::dispatch_alias(state, proxy, request, payload).await;

@@ -5011,7 +5011,7 @@
     },
     {
       "path": "server/src/routes/issues.ts",
-      "sha256": "70ee4ea133460916a1c8d69d82038819581822fd700de985a0c1939aea5b0ce8",
+      "sha256": "6e43df8f601b03f0c5d0193d8fce626854b763398a33879174ef684553f5cca3",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -59049,13 +59049,13 @@
       "node_role": "compatibility_adapter",
       "retirement_criterion": "Remove legacy backend paths after complete Rust default/no-Node acceptance.",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/messenger_writes.rs; native/crates/server-foundation/src/messenger_state; native/crates/native-chat-executor/src/messenger_title",
-      "scope": "Omit only POST /api/issues/:id/read, POST /api/issues/:id/follow and DELETE /api/issues/:id/follow under the existing Rust public-ingress guard.",
+      "scope": "Omit only POST /api/issues/:id/read, POST /api/issues/:id/follow and DELETE /api/issues/:id/follow under the existing Rust public-ingress guard. Preserve the Label write guards already present in the comparison base.",
       "compatibility_boundary": "Only registration guards change; unchanged legacy bodies remain ingress-off compatibility debt. Rust owns selected personal-state writes, authorization and receipts; no fallback.",
       "reviewer": "/root/ci_unblock_review_luna",
       "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger-public-writes-stage-r1/stage-review.md (sha256=8ce08958a21e679bd0f686059aee4f289e7dcf9b0ec9896d313e652512db899c; verdict=accept; frozen b132 source-stage)",
       "review_status": "reviewed",
-      "base_sha256": "511624fb7c5c909dcca065322bcc6501ad006e635dd5b8d24dd7ce160a425d34",
-      "head_sha256": "70ee4ea133460916a1c8d69d82038819581822fd700de985a0c1939aea5b0ce8"
+      "base_sha256": "0d163de6541e5fd658caf8a0ace6961f47f7558c5900af5bd2b1f57e72585157",
+      "head_sha256": "6e43df8f601b03f0c5d0193d8fce626854b763398a33879174ef684553f5cca3"
     },
     {
       "path": "server/src/routes/messenger.ts",
