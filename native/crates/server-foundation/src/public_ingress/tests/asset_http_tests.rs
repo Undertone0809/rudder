@@ -106,7 +106,7 @@ async fn public_assets_persist_sanitize_scope_and_fail_without_node() {
             "asset-http-agent-jwt-secret",
             "rudder-test",
             "rudder-api",
-            true,
+            false,
         )
         .unwrap(),
     );

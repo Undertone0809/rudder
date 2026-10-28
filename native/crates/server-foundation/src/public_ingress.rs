@@ -19,9 +19,9 @@ use uuid::Uuid;
 
 mod agent_core;
 mod agent_runs;
+mod approval_reads;
 mod asset_svg;
 mod assets;
-mod approval_reads;
 mod automation_reads;
 mod automation_writes;
 mod browser_session;
