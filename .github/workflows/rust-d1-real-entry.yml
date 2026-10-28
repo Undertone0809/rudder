@@ -189,6 +189,35 @@ jobs:
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
+      - name: Verify native Automation execution and Request writes
+        env:
+          RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/rudder_issue_core_test
+          RUDDER_TEST_PROCESS_HOST: ${{ github.workspace }}/native/target/debug/rudder-process-host
+          RUN_LOG_BASE_PATH: ${{ runner.temp }}/rudder-execution-request/logs
+          RUDDER_HOME: ${{ runner.temp }}/rudder-execution-request/home
+          RUDDER_SECRETS_PROVIDER: local_encrypted
+          RUDDER_SECRETS_MASTER_KEY_FILE: ${{ runner.temp }}/rudder-execution-request/master.key
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUN_LOG_BASE_PATH" "$RUDDER_HOME"
+          printf '%064d' 1 > "$RUDDER_SECRETS_MASTER_KEY_FILE"
+          chmod 600 "$RUDDER_SECRETS_MASTER_KEY_FILE"
+          test -x "$RUDDER_TEST_PROCESS_HOST"
+          selectors=(
+            public_ingress::automation_execution::http_tests::manual_webhook_and_schedule_execution_use_native_admission_receipts_and_owned_worker
+            public_ingress::tests::request_write_http_tests::public_assistance_resolution_executes_owned_process_and_settles_native_run
+            public_ingress::tests::request_write_http_tests::native_assistance_writes_unblock_audit_wake_replay_and_fail_closed
+          )
+          for selector in "${selectors[@]}"; do
+            log="$RUN_LOG_BASE_PATH/${selector##*::}.log"
+            cargo test --locked --manifest-path native/Cargo.toml \
+              --package rudder-server-foundation-core --lib "$selector" \
+              -- --exact --ignored --nocapture --test-threads=1 2>&1 | tee "$log"
+            grep -F 'running 1 test' "$log"
+            grep -F '1 passed; 0 failed; 0 ignored' "$log"
+            cat "$log" >> "$RUNNER_TEMP/rust-d1-real-entry.log"
+          done
+
       - name: Verify Rust Messenger writes and ephemeral title processes
         env:
           RUDDER_NATIVE_HOST_ORGANIZATION_WORKSPACE_HOME: ${{ runner.temp }}/rudder-public-workflow/workspaces
