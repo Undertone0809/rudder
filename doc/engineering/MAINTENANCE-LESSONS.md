@@ -27,6 +27,13 @@ An automatic attempt and a completed publication are separate observations:
 the previous eligible run `40155135246` failed its Windows candidate gate.
 Retain every candidate and public-install gate when restoring the trigger.
 
+The first repair PR run `40633528594` also exposed three diff-local Node review
+records inherited from the preceding Messenger merge. No runtime source changed
+in the repair, so the trusted base checker correctly rejected those stale
+records. Retire only the already-landed `reviewed_node_changes` entries, as the
+existing CLI lifecycle regression requires; preserve source inventories,
+transport admissions and checker enforcement.
+
 ## 2026-10-13 audit scope
 
 Inspected public main `93faca8b2352cad0331db54794b6895630ad2ecc`: contributor
