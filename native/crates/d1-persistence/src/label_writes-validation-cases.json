@@ -1,0 +1,291 @@
+[
+  {
+    "operation": "create",
+    "input": {
+      "name": " ﻿Roadmap\n",
+      "color": "#aB10Ef",
+      "unknown": true
+    },
+    "output": {
+      "name": "Roadmap",
+      "color": "#aB10Ef"
+    }
+  },
+  {
+    "operation": "create",
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "undefined",
+        "path": [],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {},
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "name"
+        ],
+        "message": "Required"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "undefined",
+        "path": [
+          "color"
+        ],
+        "message": "Required"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": [],
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "array",
+        "path": [],
+        "message": "Expected object, received array"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": null,
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "object",
+        "received": "null",
+        "path": [],
+        "message": "Expected object, received null"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "  ",
+      "color": "#123456"
+    },
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "name"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "color": "#123456"
+    },
+    "output": {
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "color": "#123456"
+    }
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "color": "#123456"
+    },
+    "issues": [
+      {
+        "code": "too_big",
+        "maximum": 48,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at most 48 character(s)",
+        "path": [
+          "name"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "color": "#123456"
+    },
+    "output": {
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "color": "#123456"
+    }
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "color": "#123456"
+    },
+    "issues": [
+      {
+        "code": "too_big",
+        "maximum": 48,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at most 48 character(s)",
+        "path": [
+          "name"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": 7,
+      "color": false
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": [
+          "name"
+        ],
+        "message": "Expected string, received number"
+      },
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "boolean",
+        "path": [
+          "color"
+        ],
+        "message": "Expected string, received boolean"
+      }
+    ]
+  },
+  {
+    "operation": "create",
+    "input": {
+      "name": "Roadmap",
+      "color": "#12345g"
+    },
+    "issues": [
+      {
+        "validation": "regex",
+        "code": "invalid_string",
+        "message": "Color must be a 6-digit hex value",
+        "path": [
+          "color"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {},
+    "issues": [
+      {
+        "code": "custom",
+        "message": "At least one label field must be provided",
+        "path": []
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "unknown": true
+    },
+    "issues": [
+      {
+        "code": "custom",
+        "message": "At least one label field must be provided",
+        "path": []
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "name": " ﻿Updated\n",
+      "unknown": true
+    },
+    "output": {
+      "name": "Updated"
+    }
+  },
+  {
+    "operation": "update",
+    "input": {
+      "color": "#Aa12bC",
+      "unknown": true
+    },
+    "output": {
+      "color": "#Aa12bC"
+    }
+  },
+  {
+    "operation": "update",
+    "input": {
+      "name": "",
+      "color": "nothex"
+    },
+    "issues": [
+      {
+        "code": "too_small",
+        "minimum": 1,
+        "type": "string",
+        "inclusive": true,
+        "exact": false,
+        "message": "String must contain at least 1 character(s)",
+        "path": [
+          "name"
+        ]
+      },
+      {
+        "validation": "regex",
+        "code": "invalid_string",
+        "message": "Color must be a 6-digit hex value",
+        "path": [
+          "color"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "input": {
+      "name": null
+    },
+    "issues": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "null",
+        "path": [
+          "name"
+        ],
+        "message": "Expected string, received null"
+      }
+    ]
+  }
+]
