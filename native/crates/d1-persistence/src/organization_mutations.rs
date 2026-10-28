@@ -221,6 +221,19 @@ pub async fn patch_public(
     pool: &PgPool,
     command: OrganizationPatchCommand<'_>,
 ) -> Result<Value, StoreError> {
+    let mut tx = pool.begin().await?;
+    let response = patch_in_transaction(&mut tx, command).await?;
+    tx.commit().await?;
+    Ok(response)
+}
+
+/// Compose an approved Chat organization change with its locked Approval.
+/// Public and Approval callers share parsing, authorization, fence adoption,
+/// branding receipts, projection and activity in this existing writer.
+pub(crate) async fn patch_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    command: OrganizationPatchCommand<'_>,
+) -> Result<Value, StoreError> {
     let OrganizationPatchCommand {
         organization_id,
         body,
@@ -259,8 +272,7 @@ pub async fn patch_public(
         // The ordinary organization PATCH historically ignores this header.
         None
     };
-    let mut tx = pool.begin().await?;
-    revalidate_public_identity(&mut tx, &organization_id, authorizer).await?;
+    revalidate_public_identity(tx, &organization_id, authorizer).await?;
     // Branding writers take the component lock before the organization row.
     // Keep this order when a complete organization update includes branding.
     if patch.brand_color.is_some() || patch.logo_asset_id.is_some() {
@@ -269,11 +281,11 @@ pub async fn patch_public(
              WHERE org_id=$1::uuid FOR UPDATE",
         )
         .bind(&organization_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
     }
-    lock_organization(&mut tx, &organization_id).await?;
-    revalidate_public_identity(&mut tx, &organization_id, authorizer).await?;
+    lock_organization(tx, &organization_id).await?;
+    revalidate_public_identity(tx, &organization_id, authorizer).await?;
     if actor_kind == "agent" {
         let role = sqlx::query_scalar::<_, String>(
             "SELECT role FROM agents WHERE id=$1::uuid AND org_id=$2::uuid
@@ -281,7 +293,7 @@ pub async fn patch_public(
         )
         .bind(agent_id.unwrap_or(&actor_id))
         .bind(&organization_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if role.as_deref() != Some("ceo") {
             return Err(StoreError::Unauthorized);
@@ -289,7 +301,7 @@ pub async fn patch_public(
     }
 
     if patch.brand_color.is_some() || patch.logo_asset_id.is_some() {
-        adopt_branding_authority(&mut tx, &organization_id).await?;
+        adopt_branding_authority(tx, &organization_id).await?;
     }
 
     if keyed_branding {
@@ -307,7 +319,7 @@ pub async fn patch_public(
         )
         .bind(&organization_id)
         .bind(key)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or(StoreError::NotOwned)?;
         if scope.try_get::<String, _>("owner")? != "rust" {
@@ -353,12 +365,10 @@ pub async fn patch_public(
         )?;
         // The keyed pilot contract revalidates current identity in this write
         // transaction before the store checks replay or changes state.
-        revalidate_public_identity(&mut tx, &organization_id, authorizer).await?;
-        let _committed = crate::branding::apply(&mut tx, command, &metadata).await?;
-        tx.commit().await?;
-        let mut connection = pool.acquire().await?;
+        revalidate_public_identity(tx, &organization_id, authorizer).await?;
+        let _committed = crate::branding::apply(tx, command, &metadata).await?;
         return organization_reads::read_organization(
-            &mut connection,
+            tx,
             &organization_id,
             time::OffsetDateTime::now_utc(),
         )
@@ -366,9 +376,9 @@ pub async fn patch_public(
         .ok_or(StoreError::NotFound);
     }
 
-    apply_patch(&mut tx, &organization_id, &patch).await?;
+    apply_patch(tx, &organization_id, &patch).await?;
     let response = organization_reads::read_organization(
-        &mut tx,
+        tx,
         &organization_id,
         time::OffsetDateTime::now_utc(),
     )
@@ -380,7 +390,7 @@ pub async fn patch_public(
         run_id: run_id.map(str::to_owned),
     };
     activity::write_activity_options(
-        &mut tx,
+        tx,
         activity::ActivityWrite {
             org: &organization_id,
             audit: &audit_actor,
@@ -396,7 +406,6 @@ pub async fn patch_public(
         },
     )
     .await?;
-    tx.commit().await?;
     Ok(response)
 }
 

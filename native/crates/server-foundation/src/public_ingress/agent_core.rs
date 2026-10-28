@@ -1050,6 +1050,25 @@ pub(super) fn instance_root(org_id: &str) -> Result<String, ()> {
         .instance_root)
 }
 
+pub(super) fn approval_host_request(
+    state: &IngressState,
+    org_id: &str,
+    local: bool,
+) -> Result<AgentCoreRequest, ()> {
+    let facts = host_paths::AgentHostFacts::resolve(org_id)?;
+    let command = json!({
+        "operation":"create","orgId":org_id,"input":{},"localImplicit":local,
+        "homeDirectory":facts.home_directory,"processWorkingDirectory":facts.process_working_directory,
+        "canonicalLocale":"en-US","deploymentMode":state.config.deployment_mode,
+        "instructionsHost":{
+            "instanceRoot":facts.instructions_host.instance_root,"workspaceHome":facts.instructions_host.workspace_home,
+            "previousDocumentsRoot":facts.instructions_host.previous_documents_root,
+            "friendlyWorkspaceHome":facts.instructions_host.friendly_workspace_home,"hostname":facts.instructions_host.hostname,
+        }
+    });
+    AgentCoreRequest::parse(&serde_json::to_vec(&command).map_err(|_| ())?).map_err(|_| ())
+}
+
 pub(super) fn organization_workspace_root(org_id: &str) -> Result<String, ()> {
     let facts = host_paths::AgentHostFacts::resolve(org_id)?;
     let host = organization_workspace_host(&facts.instructions_host);

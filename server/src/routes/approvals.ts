@@ -63,7 +63,7 @@ function isOrganizationBrandingChatOperationApproval(approval: {
 }
 
 export interface ApprovalRouteOptions {
-  /** Rust's public listener owns the migrated read-only Approval endpoints. */
+  /** Rust's identity-enabled public listener owns Approval routes. */
   nativeApprovalReads?: boolean;
 }
 
@@ -73,6 +73,7 @@ export function approvalRoutes(
   options: ApprovalRouteOptions = {},
 ) {
   const router = Router();
+  if (options.nativeApprovalReads) return router;
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);

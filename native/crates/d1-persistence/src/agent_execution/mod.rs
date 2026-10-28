@@ -7,6 +7,7 @@
 mod admission;
 mod analytics;
 mod approvals;
+pub(crate) use admission::admit_in_transaction;
 pub use admission::{AgentExecutionActor, AgentRunAdmission, AgentWakeRequest, admit};
 pub use approvals::{RuntimeApproval, create_runtime_approval, read_runtime_approval};
 pub mod attempts;
