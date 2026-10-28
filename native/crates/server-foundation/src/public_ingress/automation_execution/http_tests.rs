@@ -112,7 +112,11 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     .run();
     let node_control = node.handle();
     let node_task = actix_web::rt::spawn(node);
-    let mut app = AppState::new(ServerConfig {
+    let app = AppState::new(ServerConfig {
+        database_url: Some(format!(
+            "postgresql://postgres@127.0.0.1:{}/postgres",
+            db.pool.connect_options().get_port(),
+        )),
         actor_envelope_key: Some(
             rudder_auth_core::SigningKey::new(b"synthetic-automation-execution-envelope-key")
                 .unwrap(),
@@ -121,7 +125,10 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
         ..ServerConfig::default()
     })
     .unwrap();
-    app.database = DatabaseState::Configured(db.pool.clone());
+    assert!(
+        app.native_chat_worker.is_some(),
+        "configured database starts the native Chat supervisor"
+    );
     let app = Arc::new(app);
     let instructions = workspace
         .join(
