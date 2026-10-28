@@ -180,6 +180,8 @@ async fn public_goal_and_generic_execution_stream_stop_retry_and_failures_are_na
         .unwrap(),
     );
     config.agent_run_host = Some(host);
+    let mut auth_only_config = config.clone();
+    auth_only_config.agent_run_host = None;
     let runtime = PublicIngressRuntime::bind(config, app.clone()).unwrap();
     let base = format!("http://{}", runtime.bound_addr());
     let control = runtime.control();
@@ -366,6 +368,34 @@ async fn public_goal_and_generic_execution_stream_stop_retry_and_failures_are_na
     assert_eq!(code, StatusCode::OK, "{stopping}");
     completed(&client, &base, token, run, "cancelled").await;
     tokio::time::timeout(Duration::from_secs(8),async {loop {let proof:bool=sqlx::query_scalar("SELECT process_exited_at IS NOT NULL AND NOT terminal_effects_pending FROM heartbeat_runs WHERE id=$1::uuid").bind(run).fetch_one(&database.pool).await.unwrap();if proof{break;}tokio::time::sleep(Duration::from_millis(40)).await;}}).await.unwrap();
+    // Auth-only ingress may read and cancel native Runs, but cannot admit a
+    // retry without its execution consumer. Both aliases must fail before any
+    // durable admission and must not reach the private Node server.
+    let auth_only = PublicIngressRuntime::bind(auth_only_config, app.clone()).unwrap();
+    let auth_only_base = format!("http://{}", auth_only.bound_addr());
+    let auth_only_control = auth_only.control();
+    let auth_only_task = actix_web::rt::spawn(auth_only.run());
+    let counts_before: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid),(SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid)")
+        .bind(support::ORG).fetch_one(&database.pool).await.unwrap();
+    for surface in ["agent-runs", "heartbeat-runs"] {
+        let (code, unavailable) = call(
+            &client,
+            &auth_only_base,
+            token,
+            Method::POST,
+            &format!("/api/{surface}/{run}/retry"),
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{unavailable}");
+        assert_eq!(unavailable["reason"], "agent_execution_unavailable");
+    }
+    let counts_after: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM heartbeat_runs WHERE org_id=$1::uuid),(SELECT count(*) FROM agent_wakeup_requests WHERE org_id=$1::uuid)")
+        .bind(support::ORG).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(counts_after, counts_before);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    auth_only_control.stop(true).await;
+    auth_only_task.await.unwrap().unwrap();
     std::fs::write(&retry_ready, "retry fixture ready").unwrap();
     let (code, retry) = call(
         &client,

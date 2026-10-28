@@ -6959,7 +6959,7 @@
     },
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
-      "sha256": "dae8db3ab9c94c44dd1146c2295ce86799a5e1f7f1f0a18569adf7bc7f9f1a82",
+      "sha256": "b31c529abcb7c60742f762c6f4bdecf023156960d2fef44b3f24495b4bbe2273",
       "families": [
         "server_lifecycle_and_workers"
       ]
@@ -59085,15 +59085,15 @@
     {
       "path": "server/src/services/rust-public-ingress-config.ts",
       "base_sha256": "cebe66e1eb8c071df1ccbd67dafa22bb05cbc045daa9d74a57b91140f57aebe1",
-      "head_sha256": "dae8db3ab9c94c44dd1146c2295ce86799a5e1f7f1f0a18569adf7bc7f9f1a82",
+      "head_sha256": "b31c529abcb7c60742f762c6f4bdecf023156960d2fef44b3f24495b4bbe2273",
       "change_kind": "modified_node_compatibility",
       "node_role": "compatibility_adapter",
       "rust_authority": "native/crates/server-foundation/src/public_ingress/{agent_execution,desktop,live_events,managed_mcp}.rs; agent_run_worker; agent_run_context; native_chat_startup; native/crates/d1-persistence/src/agent_execution",
-      "scope": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged.",
-      "compatibility_boundary": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged.",
+      "scope": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged. Execution environment activates only with explicit nativeChatHost installation facts; auth-only ingress keeps selected API/auth URLs without creating an execution host.",
+      "compatibility_boundary": "Transport raw trusted operator environment/installation facts separately for generic runtime compatibility, selected API/auth URLs and bundled-skill locations. Rust owns filtering/provider selection/policy; Native Chat ambient inheritance unchanged. Execution environment activates only with explicit nativeChatHost installation facts; auth-only ingress keeps selected API/auth URLs without creating an execution host.",
       "retirement_criterion": "Remove legacy Node handlers and the raw-fact/frame transport when remaining legacy domain producers and Node launcher retire after final default no-Node-backend acceptance.",
-      "reviewer": "/root/generic_execution_stage_review",
-      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-claude-parity-review.md sha256=5dbffd74fe9a4f78cd725e71974e71da756adf05b463bc5cdebba27623258cc1; original boundary classification /Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-review.md sha256=3c596f87bec6635ef3a7ca8ccdbcd762586a24616cdc0014785bc30ed94fa220; stage only, PAV/final publication pending",
+      "reviewer": "/root/messenger_merge_review",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/stage-startup-rebind-r2.md sha256=23b335bb4fda47c74f7b468dabda3c6182fc07228b2c249bf7617ea5ca5c61a7; corrected startup stage accepted, PAV/final publication pending",
       "review_status": "reviewed"
     },
     {
