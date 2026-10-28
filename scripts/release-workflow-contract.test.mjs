@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +37,67 @@ function runMirrorPolicy(eventName, input, skipMirror) {
 }
 
 describe("unified delivery workflows", () => {
+  function admitsRelease({ message = "feat: ship a product change", ...run } = {}, eventName = "workflow_run", inputs = {}) {
+    const preflight = workflowJob(releaseWorkflow, "preflight");
+    const condition = preflight.match(/\n    if: >-\n([\s\S]*?)\n    permissions:/)?.[1];
+    if (!condition) throw new Error("Release preflight condition not found");
+    // This condition uses only boolean operators, property reads and contains.
+    // Match Actions' case-insensitive contains semantics while executing the
+    // actual workflow expression rather than a second copy of its policy.
+    return runInNewContext(condition, {
+      github: {
+        event_name: eventName,
+        repository: "Undertone0809/rudder",
+        event: {
+          inputs,
+          workflow_run: {
+            conclusion: "success",
+            event: "push",
+            head_branch: "main",
+            repository: { full_name: "Undertone0809/rudder" },
+            head_commit: { message },
+            ...run,
+          },
+        },
+      },
+      contains: (value, search) => String(value ?? "").toLowerCase().includes(search.toLowerCase()),
+    });
+  }
+
+  it.each([
+    "feat: move Label public writes to Rust [skip release]",
+    "Merge pull request #396 from Undertone0809/codex/rust-managed-mcp-negative-fence-policy-20261028\n\nchore: pin native MCP runtime retirement boundary [skip release]",
+    "fix: restore automatic canaries",
+  ])("admits qualified main product changes despite legacy markers: %s", (message) => {
+    expect(admitsRelease({ message })).toBe(true);
+  });
+
+  it.each([
+    "chore(release): start v0.7.25 [skip canary]",
+    "Merge pull request #400\n\nchore(release): start v0.7.25 [skip canary]",
+    "chore(release): repair stable candidate [SKIP CANARY]",
+    "chore(release): repair stable candidate [skip release] [skip canary]",
+  ])("respects the explicit canary maintenance opt-out: %s", (message) => {
+    expect(admitsRelease({ message })).toBe(false);
+  });
+
+  it.each([
+    { conclusion: "failure" },
+    { conclusion: "cancelled" },
+    { conclusion: "skipped" },
+    { event: "pull_request" },
+    { event: "workflow_dispatch" },
+    { head_branch: "codex/product-change" },
+    { repository: { full_name: "someone/rudder" } },
+  ])("keeps unqualified automatic triggers closed: %j", (run) => {
+    expect(admitsRelease(run)).toBe(false);
+  });
+
+  it("preserves manual stable promotion and separate mirror recovery", () => {
+    expect(admitsRelease({ message: "[skip canary]" }, "workflow_dispatch")).toBe(true);
+    expect(admitsRelease({ conclusion: "" }, "workflow_dispatch", { mirror_recovery: "true" })).toBe(false);
+  });
+
   function runBackupDirectoryPreflight(platform, rejectPosixInstall = false) {
     const job = workflowJob(releaseWorkflow, "desktop-candidate");
     const start = job.indexOf('          backup_dir="$RUNNER_TEMP/desktop-candidate-migration-backups"');
@@ -643,7 +705,8 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(1);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
     expect(releaseWorkflow).toContain("gh workflow run ci.yml");
-    expect(nextReleaseScript).toContain("[skip release]");
+    expect(nextReleaseScript).toContain("[skip canary]");
+    expect(nextReleaseScript).not.toContain("[skip release]");
     expect(handoff).toContain("pull-requests: write");
     expect(handoff).toContain("GH_TOKEN: ${{ github.token }}");
     expect(handoff).toContain("steps.next-release.outputs.action == 'proposed'");

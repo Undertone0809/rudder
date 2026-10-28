@@ -293,7 +293,7 @@ Never disable protection or add a release bypass to resolve a failing check.
 
 The release agent merges reviewed preparation PRs under the existing release
 authority, then requires exact-source `main` Test before publishing. The
-generated `[skip release]` version commit is proposed on
+generated `[skip canary]` version commit is proposed on
 `codex/release-vX.Y.Z`; retries reuse its PR without force-pushing. The workflow
 reports the PR as pending integration, includes the next version's generated
 migration compatibility declaration, and dispatches Test for its immutable SHA.
