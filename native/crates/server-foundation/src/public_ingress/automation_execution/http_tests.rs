@@ -55,7 +55,19 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     let cwd = path.join("cwd");
     let operator = path.join("operator");
     let runtime_root = path.join("runtime");
-    for directory in [&cwd, &operator, &runtime_root] {
+    let workspace = path.join("workspaces");
+    let previous = path.join("previous");
+    let profiles = path.join("profiles");
+    let chat_home = path.join("chat-home");
+    for directory in [
+        &cwd,
+        &operator,
+        &runtime_root,
+        &workspace,
+        &previous,
+        &profiles,
+        &chat_home,
+    ] {
         std::fs::create_dir_all(directory).unwrap();
     }
     let user = "automation-execution-public-fixture";
@@ -73,7 +85,7 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     .unwrap();
     let agent = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO agents(id,org_id,name,role,status,agent_runtime_type,agent_runtime_config) VALUES($1::uuid,$2::uuid,'Automation public execution','general','idle','process',$3::jsonb)")
-        .bind(&agent).bind(support::ORG).bind(json!({"command":"/bin/sh","args":["-c","printf 'synthetic automation result\\n'"],"cwd":cwd})).execute(&db.pool).await.unwrap();
+        .bind(&agent).bind(support::ORG).bind(json!({"command":"/bin/sh","args":["-c","cat >/dev/null; printf 'RUDDER_RESULT_BEGIN\\nsynthetic automation result\\nRUDDER_RESULT_END\\n'"],"cwd":cwd})).execute(&db.pool).await.unwrap();
     let hits = Arc::new(AtomicUsize::new(0));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let upstream = format!("http://{}", listener.local_addr().unwrap());
@@ -107,6 +119,47 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     .unwrap();
     app.database = DatabaseState::Configured(db.pool.clone());
     let app = Arc::new(app);
+    let instructions = workspace
+        .join(
+            support::ORG
+                .replace('-', "")
+                .chars()
+                .take(12)
+                .collect::<String>(),
+        )
+        .join("workspaces/agents/automation-public-execution/instructions");
+    std::fs::create_dir_all(&instructions).unwrap();
+    std::fs::write(
+        instructions.join("SOUL.md"),
+        "Complete the isolated automation fixture\n",
+    )
+    .unwrap();
+    let chat_context =
+        rudder_d1_persistence::native_chat::config::LocalHostContext::from_rust_host(
+            "public-automation-chat-fixture".into(),
+            path.to_path_buf(),
+            workspace,
+            previous,
+            false,
+            profiles,
+            operator.clone(),
+            PathBuf::from("/bin/sh"),
+        )
+        .unwrap()
+        .with_executable_search_path("/usr/bin:/bin".into())
+        .unwrap();
+    let chat_runtime = crate::NativeChatPublicRuntime::new(
+        chat_context,
+        rudder_native_chat_executor::HostPaths {
+            process_host: std::env::var_os("RUDDER_TEST_PROCESS_HOST")
+                .map(PathBuf::from)
+                .unwrap(),
+            runtime_root: runtime_root.clone(),
+            isolated_home: chat_home,
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap();
     let host = Arc::new(AgentRunContextHost {
         workspace: OrganizationWorkspaceHost {
             instance_root: path.display().to_string(),
@@ -153,6 +206,20 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
         interval_ms: 10_000,
     });
     config.agent_run_host = Some(host);
+    config = config
+        .with_browser_auth(
+            crate::browser_auth::BrowserAuthConfig::required(
+                "synthetic-automation-browser-session-key",
+                false,
+                crate::browser_auth::SessionPolicy::BetterAuth,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_native_chat_mutation_policy(
+            crate::browser_auth::BrowserMutationPolicy::new(&[]).unwrap(),
+        )
+        .with_native_chat_runtime(chat_runtime);
     let runtime = PublicIngressRuntime::bind(config, app.clone()).unwrap();
     let base = format!("http://{}", runtime.bound_addr());
     let control = runtime.control();
@@ -292,6 +359,78 @@ async fn manual_webhook_and_schedule_execution_use_native_admission_receipts_and
     sqlx::query("UPDATE automation_triggers SET next_run_at=statement_timestamp()-interval '1 minute' WHERE id=$1::uuid").bind(scheduled["trigger"]["id"].as_str()).execute(&db.pool).await.unwrap();
     let scheduled_issue=tokio::time::timeout(Duration::from_secs(25),async{loop{let issue=sqlx::query_scalar::<_,String>("SELECT linked_issue_id::text FROM automation_runs WHERE automation_id=$1::uuid AND source='schedule' AND linked_issue_id IS NOT NULL ORDER BY created_at DESC LIMIT 1").bind(automation).fetch_optional(&db.pool).await.unwrap();if let Some(issue)=issue{break issue;}tokio::time::sleep(Duration::from_millis(80)).await;}}).await.expect("native configured cadence fires schedule");
     settled_native_run(&db.pool, &scheduled_issue).await;
+    // Exercise the public Chat-output producer through the actual background
+    // Automation worker and Native Chat supervisor, not a direct domain call.
+    sqlx::query("UPDATE automation_triggers SET enabled=false WHERE id=$1::uuid")
+        .bind(scheduled["trigger"]["id"].as_str())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (status, chat_definition) = call(&client, &base, token, Method::POST,
+        &format!("/api/orgs/{}/automations", support::ORG),
+        json!({"title":"Public native Chat automation","description":"Complete isolated Chat output","assigneeAgentId":agent,"outputMode":"chat_output"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{chat_definition}");
+    let chat_automation = chat_definition["id"].as_str().unwrap();
+    let (status, chat_run) = call(
+        &client,
+        &base,
+        token,
+        Method::POST,
+        &format!("/api/automations/{chat_automation}/run"),
+        json!({"idempotencyKey":"fixture-chat-output"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{chat_run}");
+    assert_eq!(chat_run["status"], "running");
+    assert!(chat_run["linkedIssueId"].is_null());
+    let completed = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let (status, runs) = call(
+                &client,
+                &base,
+                token,
+                Method::GET,
+                &format!("/api/automations/{chat_automation}/runs"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{runs}");
+            let current = runs
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|run| run["id"] == chat_run["id"])
+                .unwrap();
+            assert_ne!(current["status"], "failed", "{current}");
+            if current["status"] == "completed" {
+                break current.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("public Automation worker completes native Chat output");
+    assert!(
+        completed["terminalChatMessageId"].is_string(),
+        "{completed}"
+    );
+    let terminal: (String, String) = sqlx::query_as("SELECT m.body,m.structured_payload->'automationChatRun'->>'status' FROM automation_runs ar JOIN chat_messages m ON m.org_id=ar.org_id AND m.id=ar.terminal_chat_message_id WHERE ar.id=$1::uuid")
+        .bind(chat_run["id"].as_str()).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(
+        terminal,
+        ("synthetic automation result".into(), "completed".into())
+    );
+    let cleanup: (String, bool, bool, bool) = sqlx::query_as("SELECT h.status,h.process_exited_at IS NOT NULL,h.native_admission_hold,g.native_admission_hold FROM automation_runs ar JOIN chat_generations g ON g.org_id=ar.org_id AND g.source_message_id=ar.started_chat_message_id JOIN heartbeat_runs h ON h.org_id=g.org_id AND h.chat_generation_id=g.id WHERE ar.id=$1::uuid")
+        .bind(chat_run["id"].as_str()).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(cleanup, ("succeeded".into(), true, false, false));
+    let issues: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM issues WHERE org_id=$1::uuid AND origin_id=$2")
+            .bind(support::ORG)
+            .bind(chat_automation)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(issues, 0);
     assert_eq!(hits.load(Ordering::SeqCst), 0);
     control.stop(true).await;
     task.await.unwrap().unwrap();
