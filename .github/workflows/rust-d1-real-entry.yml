@@ -68,6 +68,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          key: d1-real-entry-dev-debug0-incremental0
+
       - name: Enable pnpm
         run: |
           corepack enable
