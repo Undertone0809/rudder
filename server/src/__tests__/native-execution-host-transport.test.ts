@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFoundationChildEnvironment } from "../services/rust-public-ingress-config.js";
-import { createRustLiveEventTransportEnvelope } from "../services/rust-actor-envelope.js";
 import {
   publishGlobalLiveEvent, publishLiveEvent, subscribeCompanyLiveEvents,
   subscribeGlobalLiveEvents, subscribeLiveEventTransport,
 } from "../services/live-events.js";
+import { createRustLiveEventTransportEnvelope } from "../services/rust-actor-envelope.js";
+import { createFoundationChildEnvironment } from "../services/rust-public-ingress-config.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -18,6 +18,12 @@ describe("native execution transport facts", () => {
       publicIngress: {
         listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101", authorizationKey: "fixture-key",
         publicApiUrl: "http://127.0.0.1:3100", authPublicBaseUrl: "https://fixture.example/base",
+        nativeChatHost: {
+          instanceId: "fixture", instanceRoot: "/fixture/instance", workspaceHome: "/fixture/workspaces",
+          operatorHome: "/fixture/operator", executableSearchPath: "/fixture/bin",
+          friendlyWorkspaceHome: false, deploymentMode: "authenticated", deploymentExposure: "private",
+          authRequirement: "required", trustedOrigins: ["http://127.0.0.1:3100"],
+        },
         identityAuth: { assertionKey: "fixture-assertion", agentJwtSecret: "fixture-jwt", agentJwtIssuer: "fixture", agentJwtAudience: "fixture", localImplicitEnabled: false },
       },
     });

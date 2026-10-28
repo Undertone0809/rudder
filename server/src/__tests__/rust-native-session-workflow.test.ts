@@ -610,7 +610,7 @@ describe("source-built Rust public native session workflow", () => {
     expect(startup.publicIngress?.publicListener).toBe(true);
     expect(startup.publicIngress?.nativeAuthentication?.sessionCookieAuthority).toMatchObject({
       kind: "better_auth",
-      unmigrated: ["auth_lifecycle_routes", "websocket_session_resolution"],
+      unmigrated: ["auth_lifecycle_routes"],
     });
     expect(startup.publicIngress?.nativeAuthentication).toMatchObject({
       authority: "native-managed-http-identity-resolver",
@@ -1050,7 +1050,7 @@ describe("source-built Rust public native session workflow", () => {
     const startup = await startNative("local_account", LOCAL_SESSION_SECRET);
     expect(startup.publicIngress?.nativeAuthentication?.sessionCookieAuthority).toMatchObject({
       kind: "local_account",
-      unmigrated: ["auth_lifecycle_routes", "websocket_session_resolution"],
+      unmigrated: ["auth_lifecycle_routes"],
     });
 
     const localToken = `native-local-session-${Date.now()}`;

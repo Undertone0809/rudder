@@ -567,7 +567,12 @@ mod tests {
                 .any(|pair| pair == ["--settings", "managed.json"])
         );
         assert!(!claude.args.iter().any(|arg| arg == "custom.json"));
-        assert!(!claude.args.iter().any(|arg| arg.contains("custom-mcp.json")));
+        assert!(
+            !claude
+                .args
+                .iter()
+                .any(|arg| arg.contains("custom-mcp.json"))
+        );
         assert!(
             claude
                 .args

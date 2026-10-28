@@ -964,6 +964,25 @@ describe("constructed issuer through the real Rust application launcher", () => 
             cookie = issued.session.setCookie.split(";")[0]; userId = issued.userId; nativeSessionId = issued.session.id;
           }
           const organizationId = await exerciseCliAuthWorkflow(base, origin, cookie, userId, nativeSessionId, noMembershipSession);
+          if (!nativeHost) {
+            // Auth-only launchers remain usable without execution installation
+            // facts. Native execution fails closed before any queue write and
+            // never reaches the still-running private Node server.
+            const beforeExecution = nodePaths.length;
+            const executionEffects = () => db.$client`SELECT
+                (SELECT COUNT(*)::int FROM heartbeat_runs) AS runs,
+                (SELECT COUNT(*)::int FROM agent_wakeup_requests) AS wakeups`;
+            const beforeEffects = await executionEffects();
+            for (const suffix of ["wakeup", "heartbeat/invoke"]) {
+              const unavailable = await fetch(`${base}/api/agents/${randomUUID()}/${suffix}`, {
+                method: "POST", headers: { cookie, origin, "content-type": "application/json" }, body: "{}",
+              });
+              expect(unavailable.status).toBe(503);
+              expect(await unavailable.json()).toMatchObject({ reason: "agent_execution_unavailable" });
+            }
+            expect(await executionEffects()).toEqual(beforeEffects);
+            expect(nodePaths.length).toBe(beforeExecution);
+          }
           let nativeChatId: string | undefined;
           if (nativeHost) {
             nativeChatId = randomUUID();

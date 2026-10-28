@@ -352,8 +352,10 @@ pub(super) async fn execute(
                 .json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
         }
     };
-    if matches!(&endpoint, Endpoint::Wake(_) | Endpoint::Invoke(_))
-        && state.config.agent_run_host.is_none()
+    if matches!(
+        &endpoint,
+        Endpoint::Wake(_) | Endpoint::Invoke(_) | Endpoint::Retry(..)
+    ) && state.config.agent_run_host.is_none()
     {
         return state.foundation.json_error(
             StatusCode::SERVICE_UNAVAILABLE,
