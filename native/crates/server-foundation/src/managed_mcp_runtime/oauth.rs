@@ -182,12 +182,11 @@ fn auth_method(client: &Value, metadata: &Value) -> String {
         .unwrap_or_default();
     let explicit = text(client, "token_endpoint_auth_method");
     let supported = |method: &str| methods.iter().any(|v| v == method);
-    if let Some(explicit) = explicit {
-        if ["client_secret_basic", "client_secret_post", "none"].contains(&explicit)
-            && (methods.is_empty() || supported(explicit))
-        {
-            return explicit.into();
-        }
+    if let Some(explicit) = explicit
+        && ["client_secret_basic", "client_secret_post", "none"].contains(&explicit)
+        && (methods.is_empty() || supported(explicit))
+    {
+        return explicit.into();
     }
     let secret = client.get("client_secret").is_some();
     if methods.is_empty() {

@@ -29,16 +29,16 @@ pub(super) fn compose(
         if context["chatMode"] == true {
             return text(context, "chatPrompt").unwrap_or_default().into();
         }
-        if text(context, "scene").or_else(|| text(context, "rudderScene")) == Some("delegation") {
-            if let Some(task) = text(context, "delegationTask") {
-                return format!(
-                    "You are agent {} ({}) running an independent Rudder Delegation Run.\n\nSource Run {} and Source Agent {} are provenance only. Do not inherit the source Run's transcript, session, workspace, credentials, environment variables, or arbitrary paths. Use the target Agent's own runtime, workspace, instructions, and skills.\n\n## Delegated Task\n\n{task}\n\nComplete only this bounded task and report the result through the normal Run evidence path.",
-                    claim.agent_id,
-                    claim.agent_name,
-                    text(context, "sourceRunId").unwrap_or("unknown"),
-                    text(context, "sourceAgentId").unwrap_or("unknown")
-                );
-            }
+        if text(context, "scene").or_else(|| text(context, "rudderScene")) == Some("delegation")
+            && let Some(task) = text(context, "delegationTask")
+        {
+            return format!(
+                "You are agent {} ({}) running an independent Rudder Delegation Run.\n\nSource Run {} and Source Agent {} are provenance only. Do not inherit the source Run's transcript, session, workspace, credentials, environment variables, or arbitrary paths. Use the target Agent's own runtime, workspace, instructions, and skills.\n\n## Delegated Task\n\n{task}\n\nComplete only this bounded task and report the result through the normal Run evidence path.",
+                claim.agent_id,
+                claim.agent_name,
+                text(context, "sourceRunId").unwrap_or("unknown"),
+                text(context, "sourceAgentId").unwrap_or("unknown")
+            );
         }
         return String::new();
     }

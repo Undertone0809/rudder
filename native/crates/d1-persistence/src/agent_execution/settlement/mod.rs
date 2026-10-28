@@ -194,18 +194,18 @@ async fn settle_cost(pool: &PgPool, claim: &Claim) -> Result<(), AgentExecutionE
     .await?;
     let event=sqlx::query("SELECT id::text AS id,budget_evaluated_at IS NOT NULL AS evaluated FROM cost_events WHERE org_id=$1::uuid AND idempotency_key=$2 FOR UPDATE")
         .bind(&claim.org).bind(format!("heartbeat-run-finalizer:{}",claim.id)).fetch_optional(&mut *tx).await?;
-    if let Some(event) = event {
-        if !event.try_get::<bool, _>("evaluated")? {
-            goal_budget::evaluate_cost_event(
-                &mut tx,
-                &GoalCostEventRef {
-                    id: &event.try_get::<String, _>("id")?,
-                    org_id: &run.org,
-                    agent_id: &run.agent_id,
-                },
-            )
-            .await?;
-        }
+    if let Some(event) = event
+        && !event.try_get::<bool, _>("evaluated")?
+    {
+        goal_budget::evaluate_cost_event(
+            &mut tx,
+            &GoalCostEventRef {
+                id: &event.try_get::<String, _>("id")?,
+                org_id: &run.org,
+                agent_id: &run.agent_id,
+            },
+        )
+        .await?;
     }
     ensure_claim(&mut tx, claim).await?;
     tx.commit().await?;

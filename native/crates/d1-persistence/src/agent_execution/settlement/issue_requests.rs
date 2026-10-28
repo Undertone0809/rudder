@@ -25,10 +25,9 @@ pub(super) async fn settle(
             .as_str()
             .map(str::trim)
             .filter(|value| !value.is_empty())
+            && !ids.contains(&id)
         {
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
+            ids.push(id);
         }
     }
     if ids.len() > 1 {

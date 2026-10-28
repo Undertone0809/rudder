@@ -178,6 +178,7 @@ impl Client {
         if cleaned { Ok(()) } else { Err(failed()) }
     }
 }
+#[allow(clippy::too_many_arguments)] // Keep the owned stdio launch and its existing timeout inputs together.
 fn call_blocking(
     launch: Launch,
     host_executable: std::path::PathBuf,

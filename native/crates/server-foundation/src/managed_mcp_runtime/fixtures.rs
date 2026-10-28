@@ -1,8 +1,7 @@
 //! Disposable PostgreSQL + synthetic loopback peers. No user/provider data.
 #![allow(dead_code)]
-#[path = "../../../d1-persistence/tests/support/mod.rs"]
-mod support;
 use super::*;
+use crate::postgres_test_support as support;
 use rudder_d1_persistence::{
     agent_core::{NativeAgentAccess, NativeAgentAuthorizer},
     agent_execution::{self, AgentExecutionActor, AgentWakeRequest},

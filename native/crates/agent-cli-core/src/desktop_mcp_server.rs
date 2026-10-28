@@ -204,6 +204,83 @@ fn success_with_images(mut value: Value) -> Value {
     }
 }
 
+/// Browser-only CLI liveness transport. Main owns the revocation callback;
+/// the default core MCP server never starts a monitor.
+pub struct BrowserLivenessGuard {
+    stopped: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+impl Drop for BrowserLivenessGuard {
+    fn drop(&mut self) {
+        let (stopped, changed) = &*self.stopped;
+        if let Ok(mut stopped) = stopped.lock() {
+            *stopped = true;
+            changed.notify_all();
+        }
+    }
+}
+pub fn start_browser_liveness(
+    environment: &BTreeMap<String, String>,
+    on_revoked: fn(&str),
+) -> BrowserLivenessGuard {
+    start_liveness(environment, on_revoked, std::time::Duration::from_secs(5))
+}
+fn start_liveness(
+    environment: &BTreeMap<String, String>,
+    on_revoked: fn(&str),
+    interval: std::time::Duration,
+) -> BrowserLivenessGuard {
+    let stopped = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let control = stopped.clone();
+    let env = environment.clone();
+    std::thread::spawn(move || {
+        let request = DirectRequest {
+            capability_id: "browser.liveness".into(),
+            method: HttpMethod::Post,
+            path: "/api/browser/liveness".into(),
+            query: Vec::new(),
+            headers: Vec::new(),
+            body: Some(json!({})),
+            context: RequiredContext {
+                organization: true,
+                agent: true,
+                run: true,
+            },
+            response_limit: 1_000_000,
+        };
+        loop {
+            let (state, changed) = &*control;
+            let Ok(state) = state.lock() else {
+                return;
+            };
+            let Ok((state, _)) = changed.wait_timeout_while(state, interval, |stopped| !*stopped)
+            else {
+                return;
+            };
+            if *state {
+                return;
+            }
+            drop(state);
+            let result = mcp_server::execute_direct_request(&request, &env);
+            if control.0.lock().map_or(true, |stopped| *stopped) {
+                return;
+            }
+            if let Err(error) = result
+                && matches!(
+                    error.code.as_str(),
+                    "browser_disabled"
+                        | "browser_runtime_unsupported"
+                        | "browser_run_inactive"
+                        | "browser_run_forbidden"
+                )
+            {
+                on_revoked(&error.code);
+                return;
+            }
+        }
+    });
+    BrowserLivenessGuard { stopped }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,81 +407,4 @@ mod tests {
         assert_eq!(result["content"][1]["type"], "image");
         assert!(result["structuredContent"].get("images").is_none());
     }
-}
-
-/// Browser-only CLI liveness transport. Main owns the revocation callback;
-/// the default core MCP server never starts a monitor.
-pub struct BrowserLivenessGuard {
-    stopped: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-}
-impl Drop for BrowserLivenessGuard {
-    fn drop(&mut self) {
-        let (stopped, changed) = &*self.stopped;
-        if let Ok(mut stopped) = stopped.lock() {
-            *stopped = true;
-            changed.notify_all();
-        }
-    }
-}
-pub fn start_browser_liveness(
-    environment: &BTreeMap<String, String>,
-    on_revoked: fn(&str),
-) -> BrowserLivenessGuard {
-    start_liveness(environment, on_revoked, std::time::Duration::from_secs(5))
-}
-fn start_liveness(
-    environment: &BTreeMap<String, String>,
-    on_revoked: fn(&str),
-    interval: std::time::Duration,
-) -> BrowserLivenessGuard {
-    let stopped = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-    let control = stopped.clone();
-    let env = environment.clone();
-    std::thread::spawn(move || {
-        let request = DirectRequest {
-            capability_id: "browser.liveness".into(),
-            method: HttpMethod::Post,
-            path: "/api/browser/liveness".into(),
-            query: Vec::new(),
-            headers: Vec::new(),
-            body: Some(json!({})),
-            context: RequiredContext {
-                organization: true,
-                agent: true,
-                run: true,
-            },
-            response_limit: 1_000_000,
-        };
-        loop {
-            let (state, changed) = &*control;
-            let Ok(state) = state.lock() else {
-                return;
-            };
-            let Ok((state, _)) = changed.wait_timeout_while(state, interval, |stopped| !*stopped)
-            else {
-                return;
-            };
-            if *state {
-                return;
-            }
-            drop(state);
-            let result = mcp_server::execute_direct_request(&request, &env);
-            if control.0.lock().map_or(true, |stopped| *stopped) {
-                return;
-            }
-            if let Err(error) = result {
-                if matches!(
-                    error.code.as_str(),
-                    "browser_disabled"
-                        | "browser_runtime_unsupported"
-                        | "browser_run_inactive"
-                        | "browser_run_forbidden"
-                ) {
-                    on_revoked(&error.code);
-                    return;
-                }
-            }
-        }
-    });
-    BrowserLivenessGuard { stopped }
 }

@@ -10,10 +10,10 @@ pub(super) fn publish(
     payload: Value,
     key: Option<&str>,
 ) {
-    if let Err(error) = events.publish(org, kind, payload, key) {
-        if error != LiveEventError::Closed {
-            tracing::warn!(event="native_agent_live_publish_failed",error=%error);
-        }
+    if let Err(error) = events.publish(org, kind, payload, key)
+        && error != LiveEventError::Closed
+    {
+        tracing::warn!(event="native_agent_live_publish_failed",error=%error);
     }
 }
 pub(super) async fn committed(

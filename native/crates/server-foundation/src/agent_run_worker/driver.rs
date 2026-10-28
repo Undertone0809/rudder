@@ -176,29 +176,27 @@ pub(super) async fn run(
     let mut last_event_seq = 0;
     let org = claim.organization_id.clone();
     let run_id = claim.run_id.clone();
-    loop {
-        match run_attempt(
-            pool.clone(),
-            Arc::clone(&host),
-            identity.clone(),
-            Arc::clone(&shutdown),
-            claim,
-            &mut plan,
-            &mut failed_auth,
-            &mut transcript,
-            &events,
-            &mut last_event_seq,
-        )
-        .await
-        {
-            Some(next) => claim = next,
-            None => break,
-        }
+    while let Some(next) = run_attempt(
+        pool.clone(),
+        Arc::clone(&host),
+        identity.clone(),
+        Arc::clone(&shutdown),
+        claim,
+        &mut plan,
+        &mut failed_auth,
+        &mut transcript,
+        &events,
+        &mut last_event_seq,
+    )
+    .await
+    {
+        claim = next;
     }
     let _ = live::committed(&pool, &events, &org, &run_id, &mut last_event_seq, true).await;
     let _ = live::status(&pool, &events, &org, &run_id).await;
 }
 
+#[allow(clippy::too_many_arguments)] // Carry the same owned attempt and durable output cursors through fallback.
 async fn run_attempt(
     pool: PgPool,
     host: Arc<AgentRunContextHost>,
@@ -301,20 +299,9 @@ async fn run_attempt(
             .collect(),
     );
     drain.metadata = json!({"runtimeSkills":prepared.runtime_skills,"managedMcp":prepared.context.get("managedMcpPolicySnapshot")});
-    if cancelled.load(Ordering::Acquire)
-        || io_error.is_some()
-        || !prepared.preparation_requirements.is_empty()
-    {
-        let error = io_error.unwrap_or_else(|| {
-            if cancelled.load(Ordering::Acquire) {
-                "Agent invocation cancelled during preparation".into()
-            } else {
-                format!(
-                    "Agent invocation preparation still requires {:?}",
-                    prepared.preparation_requirements
-                )
-            }
-        });
+    if cancelled.load(Ordering::Acquire) || io_error.is_some() {
+        let error =
+            io_error.unwrap_or_else(|| "Agent invocation cancelled during preparation".into());
         if let Err(error) = prepared.abort_before_provider(&pool).await {
             tracing::error!(event="native_agent_preparation_cleanup_unresolved",run_id=%claim.run_id,error=%error);
             return None;
@@ -392,10 +379,11 @@ async fn run_attempt(
     let mut next_event_poll = Instant::now();
     let outcome = loop {
         tokio::select! {
-            result=&mut execution=>break result,
-            Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item,last_event_seq).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
-            _=execution_tick.tick()=>{if shutdown.load(Ordering::Acquire)&&!cancelled.load(Ordering::Acquire){let _=output::request_cancel(&pool,&owner,"Server shutdown requested").await;cancelled.store(true,Ordering::Release);}if Instant::now()>=next_event_poll{let _=live::committed(&pool,events,owner.organization_id(),owner.run_id(),last_event_seq,false).await;next_event_poll=Instant::now()+Duration::from_millis(500);}}
-        }
+                   result=&mut execution=>break result,
+                   Some(item)=receiver.recv()=>if let Err(error)=drain.receive(item,last_event_seq).await{io_error=Some(error);cancelled.store(true,Ordering::Release);},
+                   _=execution_tick.tick()=>{if shutdown.load(Ordering::Acquire)&&!cancelled.load(Ordering::Acquire){let _=output::request_cancel(&pool,&owner,"Server shutdown requested").await;cancelled.store(true,Ordering::Release);}
+        if Instant::now()>=next_event_poll{let _=live::committed(&pool,events,owner.organization_id(),owner.run_id(),last_event_seq,false).await;next_event_poll=Instant::now()+Duration::from_millis(500);}}
+               }
     };
     let (mut claim, mut observation) = match outcome {
         Ok(outcome) => outcome,
@@ -420,22 +408,21 @@ async fn run_attempt(
         observation.result["sessionId"] = json!(id);
         observation.result["sessionParamsAfter"] = json!(observation.session_params);
     }
-    if let Some(id) = drain.approval_ids.last() {
-        if observation
+    if let Some(id) = drain.approval_ids.last()
+        && observation
             .result
             .pointer("/approval/rudderApprovalId")
             .is_none_or(Value::is_null)
-        {
-            if !observation.result["approval"].is_object() {
-                observation.result["approval"] = json!({});
-            }
-            observation.result["approval"]["rudderApprovalId"] = json!(id);
+    {
+        if !observation.result["approval"].is_object() {
+            observation.result["approval"] = json!({});
         }
+        observation.result["approval"]["rudderApprovalId"] = json!(id);
     }
-    if let Some(failure) = observation.result.get("providerFailure") {
-        if let Err(error) = output::provider_failure(&pool, &owner, failure).await {
-            tracing::warn!(event="native_agent_readiness_persist_failed",run_id=%claim.run_id,error=%error);
-        }
+    if let Some(failure) = observation.result.get("providerFailure")
+        && let Err(error) = output::provider_failure(&pool, &owner, failure).await
+    {
+        tracing::warn!(event="native_agent_readiness_persist_failed",run_id=%claim.run_id,error=%error);
     }
     let proof = observation.cleanup_proof.as_ref();
     if proof.is_none() && !claim.owned.launch_permit_unspent() {

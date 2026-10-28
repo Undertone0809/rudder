@@ -122,9 +122,9 @@ pub(crate) async fn hydrate_explicit_resume(
                 || (desired_id.is_some() && task_id == desired_id)
         });
         let params = source_params
-            .or_else(|| if can_reuse { task_params } else { None })
+            .or(if can_reuse { task_params } else { None })
             .or_else(|| desired_id.as_ref().map(|id| json!({"sessionId":id})));
-        let display = desired_id.or_else(|| if can_reuse { task_id } else { None });
+        let display = desired_id.or(if can_reuse { task_id } else { None });
         if params.is_none() && display.is_none() {
             return Ok(());
         }
@@ -145,10 +145,10 @@ pub(crate) async fn hydrate_explicit_resume(
         ),
         ("taskKey", key),
     ] {
-        if context::nonempty(snapshot.get(field)).is_none() {
-            if let Some(value) = value {
-                snapshot[field] = json!(value);
-            }
+        if context::nonempty(snapshot.get(field)).is_none()
+            && let Some(value) = value
+        {
+            snapshot[field] = json!(value);
         }
     }
     Ok(())

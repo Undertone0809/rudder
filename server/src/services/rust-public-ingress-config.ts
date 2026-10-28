@@ -283,16 +283,19 @@ export function createFoundationChildEnvironment(input: {
     RUDDER_NATIVE_HOST_PROCESS_WORKING_DIRECTORY: process.cwd(),
     RUDDER_NATIVE_HOST_HOSTNAME: hostname(),
     // Existing generic Agent runtimes inherit operator variables. Transport the
-    // raw facts separately; Rust selects/filters child environments. Chat's
-    // narrower LocalHostContext environment contract is unchanged.
+    // raw facts separately; Rust selects/filters child environments. Activate
+    // execution only when the launcher also supplied its installation facts.
+    // Chat's narrower LocalHostContext environment contract is unchanged.
     ...(input.publicIngress?.identityAuth ? {
-      RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS: JSON.stringify([
-        resolve(dirname(fileURLToPath(import.meta.url)), "../../resources/bundled-skills"),
-        resolve(process.cwd(), "server/resources/bundled-skills"),
-      ]),
-      RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT: JSON.stringify(Object.fromEntries(
-        Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-      )),
+      ...(input.publicIngress.nativeChatHost ? {
+        RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS: JSON.stringify([
+          resolve(dirname(fileURLToPath(import.meta.url)), "../../resources/bundled-skills"),
+          resolve(process.cwd(), "server/resources/bundled-skills"),
+        ]),
+        RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT: JSON.stringify(Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        )),
+      } : {}),
       ...(input.publicIngress.publicApiUrl ? {
         RUDDER_NATIVE_HOST_API_URL: input.publicIngress.publicApiUrl,
       } : {}),

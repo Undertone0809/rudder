@@ -526,6 +526,7 @@ pub(crate) async fn enqueue_issue_core_wakeup(
     .map(|admission| admission.run_id)
 }
 
+#[allow(clippy::too_many_arguments)] // Preserve the shared Issue admission and native producer transaction boundary.
 async fn enqueue_issue_wakeup_with_agent(
     tx: &mut Tx<'_>,
     org: &str,
@@ -698,23 +699,21 @@ async fn enqueue_issue_wakeup_with_agent(
         context["issue"] = hydrated_issue;
         context["issueId"] = json!(issue_id);
         context["taskId"] = json!(issue_id);
-        if let Some(project_id) = project_id {
-            if context
+        if let Some(project_id) = project_id
+            && context
                 .get("projectId")
                 .and_then(Value::as_str)
                 .is_none_or(|value| value.trim().is_empty())
-            {
-                context["projectId"] = project_id;
-            }
+        {
+            context["projectId"] = project_id;
         }
-        if let Some(goal_id) = goal_id {
-            if context
+        if let Some(goal_id) = goal_id
+            && context
                 .get("goalId")
                 .and_then(Value::as_str)
                 .is_none_or(|value| value.trim().is_empty())
-            {
-                context["goalId"] = goal_id;
-            }
+        {
+            context["goalId"] = goal_id;
         }
         payload = input.payload.clone();
     }

@@ -56,15 +56,6 @@ pub(crate) struct AgentRunContextHost {
     pub bundled_skills_root: Option<PathBuf>,
 }
 
-/// These concrete prerequisites cannot be represented as successful provider
-/// provisioning. The driver must fulfill them before consuming a launch permit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ContextPreparationRequirement {
-    WorkspaceRealization,
-    ManagedExternalMcp,
-    ManagedInstructionBundle,
-}
-
 /// Deliberately no Debug/Serialize: env/config can contain resolved secrets.
 pub(crate) struct PreparedAgentInvocation {
     pub prompt: String,
@@ -75,11 +66,7 @@ pub(crate) struct PreparedAgentInvocation {
     pub env: BTreeMap<String, String>,
     pub secret_keys: BTreeSet<String>,
     pub managed_args: Vec<String>,
-    pub workspace: AgentWorkspacePreparation,
-    pub preparation_requirements: Vec<ContextPreparationRequirement>,
-    pub instruction_revision: String,
     pub runtime_skills: Vec<Value>,
-    pub artifact_root: PathBuf,
     _artifacts: InvocationArtifacts,
     service_lease: services::RuntimeServiceLease,
 }
@@ -450,7 +437,6 @@ pub(crate) async fn prepare_agent_run_invocation(
     context["rudderStartupContext"] = recent.startup_context.clone();
     context["rudderStartupContextMetrics"] = recent.startup_context["metrics"].clone();
     context["managedMcpPolicySnapshot"] = json!(resources.managed_mcp_bindings);
-    let mut preparation_requirements = Vec::new();
     if !resources.managed_mcp_bindings.is_empty()
         && !matches!(
             claim.runtime_type.as_str(),
@@ -817,7 +803,6 @@ pub(crate) async fn prepare_agent_run_invocation(
             }
         }
     }
-    let artifact_root = artifacts.root.clone();
     Ok(PreparedAgentInvocation {
         prompt,
         context,
@@ -827,11 +812,7 @@ pub(crate) async fn prepare_agent_run_invocation(
         env,
         secret_keys,
         managed_args,
-        workspace,
-        preparation_requirements,
-        instruction_revision: instructions.revision,
         runtime_skills: skills.entries,
-        artifact_root,
         _artifacts: artifacts,
         service_lease,
     })

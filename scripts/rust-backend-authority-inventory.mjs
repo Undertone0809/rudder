@@ -22,6 +22,11 @@ const OPERATORS_BY_FIRST_CHAR = new Map([
   ["<", ["<="]], [">", [">="]], ["&", ["&&"]], ["|", ["||"]], ["+", ["++"]], ["-", ["--"]], ["*", ["**"]],
 ]);
 const DATABASE_RECEIVER = /^(?:db|tx|database|dbOrTx|txDb|identityDb|transaction|trx|pool|connection|conn|executor|statement|sqlite|postgres|pg|drizzle|sqlx)(?:[A-Z][A-Za-z0-9_]*)?$/;
+// Exact existing mount replacement for the native managed-MCP runtime fence.
+// Connection-management handlers remain visible Node migration debt.
+const MANAGED_MCP_LEGACY_MOUNT = "managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.mcpDeploymentAllowlists ?? { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [], }, hostEnv: opts.mcpHostEnv ?? process.env, })";
+const MANAGED_MCP_NATIVE_RUNTIME_MOUNT = "managedMcpConnectionRoutes(db, { nativeRuntime: Boolean(opts.rustPublicIngress?.identityAuth), deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.mcpDeploymentAllowlists ?? { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [], }, hostEnv: opts.mcpHostEnv ?? process.env, })";
+const MANAGED_MCP_NATIVE_RUNTIME_CALLER_SHA256 = "fd67c7bdbb39f6e77c8d290c36de5354ff765f003e337566e3978b40da779443";
 const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
   "rust-native-session-proof-v1": Object.freeze({
     id: "rust-native-session-proof-v1",
@@ -126,6 +131,32 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     order_before_call: true,
     rust_proof_owner: "native/crates/server-foundation/src/public_ingress/project_reads.rs",
   }),
+  "rust-native-managed-mcp-runtime-fence-v1": Object.freeze({
+    id: "rust-native-managed-mcp-runtime-fence-v1",
+    admission_label: "native managed MCP runtime negative fence",
+    validation_kind: "compatibility_mount",
+    source_path: "server/src/bootstrap/register-api-routes.ts",
+    source_sha256: MANAGED_MCP_NATIVE_RUNTIME_CALLER_SHA256,
+    receiver: "api",
+    factory_path: "server/src/routes/managed-mcp-connections.ts",
+    factory_import: "../routes/managed-mcp-connections.js",
+    factory_export: "managedMcpConnectionRoutes",
+    factory_sha256: "a4caff90b827ef0f2edaa6f8b246326ed0fee1469d3c554a6712c98f2d19713a",
+    mount_expression: MANAGED_MCP_NATIVE_RUNTIME_MOUNT,
+    mount_guard: "Boolean(opts.rustPublicIngress?.identityAuth)",
+    order_after: "integration_routes",
+    order_before: "goal_routes",
+    order_after_expression: "integrationRoutes(db)",
+    order_before_expression: "goalRoutes(db, rustFoundationBridge, { nativeGoalWrites: Boolean(opts.rustPublicIngress), })",
+    order_after_call: true,
+    order_before_call: true,
+    existing_mount_replacement: Object.freeze({
+      label: "existing managed MCP runtime mount",
+      before: MANAGED_MCP_LEGACY_MOUNT,
+      after: MANAGED_MCP_NATIVE_RUNTIME_MOUNT,
+    }),
+    rust_proof_owner: "native/crates/server-foundation/src/public_ingress/managed_mcp.rs; native/crates/server-foundation/src/managed_mcp_runtime",
+  }),
   "rust-native-goal-writes-router-v1": Object.freeze({
     id: "rust-native-goal-writes-router-v1",
     admission_label: "native Goal writes router adapter",
@@ -136,7 +167,16 @@ const TRUSTED_TRANSPORT_ADMISSIONS = Object.freeze({
     mount_guard: "Boolean(opts.rustPublicIngress)",
     order_after: "managed_mcp_connection_routes",
     order_before: "request_routes",
-    order_after_expression: "managedMcpConnectionRoutes(db, { deploymentMode: opts.deploymentMode, serverPort: opts.serverPort, authPublicBaseUrl: opts.authPublicBaseUrl, allowlists: opts.mcpDeploymentAllowlists ?? { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [], }, hostEnv: opts.mcpHostEnv ?? process.env, })",
+    order_after_expression: MANAGED_MCP_LEGACY_MOUNT,
+    // Preserve the main anchor; only the exact native-runtime cutover caller
+    // may use its replacement. Candidate review records cannot add variants.
+    conditional_source_variants: Object.freeze([
+      Object.freeze({
+        source_sha256: MANAGED_MCP_NATIVE_RUNTIME_CALLER_SHA256,
+        order_after_expression: MANAGED_MCP_NATIVE_RUNTIME_MOUNT,
+        additional_mounts: Object.freeze([]),
+      }),
+    ]),
     order_before_expression: "requestRoutes(db, rustFoundationBridge)",
     order_after_call: true,
     order_before_call: true,
@@ -442,6 +482,12 @@ function compactInventoryRecord(record) {
     record[key] = `${value.slice(0, 160)}… [sha256:${sha256(value)}]`;
   }
   return record;
+}
+
+// Inventory expressions longer than the display bound carry their full SHA.
+// Compare the same content-bound representation; never match a prefix alone.
+function storedExpression(expression) {
+  return compactInventoryRecord({ expression }).expression;
 }
 
 function normalizePath(value) {
@@ -1286,7 +1332,7 @@ function validateTransportAdmissionSource(policy, source, sourcePath, sourceHash
   const problems = [];
   if (sourcePath !== policy.source_path) problems.push("mount source path does not match trusted policy");
   const sourceVariant = conditionalTransportSourceVariant(policy, sourceHash);
-  if (policy.conditional_source_variants?.length && sourceHash !== policy.source_sha256 && !sourceVariant) {
+  if (policy.source_sha256 && sourceHash !== policy.source_sha256 && !sourceVariant) {
     problems.push("mount source hash does not match any trusted caller variant");
   }
   const { tokens, calls } = findAppUseCalls(source, policy.receiver);
@@ -1311,9 +1357,10 @@ function validateTransportAdmissionSource(policy, source, sourcePath, sourceHash
         }
         return findTokenSequence(tokens, expression);
       };
-      const after = anchorIndex(policy.order_after_expression, policy.order_after_call);
+      const afterExpression = sourceVariant?.order_after_expression ?? policy.order_after_expression;
+      const after = anchorIndex(afterExpression, policy.order_after_call);
       const before = anchorIndex(policy.order_before_expression, policy.order_before_call);
-      if (policy.order_after_expression && after < 0) problems.push(`${policy.admission_label} is missing its order-after anchor`);
+      if (afterExpression && after < 0) problems.push(`${policy.admission_label} is missing its order-after anchor`);
       if (policy.order_before_expression && before < 0) problems.push(`${policy.admission_label} is missing its order-before anchor`);
       if (after >= 0 && after >= proofTokenIndex) problems.push(`${policy.admission_label} must appear after its order-after anchor`);
       if (before >= 0 && before <= proofTokenIndex) problems.push(`${policy.admission_label} must appear before its order-before anchor`);
@@ -1417,6 +1464,18 @@ function validateTransportAdmissionRecord(record, policy, headInventory, headCon
       else if (manifestMountSource.sha256 !== mountSource.sha256) problems.push("mount source content hash disagrees with the candidate inventory");
       if (record.mount_source_sha256 !== mountSource.sha256) problems.push("mount_source_sha256 does not match candidate source");
       problems.push(...validateTransportAdmissionSource(policy, mountSource.content, policy.source_path, mountSource.sha256));
+    }
+    if (policy.factory_sha256) {
+      const factorySource = headContents.get(policy.factory_path);
+      const manifestFactorySource = headInventory.source_manifest.find((entry) => entry.path === policy.factory_path);
+      if (!factorySource || !manifestFactorySource) problems.push("trusted factory source is absent from the candidate inventory");
+      else {
+        if (manifestFactorySource.sha256 !== factorySource.sha256) problems.push("factory source content hash disagrees with the candidate inventory");
+        if (factorySource.sha256 !== policy.factory_sha256) problems.push("factory source hash does not match the trusted allowlist");
+      }
+      if (mountSource && !hasExactNamedImport(tokenize(mountSource.content), policy.factory_export, policy.factory_import)) {
+        problems.push("factory must be imported once by its exact named export from the trusted module");
+      }
     }
     return problems;
   }
@@ -2661,7 +2720,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       ? conditionalTransportSourceVariant(policy, mountSource.sha256)
       : null;
     const requiredAdditionalMounts = sourceVariant?.additional_mounts ?? [];
-    const primarySurfaces = surfacesForId.filter((surface) => surface.expression === policy.mount_expression);
+    const primarySurfaces = surfacesForId.filter((surface) => surface.expression === storedExpression(policy.mount_expression));
     if (surfacesForId.length === 0 && record) failures.push(`stale reviewed_transport_admissions record: ${id}`);
     if (primarySurfaces.length > 1 || (surfacesForId.length > 0 && primarySurfaces.length !== 1)) {
       failures.push(`${id}: trusted primary transport-admission mount must appear exactly once`);
@@ -2677,11 +2736,11 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     const problems = validateTransportAdmissionRecord(record, policy, headInventory, headContents);
     const surface = primarySurfaces[0];
     if (!surface || surface.type !== "middleware_mount" || surface.source !== policy.source_path
-      || surface.receiver !== policy.receiver || surface.expression !== policy.mount_expression) {
+      || surface.receiver !== policy.receiver || surface.expression !== storedExpression(policy.mount_expression)) {
       problems.push("generated middleware surface does not match the trusted mount identity");
     }
     for (const mount of requiredAdditionalMounts) {
-      const matchingSurfaces = surfacesForId.filter((entry) => entry.expression === mount.expression);
+      const matchingSurfaces = surfacesForId.filter((entry) => entry.expression === storedExpression(mount.expression));
       if (matchingSurfaces.length !== 1 || matchingSurfaces[0].type !== "middleware_mount"
         || matchingSurfaces[0].source !== policy.source_path || matchingSurfaces[0].receiver !== policy.receiver) {
         problems.push("conditional Rust email-auth fence surface does not match its exact trusted middleware identity");
@@ -2692,14 +2751,14 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       const replacement = policy.existing_mount_replacement;
       const mounts = (inventory, expression) => inventory.structural_surfaces.filter((entry) =>
         entry.type === "middleware_mount" && entry.source === policy.source_path
-        && entry.receiver === policy.receiver && entry.expression === expression);
+        && entry.receiver === policy.receiver && entry.expression === storedExpression(expression));
       const oldBase = mounts(baseInventory, replacement.before);
       const newBase = mounts(baseInventory, replacement.after);
       const oldHead = mounts(headInventory, replacement.before);
       const newHead = mounts(headInventory, replacement.after);
       if (!policy.source_sha256 || oldHead.length !== 0 || newHead.length !== 1
         || !((oldBase.length === 1 && newBase.length === 0) || (oldBase.length === 0 && newBase.length === 1))) {
-        problems.push("existing actor mount must be replaced exactly once from the trusted base; adding or retaining another mount is forbidden");
+        problems.push(`${replacement.label ?? "existing actor mount"} must be replaced exactly once from the trusted base; adding or retaining another mount is forbidden`);
       } else replacementSurface = newHead[0];
     }
     if (problems.length) {
@@ -2712,7 +2771,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
     }
     allowedTransportSurfaceSignatures.add(surface.signature);
     for (const mount of requiredAdditionalMounts) {
-      for (const additionalSurface of surfacesForId.filter((entry) => entry.expression === mount.expression)) {
+      for (const additionalSurface of surfacesForId.filter((entry) => entry.expression === storedExpression(mount.expression))) {
         allowedTransportSurfaceSignatures.add(additionalSurface.signature);
       }
     }
@@ -2722,7 +2781,7 @@ function compareInventoriesWithPolicy(baseInventory, headInventory, baseContents
       signature: surface.signature,
       ...(requiredAdditionalMounts.length
         ? { conditional_signatures: surfacesForId
-          .filter((entry) => requiredAdditionalMounts.some((mount) => entry.expression === mount.expression))
+          .filter((entry) => requiredAdditionalMounts.some((mount) => entry.expression === storedExpression(mount.expression)))
           .map((entry) => entry.signature) }
         : {}),
     });

@@ -131,15 +131,7 @@ pub(crate) enum TimerRecoveryDisposition {
 pub(crate) struct PendingTimerWakeup {
     pub wakeup_request_id: String,
     pub original_status: String,
-    pub source: String,
-    pub trigger_detail: Option<String>,
     pub reason: Option<String>,
-    pub payload: Value,
-    pub context_snapshot: Value,
-    pub issue_id: Option<String>,
-    pub idempotency_key: Option<String>,
-    pub requested_by_actor_type: Option<String>,
-    pub requested_by_actor_id: Option<String>,
     pub disposition: TimerRecoveryDisposition,
 }
 
@@ -227,15 +219,7 @@ pub(crate) async fn recovery_candidates(
         candidates.push(PendingTimerWakeup {
             wakeup_request_id: wakeup_id,
             original_status: status,
-            source: context::nonempty(row.get("source")).unwrap_or_else(|| "on_demand".into()),
-            trigger_detail: context::nonempty(row.get("trigger_detail")),
             reason,
-            payload,
-            context_snapshot: snapshot,
-            issue_id,
-            idempotency_key: context::nonempty(row.get("idempotency_key")),
-            requested_by_actor_type: context::nonempty(row.get("requested_by_actor_type")),
-            requested_by_actor_id: context::nonempty(row.get("requested_by_actor_id")),
             disposition,
         });
     }

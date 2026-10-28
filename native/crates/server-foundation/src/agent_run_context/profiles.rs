@@ -282,11 +282,11 @@ pub(super) fn codex_disabled_skill_paths(
 pub(super) fn opencode_base(host: &AgentRunContextHost) -> Value {
     let mut source = json!({});
     for filename in ["opencode.json", "opencode.jsonc"] {
-        if let Ok(raw) = fs::read(host.operator_home.join(".config/opencode").join(filename)) {
-            if let Ok(value) = serde_json::from_slice::<Value>(&raw) {
-                source = value;
-                break;
-            }
+        if let Ok(raw) = fs::read(host.operator_home.join(".config/opencode").join(filename))
+            && let Ok(value) = serde_json::from_slice::<Value>(&raw)
+        {
+            source = value;
+            break;
         }
     }
     let mut base = json!({"autoupdate":false,"$schema":"https://opencode.ai/config.json"});

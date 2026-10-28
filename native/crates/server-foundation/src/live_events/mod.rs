@@ -5,9 +5,10 @@ mod fixtures;
 mod forward;
 mod websocket;
 pub(crate) use forward::forward_handler;
-pub(crate) use websocket::{bearer_token, organization_from_path, upgrade};
+pub(crate) use websocket::{bearer_token, upgrade};
 pub const FORWARD_ACTION: &str = "live.events.forward";
 pub const FORWARD_ACTOR: &str = "node-live-events-transport";
+pub(crate) const FORWARD_PATH: &str = "/internal/live-events/forward";
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{

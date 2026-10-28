@@ -103,10 +103,10 @@ pub(super) async fn settle(
         context::task_key(&snapshot, &json!({"issueId":issue.id}))
             .unwrap_or_else(|| issue.id.clone())
     );
-    if context::nonempty(snapshot.get("projectId")).is_none() {
-        if let Some(project) = issue.project_id.as_ref() {
-            snapshot["projectId"] = json!(project);
-        }
+    if context::nonempty(snapshot.get("projectId")).is_none()
+        && let Some(project) = issue.project_id.as_ref()
+    {
+        snapshot["projectId"] = json!(project);
     }
     snapshot["wakeReason"] = json!("issue_passive_followup");
     snapshot["wakeSource"] = json!("passive_issue_followup");

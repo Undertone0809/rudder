@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createFoundationChildEnvironment,
   nativeIssueAssetStorageEnvironment,
   nativeLocalAccountLifecycleEnvironment,
   nativeSessionAuthEnvironment,
   resolveNativeChatProviderHostFields,
   type RustIssueAssetStorage,
+  type RustNativeChatHost,
   type RustNativeSessionAuthOptions,
 } from "./rust-public-ingress-config.js";
 
@@ -13,6 +15,54 @@ afterEach(() => vi.unstubAllEnvs());
 const local: RustNativeSessionAuthOptions = {
   kind: "local_account", secret: "test-only", secureCookie: false, assertionKey: "test-proof",
 };
+
+describe("native execution startup transport", () => {
+  const identityAuth = {
+    assertionKey: "test-identity-proof", agentJwtSecret: "test-jwt-secret",
+    agentJwtIssuer: "rudder", agentJwtAudience: "rudder-agent", localImplicitEnabled: false,
+  };
+  const ingress = {
+    listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101", authorizationKey: "test-only",
+    publicApiUrl: "https://rudder.example", authPublicBaseUrl: "https://auth.example",
+    identityAuth,
+  };
+  const nativeChatHost: RustNativeChatHost = {
+    instanceId: "test", instanceRoot: "/tmp/rudder-test-instance", workspaceHome: "/tmp/rudder-test-workspace",
+    operatorHome: "/tmp/rudder-test-operator", executableSearchPath: "/opt/rudder/bin",
+    friendlyWorkspaceHome: false, deploymentMode: "authenticated", deploymentExposure: "private",
+    authRequirement: "required", trustedOrigins: [ingress.publicApiUrl],
+  };
+  const startup = { databaseUrl: "postgres://test", actorEnvelopeKey: "test-actor", secretsMasterKeyFile: "/tmp/test-master.key" };
+
+  it("keeps auth-only ingress from activating execution without installation facts", () => {
+    const environment = createFoundationChildEnvironment({ ...startup, publicIngress: ingress });
+
+    expect(environment).toMatchObject({
+      RUDDER_NATIVE_IDENTITY_AUTH_MODE: "required",
+      RUDDER_NATIVE_HOST_API_URL: ingress.publicApiUrl,
+      RUDDER_NATIVE_HOST_AUTH_PUBLIC_BASE_URL: ingress.authPublicBaseUrl,
+    });
+    expect(environment).not.toHaveProperty("RUDDER_NATIVE_CHAT_HOST");
+    expect(environment).not.toHaveProperty("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT");
+    expect(environment).not.toHaveProperty("RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS");
+  });
+
+  it("activates execution only with identity authority and explicit installation facts", () => {
+    vi.stubEnv("RUDDER_TEST_OPERATOR_VARIABLE", "test-runtime-fact");
+    const environment = createFoundationChildEnvironment({ ...startup, publicIngress: { ...ingress, nativeChatHost } });
+
+    expect(JSON.parse(environment.RUDDER_NATIVE_CHAT_HOST)).toEqual(nativeChatHost);
+    expect(JSON.parse(environment.RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT))
+      .toHaveProperty("RUDDER_TEST_OPERATOR_VARIABLE", "test-runtime-fact");
+    expect(JSON.parse(environment.RUDDER_NATIVE_HOST_BUNDLED_SKILL_ROOTS)).toHaveLength(2);
+    expect(environment.PATH).toBe(nativeChatHost.executableSearchPath);
+
+    const withoutIdentity = createFoundationChildEnvironment({
+      ...startup, publicIngress: { ...ingress, nativeChatHost, identityAuth: undefined },
+    });
+    expect(withoutIdentity).not.toHaveProperty("RUDDER_NATIVE_HOST_RUNTIME_ENVIRONMENT");
+  });
+});
 
 describe("native WebSocket session fallback configuration", () => {
   it("rejects ambiguous local-account credential precedence before starting Rust", () => {

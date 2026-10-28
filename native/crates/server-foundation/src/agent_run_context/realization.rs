@@ -27,6 +27,7 @@ pub(super) struct RealizedWorkspace {
     pub created: bool,
     pub strategy: String,
 }
+#[allow(clippy::too_many_arguments)] // Preserve one claimed workspace realization transaction and cancellation owner.
 pub(super) async fn realize(
     pool: &PgPool,
     claim: &AgentRunClaim,
@@ -235,14 +236,29 @@ pub(super) async fn realize(
     match agent_run_workspace::persist_workspace(pool, claim, &projection).await {
         Ok(id) => workspace.execution_workspace_id = id,
         Err(error) => {
-            if realized.created {
-                if let Some(path) = realized.worktree_path.as_ref() {
+            if realized.created
+                && let Some(path) = realized.worktree_path.as_ref()
+            {
+                let _ = run_git(
+                    pool,
+                    claim,
+                    "worktree_cleanup",
+                    &base,
+                    &["worktree", "remove", "--force", &path.to_string_lossy()],
+                    cancelled,
+                    secret_keys,
+                    config,
+                    host,
+                    censor_username,
+                )
+                .await;
+                if let Some(branch) = realized.branch_name.as_deref() {
                     let _ = run_git(
                         pool,
                         claim,
                         "worktree_cleanup",
                         &base,
-                        &["worktree", "remove", "--force", &path.to_string_lossy()],
+                        &["branch", "-d", branch],
                         cancelled,
                         secret_keys,
                         config,
@@ -250,21 +266,6 @@ pub(super) async fn realize(
                         censor_username,
                     )
                     .await;
-                    if let Some(branch) = realized.branch_name.as_deref() {
-                        let _ = run_git(
-                            pool,
-                            claim,
-                            "worktree_cleanup",
-                            &base,
-                            &["branch", "-d", branch],
-                            cancelled,
-                            secret_keys,
-                            config,
-                            host,
-                            censor_username,
-                        )
-                        .await;
-                    }
                 }
             }
             return Err(error.into());
@@ -273,6 +274,7 @@ pub(super) async fn realize(
     Ok(realized)
 }
 
+#[allow(clippy::too_many_arguments)] // Keep the existing operation log, command, and cancellation receipt together.
 pub(super) async fn run_git(
     pool: &PgPool,
     claim: &AgentRunClaim,

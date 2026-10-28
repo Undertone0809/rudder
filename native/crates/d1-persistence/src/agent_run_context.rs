@@ -577,38 +577,6 @@ pub async fn record_skill_installation(
     Ok(())
 }
 
-#[cfg(test)]
-mod runtime_skill_tests {
-    use super::*;
-    #[test]
-    fn legacy_selection_normalizes_and_bundled_stays_implicit() {
-        let catalog = vec![
-            json!({"id":"id-1","key":"organization/o/review","slug":"review"}),
-            json!({"id":"id-2","key":"rudder/rudder-docs","slug":"rudder-docs"}),
-        ];
-        assert_eq!(
-            normalize_runtime_skill_ref("id-1", &catalog, "codex_local"),
-            Some("org:organization/o/review".into())
-        );
-        assert_eq!(
-            normalize_runtime_skill_ref("review", &catalog, "codex_local"),
-            Some("org:organization/o/review".into())
-        );
-        assert_eq!(
-            normalize_runtime_skill_ref("my helper", &catalog, "codex_local"),
-            Some("adapter:codex_local:my-helper".into())
-        );
-        assert_eq!(
-            normalize_runtime_skill_ref("rudder/rudder", &catalog, "codex_local"),
-            Some("bundled:rudder/rudder-docs".into())
-        );
-        assert_eq!(
-            normalize_runtime_skill_ref("rudder-create-agent", &catalog, "codex_local"),
-            None
-        );
-    }
-}
-
 /// Persist only provider-neutral, credential-free policy input for native MCP
 /// calls. Every request still intersects this snapshot with current authority.
 pub async fn persist_prepared_policy(
@@ -718,5 +686,37 @@ pub fn redact_context_log(text: &str, censor_username: bool) -> String {
         crate::activity::redact_current_user_text(text)
     } else {
         text.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod runtime_skill_tests {
+    use super::*;
+    #[test]
+    fn legacy_selection_normalizes_and_bundled_stays_implicit() {
+        let catalog = vec![
+            json!({"id":"id-1","key":"organization/o/review","slug":"review"}),
+            json!({"id":"id-2","key":"rudder/rudder-docs","slug":"rudder-docs"}),
+        ];
+        assert_eq!(
+            normalize_runtime_skill_ref("id-1", &catalog, "codex_local"),
+            Some("org:organization/o/review".into())
+        );
+        assert_eq!(
+            normalize_runtime_skill_ref("review", &catalog, "codex_local"),
+            Some("org:organization/o/review".into())
+        );
+        assert_eq!(
+            normalize_runtime_skill_ref("my helper", &catalog, "codex_local"),
+            Some("adapter:codex_local:my-helper".into())
+        );
+        assert_eq!(
+            normalize_runtime_skill_ref("rudder/rudder", &catalog, "codex_local"),
+            Some("bundled:rudder/rudder-docs".into())
+        );
+        assert_eq!(
+            normalize_runtime_skill_ref("rudder-create-agent", &catalog, "codex_local"),
+            None
+        );
     }
 }

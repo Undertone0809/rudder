@@ -304,13 +304,12 @@ fn handle_message_with_surface(
                         surface.server_info.clone(),
                     );
                 }
-                if let Some(hash)=surface.browser_contract_hash.as_ref(){
-                    if let Some(capabilities)=result.get_mut("capabilities").and_then(Value::as_object_mut){
+                if let Some(hash)=surface.browser_contract_hash.as_ref()
+                    && let Some(capabilities)=result.get_mut("capabilities").and_then(Value::as_object_mut){
                         let experimental=capabilities.entry("experimental").or_insert_with(||json!({}));
                         if !experimental.is_object(){*experimental=json!({});}
                         if experimental["rudder"].is_null(){experimental["rudder"]=json!({"contractVersion":RUDDER_MCP_CONTRACT_VERSION,"coreContractHash":CORE_MCP_CONTRACT_HASH});}
                         experimental["rudder"]["browserContractHash"]=json!(hash);
-                    }
                 }
             }
             bound_response_limit(response, surface.response_limit)

@@ -1835,6 +1835,7 @@ test("trusted-base policy pins the exact Rust identity-proof source and mount wi
     GOAL_WRITES_ADMISSION_ID,
     IDENTITY_ADMISSION_ID,
     ISSUE_APPROVAL_READS_ADMISSION_ID,
+    MANAGED_MCP_FENCE_ADMISSION_ID,
     PROJECT_READS_ADMISSION_ID,
     SESSION_ADMISSION_ID,
   ].sort());
@@ -1891,6 +1892,132 @@ test("trusted policy admits only the exact Rust CLI auth and Project reads route
   for (const id of [CLI_AUTH_ADMISSION_ID, PROJECT_READS_ADMISSION_ID]) {
     assert.equal(accepted.head.structural_surfaces.filter((surface) => surface.transport_admission === id).length, 1);
   }
+});
+
+const MANAGED_MCP_FENCE_ADMISSION_ID = "rust-native-managed-mcp-runtime-fence-v1";
+const managedMcpFactoryFixture = `export function managedMcpConnectionRoutes(db, options) {
+  const runtime = options.nativeRuntime ? undefined : managedMcpRuntimeService(db);
+  if (runtime) router.use(managedMcpRuntimeRoutes(runtime));
+  return router;
+}
+`;
+function managedMcpFenceMountSource(mount) {
+  return `import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
+function register(api, opts) {
+  api.use(integrationRoutes(db));
+  api.use(${mount});
+  api.use(goalRoutes(db, rustFoundationBridge));
+}
+`;
+}
+function compareManagedMcpFenceFixture(t, options = {}) {
+  const policy = TRUSTED_TRANSPORT_ADMISSIONS[MANAGED_MCP_FENCE_ADMISSION_ID];
+  const canonical = managedMcpFenceMountSource(policy.mount_expression);
+  // A fixed small caller/factory tests the same policy engine. Its pins are
+  // never recomputed from the mutated candidate; production retains its own
+  // separately reviewed full caller and module hashes.
+  const trusted = {
+    ...policy,
+    source_sha256: sha256(canonical),
+    factory_sha256: sha256(managedMcpFactoryFixture),
+    order_before_expression: "goalRoutes(db, rustFoundationBridge)",
+  };
+  const baseRoot = temporaryTree(t), headRoot = temporaryTree(t);
+  const baseSource = options.baseSource ?? managedMcpFenceMountSource(policy.existing_mount_replacement.before);
+  const headSource = options.headSource ?? canonical;
+  const factory = options.factorySource ?? managedMcpFactoryFixture;
+  put(baseRoot, policy.source_path, baseSource);
+  put(headRoot, policy.source_path, headSource);
+  put(baseRoot, policy.factory_path, managedMcpFactoryFixture);
+  put(headRoot, policy.factory_path, factory);
+  const base = buildInventory(baseRoot);
+  const records = [boundaryRecord(policy.source_path, sha256(baseSource), sha256(headSource))];
+  if (factory !== managedMcpFactoryFixture) {
+    records.push(boundaryRecord(policy.factory_path, sha256(managedMcpFactoryFixture), sha256(factory)));
+  }
+  const admission = identityAdmissionReviewRecord(trusted, headSource, options.recordOverrides);
+  const head = buildInventory(headRoot, records, options.omitAdmissionRecord ? [] : [admission]);
+  const result = compareInventoriesWithTransportPolicyForTests(
+    base, head, contentsFor(baseRoot, base), contentsFor(headRoot, head), trusted,
+  );
+  return { result, canonical, trusted, base, head };
+}
+
+test("managed MCP negative fence pins the one existing mount and leaves connection management as debt", (t) => {
+  const policy = TRUSTED_TRANSPORT_ADMISSIONS[MANAGED_MCP_FENCE_ADMISSION_ID];
+  assert.equal(policy.source_sha256, "fd67c7bdbb39f6e77c8d290c36de5354ff765f003e337566e3978b40da779443");
+  assert.equal(policy.factory_sha256, "a4caff90b827ef0f2edaa6f8b246326ed0fee1469d3c554a6712c98f2d19713a");
+  assert.equal(policy.factory_path, "server/src/routes/managed-mcp-connections.ts");
+  assert.equal(policy.mount_guard, "Boolean(opts.rustPublicIngress?.identityAuth)");
+  assert.equal(policy.mount_expression, policy.existing_mount_replacement.before.replace(
+    "{ deploymentMode:", "{ nativeRuntime: Boolean(opts.rustPublicIngress?.identityAuth), deploymentMode:",
+  ));
+  assert.equal(policy.order_after_expression, "integrationRoutes(db)");
+  assert.equal(policy.order_before_expression, TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID].mount_expression);
+  assert.equal(policy.rust_proof_owner, "native/crates/server-foundation/src/public_ingress/managed_mcp.rs; native/crates/server-foundation/src/managed_mcp_runtime");
+  const accepted = compareManagedMcpFenceFixture(t);
+  assert.deepEqual(accepted.result.failures, []);
+  assert.deepEqual(accepted.result.allowed_transport_admissions.map((entry) => entry.id), [policy.id]);
+  assert(accepted.result.added_surfaces.some((entry) => entry.signature.includes("nativeRuntime")));
+  assert(accepted.head.structural_surfaces.some((entry) => entry.source === policy.factory_path && entry.type === "middleware_mount"));
+});
+
+test("managed MCP negative fence rejects altered flag, guard, original options, owner and module", (t) => {
+  const policy = TRUSTED_TRANSPORT_ADMISSIONS[MANAGED_MCP_FENCE_ADMISSION_ID];
+  const canonical = managedMcpFenceMountSource(policy.mount_expression);
+  const mutations = [
+    canonical.replace("nativeRuntime:", "nativeRuntimeOwner:"),
+    canonical.replace("Boolean(opts.rustPublicIngress?.identityAuth)", "Boolean(opts.rustPublicIngress)"),
+    canonical.replace("Boolean(opts.rustPublicIngress?.identityAuth)", "true"),
+    canonical.replace("managedMcpConnectionRoutes(db,", "managedMcpConnectionRoutes(otherDb,"),
+    canonical.replace("hostEnv: opts.mcpHostEnv ?? process.env", "hostEnv: process.env"),
+    canonical.replace("stdioEnvironmentNames: []", "stdioEnvironmentNames: [\"UNREVIEWED\"]"),
+    canonical.replace("../routes/managed-mcp-connections.js", "../routes/other-runtime.js"),
+    canonical.replace("  api.use(integrationRoutes(db));\n", ""),
+    canonical.replace("  api.use(integrationRoutes(db));\n", "").replace("  api.use(goalRoutes", "  api.use(integrationRoutes(db));\n  api.use(goalRoutes"),
+    canonical + `api.use(${policy.mount_expression});\n`,
+    canonical + `api.use(${policy.existing_mount_replacement.before});\n`,
+    canonical + "db.insert(runs).values({});\n",
+  ];
+  for (const headSource of mutations) {
+    assert(compareManagedMcpFenceFixture(t, { headSource }).result.failures.length > 0);
+  }
+  for (const recordOverrides of [
+    { rust_proof_owner: "Node managedMcpRuntimeService" },
+    { mount_guard: "Boolean(opts.rustPublicIngress)" },
+    { factory_sha256: "0".repeat(64) },
+    { mount_source_sha256: "0".repeat(64) },
+  ]) {
+    assert(compareManagedMcpFenceFixture(t, { recordOverrides }).result.failures.length > 0);
+  }
+  const moduleMutation = compareManagedMcpFenceFixture(t, {
+    factorySource: managedMcpFactoryFixture.replace("options.nativeRuntime ? undefined", "false ? undefined"),
+  });
+  assert(moduleMutation.result.failures.some((entry) => entry.includes("factory source hash does not match")));
+  const missingRecord = compareManagedMcpFenceFixture(t, { omitAdmissionRecord: true });
+  assert(missingRecord.result.failures.some((entry) => entry.includes("missing reviewed_transport_admissions record")));
+  const absentBase = compareManagedMcpFenceFixture(t, {
+    baseSource: managedMcpFenceMountSource(policy.existing_mount_replacement.before)
+      .replace(`  api.use(${policy.existing_mount_replacement.before});\n`, ""),
+  });
+  assert(absentBase.result.failures.some((entry) => entry.includes("must be replaced exactly once")));
+});
+
+test("Goal keeps its main MCP anchor and admits the replacement only for the pinned caller", (t) => {
+  const goal = TRUSTED_TRANSPORT_ADMISSIONS[GOAL_WRITES_ADMISSION_ID];
+  const mcp = TRUSTED_TRANSPORT_ADMISSIONS[MANAGED_MCP_FENCE_ADMISSION_ID];
+  assert.equal(goal.order_after_expression, mcp.existing_mount_replacement.before);
+  assert.deepEqual(goal.conditional_source_variants, [{
+    source_sha256: mcp.source_sha256,
+    order_after_expression: mcp.mount_expression,
+    additional_mounts: [],
+  }]);
+  const headSource = publicOwnerMountSource({
+    goalExpression: goal.mount_expression,
+    includeGoalAnchors: true,
+  }).replace(goal.order_after_expression, mcp.mount_expression);
+  const result = comparePublicOwnerMountFixture(t, { includeGoalAdmission: true, headSource });
+  assert(result.result.failures.some((entry) => entry.includes("native Goal writes router adapter is missing its order-after anchor")));
 });
 
 test("trusted policy admits only the exact Rust Goal writes router between its fixed anchors", (t) => {

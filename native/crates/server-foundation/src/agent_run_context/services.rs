@@ -94,10 +94,10 @@ impl Drop for RuntimeServiceLease {
         // not retain the finished driver's output channel.
         if let Ok(mut state) = state().lock() {
             for id in &self.ids {
-                if let Some(record) = state.by_id.get_mut(id) {
-                    if let Ok(mut outputs) = record.outputs.lock() {
-                        outputs.remove(&self.run);
-                    }
+                if let Some(record) = state.by_id.get_mut(id)
+                    && let Ok(mut outputs) = record.outputs.lock()
+                {
+                    outputs.remove(&self.run);
                 }
             }
         }
@@ -414,6 +414,7 @@ async fn start(
     Ok((id, reference))
 }
 
+#[allow(clippy::too_many_arguments)] // Launch one owned service with its resolved environment and redaction inputs.
 fn launch_service(
     host: &AgentRunContextHost,
     id: &str,
@@ -690,10 +691,8 @@ async fn release_one(pool: &PgPool, org: &str, run: &str, id: &str) -> Result<()
         );
         let stop = record.leases.is_empty()
             && (record.reference["lifecycle"] == "ephemeral" || policy == "on_run_finish");
-        if !stop {
-            if let Ok(mut outputs) = record.outputs.lock() {
-                outputs.remove(run);
-            }
+        if !stop && let Ok(mut outputs) = record.outputs.lock() {
+            outputs.remove(run);
         }
         (
             stop,
@@ -777,12 +776,11 @@ fn monitor(pool: PgPool, org: String, id: String) {
                     .and_then(|failed| record.process.pid().map(|pid| (pid.to_string(), failed)))
             };
             if let Some((process, failed)) = exited {
-                if let Ok(mut state) = state().lock() {
-                    if let Some(record) = state.by_id.remove(&id) {
-                        if let Some(reuse) = text(&record.reference, "reuseKey") {
-                            state.by_reuse.remove(&(org.clone(), reuse.into()));
-                        }
-                    }
+                if let Ok(mut state) = state().lock()
+                    && let Some(record) = state.by_id.remove(&id)
+                    && let Some(reuse) = text(&record.reference, "reuseKey")
+                {
+                    state.by_reuse.remove(&(org.clone(), reuse.into()));
                 }
                 let _ = agent_run_workspace::observe_service_process_exit(
                     &pool, &org, &id, &process, failed,

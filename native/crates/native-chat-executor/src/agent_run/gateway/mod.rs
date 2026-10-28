@@ -167,8 +167,9 @@ pub(super) async fn execute(
             if let Ok(approval) = request.observed_approval.lock() {
                 observation.result["approval"] = approval.clone();
             }
-            if !output.success && !output.auth_failure {
-                if let Some(network) = projection::network_suspension(
+            if !output.success
+                && !output.auth_failure
+                && let Some(network) = projection::network_suspension(
                     observation.error.as_deref().unwrap_or(""),
                     &claim.runtime_type,
                     input.config["model"].as_str().unwrap_or(""),
@@ -176,11 +177,11 @@ pub(super) async fn execute(
                     observation.session_params.as_ref(),
                     false,
                     false,
-                ) {
-                    observation.state = AgentRunExecutionState::Suspended;
-                    observation.result["networkSuspension"] = network;
-                    observation.error_code = Some("provider_transport_unavailable".into());
-                }
+                )
+            {
+                observation.state = AgentRunExecutionState::Suspended;
+                observation.result["networkSuspension"] = network;
+                observation.error_code = Some("provider_transport_unavailable".into());
             }
             observation
         }

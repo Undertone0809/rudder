@@ -1,9 +1,8 @@
 //! Real native HTTP/WebSocket + disposable PostgreSQL. No Node upstream exists
 //! in this fixture; public-listener wiring is verified separately by ingress.
 #![allow(dead_code)]
-#[path = "../../../d1-persistence/tests/support/mod.rs"]
-mod support;
 use super::*;
+use crate::postgres_test_support as support;
 use crate::{
     AppState, DatabaseState, ServerConfig,
     native_session_auth::{NativeIngressIdentity, NativeSessionResolution, sign_session_token},

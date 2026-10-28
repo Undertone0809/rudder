@@ -220,17 +220,17 @@ pub async fn retry(
             invocation_block: None,
         });
     }
-    if let Some(issue) = issue.as_ref() {
-        if let Some(active_id) = issue.try_get::<Option<String>, _>("execution_run_id")? {
-            let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND (status IN ('queued','running') OR terminal_effects_pending=true))")
+    if let Some(issue) = issue.as_ref()
+        && let Some(active_id) = issue.try_get::<Option<String>, _>("execution_run_id")?
+    {
+        let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND (status IN ('queued','running') OR terminal_effects_pending=true))")
                 .bind(&org).bind(&active_id).fetch_one(&mut *tx).await?;
-            if active {
-                return Err(AgentExecutionError::Http(
-                    409,
-                    "Issue already has an active execution run".into(),
-                    Some(json!({"issueId":issue_id,"executionRunId":active_id})),
-                ));
-            }
+        if active {
+            return Err(AgentExecutionError::Http(
+                409,
+                "Issue already has an active execution run".into(),
+                Some(json!({"issueId":issue_id,"executionRunId":active_id})),
+            ));
         }
     }
     let kind: Option<String> = source.try_get("error_code")?;
@@ -386,19 +386,17 @@ async fn backfill_recovery_context(
             if snapshot
                 .get(field)
                 .is_none_or(|value| value.is_null() || value == "")
-            {
-                if let Some(value) = context
+                && let Some(value) = context
                     .get(field)
                     .filter(|value| !value.is_null() && *value != "")
-                {
-                    snapshot[field] = value.clone();
-                }
+            {
+                snapshot[field] = value.clone();
             }
         }
-        if let Some(goal) = row.try_get::<Option<String>, _>("goal_id")? {
-            if snapshot.get("goalId").is_none() {
-                snapshot["goalId"] = json!(goal);
-            }
+        if let Some(goal) = row.try_get::<Option<String>, _>("goal_id")?
+            && snapshot.get("goalId").is_none()
+        {
+            snapshot["goalId"] = json!(goal);
         }
         current = row.try_get("retry_of_run_id")?;
     }

@@ -306,11 +306,6 @@ impl DesktopBroker {
         self.retire(&mut state, "revoked");
         true
     }
-    pub(crate) fn revoke(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            self.retire(&mut state, "revoked");
-        }
-    }
     pub(crate) fn is_available(&self) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;

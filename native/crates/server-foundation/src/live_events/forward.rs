@@ -3,6 +3,9 @@ use super::{FORWARD_ACTION, FORWARD_ACTOR, LiveEvent, LiveEventError, LiveEventP
 use crate::{ActorEnvelopeVerificationError, AppState};
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde_json::json;
+#[cfg(test)]
+#[path = "forward_tests.rs"]
+mod tests;
 pub(crate) async fn forward_handler(
     state: web::Data<AppState>,
     publisher: web::Data<LiveEventPublisher>,

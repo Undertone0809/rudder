@@ -28,16 +28,16 @@ mod browser_session;
 mod calendar_writes;
 mod cli_auth;
 mod cost_reads;
+mod desktop;
 mod email_auth;
 mod existing_reads;
 mod goal_singular_reads;
 mod goal_writes;
 mod issue_core;
 mod label_writes;
-mod messenger_reads;
-mod managed_mcp;
-mod desktop;
 mod live_events;
+mod managed_mcp;
+mod messenger_reads;
 mod messenger_writes;
 mod native_chat;
 mod observational_reads;
@@ -195,9 +195,14 @@ impl PublicIngressRuntime {
         let agent_run_host = if config.identity_auth.is_some() {
             match config.agent_run_host.clone() {
                 Some(host) => Some(host),
-                None => crate::native_chat_startup::agent_execution_host(&mut config, foundation.desktop_brokers.clone())?,
+                None => crate::native_chat_startup::agent_execution_host(
+                    &mut config,
+                    foundation.desktop_brokers.clone(),
+                )?,
             }
-        } else { None };
+        } else {
+            None
+        };
         config.agent_run_host = agent_run_host.clone();
         {
             let mut reader_runtime = foundation
@@ -499,17 +504,36 @@ impl PublicIngressRuntime {
             _ => None,
         };
         let automation_worker = match (&foundation.database, agent_run_host.as_ref()) {
-            (DatabaseState::Configured(pool), Some(host)) => Some(crate::automation_worker::AutomationWorker::start(
-                pool.clone(), automation_runtime, foundation.native_chat_worker.clone(), automation_scheduler, automation_storage.map(|value|value as std::sync::Arc<dyn rudder_d1_persistence::issue_core_writes::IssueAssetStorage>), host.environment.get("RUDDER_ATTACHMENT_MAX_BYTES").and_then(|v|v.trim().parse::<f64>().ok()).filter(|v|v.is_finite()&&*v!=0.0).unwrap_or(10.0*1024.0*1024.0),
-            )),
+            (DatabaseState::Configured(pool), Some(host)) => {
+                Some(crate::automation_worker::AutomationWorker::start(
+                    pool.clone(),
+                    automation_runtime,
+                    foundation.native_chat_worker.clone(),
+                    automation_scheduler,
+                    automation_storage.map(|value| {
+                        value
+                            as std::sync::Arc<
+                                dyn rudder_d1_persistence::issue_core_writes::IssueAssetStorage,
+                            >
+                    }),
+                    host.environment
+                        .get("RUDDER_ATTACHMENT_MAX_BYTES")
+                        .and_then(|v| v.trim().parse::<f64>().ok())
+                        .filter(|v| v.is_finite() && *v != 0.0)
+                        .unwrap_or(10.0 * 1024.0 * 1024.0),
+                ))
+            }
             _ => None,
         };
         let agent_run_worker = match (&foundation.database, agent_run_host, config_identity) {
-            (DatabaseState::Configured(pool), Some(host), Some(identity)) => Some(
-                crate::agent_run_worker::AgentRunWorker::start(
-                    pool.clone(), host, identity.agent_jwt, foundation.live_event_publisher.clone(),
-                )
-            ),
+            (DatabaseState::Configured(pool), Some(host), Some(identity)) => {
+                Some(crate::agent_run_worker::AgentRunWorker::start(
+                    pool.clone(),
+                    host,
+                    identity.agent_jwt,
+                    foundation.live_event_publisher.clone(),
+                ))
+            }
             _ => None,
         };
         Ok(Self {
@@ -627,8 +651,12 @@ fn public_ingress_startup_receipt(
     }
     let mut auth_migration_debt = if better_auth_email_auth_enabled {
         vec!["remaining_auth_wildcard_routes"]
-    } else { vec!["auth_lifecycle_routes"] };
-    if !native_identity_enabled { auth_migration_debt.push("websocket_session_resolution"); }
+    } else {
+        vec!["auth_lifecycle_routes"]
+    };
+    if !native_identity_enabled {
+        auth_migration_debt.push("websocket_session_resolution");
+    }
     let mut native_authentication = serde_json::json!({
         "authority": if native_identity_enabled { "native-managed-http-identity-resolver" } else { "native-pcp-bearer-resolver" },
         "recognizedBearerPrefix": if native_identity_enabled { serde_json::Value::Null } else { serde_json::json!("pcp_") },
@@ -780,7 +808,9 @@ async fn proxy_request(
         && let Some(binding) = managed_mcp::binding_reference(&request)
     {
         let Some(host) = state.config.managed_mcp_host.clone() else {
-            return state.foundation.json_error(StatusCode::SERVICE_UNAVAILABLE, "managed_mcp_unavailable");
+            return state
+                .foundation
+                .json_error(StatusCode::SERVICE_UNAVAILABLE, "managed_mcp_unavailable");
         };
         return managed_mcp::execute(state, request, payload, binding, host).await;
     }
@@ -814,7 +844,8 @@ async fn proxy_request(
         // request and Payload untouched for the existing legacy route.
     }
     if state.config.identity_auth.is_some()
-        && let Some(endpoint) = agent_execution::endpoint_for_path(request.uri().path(), request.method())
+        && let Some(endpoint) =
+            agent_execution::endpoint_for_path(request.uri().path(), request.method())
     {
         match agent_execution::selects_native_run(&state, &request, &endpoint).await {
             Ok(true) => return agent_execution::execute(state, request, payload, endpoint).await,
@@ -2725,6 +2756,10 @@ mod tests {
             ])
         );
         assert!(bearer_only["nativeAuthentication"]["sessionCookieAuthority"].is_null());
+        assert_eq!(
+            bearer_only["compatibilityAuthentication"]["nodeOwnedRoutes"],
+            serde_json::json!(["auth_lifecycle_routes", "websocket_session_resolution"])
+        );
 
         let managed_http = public_ingress_startup_receipt(address, None, true, true, false, false);
         assert_eq!(
@@ -2783,17 +2818,11 @@ mod tests {
         );
         assert_eq!(
             with_better_auth["nativeAuthentication"]["sessionCookieAuthority"]["unmigrated"],
-            serde_json::json!([
-                "remaining_auth_wildcard_routes",
-                "websocket_session_resolution"
-            ])
+            serde_json::json!(["remaining_auth_wildcard_routes"])
         );
         assert_eq!(
             with_better_auth["compatibilityAuthentication"]["nodeOwnedRoutes"],
-            serde_json::json!([
-                "remaining_auth_wildcard_routes",
-                "websocket_session_resolution"
-            ])
+            serde_json::json!(["remaining_auth_wildcard_routes"])
         );
         assert_eq!(
             with_better_auth["nativeEmailPasswordLifecycle"],

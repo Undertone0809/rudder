@@ -69,7 +69,7 @@ pub struct RefreshLease {
 pub enum RefreshClaim {
     Changed,
     Busy { wait_ms: u64, timeout_ms: u64 },
-    Owned(RefreshLease),
+    Owned(Box<RefreshLease>),
 }
 pub enum RefreshOutcome<'a> {
     Success(&'a Value),
@@ -408,7 +408,16 @@ pub async fn list_tools(
     let result=async {let access=runtime_access(&mut tx,identity,binding,local_trusted,true).await?;
         let rows=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(t) FROM custom_integration_tools t WHERE org_id=$1::uuid AND connection_id=$2::uuid AND status='active' AND enabled ORDER BY rudder_tool_name")
             .bind(&identity.organization_id).bind(&access.connection_id).fetch_all(&mut *tx).await?;
-        Ok(rows.into_iter().filter(|tool|allowed(&access,tool)).map(|tool|{let mut result=json!({"name":tool["rudder_tool_name"],"inputSchema":tool["input_schema"]});if let Some(value)=tool.get("description").filter(|value|!value.is_null()){result["description"]=value.clone();}if let Some(value)=tool.get("output_schema").filter(|value|!value.is_null()){result["outputSchema"]=value.clone();}result}).collect())
+        Ok(rows.into_iter().filter(|tool| allowed(&access, tool)).map(|tool| {
+            let mut result=json!({"name":tool["rudder_tool_name"],"inputSchema":tool["input_schema"]});
+            if let Some(value)=tool.get("description").filter(|value|!value.is_null()) {
+                result["description"]=value.clone();
+            }
+            if let Some(value)=tool.get("output_schema").filter(|value|!value.is_null()) {
+                result["outputSchema"]=value.clone();
+            }
+            result
+        }).collect())
     }.await;
     commit_result(tx, result).await
 }
@@ -675,7 +684,7 @@ pub async fn claim_refresh(
         let nonce=uuid::Uuid::new_v4().to_string();
         sqlx::query("UPDATE mcp_oauth_grants SET refresh_lease_nonce=$2,refresh_lease_expires_at=statement_timestamp()+($3::bigint*interval '1 millisecond'),updated_at=statement_timestamp() WHERE id=$1::uuid")
             .bind(txt(&grant,"id")).bind(&nonce).bind((timeout+1000) as i64).execute(&mut *tx).await?;
-        Ok(RefreshClaim::Owned(RefreshLease {credential:OAuthCredential {grant_id:txt(&grant,"id").ok_or(Error::Denied)?.into(),secret_id:secret_id.into(),latest_version:version,material,status_metadata:grant["status_metadata"].clone(),authorizing_user_id:txt(&grant,"authorizing_user_id").map(str::to_owned)},nonce,timeout_ms:timeout,authorization,connection_id:access.connection_id.clone(),organization_id:identity.organization_id.clone()}))
+        Ok(RefreshClaim::Owned(Box::new(RefreshLease {credential:OAuthCredential {grant_id:txt(&grant,"id").ok_or(Error::Denied)?.into(),secret_id:secret_id.into(),latest_version:version,material,status_metadata:grant["status_metadata"].clone(),authorizing_user_id:txt(&grant,"authorizing_user_id").map(str::to_owned)},nonce,timeout_ms:timeout,authorization,connection_id:access.connection_id.clone(),organization_id:identity.organization_id.clone()})))
     }.await;
     commit_result(tx, result).await
 }

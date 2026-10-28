@@ -80,7 +80,10 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
     assert_eq!(first.journal.entries[184].idx, 184);
     assert_eq!(first.journal.entries[184].tag, "0184_goal_run_ownership");
     assert_eq!(first.journal.entries[185].idx, 185);
-    assert_eq!(first.journal.entries[185].tag, "0185_native_agent_execution");
+    assert_eq!(
+        first.journal.entries[185].tag,
+        "0185_native_agent_execution"
+    );
     assert_eq!(first.journal.entries[57].tag, "0058_messenger_threads");
     assert_eq!(first.journal.entries[58].tag, "0058_calm_red_ghost");
     assert!(first.entries[186].is_legacy_unjournaled());

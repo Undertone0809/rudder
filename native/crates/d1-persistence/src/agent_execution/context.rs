@@ -37,10 +37,10 @@ pub(crate) fn suppression(context: &Value) -> Option<Value> {
         Some("force_fresh") => return Some(json!({"kind":"force_fresh"})),
         _ => {}
     }
-    if context["sessionResumeSuppressed"] == true {
-        if let Some(source_run_id) = nonempty(context.get("resumeFromRunId")) {
-            return Some(json!({"kind":"source_session_cleared","sourceRunId":source_run_id}));
-        }
+    if context["sessionResumeSuppressed"] == true
+        && let Some(source_run_id) = nonempty(context.get("resumeFromRunId"))
+    {
+        return Some(json!({"kind":"source_session_cleared","sourceRunId":source_run_id}));
     }
     (context["forceFreshSession"] == true).then(|| json!({"kind":"force_fresh"}))
 }
@@ -84,10 +84,10 @@ pub(crate) fn enrich_wake_context(
         ("wakeSource", Some(source.to_owned())),
         ("wakeTriggerDetail", trigger_detail.map(str::to_owned)),
     ] {
-        if nonempty(context.get(key)).is_none() {
-            if let Some(value) = value {
-                context[key] = Value::String(value);
-            }
+        if nonempty(context.get(key)).is_none()
+            && let Some(value) = value
+        {
+            context[key] = Value::String(value);
         }
     }
     normalize_suppression(&mut context);

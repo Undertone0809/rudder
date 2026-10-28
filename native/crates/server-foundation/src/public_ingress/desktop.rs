@@ -31,12 +31,11 @@ pub(super) fn endpoint(path: &str, method: &Method) -> Option<Endpoint> {
         }
     };
     if parts.len() == 4 && parts[1].eq_ignore_ascii_case("instance") {
-        if let Some(kind) = kind(parts[2]) {
-            if parts[3].eq_ignore_ascii_case("broker")
-                && matches!(*method, Method::PUT | Method::DELETE)
-            {
-                return Some(Endpoint::Registry(kind));
-            }
+        if let Some(kind) = kind(parts[2])
+            && parts[3].eq_ignore_ascii_case("broker")
+            && matches!(*method, Method::PUT | Method::DELETE)
+        {
+            return Some(Endpoint::Registry(kind));
         }
         if parts[2].eq_ignore_ascii_case("computer")
             && parts[3].eq_ignore_ascii_case("readiness")
@@ -63,6 +62,7 @@ fn error(status: u16, code: &str, message: &str) -> HttpResponse {
 fn internal() -> HttpResponse {
     HttpResponse::InternalServerError().json(json!({"error":"Internal server error"}))
 }
+#[allow(clippy::result_large_err)] // Preserve the existing Actix HTTP error response contract.
 async fn admin(
     pool: &sqlx::PgPool,
     state: &IngressState,
