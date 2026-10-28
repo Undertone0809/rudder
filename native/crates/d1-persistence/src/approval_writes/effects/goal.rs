@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn decide_goal(
+pub(in crate::approval_writes) async fn decide_goal(
     tx: &mut Tx<'_>,
     context: &ApprovalWriteContext<'_>,
     approval: &LockedApproval,

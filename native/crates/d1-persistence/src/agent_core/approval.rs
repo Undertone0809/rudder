@@ -1,6 +1,6 @@
 //! Approval-only composition of the existing Agent writers. The locked
 //! Approval capability is never deserializable at a public boundary.
-use super::{common::*, *};
+use super::*;
 use crate::approval_writes::LockedApproval;
 
 pub(crate) async fn normalize_hire_approval_payload(
@@ -65,6 +65,13 @@ pub(crate) async fn apply_approved_agent_change(
             if !approved {
                 return Ok(None);
             }
+            let budget = match &payload["budgetMonthlyCents"] {
+                Value::Number(value) => value
+                    .as_i64()
+                    .filter(|amount| i32::try_from(*amount).is_ok())
+                    .ok_or_else(|| http(422, "Invalid Agent budget"))?,
+                _ => 0,
+            };
             let request = AgentCreateRequest {
                 name: Some(hire_string(&payload["name"], "New Agent")),
                 role: hire_string(&payload["role"], "general"),
@@ -77,7 +84,7 @@ pub(crate) async fn apply_approved_agent_change(
                     .cloned()
                     .unwrap_or_else(|| json!({})),
                 runtime_config: json!({}),
-                budget_monthly_cents: payload["budgetMonthlyCents"].as_i64().unwrap_or(0),
+                budget_monthly_cents: budget,
                 permissions: AgentCreatePermissions {
                     can_create_agents: true,
                     can_manage_skills: true,

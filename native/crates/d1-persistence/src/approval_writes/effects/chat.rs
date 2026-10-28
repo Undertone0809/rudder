@@ -34,38 +34,7 @@ pub(super) async fn create_issue(
         .filter(|v| v.is_object())
         .cloned()
         .ok_or_else(|| http(422, "Issue proposal payload was incomplete"))?;
-    let has_owner =
-        text(&proposed, "assigneeAgentId").is_some() || text(&proposed, "assigneeUserId").is_some();
-    let reason = text(&proposed, "assigneeUnassignedReason").is_some();
-    if has_owner && reason {
-        return Err(http(
-            422,
-            "Issue proposals with an owner must not also include assigneeUnassignedReason",
-        ));
-    }
-    if !has_owner && !reason {
-        return Err(http(
-            422,
-            "Issue proposals without an owner must include assigneeUnassignedReason",
-        ));
-    }
-    if [
-        "assigneeAgentId",
-        "assigneeUserId",
-        "reviewerAgentId",
-        "reviewerUserId",
-    ]
-    .iter()
-    .any(|key| text(&proposed, key).is_some())
-    {
-        let local = context.actor.session_id() == "local-implicit"
-            && context.user_id() == Some("local-board")
-            && context.agent_host.local_implicit;
-        let allowed=local || sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$2 AND role='instance_admin') OR EXISTS(SELECT 1 FROM organization_memberships m JOIN principal_permission_grants g USING(org_id,principal_type,principal_id) WHERE m.org_id=$1::uuid AND m.principal_type='user' AND m.principal_id=$2 AND m.status='active' AND g.permission_key='tasks:assign')").bind(org).bind(context.user_id()).fetch_one(&mut **tx).await?;
-        if !allowed {
-            return Err(http(403, "Missing permission: tasks:assign"));
-        }
-    }
+    validate_owner(tx, context, org, &proposed).await?;
     if let Some(agent) = text(payload, "proposedByAgentId") {
         scoped_agent(tx, org, &uuid(agent)?).await?;
         labels(tx, org, &proposed).await?;
@@ -77,11 +46,44 @@ pub(super) async fn create_issue(
             body.trim_end()
         ));
     }
-    let source_message = if let Some(id) = text(payload, "chatMessageId") {
-        sqlx::query_scalar::<_,String>("SELECT id::text FROM chat_messages WHERE id=$1::uuid AND org_id=$2::uuid AND conversation_id=$3::uuid").bind(uuid(id)?).bind(org).bind(&conversation).fetch_optional(&mut **tx).await?
+    let mut source_message = if let Some(id) = text(payload, "chatMessageId") {
+        sqlx::query("SELECT id::text,structured_payload,replying_agent_id::text FROM chat_messages WHERE id=$1::uuid AND org_id=$2::uuid AND conversation_id=$3::uuid").bind(uuid(id)?).bind(org).bind(&conversation).fetch_optional(&mut **tx).await?
     } else {
         None
     };
+    let parse_proposal = |value: &Value| {
+        let proposal = value
+            .get("issueProposal")
+            .filter(|v| v.is_object())
+            .unwrap_or(value);
+        (text(proposal, "title").is_some() && text(proposal, "description").is_some())
+            .then(|| proposal.clone())
+    };
+    if primary.is_none() && parse_proposal(&proposed).is_none() {
+        if source_message.is_none() {
+            source_message=sqlx::query("SELECT id::text,structured_payload,replying_agent_id::text FROM chat_messages WHERE org_id=$1::uuid AND conversation_id=$2::uuid AND kind='issue_proposal' ORDER BY created_at DESC LIMIT 1").bind(org).bind(&conversation).fetch_optional(&mut **tx).await?;
+        }
+        let message = source_message
+            .as_ref()
+            .ok_or_else(|| http(422, "No issue proposal found for this conversation"))?;
+        proposed = parse_proposal(
+            &message
+                .try_get::<Option<Value>, _>("structured_payload")?
+                .unwrap_or(Value::Null),
+        )
+        .ok_or_else(|| http(422, "Issue proposal payload was incomplete"))?;
+        validate_owner(tx, context, org, &proposed).await?;
+    }
+    let source_id = source_message
+        .as_ref()
+        .map(|row| row.try_get::<String, _>("id"))
+        .transpose()?;
+    let source_agent = source_message
+        .as_ref()
+        .map(|row| row.try_get::<Option<String>, _>("replying_agent_id"))
+        .transpose()?
+        .flatten();
+    let creator = text(payload, "proposedByAgentId").or(source_agent.as_deref());
     let issue = if let Some(id) = primary {
         let raw = sqlx::query_scalar::<_, String>(
             "SELECT to_jsonb(i)::text FROM issues i WHERE org_id=$1::uuid AND id=$2::uuid",
@@ -95,17 +97,17 @@ pub(super) async fn create_issue(
                 .await
                 .map_err(|e| http(500, e.to_string()))?
         } else {
-            new_issue(tx, context, approval, &proposed, staged_assets).await?
+            new_issue(tx, context, approval, &proposed, creator, staged_assets).await?
         }
     } else {
-        new_issue(tx, context, approval, &proposed, staged_assets).await?
+        new_issue(tx, context, approval, &proposed, creator, staged_assets).await?
     };
     let issue_id = issue["id"]
         .as_str()
         .ok_or_else(|| http(500, "Invalid Issue result"))?;
     mark_chat_write(tx).await?;
     sqlx::query("UPDATE chat_conversations SET primary_issue_id=$3::uuid,updated_at=now() WHERE org_id=$1::uuid AND id=$2::uuid").bind(org).bind(&conversation).bind(issue_id).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO chat_context_links (org_id,conversation_id,entity_type,entity_id,metadata) VALUES ($1::uuid,$2::uuid,'issue',$3,$4::jsonb) ON CONFLICT DO NOTHING").bind(org).bind(&conversation).bind(issue_id).bind(source_message.as_ref().map(|id|json!({"sourceMessageId":id}).to_string())).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO chat_context_links (org_id,conversation_id,entity_type,entity_id,metadata) VALUES ($1::uuid,$2::uuid,'issue',$3,$4::jsonb) ON CONFLICT DO NOTHING").bind(org).bind(&conversation).bind(issue_id).bind(source_id.as_ref().map(|id|json!({"sourceMessageId":id}).to_string())).execute(&mut **tx).await?;
     link_issue(tx, context, org, approval.id(), issue_id).await?;
     system_message(tx,approval,&conversation,&format!("Created issue {} from this chat conversation.",issue["identifier"].as_str().unwrap_or(issue_id)),json!({"eventType":"issue_created","issueId":issue_id,"issueIdentifier":issue["identifier"],"approvalId":approval.id()}),"issue-created").await?;
     if let Some(note) = text(approval.value(), "decisionNote") {
@@ -128,11 +130,53 @@ pub(super) async fn create_issue(
     Ok(())
 }
 
+async fn validate_owner(
+    tx: &mut Tx<'_>,
+    context: &ApprovalWriteContext<'_>,
+    org: &str,
+    proposed: &Value,
+) -> Result<()> {
+    let has_owner =
+        text(proposed, "assigneeAgentId").is_some() || text(proposed, "assigneeUserId").is_some();
+    let reason = text(proposed, "assigneeUnassignedReason").is_some();
+    if has_owner && reason {
+        return Err(http(
+            422,
+            "Issue proposals with an owner must not also include assigneeUnassignedReason",
+        ));
+    }
+    if !has_owner && !reason {
+        return Err(http(
+            422,
+            "Issue proposals without an owner must include assigneeUnassignedReason",
+        ));
+    }
+    if [
+        "assigneeAgentId",
+        "assigneeUserId",
+        "reviewerAgentId",
+        "reviewerUserId",
+    ]
+    .iter()
+    .any(|key| text(proposed, key).is_some())
+    {
+        let local = context.actor.session_id() == "local-implicit"
+            && context.user_id() == Some("local-board")
+            && context.agent_host.local_implicit;
+        let allowed=local || sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM instance_user_roles WHERE user_id=$2 AND role='instance_admin') OR EXISTS(SELECT 1 FROM organization_memberships m JOIN principal_permission_grants g USING(org_id,principal_type,principal_id) WHERE m.org_id=$1::uuid AND m.principal_type='user' AND m.principal_id=$2 AND m.status='active' AND g.permission_key='tasks:assign')").bind(org).bind(context.user_id()).fetch_one(&mut **tx).await?;
+        if !allowed {
+            return Err(http(403, "Missing permission: tasks:assign"));
+        }
+    }
+    Ok(())
+}
+
 async fn new_issue(
     tx: &mut Tx<'_>,
     context: &ApprovalWriteContext<'_>,
     approval: &LockedApproval,
     source: &Value,
+    creator: Option<&str>,
     staged_assets: &mut Vec<String>,
 ) -> Result<Value> {
     let source = source
@@ -169,9 +213,9 @@ async fn new_issue(
     let value = crate::issue_core_writes::create_approved_chat_issue(
         tx,
         approval,
-        &context.actor.actor().id,
+        context,
         &input,
-        context.asset_storage,
+        creator,
         staged_assets,
     )
     .await?;

@@ -150,6 +150,7 @@ struct IssueCreateContext<'a> {
     asset_storage: Option<&'a dyn IssueAssetStorage>,
     staged_asset_objects: &'a mut Vec<String>,
     approved_chat: Option<&'a crate::approval_writes::LockedApproval>,
+    approved_chat_creator: Option<&'a str>,
 }
 
 struct IssueDescriptionAssetStageInput<'a> {
@@ -248,6 +249,7 @@ pub async fn apply_issue_core_write(
                             asset_storage,
                             staged_asset_objects: &mut staged_asset_objects,
                             approved_chat: None,
+                            approved_chat_creator: None,
                         },
                     )
                     .await?;
@@ -394,25 +396,41 @@ pub(crate) async fn cleanup_staged_issue_asset_objects(
 pub(crate) async fn create_approved_chat_issue(
     tx: &mut Tx<'_>,
     approval: &crate::approval_writes::LockedApproval,
-    actor_id: &str,
+    context: &crate::approval_writes::ApprovalWriteContext<'_>,
     input: &Value,
-    asset_storage: Option<&dyn IssueAssetStorage>,
+    creator: Option<&str>,
     staged_asset_objects: &mut Vec<String>,
 ) -> Result<Value> {
     crate::issue_input_validation::validate_nested_fields(input)
         .map_err(|message| http(422, message))?;
+    if let Some(creator) = creator {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE org_id=$1::uuid AND id=$2::uuid)",
+        )
+        .bind(approval.organization_id())
+        .bind(creator)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !exists {
+            return Err(http(
+                422,
+                "Issue creator must belong to the same organization",
+            ));
+        }
+    }
     create_issue(
         tx,
         IssueCreateContext {
             org: approval.organization_id(),
             actor_kind: "user",
-            actor_id,
+            actor_id: &context.actor.actor().id,
             actor_agent_id: None,
             run_id: None,
             input,
-            asset_storage,
+            asset_storage: context.asset_storage,
             staged_asset_objects,
             approved_chat: Some(approval),
+            approved_chat_creator: creator,
         },
     )
     .await
@@ -455,6 +473,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
         asset_storage,
         staged_asset_objects,
         approved_chat,
+        approved_chat_creator,
     } = context;
     let agent_issue_creation_request_id = if actor_kind == "agent" {
         match (actor_agent_id, run_id) {
@@ -783,9 +802,7 @@ async fn create_issue(tx: &mut Tx<'_>, context: IssueCreateContext<'_>) -> Resul
     .await?;
     let id = Uuid::new_v4().to_string();
     let created_by_user_id = (actor_kind == "user").then_some(actor_id);
-    let created_by_agent_id = approved_chat
-        .and_then(|approval| approval.value()["payload"]["proposedByAgentId"].as_str())
-        .or(actor_agent_id);
+    let created_by_agent_id = approved_chat_creator.or(actor_agent_id);
     let staged_description_assets = stage_issue_description_assets(
         tx,
         IssueDescriptionAssetStageInput {

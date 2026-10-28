@@ -138,6 +138,7 @@ pub(super) async fn apply(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // One existing domain wake intent and its audit identity.
 pub(super) async fn wake_best_effort(
     tx: &mut Tx<'_>,
     context: &ApprovalWriteContext<'_>,
@@ -189,6 +190,7 @@ pub(super) async fn wake_best_effort(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // Bounded composition of the existing native admission.
 pub(super) async fn wake(
     tx: &mut Tx<'_>,
     context: &ApprovalWriteContext<'_>,

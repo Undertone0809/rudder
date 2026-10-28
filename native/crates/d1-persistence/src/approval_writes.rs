@@ -82,15 +82,16 @@ impl ApprovalWriteContext<'_> {
     }
 }
 
-/// This value is constructed only after the Approval row has been locked and
-/// its decision validated; sibling domain adapters cannot accept public JSON as
-/// permission to apply an approved operation.
+// Only the existing Agent workspace reconciler and Issue analytics run after
+// commit; these are local return values, with no new queue or persisted state.
 #[derive(Default)]
 pub(super) struct ApprovalPostCommit {
     created_agent_id: Option<String>,
     issue_updates: Vec<crate::issue_core_writes::IssueUpdatePostCommit>,
 }
 
+/// Constructed only after locking and validating the Approval row. Sibling
+/// writers cannot accept public JSON as approved mutation authority.
 pub(crate) struct LockedApproval {
     id: String,
     organization_id: String,
@@ -473,6 +474,7 @@ pub(super) async fn public_approval(tx: &mut Tx<'_>, org: &str, id: &str) -> Res
     )?)
 }
 
+#[allow(clippy::too_many_arguments)] // Existing activity shape plus the verified Approval actor.
 pub(super) async fn audit(
     tx: &mut Tx<'_>,
     context: &ApprovalWriteContext<'_>,

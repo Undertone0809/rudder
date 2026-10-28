@@ -304,7 +304,7 @@ async fn public_approval_lifecycle_comments_and_domain_effects_run_without_node(
         .await
         .unwrap()
     );
-    let new_hire=create(&client,&base,&token,&org,"hire_agent",json!({"name":"Public approved new Agent","agentRuntimeType":"process","agentRuntimeConfig":{"command":"/bin/sh"},"budgetMonthlyCents":100})).await;
+    let new_hire=create(&client,&base,&token,&org,"hire_agent",json!({"name":"Public approved new Agent","agentRuntimeType":"process","agentRuntimeConfig":{"command":"/bin/sh","promptTemplate":"Keep the approved process template"},"budgetMonthlyCents":100})).await;
     post(
         &client,
         &base,
@@ -316,6 +316,52 @@ async fn public_approval_lifecycle_comments_and_domain_effects_run_without_node(
     .await;
     assert!(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM agents a JOIN organization_memberships m ON m.org_id=a.org_id AND m.principal_type='agent' AND m.principal_id=a.id::text WHERE a.org_id=$1::uuid AND a.name='Public approved new Agent' AND a.status='idle')").bind(&org).fetch_one(&pool).await.unwrap());
 
+    assert_eq!(sqlx::query_scalar::<_,String>("SELECT agent_runtime_config->>'promptTemplate' FROM agents WHERE org_id=$1::uuid AND name='Public approved new Agent'").bind(&org).fetch_one(&pool).await.unwrap(),"Keep the approved process template");
+    let overflow = create(
+        &client,
+        &base,
+        &token,
+        &org,
+        "hire_agent",
+        json!({"name":"Invalid overflowing budget","budgetMonthlyCents":4294967296_i64}),
+    )
+    .await;
+    post(
+        &client,
+        &base,
+        &token,
+        &format!("/api/approvals/{overflow}/approve"),
+        json!({}),
+        422,
+    )
+    .await;
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id=$1::uuid")
+            .bind(&overflow)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "pending"
+    );
+    let runtime_permission = create(
+        &client,
+        &base,
+        &token,
+        &org,
+        "agent_runtime",
+        json!({"permissionId":"synthetic-public-runtime-permission"}),
+    )
+    .await;
+    let resolved = post(
+        &client,
+        &base,
+        &token,
+        &format!("/api/approvals/{runtime_permission}/approve"),
+        json!({}),
+        200,
+    )
+    .await;
+    assert_eq!(resolved["status"], "approved");
     let revision = create(
         &client,
         &base,
@@ -485,6 +531,22 @@ async fn public_approval_lifecycle_comments_and_domain_effects_run_without_node(
     );
     wait_issue(&pool, &converted).await;
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM chat_messages WHERE conversation_id=$1::uuid AND structured_payload->>'eventType'='issue_created'").bind(&conversation).fetch_one(&pool).await.unwrap(),1);
+    let fallback_conversation = Uuid::new_v4().to_string();
+    let fallback_message = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO chat_conversations(id,org_id,title,created_by_user_id) VALUES ($1::uuid,$2::uuid,'Stored proposal fallback',$3)").bind(&fallback_conversation).bind(&org).bind(&user).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO chat_messages(id,org_id,conversation_id,role,kind,status,body,structured_payload,replying_agent_id) VALUES ($1::uuid,$2::uuid,$3::uuid,'assistant','issue_proposal','completed','Stored proposal',$4::jsonb,$5::uuid)").bind(&fallback_message).bind(&org).bind(&fallback_conversation).bind(json!({"issueProposal":{"title":"Stored source proposal","description":"Native conversion preserves the pre-existing source fallback","assigneeUnassignedReason":"Operator triage"}}).to_string()).bind(&agent).execute(&pool).await.unwrap();
+    let fallback=create(&client,&base,&token,&org,"chat_issue_creation",json!({"chatConversationId":fallback_conversation,"chatMessageId":fallback_message,"proposedIssue":{"assigneeUnassignedReason":"Operator triage"}})).await;
+    post(
+        &client,
+        &base,
+        &token,
+        &format!("/api/approvals/{fallback}/approve"),
+        json!({}),
+        200,
+    )
+    .await;
+    let source_creator:String=sqlx::query_scalar("SELECT i.created_by_agent_id::text FROM issues i JOIN chat_conversations c ON c.primary_issue_id=i.id AND c.org_id=i.org_id WHERE c.id=$1::uuid AND i.title='Stored source proposal'").bind(&fallback_conversation).fetch_one(&pool).await.unwrap();
+    assert_eq!(source_creator, agent);
     for index in 0..5 {
         sqlx::query("INSERT INTO labels(org_id,name,color) VALUES ($1::uuid,$2,'#123456')")
             .bind(&org)

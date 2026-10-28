@@ -307,7 +307,7 @@ async fn create_record(
     }
 
     if request.budget_monthly_cents > 0 {
-        upsert_budget_policy(tx, ctx, &id, request.budget_monthly_cents as i64).await?;
+        upsert_budget_policy(tx, ctx, &id, request.budget_monthly_cents).await?;
     }
 
     // The public Rust create path applies the existing managed MCP helper in
