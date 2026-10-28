@@ -99,7 +99,7 @@ exposing secrets, or expanding to another product/environment.
   canary work when safe, and let stable cleanup remove its Release/tag.
 - Keep public install smoke, including slow Windows runtime installation. A slow
   real install is product evidence to optimize, not a release gate to delete.
-- Once a stable campaign is active, candidate-repair commits use `[skip release]`
+- Once a stable campaign is active, candidate-repair commits use `[skip canary]`
   unless a canary is explicitly needed. CI still validates the repair, while the
   automatic canary path does not duplicate the manual stable candidate.
 - Do not dispatch a third run after the same stage fails twice on unchanged

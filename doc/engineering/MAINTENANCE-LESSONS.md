@@ -9,6 +9,31 @@ Use this record before maintenance work and merge review. Each lesson links a
 failure to a regression check and a review rule. A checkbox is not evidence.
 Keep new incidents here rather than creating competing rule documents.
 
+## 2026-10-28: Canary opt-out markers suppressed product releases
+
+Main Test runs `40607366853` and `40624024900` succeeded, but their Release
+preflight jobs were skipped because merged product PR messages included
+`[skip release]`. The latest published canary remained `0.7.24-canary.49`.
+
+Reserve the explicit `[skip canary]` opt-out for active stable-release repairs
+and generated post-stable version handoffs. Legacy `[skip release]` text no
+longer suppresses automatic canaries. Keep the generator, runbook and release
+skill synchronized with the workflow token.
+
+The release workflow contract executes the actual preflight expression against
+legacy product merge messages, explicit maintenance opt-outs, unsuccessful CI,
+non-main/non-push and foreign-repository events, plus manual stable dispatch.
+An automatic attempt and a completed publication are separate observations:
+the previous eligible run `40155135246` failed its Windows candidate gate.
+Retain every candidate and public-install gate when restoring the trigger.
+
+The first repair PR run `40633528594` also exposed three diff-local Node review
+records inherited from the preceding Messenger merge. No runtime source changed
+in the repair, so the trusted base checker correctly rejected those stale
+records. Retire only the already-landed `reviewed_node_changes` entries, as the
+existing CLI lifecycle regression requires; preserve source inventories,
+transport admissions and checker enforcement.
+
 ## 2026-10-13 audit scope
 
 Inspected public main `93faca8b2352cad0331db54794b6895630ad2ecc`: contributor

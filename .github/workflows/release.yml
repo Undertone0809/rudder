@@ -63,7 +63,7 @@ jobs:
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.repository.full_name == github.repository &&
-       !contains(github.event.workflow_run.head_commit.message, '[skip release]'))
+       !contains(github.event.workflow_run.head_commit.message, '[skip canary]'))
     permissions:
       actions: read
       contents: read
