@@ -32,18 +32,23 @@ pub async fn tick(pool: &PgPool, now_ms: i64, host: &Host<'_>) -> Result<u64> {
         else {
             continue;
         };
-        let mut count = 1;
-        if automation["catchUpPolicy"] == "enqueue_missed_with_cap" {
+        let (count, next) = if automation["catchUpPolicy"] == "enqueue_missed_with_cap" {
             let mut cursor = Some(due_at);
-            count = 0;
+            let mut count = 0;
             while cursor.is_some_and(|at| at <= now_ms) && count < 25 {
                 count += 1;
                 cursor = automation_management::schedule::next_tick(cron, zone, cursor.unwrap())?;
             }
-        }
-        // The existing dispatch recomputes the next future tick at firing time;
-        // preserve its catch-up cap and resulting schedule, not a parallel cron.
-        let next = automation_management::schedule::next_tick(cron, zone, now_ms)?
+            // Keep the first unconsumed occurrence, even when it is still due.
+            // The next scheduler pass continues the backlog after this cap.
+            (count, cursor)
+        } else {
+            (
+                1,
+                automation_management::schedule::next_tick(cron, zone, now_ms)?,
+            )
+        };
+        let next = next
             .map(automation_management::schedule::stamp)
             .transpose()?;
         sqlx::query("UPDATE automation_triggers SET next_run_at=$2::timestamptz,updated_at=statement_timestamp() WHERE id=$1::uuid")

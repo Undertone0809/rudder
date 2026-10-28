@@ -116,7 +116,9 @@ pub(super) async fn dispatch(
     sqlx::query("UPDATE automations SET last_triggered_at=to_timestamp($3::double precision/1000),last_enqueued_at=CASE WHEN $4::uuid IS NULL THEN last_enqueued_at ELSE to_timestamp($3::double precision/1000) END,updated_at=statement_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(&org).bind(&automation_id).bind(now).bind(&issue_id).execute(&mut **tx).await?;
     if let Some(trigger) = trigger {
-        let schedule = trigger["kind"] == "schedule";
+        // Scheduled batches already claim their next unconsumed occurrence in
+        // the same transaction. Per-run metadata must not skip that backlog.
+        let schedule = trigger["kind"] == "schedule" && source != "schedule";
         let next = if schedule {
             automation_management::schedule::next_tick(
                 text(trigger, "cronExpression").unwrap_or_default(),

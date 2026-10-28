@@ -139,7 +139,7 @@ async fn schedule_claim_and_admission_commit_once_and_catch_up_uses_existing_cap
     let db = Database::start().await;
     let host = Host { chat: None };
     let (automation, _) = definition(&db, "process", "track_issue").await;
-    let trigger:String=sqlx::query_scalar("INSERT INTO automation_triggers(org_id,automation_id,kind,enabled,cron_expression,timezone,next_run_at) VALUES($1::uuid,$2::uuid,'schedule',true,'* * * * *','UTC',statement_timestamp()-interval '1 minute') RETURNING id::text")
+    let _trigger:String=sqlx::query_scalar("INSERT INTO automation_triggers(org_id,automation_id,kind,enabled,cron_expression,timezone,next_run_at) VALUES($1::uuid,$2::uuid,'schedule',true,'* * * * *','UTC',statement_timestamp()-interval '1 minute') RETURNING id::text")
         .bind(ORG).bind(&automation).fetch_one(&db.pool).await.unwrap();
     let now: i64 =
         sqlx::query_scalar("SELECT (extract(epoch FROM statement_timestamp())*1000)::bigint")
@@ -151,27 +151,57 @@ async fn schedule_claim_and_admission_commit_once_and_catch_up_uses_existing_cap
         automation_execution::tick(&db.pool, now, &host)
     );
     assert_eq!(left.unwrap() + right.unwrap(), 1);
-    sqlx::query("UPDATE automations SET concurrency_policy='always_enqueue',catch_up_policy='enqueue_missed_with_cap' WHERE id=$1::uuid").bind(&automation).execute(&db.pool).await.unwrap();
-    sqlx::query("UPDATE automation_triggers SET next_run_at=statement_timestamp()-interval '2 hours' WHERE id=$1::uuid").bind(&trigger).execute(&db.pool).await.unwrap();
     assert_eq!(
         automation_execution::tick(&db.pool, now, &host)
             .await
             .unwrap(),
-        25
+        0,
+        "skip_missed advances beyond now after its one dispatch"
     );
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM automation_runs WHERE automation_id=$1::uuid")
-            .bind(&automation)
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!(count, 26);
-    assert_eq!(
-        automation_execution::tick(&db.pool, now, &host)
-            .await
-            .unwrap(),
-        0
-    );
+    let now = now / 60_000 * 60_000;
+    for overdue in [3_i64, 25, 30] {
+        let (automation, _) = definition(&db, "process", "track_issue").await;
+        sqlx::query("UPDATE automations SET concurrency_policy='always_enqueue',catch_up_policy='enqueue_missed_with_cap' WHERE id=$1::uuid")
+            .bind(&automation).execute(&db.pool).await.unwrap();
+        let due_at = now - (overdue - 1) * 60_000;
+        let trigger: String = sqlx::query_scalar("INSERT INTO automation_triggers(org_id,automation_id,kind,enabled,cron_expression,timezone,next_run_at) VALUES($1::uuid,$2::uuid,'schedule',true,'* * * * *','UTC',to_timestamp($3::double precision/1000)) RETURNING id::text")
+            .bind(ORG).bind(&automation).bind(due_at).fetch_one(&db.pool).await.unwrap();
+        let first = overdue.min(25);
+        assert_eq!(
+            automation_execution::tick(&db.pool, now, &host)
+                .await
+                .unwrap(),
+            first as u64
+        );
+        let cursor: i64 = sqlx::query_scalar("SELECT (extract(epoch FROM next_run_at)*1000)::bigint FROM automation_triggers WHERE id=$1::uuid")
+            .bind(&trigger).fetch_one(&db.pool).await.unwrap();
+        assert_eq!(cursor, due_at + first * 60_000);
+        assert_eq!(cursor <= now, overdue > 25);
+        assert_eq!(
+            automation_execution::tick(&db.pool, now, &host)
+                .await
+                .unwrap(),
+            (overdue - first) as u64,
+            "the second pass consumes only the overdue occurrences beyond the cap"
+        );
+        let cursor: i64 = sqlx::query_scalar("SELECT (extract(epoch FROM next_run_at)*1000)::bigint FROM automation_triggers WHERE id=$1::uuid")
+            .bind(&trigger).fetch_one(&db.pool).await.unwrap();
+        assert_eq!(cursor, now + 60_000);
+        assert_eq!(
+            automation_execution::tick(&db.pool, now, &host)
+                .await
+                .unwrap(),
+            0,
+            "consumed occurrences must not dispatch again"
+        );
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM automation_runs WHERE automation_id=$1::uuid")
+                .bind(&automation)
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, overdue);
+    }
 }
 #[tokio::test]
 async fn failed_issue_admission_retains_only_failed_automation_receipt() {
