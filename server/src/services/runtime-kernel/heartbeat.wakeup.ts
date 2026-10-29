@@ -452,13 +452,13 @@ export function createHeartbeatWakeupHandlers(context: any) {
       ))
       .orderBy(desc(heartbeatRuns.createdAt));
 
-    const activeNativeGoalRun = activeRuns.find(
-      (candidate) => candidate.executionAuthority === "native_rust" && candidate.goalId !== null,
+    const activeNativeHeartbeatRun = activeRuns.find(
+      (candidate) => candidate.executionAuthority === "native_rust" && candidate.scene === "heartbeat",
     );
-    if (activeNativeGoalRun) {
-      // Legacy wakes, including Issue work, must wait for this Agent's native
-      // Goal owner. Do not create a second provider Run or let Node claim a
-      // native Goal wakeup through the shared Run queue.
+    if (activeNativeHeartbeatRun) {
+      // Legacy wakes wait for any native heartbeat owner, including runs that
+      // have no Goal. Keep the existing defer status for compatibility; the
+      // legacy worker never claims native wakeups or Native Chat runs.
       const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
       if (existingWakeupRequestId) {
         await updateWakeupRequestRecord(db, existingWakeupRequestId, {

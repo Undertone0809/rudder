@@ -7,7 +7,7 @@
     "agent_id": "root"
   },
   "intent": {
-    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# Rudder \u5168 Rust \u540e\u7aef\u8fc1\u79fb\u4e0e Node \u9000\u5f79\n\n## \u76ee\u6807\u4e0e\u5b8c\u6210\u6807\u51c6\n\n\u5b8c\u6210\u6240\u6709 Rudder \u540e\u7aef\u63a5\u53e3\u3001\u4e1a\u52a1\u903b\u8f91\u548c\u8fd0\u884c\u804c\u8d23\u7684 Rust \u8fc1\u79fb\u3002\u6700\u7ec8\u4ea7\u54c1\u76f4\u63a5\u542f\u52a8 Rust \u540e\u7aef\uff0c\u4e0d\u518d\u901a\u8fc7 Node \u63d0\u4f9b\u9274\u6743\u3001\u4e1a\u52a1\u5904\u7406\u3001\u6570\u636e\u5e93\u8fc1\u79fb\u3001\u8c03\u5ea6\u6216\u6062\u590d\u80fd\u529b\u3002\u65b0\u589e\u540e\u7aef\u529f\u80fd\u4ece\u672c\u8f6e\u5f00\u59cb\u7edf\u4e00\u4f7f\u7528 Rust\u3002\n\n\u4fdd\u7559 React \u524d\u7aef\u3001Electron \u684c\u9762\u58f3\u3001\u6784\u5efa\u5de5\u5177\u53ca\u7528\u6237\u9009\u62e9\u7684\u5916\u90e8 CLI/MCP\uff1b\u8fd9\u4e9b\u7ec4\u4ef6\u4e0d\u80fd\u9690\u85cf\u7b2c\u4e00\u65b9 Node \u540e\u7aef\u804c\u8d23\u3002\n\n**\u5b8c\u6210\u5fc5\u987b\u540c\u65f6\u6ee1\u8db3\uff1a**\n\n- \u6240\u6709\u540e\u7aef\u80fd\u529b\u6e05\u5355\u9879\u90fd\u6709 Rust \u5b9e\u73b0\u3001\u771f\u5b9e\u5165\u53e3\u9a8c\u6536\u53ca\u65e7\u5b9e\u73b0\u9000\u5f79\u8bc1\u636e\u3002\n- \u9ed8\u8ba4\u5b89\u88c5\u3001\u542f\u52a8\u3001\u5347\u7ea7\u548c\u6838\u5fc3\u5de5\u4f5c\u6d41\u4e0d\u4f9d\u8d56 Node \u540e\u7aef\u4ea7\u7269\u3002\n- \u5f53\u524d\u5019\u9009\u901a\u8fc7\u72ec\u7acb\u5ba1\u6838\u3001\u771f\u5b9e\u73af\u5883\u9a8c\u6536\u3001\u8de8\u5e73\u53f0\u6253\u5305\u68c0\u67e5\u53ca\u5fc5\u8981 CI\u3002\n- \u6240\u6709\u53d8\u66f4\u901a\u8fc7\u53d7\u4fdd\u62a4 PR \u4ea4\u4ed8\uff1b\u751f\u4ea7\u90e8\u7f72\u4e0e\u6e90\u7801\u5b8c\u6210\u5206\u522b\u8bb0\u5f55\u3002\n\n## \u5b9e\u65bd\u987a\u5e8f\n\n| \u9636\u6bb5 | \u5b9e\u65bd\u5185\u5bb9 | \u9000\u51fa\u6761\u4ef6 |\n|---|---|---|\n| 1. \u6e05\u5355\u4e0e\u7ea6\u675f | \u57fa\u4e8e\u6700\u65b0 main \u91cd\u5efa HTTP\u3001WebSocket\u3001\u9274\u6743\u3001\u540e\u53f0\u4efb\u52a1\u3001\u8fc1\u79fb\u3001CLI/MCP\u3001\u542f\u52a8\u548c\u6062\u590d\u6e05\u5355\uff1b\u5173\u8054\u8fd1\u671f\u5df2\u5408\u5165\u6210\u679c\u53ca\u672a\u5408\u5165\u5de5\u4f5c | \u6ca1\u6709\u672a\u5206\u7c7b\u80fd\u529b\uff1bCI \u80fd\u963b\u6b62\u65b0\u589e Node \u540e\u7aef\u804c\u8d23 |\n| 2. \u539f\u751f\u9274\u6743 | Rust \u63a5\u7ba1\u4f1a\u8bdd\u3001Cookie\u3001API Key\u3001\u8bbe\u5907\u6388\u6743\u3001OAuth \u56de\u8c03\u3001\u7ec4\u7ec7\u6743\u9650\u53ca\u64a4\u9500\u68c0\u67e5 | \u73b0\u6709\u8d26\u53f7\u3001\u51ed\u636e\u548c\u4f1a\u8bdd\u517c\u5bb9\uff1b\u65e0\u9700 Node \u63d0\u4f9b\u8eab\u4efd\u5224\u65ad |\n| 3. \u6570\u636e\u5e93\u4e0e\u751f\u547d\u5468\u671f | \u5c06 Rust \u53ea\u8bfb\u8fc1\u79fb\u9884\u68c0\u6269\u5c55\u4e3a\u5b8c\u6574\u8fc1\u79fb\u6267\u884c\u5668\uff1b\u63a5\u7ba1 PostgreSQL \u542f\u505c\u3001\u5907\u4efd\u3001\u6062\u590d\u4e0e\u542f\u52a8\u534f\u8c03 | Rust \u72ec\u5360\u8fc1\u79fb\u6267\u884c\uff1b\u65e7\u5e93\u5347\u7ea7\u3001\u5e76\u53d1\u542f\u52a8\u548c\u5931\u8d25\u6062\u590d\u901a\u8fc7 |\n| 4. \u5168\u90e8\u4e1a\u52a1\u63a5\u53e3 | \u6309\u9886\u57df\u8fc1\u79fb\u5b8c\u6574\u8bfb\u5199\u6d41\u7a0b\uff0c\u5e76\u76f4\u63a5\u6302\u8f7d\u5230 Rust \u516c\u5171\u5165\u53e3\uff1b\u590d\u7528\u5df2\u5b8c\u6210\u7684 Rust \u5b9e\u73b0 | \u6bcf\u4e2a\u9886\u57df\u7684\u67e5\u8be2\u3001\u5199\u5165\u3001\u5ba1\u8ba1\u3001\u526f\u4f5c\u7528\u548c\u6062\u590d\u5747\u95ed\u73af\uff0c\u65e7 Node \u8def\u5f84\u9000\u5f79 |\n| 5. \u6267\u884c\u4e0e\u540e\u53f0\u4efb\u52a1 | \u8fc1\u79fb Agent \u6267\u884c\u7f16\u6392\u3001Chat\u3001Automation\u3001heartbeat\u3001\u961f\u5217\u3001\u8c03\u5ea6\u5668\u3001\u96c6\u6210\u3001analytics \u548c managed MCP \u540e\u7aef | \u5355\u4e00\u4efb\u52a1\u6240\u6709\u8005\uff1b\u53d6\u6d88\u3001\u91cd\u8bd5\u3001\u5d29\u6e83\u6062\u590d\u548c\u91cd\u542f\u4e0d\u91cd\u590d\u6267\u884c |\n| 6. CLI/MCP \u4e0e\u9ed8\u8ba4\u5207\u6362 | \u7b2c\u4e00\u65b9 CLI/MCP \u4f7f\u7528 Rust \u5b9e\u73b0\uff1b\u684c\u9762\u4e0e\u72ec\u7acb\u670d\u52a1\u9ed8\u8ba4\u542f\u52a8 Rust\uff1b\u79fb\u9664\u4ee3\u7406\u548c Node \u540e\u7aef\u4f9d\u8d56 | \u79fb\u8d70 Node \u540e\u7aef\u4ea7\u7269\u540e\uff0c\u5b8c\u6574\u5b89\u88c5\u4e0e\u6838\u5fc3\u5de5\u4f5c\u6d41\u4ecd\u901a\u8fc7 |\n\n\u9636\u6bb5 2\u30013 \u4e0e\u72ec\u7acb\u4e1a\u52a1\u9886\u57df\u53ef\u5e76\u884c\u3002\u4e1a\u52a1\u9886\u57df\u6309\u201c\u7ec4\u7ec7/\u8d44\u6e90/Agent \u2192 Project/Goal \u2192 Issue/\u5ba1\u6279/\u9884\u7b97/Review \u2192 \u6267\u884c/Chat/Automation \u2192 \u96c6\u6210\u4e0e\u6062\u590d\u201d\u63a8\u8fdb\uff1b\u5df2\u6709 Rust \u80fd\u529b\u76f4\u63a5\u590d\u7528\uff0c\u8865\u9f50\u5269\u4f59\u804c\u8d23\u3002\n\n\u516c\u5171\u5165\u53e3\u6700\u7ec8\u5207\u6362\u5fc5\u987b\u7b49\u5f85\u539f\u751f\u9274\u6743\u5b8c\u6210\u3002\u540e\u53f0\u4efb\u52a1\u5207\u6362\u5fc5\u987b\u7b49\u5f85\u5bf9\u5e94\u4e8b\u52a1\u548c\u6301\u4e45\u5316\u72b6\u6001\u673a\u5b8c\u6210\uff0c\u7981\u6b62\u4e24\u5957\u5b9e\u73b0\u540c\u65f6\u62e5\u6709\u5199\u5165\u6216\u8c03\u5ea6\u6743\u3002\n\n## \u67b6\u6784\u4e0e\u517c\u5bb9\u7b56\u7565\n\n- \u91c7\u7528\u73b0\u6709 Actix\u3001Tokio\u3001SQLx \u57fa\u7840\uff0c\u7ec4\u7ec7\u4e3a\u6a21\u5757\u5316 Rust \u540e\u7aef\uff1b\u6309\u9886\u57df\u62c6\u5206\u6a21\u5757\uff0c\u907f\u514d\u7ee7\u7eed\u6269\u5927\u96c6\u4e2d\u5f0f\u670d\u52a1\u6587\u4ef6\u3002\n- \u4fdd\u6301\u73b0\u6709\u516c\u5f00 API \u8def\u5f84\u3001\u8bf7\u6c42\u54cd\u5e94\u3001\u9519\u8bef\u7801\u3001\u6d41\u5f0f\u534f\u8bae\u3001CLI \u547d\u4ee4\u53ca MCP \u5de5\u5177\u5951\u7ea6\u3002TypeScript \u5ba2\u6237\u7aef\u7c7b\u578b\u548c\u63cf\u8ff0\u7b26\u901a\u8fc7\u5951\u7ea6\u751f\u6210\u6216\u4e00\u81f4\u6027\u68c0\u67e5\u4fdd\u6301\u540c\u6b65\u3002\n- \u4fdd\u7559 PostgreSQL \u6570\u636e\u3001\u5386\u53f2 SQL\u3001\u8fc1\u79fb\u987a\u5e8f\u548c journal \u517c\u5bb9\u6027\uff0c\u4e0d\u91cd\u7f6e\u5b9e\u4f8b\u3001\u4e0d\u5efa\u7acb\u7b2c\u4e8c\u5957\u72ec\u7acb\u8fc1\u79fb\u5386\u53f2\u3002\n- \u6bcf\u4e2a\u5199\u5165\u5207\u7247\u540c\u65f6\u8fc1\u79fb\u6821\u9a8c\u3001\u6743\u9650\u3001\u4e8b\u52a1\u3001activity/audit\u3001outbox\u3001\u5e42\u7b49\u53ca\u76f8\u5173\u526f\u4f5c\u7528\uff1b\u4e0d\u80fd\u53ea\u628a SQL \u642c\u5230 Rust\u3002\n- \u8fc7\u6e21\u671f\u5141\u8bb8\u660e\u786e\u767b\u8bb0\u7684 Node \u6865\u63a5\uff0c\u4f46\u5df2\u8fc1\u79fb\u80fd\u529b\u5931\u8d25\u65f6\u4e0d\u5f97\u56de\u9000\u5230 Node\u3002\u6700\u7ec8\u5220\u9664\u6865\u63a5\u3001\u4ee3\u7406\u3001\u65e7\u4e1a\u52a1\u5b9e\u73b0\u53ca\u5176\u8fd0\u884c\u4f9d\u8d56\u3002\n- \u4fdd\u7559\u73b0\u6709\u4f1a\u8bdd\u4e0e\u52a0\u5bc6\u6570\u636e\u517c\u5bb9\uff1b\u5b89\u5168\u7f3a\u9677\u4e0d\u4f5c\u4e3a\u5fc5\u987b\u590d\u5236\u7684\u65e7\u884c\u4e3a\uff0c\u4fee\u590d\u9700\u5355\u72ec\u8bb0\u5f55\u5e76\u9a8c\u8bc1\u3002\n- \u66f4\u65b0\u5f00\u53d1\u89c4\u8303\u548c CI\uff1a\u65b0\u589e\u540e\u7aef\u4e1a\u52a1\u53ea\u80fd\u8fdb\u5165 Rust\uff1b\u65e2\u6709 Node \u8fc1\u79fb\u503a\u52a1\u53ea\u80fd\u51cf\u5c11\uff0c\u517c\u5bb9\u4ee3\u7801\u5fc5\u987b\u5173\u8054\u5177\u4f53\u9000\u5f79\u9879\u3002\n\n## \u9a8c\u8bc1\u4e0e\u4ea4\u4ed8\n\n\u6bcf\u6279\u6267\u884c\u56fa\u5b9a\u6d41\u7a0b\uff1a**\u5b9e\u73b0\u4e0e\u4f5c\u8005\u68c0\u67e5 \u2192 \u72ec\u7acb\u9636\u6bb5\u5ba1\u6838 \u2192 \u51bb\u7ed3\u5019\u9009 \u2192 \u72ec\u7acb\u771f\u5b9e\u9a8c\u6536 \u2192 \u6700\u7ec8\u5ba1\u6838 \u2192 PR \u4e0e CI**\u3002\u9a8c\u6536\u7ed1\u5b9a\u6e90\u7801\u3001\u6784\u5efa\u4ea7\u7269\u3001\u8fd0\u884c\u5b9e\u4f8b\u548c\u6d4b\u8bd5\u6570\u636e\u8eab\u4efd\uff1b\u76f8\u5173\u5185\u5bb9\u6539\u53d8\u540e\u91cd\u65b0\u9a8c\u8bc1\u3002\n\n\u91cd\u70b9\u8986\u76d6\uff1a\n\n- \u8de8\u7ec4\u7ec7\u8bbf\u95ee\u3001\u79c1\u6709 Chat\u3001\u4f1a\u8bdd\u64a4\u9500\u3001\u8bbe\u5907\u64a4\u9500\u3001\u6743\u9650\u53d8\u66f4\u4e0e\u5e76\u53d1\u7ade\u6001\u3002\n- \u5927\u6570\u636e\u91cf\u3001\u5206\u9875\u3001\u65f6\u533a\u3001\u6df1\u5c42 JSON\u3001\u5386\u53f2\u6570\u636e\u53ca\u5b8c\u6574\u54cd\u5e94\u517c\u5bb9\u3002\n- \u4e8b\u52a1\u56de\u6eda\u3001\u91cd\u590d\u8bf7\u6c42\u3001\u4e22\u5931\u54cd\u5e94\u540e\u91cd\u8bd5\u3001\u65e7\u5199\u5165\u8005\u9694\u79bb\u548c\u5ba1\u8ba1\u4e00\u81f4\u6027\u3002\n- WebSocket/SSE \u65ad\u8fde\u91cd\u8fde\u3001\u80cc\u538b\u3001\u53d6\u6d88\u3001\u5b50\u8fdb\u7a0b\u9000\u51fa\u53ca\u5d29\u6e83\u6062\u590d\u3002\n- \u65e7\u7248\u672c\u6570\u636e\u5e93\u5347\u7ea7\u3001\u8fc1\u79fb\u9501\u7ade\u4e89\u3001\u5907\u4efd\u5931\u8d25\u3001\u8fc1\u79fb\u4e2d\u65ad\u548c\u53ef\u6062\u590d\u56de\u6eda\u3002\n- \u6d4f\u89c8\u5668\u6838\u5fc3\u6d41\u7a0b\u3001CLI/MCP \u540c\u7b49\u64cd\u4f5c\u3001\u771f\u5b9e\u8fd0\u884c\u53ca\u6253\u5305\u540e\u7684\u5b89\u88c5\u542f\u52a8\u3002\n\n\u8de8\u5305\u53d8\u66f4\u8fd0\u884c\u4ed3\u5e93\u5b8c\u6574\u57fa\u7ebf\uff1b\u6d89\u53ca\u542f\u52a8\u3001\u8fc1\u79fb\u548c\u6253\u5305\u65f6\u8fd0\u884c `pnpm desktop:verify`\u3002\u6700\u7ec8\u589e\u52a0\u72ec\u7acb\u7684 **\u65e0 Node \u540e\u7aef\u9a8c\u6536**\uff1a\u79fb\u9664\u540e\u7aef JS \u4ea7\u7269\uff0c\u68c0\u67e5\u8fdb\u7a0b\u6811\u548c\u76d1\u542c\u8005\uff0c\u5b8c\u6210\u6838\u5fc3\u4e1a\u52a1\u95ed\u73af\uff0c\u5e76\u8bc1\u660e\u6ca1\u6709\u8c03\u7528\u65e7\u670d\u52a1\u3002\n\n## \u8c03\u5ea6\u4e0e\u9ed8\u8ba4\u7ea6\u5b9a\n\n- \u5f53\u524d\u804a\u5929\u8d1f\u8d23\u603b\u4f53\u8c03\u5ea6\uff1b\u5b50\u4ee3\u7406\u7edf\u4e00\u4f7f\u7528 `gpt-6-luna`\u3001`xhigh`\uff0c\u5206\u522b\u8d1f\u8d23\u8fb9\u754c\u6e05\u6670\u7684\u5b9e\u73b0\u3001\u5ba1\u6838\u548c\u9a8c\u6536\u3002\n- \u4f7f\u7528\u5df2\u521b\u5efa\u7684\u72ec\u7acb\u5de5\u4f5c\u533a\uff0c\u4fdd\u7559\u539f\u5de5\u4f5c\u533a\u3001\u7528\u6237\u6570\u636e\u53ca\u5176\u4ed6\u4efb\u52a1\u4fee\u6539\u3002\n- \u5148\u6838\u5b9e\u65e7 PR \u548c\u5206\u652f\u662f\u5426\u53ef\u590d\u7528\uff0c\u518d\u5206\u6d3e\u91cd\u53e0\u9886\u57df\uff0c\u907f\u514d\u91cd\u590d\u5b9e\u73b0\u3002\n- \u5ef6\u7eed\u539f\u603b\u8ba1\u5212\uff0c\u5b9e\u65bd\u65f6\u66f4\u65b0\u6743\u5a01\u6e05\u5355\u548c\u4ea4\u4ed8\u8bb0\u5f55\uff1b\u5386\u53f2\u9a8c\u6536\u4fdd\u7559\uff0c\u4f46\u4e0d\u80fd\u66ff\u4ee3\u5f53\u524d\u5019\u9009\u8bc1\u636e\u3002\n- \u4ee5\u5df2\u9000\u5f79\u7684\u540e\u7aef\u804c\u8d23\u548c\u5b8c\u6574\u5de5\u4f5c\u6d41\u8861\u91cf\u5b8c\u6210\u5ea6\uff0c\u4e0d\u4ee5 Rust \u4ee3\u7801\u91cf\u3001\u63a5\u53e3\u6570\u91cf\u6216\u4f30\u7b97\u767e\u5206\u6bd4\u5ba3\u5e03\u5b8c\u6210\u3002\n- \u5f53\u524d\u8ba1\u5212\u6a21\u5f0f\u53ea\u5b8c\u6210\u65b9\u6848\uff1b\u4ee3\u7801\u4fee\u6539\u3001\u63d0\u4ea4\u548c\u8fd0\u884c\u73af\u5883\u5207\u6362\u5728\u8fdb\u5165\u6267\u884c\u6a21\u5f0f\u540e\u8fdb\u884c\u3002\n\n",
+    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# Rudder 全 Rust 后端迁移与 Node 退役\n\n## 目标与完成标准\n\n完成所有 Rudder 后端接口、业务逻辑和运行职责的 Rust 迁移。最终产品直接启动 Rust 后端，不再通过 Node 提供鉴权、业务处理、数据库迁移、调度或恢复能力。新增后端功能从本轮开始统一使用 Rust。\n\n保留 React 前端、Electron 桌面壳、构建工具及用户选择的外部 CLI/MCP；这些组件不能隐藏第一方 Node 后端职责。\n\n**完成必须同时满足：**\n\n- 所有后端能力清单项都有 Rust 实现、真实入口验收及旧实现退役证据。\n- 默认安装、启动、升级和核心工作流不依赖 Node 后端产物。\n- 当前候选通过独立审核、真实环境验收、跨平台打包检查及必要 CI。\n- 所有变更通过受保护 PR 交付；生产部署与源码完成分别记录。\n\n## 实施顺序\n\n| 阶段 | 实施内容 | 退出条件 |\n|---|---|---|\n| 1. 清单与约束 | 基于最新 main 重建 HTTP、WebSocket、鉴权、后台任务、迁移、CLI/MCP、启动和恢复清单；关联近期已合入成果及未合入工作 | 没有未分类能力；CI 能阻止新增 Node 后端职责 |\n| 2. 原生鉴权 | Rust 接管会话、Cookie、API Key、设备授权、OAuth 回调、组织权限及撤销检查 | 现有账号、凭据和会话兼容；无需 Node 提供身份判断 |\n| 3. 数据库与生命周期 | 将 Rust 只读迁移预检扩展为完整迁移执行器；接管 PostgreSQL 启停、备份、恢复与启动协调 | Rust 独占迁移执行；旧库升级、并发启动和失败恢复通过 |\n| 4. 全部业务接口 | 按领域迁移完整读写流程，并直接挂载到 Rust 公共入口；复用已完成的 Rust 实现 | 每个领域的查询、写入、审计、副作用和恢复均闭环，旧 Node 路径退役 |\n| 5. 执行与后台任务 | 迁移 Agent 执行编排、Chat、Automation、heartbeat、队列、调度器、集成、analytics 和 managed MCP 后端 | 单一任务所有者；取消、重试、崩溃恢复和重启不重复执行 |\n| 6. CLI/MCP 与默认切换 | 第一方 CLI/MCP 使用 Rust 实现；桌面与独立服务默认启动 Rust；移除代理和 Node 后端依赖 | 移走 Node 后端产物后，完整安装与核心工作流仍通过 |\n\n阶段 2、3 与独立业务领域可并行。业务领域按“组织/资源/Agent → Project/Goal → Issue/审批/预算/Review → 执行/Chat/Automation → 集成与恢复”推进；已有 Rust 能力直接复用，补齐剩余职责。\n\n公共入口最终切换必须等待原生鉴权完成。后台任务切换必须等待对应事务和持久化状态机完成，禁止两套实现同时拥有写入或调度权。\n\n## 架构与兼容策略\n\n- 采用现有 Actix、Tokio、SQLx 基础，组织为模块化 Rust 后端；按领域拆分模块，避免继续扩大集中式服务文件。\n- 保持现有公开 API 路径、请求响应、错误码、流式协议、CLI 命令及 MCP 工具契约。TypeScript 客户端类型和描述符通过契约生成或一致性检查保持同步。\n- 保留 PostgreSQL 数据、历史 SQL、迁移顺序和 journal 兼容性，不重置实例、不建立第二套独立迁移历史。\n- 每个写入切片同时迁移校验、权限、事务、activity/audit、outbox、幂等及相关副作用；不能只把 SQL 搬到 Rust。\n- 过渡期允许明确登记的 Node 桥接，但已迁移能力失败时不得回退到 Node。最终删除桥接、代理、旧业务实现及其运行依赖。\n- 保留现有会话与加密数据兼容；安全缺陷不作为必须复制的旧行为，修复需单独记录并验证。\n- 更新开发规范和 CI：新增后端业务只能进入 Rust；既有 Node 迁移债务只能减少，兼容代码必须关联具体退役项。\n\n## 验证与交付\n\n每批执行固定流程：**实现与作者检查 → 独立阶段审核 → 冻结候选 → 独立真实验收 → 最终审核 → PR 与 CI**。验收绑定源码、构建产物、运行实例和测试数据身份；相关内容改变后重新验证。\n\n重点覆盖：\n\n- 跨组织访问、私有 Chat、会话撤销、设备撤销、权限变更与并发竞态。\n- 大数据量、分页、时区、深层 JSON、历史数据及完整响应兼容。\n- 事务回滚、重复请求、丢失响应后重试、旧写入者隔离和审计一致性。\n- WebSocket/SSE 断连重连、背压、取消、子进程退出及崩溃恢复。\n- 旧版本数据库升级、迁移锁竞争、备份失败、迁移中断和可恢复回滚。\n- 浏览器核心流程、CLI/MCP 同等操作、真实运行及打包后的安装启动。\n\n跨包变更运行仓库完整基线；涉及启动、迁移和打包时运行 `pnpm desktop:verify`。最终增加独立的 **无 Node 后端验收**：移除后端 JS 产物，检查进程树和监听者，完成核心业务闭环，并证明没有调用旧服务。\n\n## 调度与默认约定\n\n- 当前聊天负责总体调度；子代理统一使用 `gpt-6-luna`、`xhigh`，分别负责边界清晰的实现、审核和验收。\n- 使用已创建的独立工作区，保留原工作区、用户数据及其他任务修改。\n- 先核实旧 PR 和分支是否可复用，再分派重叠领域，避免重复实现。\n- 延续原总计划，实施时更新权威清单和交付记录；历史验收保留，但不能替代当前候选证据。\n- 以已退役的后端职责和完整工作流衡量完成度，不以 Rust 代码量、接口数量或估算百分比宣布完成。\n- 当前计划模式只完成方案；代码修改、提交和运行环境切换在进入执行模式后进行。\n\n",
     "corrections": [],
     "non_goals": [
       "Rewrite React or Electron renderer",
@@ -258,11 +258,11 @@
     }
   },
   "current_execution": {
-    "updated_at": "2026-10-26T12:22:37.271531+00:00",
-    "observed_main": "8b91adb1e8cc2e9e4e3597239af6fbe9692141e7",
-    "branch": "codex/rust-issue-attachments-20261026",
-    "status": "Attachment/UTC/Automation/FinanceEvents combined source-stage accepted; author qualification and frozen acceptance pending",
-    "scope": "Four attachment operations, three Automation reads and FinanceEvents GET/HEAD, plus approved canonical UTC serialization; reuse existing Rust projections and storage.",
+    "updated_at": "2026-10-28T00:30:46.826242+00:00",
+    "observed_main": "2e1c977a10b49c7d79a0a339c06e51baee1e0937",
+    "branch": "codex/rust-agent-execution-core-20261028",
+    "status": "Generic Agent execution cutover author validation in progress; independent final acceptance and publication pending",
+    "scope": "Generic Agent wake/invoke/Stop/retry, all-runtime new Goal and native Issue wake producers, native live events, signed-run managed MCP and Desktop MCP, schema-compatible 188th migration. Remaining business domains and global Node retirement remain open.",
     "recent_source_deliveries": [
       {
         "pr": 305,
@@ -332,6 +332,36 @@
         "independent_acceptance": "PASS",
         "final_review": "/private/tmp/rudder-org-write-20261026/combined-final-r1/p1-delete-fix-r1/final-merge-review-r1.md",
         "evidence": "/private/tmp/rudder-org-write-20261026/combined-final-r1/p1-delete-fix-r1/pr386-merge-delivery-r1.json",
+        "production_or_installed_release": false
+      },
+      {
+        "pr": 392,
+        "state": "merged_protected_pr",
+        "merge_sha": "d8efcd0c6e813cd8b9fe854f3e52e37f2ddc3d58",
+        "scope": "Secrets four and Calendar six native public writes; remaining lifecycle debt explicit",
+        "independent_acceptance": "PASS",
+        "final_review": "accept",
+        "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/combined10-writes-final-r1/merge-receipt.json",
+        "production_or_installed_release": false
+      },
+      {
+        "pr": 393,
+        "state": "merged_protected_pr",
+        "merge_sha": "cd59573cb3e4b54181c9655be7db059e2fd47859",
+        "scope": "Automation seven management writes; execution/fire/scheduler remains migration debt",
+        "independent_acceptance": "PASS",
+        "final_review": "accept",
+        "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/automation393-ci-repair-r1/merge-receipt.json",
+        "production_or_installed_release": false
+      },
+      {
+        "pr": 395,
+        "state": "merged_protected_pr",
+        "merge_sha": "2e1c977a10b49c7d79a0a339c06e51baee1e0937",
+        "scope": "Label create/update/delete native public writes",
+        "independent_acceptance": "PASS",
+        "final_review": "accept",
+        "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/label-public-writes-final-r1/merge-receipt.json",
         "production_or_installed_release": false
       }
     ],
@@ -1091,7 +1121,7 @@
     },
     "ci_packaging_exception_20261026": {
       "approved": true,
-      "human_answer": "\u672c\u8f6e\u7a7a\u95f4\u4e0d\u8db3\u65f6\u7edf\u4e00\u7528 CI\uff08\u63a8\u8350\uff09",
+      "human_answer": "本轮空间不足时统一用 CI（推荐）",
       "source_question_id": "call_c3400e7f34a9451eb0e4dd148220afcd",
       "scope": "This Rust migration episode: when local disk is insufficient, the corresponding protected PR full CI replaces local pnpm desktop:verify, including full repository tests/build, cross-platform Rust and packaged Desktop smoke.",
       "retained_gates": [
@@ -1228,6 +1258,30 @@
       "author_report": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-27/combined22-qualification-r1/final-author-report.md",
       "author_manifest_sha256": "5e4d9012b18d3061c5b6f655a26a0d9f9b9166151389e289f7403a532303a619",
       "isolation_iteration": "AGENTS requires distinct short canonical TMPDIR per concurrent verifier; exact PG smart-shutdown collision retained, contaminated evidence invalidated, commands recovered serially in isolated roots."
+    },
+    "native_agent_execution_batch_20261028": {
+      "status": "independent_backend_and_packaged_lifecycle_PAV_PASS; final_publication_review_pending",
+      "acceptance_packet": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/acceptance-packet.json",
+      "source_checkpoint": "dff3161bfb05c96a97b0738cc0a69cddea0a5c49 runtime-equivalent to9e33185; final ledger-only checkpoint",
+      "author_evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/segmented-build-typecheck-reconciliation.json",
+      "remaining": "Final independent publication review, protected PR and exact-head CI. Global Rust migration remains incomplete.",
+      "packaged_verification": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/segmented-desktop-verification-final.json",
+      "backend_pav": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/pav-r3-broker-extension/report.md",
+      "packaged_pav": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/agent-execution-core-source-r1/pav-r3/packaged-synthetic-auth-runtime-pav-r1.json",
+      "baseline_limits": "17 pre-existing lint findings in unchanged-main files; original build/test/package failures retained with successful focused recovery. Initial full-only updater failure cause remains unestablished; same-candidate full scenario recovered without weakening assertions.",
+      "production_released": false
+    },
+    "delivered_pr394_20261028": {
+      "state": "Merged after independent final review and exact-head CI",
+      "pr": "https://github.com/Undertone0809/rudder/pull/394",
+      "head": "4552b3c679d8473c44f55dcb27d18c44a4c6984d",
+      "merge_commit": "e070d9cf37f4ad8a9c779a38ac4033ad3f704a44",
+      "scope": "Messenger public writes; independent Messenger21 plus existing Automation7 and Label3 regressions",
+      "ci": "21 success; 1 expected conditional skip; 0 pending or failed",
+      "evidence": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/messenger394-label-integration-r1/merge-receipt-4552.json",
+      "production_released": false,
+      "installed_app_replaced": false,
+      "global_complete": false
     }
   }
 }

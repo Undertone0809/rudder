@@ -6,6 +6,7 @@ import * as localAccountRoutes from "../routes/local-account-auth.js";
 const mocks = vi.hoisted(() => ({
   organizationRoutes: vi.fn(), projectRoutes: vi.fn(), goalRoutes: vi.fn(),
   approvalRoutes: vi.fn(), issueRoutes: vi.fn(),
+  browserRoutes: vi.fn(), computerRoutes: vi.fn(),
   localAccountAuthRoutes: vi.fn(), otherRoute: vi.fn(), rudderPluginService: vi.fn(),
 }));
 
@@ -17,10 +18,10 @@ vi.mock("../routes/app-builder.js", () => ({ appBuilderRoutes: mocks.otherRoute 
 vi.mock("../routes/approvals.js", () => ({ approvalRoutes: mocks.approvalRoutes }));
 vi.mock("../routes/assets.js", () => ({ assetRoutes: mocks.otherRoute }));
 vi.mock("../routes/automations.js", () => ({ automationRoutes: mocks.otherRoute }));
-vi.mock("../routes/browser.js", () => ({ browserRoutes: mocks.otherRoute }));
+vi.mock("../routes/browser.js", () => ({ browserRoutes: mocks.browserRoutes }));
 vi.mock("../routes/calendar.js", () => ({ calendarRoutes: mocks.otherRoute }));
 vi.mock("../routes/chats.js", () => ({ chatRoutes: mocks.otherRoute }));
-vi.mock("../routes/computer.js", () => ({ computerRoutes: mocks.otherRoute }));
+vi.mock("../routes/computer.js", () => ({ computerRoutes: mocks.computerRoutes }));
 vi.mock("../routes/costs.js", () => ({ costRoutes: mocks.otherRoute }));
 vi.mock("../routes/dashboard.js", () => ({ dashboardRoutes: mocks.otherRoute }));
 vi.mock("../routes/execution-workspaces.js", () => ({ runWorkspaceRoutes: mocks.otherRoute }));
@@ -58,6 +59,10 @@ beforeEach(() => {
   mocks.approvalRoutes.mockImplementation(() => Router());
   mocks.issueRoutes.mockReset();
   mocks.issueRoutes.mockImplementation(() => Router());
+  mocks.browserRoutes.mockReset();
+  mocks.browserRoutes.mockImplementation(() => Router());
+  mocks.computerRoutes.mockReset();
+  mocks.computerRoutes.mockImplementation(() => Router());
   mocks.localAccountAuthRoutes.mockReset();
   mocks.localAccountAuthRoutes.mockImplementation(() => Router());
   mocks.otherRoute.mockReset();
@@ -67,6 +72,21 @@ beforeEach(() => {
 });
 
 describe("registerApiRoutes", () => {
+  it("retires private Node Browser and Computer routes under native identity authority", () => {
+    const options = {
+      uiMode: "none", serverPort: 3100, storageService: {}, deploymentMode: "local_trusted",
+      deploymentExposure: "private", allowedHostnames: [], bindHost: "127.0.0.1",
+      authReady: true, companyDeletionEnabled: false,
+    };
+    registerApiRoutes({} as never, {
+      ...options, rustPublicIngress: { identityAuth: {} },
+    } as never);
+    expect(mocks.browserRoutes).not.toHaveBeenCalled();
+    expect(mocks.computerRoutes).not.toHaveBeenCalled();
+    registerApiRoutes({} as never, { ...options, rustPublicIngress: {} } as never);
+    expect(mocks.browserRoutes).toHaveBeenCalledOnce();
+    expect(mocks.computerRoutes).toHaveBeenCalledOnce();
+  });
   it("passes native route gates only when public ingress is configured", () => {
     const baseOptions = {
       uiMode: "none", serverPort: 3100, storageService: {}, deploymentMode: "local_trusted",

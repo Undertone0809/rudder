@@ -2625,6 +2625,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "time",
+ "url",
  "uuid",
 ]
 
@@ -3078,6 +3079,8 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "ring",
+ "rudder-agent-cli-core",
+ "rudder-agent-request-planner",
  "rudder-archive-core",
  "rudder-auth-core",
  "rudder-claude-code",
@@ -3085,6 +3088,7 @@ dependencies = [
  "rudder-d1-persistence",
  "rudder-native-chat-executor",
  "rudder-native-process-transport",
+ "rudder-native-protocol",
  "rudder-opencode-native",
  "rudder-organization-mutation-core",
  "rudder-project-goal-link-core",

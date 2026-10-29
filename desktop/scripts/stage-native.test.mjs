@@ -8,7 +8,7 @@ import { stageDesktopNative } from "./stage-native.mjs";
 const script = readFileSync(new URL("./stage-native.mjs", import.meta.url), "utf8");
 const rootPackage = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
-const nativeNames = ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner", "rudder-server-foundation"];
+const nativeNames = ["rudder-process-host", "rudder-native", "rudder-cli", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner", "rudder-server-foundation"];
 
 function macho(machine = 0x01000007) {
   const bytes = Buffer.alloc(32);
@@ -62,6 +62,7 @@ describe("Desktop native staging contract", () => {
     for (const binary of [
       "rudder-process-host",
       "rudder-native",
+      "rudder-cli",
       "rudder-update-helper",
       "migration-preflight",
       "migration-apply",
@@ -114,7 +115,7 @@ describe("Desktop qualified foundation reuse", () => {
           if (targetIndex !== -1) expect(args[targetIndex + 1]).toBe(target);
           const profile = path.join(root, "native", "target", ...(targetIndex !== -1 ? [target] : []), "release");
           await fs.mkdir(profile, { recursive: true });
-          for (const name of nativeNames.slice(0, 6)) {
+          for (const name of nativeNames.filter((name) => name !== "rudder-server-foundation")) {
             await fs.writeFile(path.join(profile, `${name}${extension}`), `release-version ${name}`);
           }
         } });
@@ -124,7 +125,7 @@ describe("Desktop qualified foundation reuse", () => {
     });
   }
 
-  it("preserves the default six-binary build when no artifact directory is provided", async () => {
+  it("preserves the complete native binary build when no artifact directory is provided", async () => {
     await withStagingFixture(async ({ options, calls, targetRoot }) => {
       await stageDesktopNative({ ...options, artifactDir: null });
       expect(calls).toHaveLength(1);
@@ -170,15 +171,15 @@ describe("Desktop qualified foundation reuse", () => {
     });
   });
 
-  it("reuses only foundation while explicitly building all six versioned binaries", async () => {
+  it("reuses only foundation while explicitly building all seven versioned binaries", async () => {
     await withStagingFixture(async ({ options, calls, artifactDir, target, targetRoot }) => {
       await fs.writeFile(path.join(artifactDir, target, "migration-preflight"), "base-version preflight must not be staged");
       await fs.writeFile(path.join(artifactDir, target, "migration-apply"), "base-version apply must not be staged");
       await stageDesktopNative(options);
       expect(calls).toHaveLength(1);
-      expect(calls[0].args.filter((_, index, args) => args[index - 1] === "--bin")).toEqual(nativeNames.slice(0, 6));
+      expect(calls[0].args.filter((_, index, args) => args[index - 1] === "--bin")).toEqual(nativeNames.filter((name) => name !== "rudder-server-foundation"));
       expect(calls[0].args.filter((_, index, args) => args[index - 1] === "-p")).toEqual([
-        "rudder-process-host", "rudder-native", "rudder-update-helper", "rudder-migration-service", "rudder-postgres-lifecycle",
+        "rudder-process-host", "rudder-native", "rudder-cli", "rudder-update-helper", "rudder-migration-service", "rudder-postgres-lifecycle",
       ]);
       expect(await fs.readFile(path.join(targetRoot, "rudder-server-foundation"))).toEqual(macho());
       expect(await fs.readFile(path.join(targetRoot, "migration-preflight"), "utf8")).toBe("release-version migration-preflight");
@@ -271,5 +272,19 @@ describe("Desktop qualified foundation reuse", () => {
       } });
       expect(await fs.readFile(path.join(targetRoot, "rudder-server-foundation"))).toEqual(macho());
     });
+  });
+});
+
+
+it("refuses to replace Desktop staging when the required Rust Agent CLI is missing", async () => {
+  await withStagingFixture(async ({ root, previous, options }) => {
+    await expect(stageDesktopNative({ ...options, runCommand: async () => {
+      const profile = path.join(root, "native", "target", "release");
+      await fs.mkdir(profile, { recursive: true });
+      for (const name of nativeNames.filter(name => name !== "rudder-cli" && name !== "rudder-server-foundation")) {
+        await fs.writeFile(path.join(profile, name), `fixture ${name}`);
+      }
+    } })).rejects.toThrow(/rudder-cli/u);
+    expect(await fs.readFile(previous, "utf8")).toBe("preserve until every source is ready");
   });
 });

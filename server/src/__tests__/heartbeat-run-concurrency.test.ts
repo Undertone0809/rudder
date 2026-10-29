@@ -1138,7 +1138,7 @@ describe("heartbeat run concurrency", () => {
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(new Set(["issue:a", "issue:b"]));
   });
 
-  it("rechecks native Goal ownership after a legacy run's stale capacity snapshot", async () => {
+  it.each([true, false])("rechecks native heartbeat ownership after a stale capacity snapshot (Goal: %s)", async (withGoal) => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const legacyRunId = await seedQueuedRun({
       orgId,
@@ -1150,7 +1150,7 @@ describe("heartbeat run concurrency", () => {
     const goalId = randomUUID();
     const nativeWakeupRequestId = randomUUID();
     const nativeRunId = randomUUID();
-    await db.insert(goals).values({
+    if (withGoal) await db.insert(goals).values({
       id: goalId,
       orgId,
       title: "Native owner race",
@@ -1221,8 +1221,8 @@ describe("heartbeat run concurrency", () => {
           status: "running",
           startedAt: new Date(),
           wakeupRequestId: nativeWakeupRequestId,
-          goalId,
-          contextSnapshot: { goalId, wakeReason: "goal_started" },
+          goalId: withGoal ? goalId : null,
+          contextSnapshot: withGoal ? { goalId, wakeReason: "goal_started" } : { wakeReason: "manual" },
           executionAuthority: "native_rust",
           nativeAdmissionHold: false,
           scene: "heartbeat",
@@ -1295,7 +1295,7 @@ describe("heartbeat run concurrency", () => {
         }).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.id, nativeRunId));
         await tx.delete(agentWakeupRequests).where(eq(agentWakeupRequests.id, nativeWakeupRequestId));
-        await tx.delete(goals).where(eq(goals.id, goalId));
+        if (withGoal) await tx.delete(goals).where(eq(goals.id, goalId));
       });
     }
   }, 30_000);

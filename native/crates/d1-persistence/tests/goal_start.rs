@@ -472,3 +472,120 @@ async fn goal_start_preview_and_transaction_match_packet_replay_and_wakeup_contr
     .unwrap();
     assert_eq!(legacy_replay_state, (1, "legacy_ts".to_owned()));
 }
+
+#[tokio::test]
+async fn new_goal_starts_use_generic_owner_for_every_runtime_and_preserve_old_owner() {
+    use rudder_d1_persistence::{agent_execution, goal_run_cancellation, goal_runs};
+    let database = Database::start().await;
+    for (index, runtime) in [
+        "claude_local",
+        "codex_local",
+        "cursor",
+        "opencode_local",
+        "pi_local",
+        "hermes_local",
+        "process",
+        "http",
+        "openclaw_gateway",
+        "hermes_gateway",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let agent = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO agents(id,org_id,name,role,status,capabilities,agent_runtime_type) VALUES($1::uuid,$2::uuid,$3,'engineer','idle','Plan and execute software releases',$4)")
+            .bind(&agent).bind(ORG).bind(format!("Producer {runtime}")).bind(runtime).execute(&database.pool).await.unwrap();
+        let preview = compile_goal_start_preview(
+            &database.pool,
+            ORG,
+            &preview_input(&agent, "Publish a verified software release"),
+        )
+        .await
+        .unwrap();
+        let input = start_input(&format!("generic-goal-{index}"), &preview, None, true);
+        let started = apply_goal_start(&database.pool, &Authorized, actor(ORG), &input)
+            .await
+            .unwrap();
+        let replay = apply_goal_start(&database.pool, &Authorized, actor(ORG), &input)
+            .await
+            .unwrap();
+        assert_eq!(
+            replay.dispatch.wakeup_request_id,
+            started.dispatch.wakeup_request_id
+        );
+        let wake = &started.dispatch.wakeup_request_id;
+        let marker: String = sqlx::query_scalar("SELECT payload->>'_rudderExecutionProducer' FROM agent_wakeup_requests WHERE id=$1::uuid").bind(wake).fetch_one(&database.pool).await.unwrap();
+        assert_eq!(marker, "goal_start_v1");
+        assert!(
+            !goal_runs::list_due_native_goal_wakeups(&database.pool)
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.wakeup_request_id == *wake)
+        );
+        assert!(
+            goal_runs::claim_wakeup(&database.pool, ORG, wake)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE goals SET focus=false WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .execute(&database.pool)
+            .await
+            .unwrap();
+        agent_execution::resume_pending(&database.pool)
+            .await
+            .unwrap();
+        let run: String =
+            sqlx::query_scalar("SELECT run_id::text FROM agent_wakeup_requests WHERE id=$1::uuid")
+                .bind(wake)
+                .fetch_one(&database.pool)
+                .await
+                .unwrap();
+        assert!(
+            goal_run_cancellation::resolve_native_goal_run_cancel_target(
+                &database.pool,
+                &run,
+                None,
+                None
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        let claim = agent_execution::claim_queued_run(&database.pool, ORG, &run)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.runtime_type, *runtime);
+        assert_eq!(claim.goal_id.as_deref(), started.goal["id"].as_str());
+    }
+    // An existing unversioned Goal intent is never materialized by the generic worker.
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_type='claude_local',status='idle' WHERE id=$1::uuid",
+    )
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE goals SET owner_agent_id=$1::uuid,lifecycle='active',status='active',focus=false,plan_revision=1 WHERE id=$2::uuid").bind(CEO).bind(GOAL).execute(&database.pool).await.unwrap();
+    let old: String = sqlx::query_scalar("INSERT INTO agent_wakeup_requests(org_id,agent_id,source,trigger_detail,reason,payload,execution_authority) VALUES($1::uuid,$2::uuid,'on_demand','system','goal_started',$3,'native_rust') RETURNING id::text")
+        .bind(ORG).bind(CEO).bind(json!({"event":"goal_started","goalId":GOAL,"taskKey":format!("goal:{GOAL}:goal_started:old"),"goalStartRequestId":"old","_paperclipWakeContext":{"goalId":GOAL}})).fetch_one(&database.pool).await.unwrap();
+    agent_execution::resume_pending(&database.pool)
+        .await
+        .unwrap();
+    let old_run: Option<String> =
+        sqlx::query_scalar("SELECT run_id::text FROM agent_wakeup_requests WHERE id=$1::uuid")
+            .bind(&old)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert!(old_run.is_none());
+    assert!(
+        goal_runs::claim_wakeup(&database.pool, ORG, &old)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}

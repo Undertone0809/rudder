@@ -637,7 +637,7 @@ jobs:
           const target = process.env.NATIVE_TARGET;
           const extension = process.env.NATIVE_EXTENSION;
           const root = path.resolve("desktop/.packaged/native", target);
-          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner"]) {
+          for (const name of ["rudder-process-host", "rudder-native", "rudder-cli", "rudder-update-helper", "migration-preflight", "migration-apply", "rudder-postgres-owner"]) {
             const binary = path.join(root, `${name}${extension}`);
             execFileSync(binary, ["--version"], { stdio: "pipe" });
           }
@@ -754,7 +754,8 @@ jobs:
             -p rudder-migration-service --bin migration-preflight --bin migration-apply \
             -p rudder-postgres-lifecycle --bin rudder-postgres-owner \
             -p rudder-process-host --bin rudder-process-host \
-            -p rudder-native --bin rudder-native
+            -p rudder-native --bin rudder-native \
+            -p rudder-cli --bin rudder-cli
           artifact_dir="dist/server-foundation-artifacts/$SERVER_FOUNDATION_TARGET"
           mkdir -p "$artifact_dir"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-server-foundation$SERVER_FOUNDATION_EXTENSION" \
@@ -769,6 +770,8 @@ jobs:
             "$artifact_dir/rudder-postgres-owner$SERVER_FOUNDATION_EXTENSION"
           cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-native$SERVER_FOUNDATION_EXTENSION" \
             "$artifact_dir/rudder-native$SERVER_FOUNDATION_EXTENSION"
+          cp "native/target/$SERVER_FOUNDATION_TARGET/release/rudder-cli$SERVER_FOUNDATION_EXTENSION" \
+            "$artifact_dir/rudder-cli$SERVER_FOUNDATION_EXTENSION"
           {
             echo "target=$SERVER_FOUNDATION_TARGET"
             echo "build_mode=$SERVER_FOUNDATION_BUILD_MODE"

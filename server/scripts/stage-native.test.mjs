@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   FOUNDATION_TARGETS,
+  agentCliBinaryName,
   checkPackagedFoundationArtifacts,
   foundationBinaryName,
   migrationApplyBinaryName,
@@ -57,6 +58,7 @@ function makeArtifactRoot(targets = Object.keys(FOUNDATION_TARGETS)) {
     writeFileSync(path.join(dir, processHostBinaryName(target)), fakeBinary(target), { mode: 0o600 });
     writeFileSync(path.join(dir, postgresOwnerBinaryName(target)), fakeBinary(target), { mode: 0o600 });
     writeFileSync(path.join(dir, nativeMcpBinaryName(target)), fakeBinary(target), { mode: 0o600 });
+    writeFileSync(path.join(dir, agentCliBinaryName(target)), fakeBinary(target), { mode: 0o600 });
   }
   return root;
 }
@@ -89,6 +91,7 @@ test("CI produces every native executable required by server artifact staging", 
     processHostBinaryName(target),
     postgresOwnerBinaryName(target),
     nativeMcpBinaryName(target),
+    agentCliBinaryName(target),
   ]) {
     assert.ok(requested.has(binary), `CI does not build required executable ${binary}`);
     assert.ok(
@@ -136,6 +139,7 @@ test("stages all required payloads into the generic server resource path", async
       assert.deepEqual(readFileSync(postgresOwnerPath), fakeBinary(target));
       const nativeMcpPath = path.join(resourcesDir, "native", target, nativeMcpBinaryName(target));
       assert.deepEqual(readFileSync(nativeMcpPath), fakeBinary(target));
+      assert.deepEqual(readFileSync(path.join(resourcesDir, "native", target, agentCliBinaryName(target))), fakeBinary(target));
       if (process.platform !== "win32") assert.notEqual(statSync(destination).mode & 0o111, 0);
     }
   } finally {
@@ -189,7 +193,7 @@ test("replaces a staged executable without changing bytes seen by an existing re
     assert.deepEqual(readFileSync(destinationPath), replacementBytes);
     assert.deepEqual(await previousReader.readFile(), previousBytes);
     if (process.platform !== "win32") assert.notEqual(statSync(destinationPath).ino, previousStat.ino);
-     assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target), migrationApplyBinaryName(target), processHostBinaryName(target), postgresOwnerBinaryName(target), nativeMcpBinaryName(target)].sort());
+     assert.deepEqual(readdirSync(path.dirname(destinationPath)).sort(), [foundationBinaryName(target), migrationPreflightBinaryName(target), migrationApplyBinaryName(target), processHostBinaryName(target), postgresOwnerBinaryName(target), nativeMcpBinaryName(target), agentCliBinaryName(target)].sort());
 
     writeFileSync(sourcePath, Buffer.from("invalid replacement"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /Unrecognized/u);
@@ -208,7 +212,7 @@ test("validates every artifact before writing any package payload", async () => 
   mkdirSync(path.dirname(sentinel), { recursive: true });
   writeFileSync(sentinel, "preserve");
   try {
-    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /(rudder-server-foundation|rudder-process-host|rudder-native)\.exe/u);
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir }), /(rudder-server-foundation|rudder-process-host|rudder-native|rudder-cli)\.exe/u);
     assert.equal(readFileSync(sentinel, "utf8"), "preserve");
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
   } finally {
@@ -495,6 +499,21 @@ test("rejects a missing or wrong-target PostgreSQL owner before publishing serve
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
     writeFileSync(source, fakeBinary("aarch64-unknown-linux-gnu"));
     await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /does not match x86_64-unknown-linux-gnu/u);
+    assert.deepEqual(requireNativeTargets(resourcesDir), []);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
+});
+
+
+test("rejects a missing Rust Agent CLI before publishing server artifacts", async () => {
+  const target = "x86_64-unknown-linux-gnu";
+  const artifactDir = makeArtifactRoot([target]);
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-agent-cli-stage-"));
+  try {
+    rmSync(path.join(artifactDir, target, agentCliBinaryName(target)));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /rudder-cli/u);
     assert.deepEqual(requireNativeTargets(resourcesDir), []);
   } finally {
     rmSync(artifactDir, { recursive: true, force: true });

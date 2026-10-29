@@ -8,6 +8,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { registerAgentManagementRoutes } from "../routes/agents.management-routes.js";
 
 const mockHeartbeatService = vi.hoisted(() => ({
+  wakeup: vi.fn(),
   cancelRun: vi.fn(),
   getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
@@ -108,7 +109,7 @@ async function createApp(
   return startApp(app);
 }
 
-async function createManagementApp(db: Record<string, unknown>, actor: Record<string, unknown>) {
+async function createManagementApp(db: Record<string, unknown>, actor: Record<string, unknown>, nativeAgentExecution = false) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -118,6 +119,7 @@ async function createManagementApp(db: Record<string, unknown>, actor: Record<st
   const router = express.Router();
   registerAgentManagementRoutes({
     router,
+    nativeAgentExecution,
     db,
     svc: mockAgentService,
     heartbeat: mockHeartbeatService,
@@ -146,6 +148,13 @@ function createRunIdLookupDb(rows: Array<{ id: string }>) {
 }
 
 describe("agent run retry route", () => {
+
+  it("retires Node wake and invoke admission under native execution authority", async () => {
+    const server = await createManagementApp({}, { type: "board", source: "local_implicit", userId: "local-board" }, true);
+    await request(server).post("/api/agents/fixture-agent/wakeup").send({ source: "on_demand" }).expect(404);
+    await request(server).post("/api/agents/fixture-agent/heartbeat/invoke").send({}).expect(404);
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockRunRead.mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("[]") });

@@ -412,8 +412,49 @@ fn compose_instruction_context(
     instruction_context_sections: &[String],
     include_goal_runtime_prefix: bool,
 ) -> Result<String, ClaudeExecutionError> {
+    compose_instruction_context_with_prefix(
+        instruction_content,
+        instruction_source_path,
+        instruction_entry_file,
+        instruction_siblings,
+        instruction_context_sections,
+        include_goal_runtime_prefix,
+        include_goal_runtime_prefix,
+    )
+}
+
+/// Shared Agent instruction framing. Goal's existing caller retains its exact
+/// bytes; generic Issue/delegation scenes may omit only the heartbeat section.
+pub fn compose_agent_instruction_context(
+    instruction_content: Option<&str>,
+    instruction_source_path: Option<&Path>,
+    instruction_entry_file: &str,
+    instruction_siblings: &[(String, String)],
+    instruction_context_sections: &[String],
+    include_heartbeat: bool,
+) -> Result<String, ClaudeExecutionError> {
+    compose_instruction_context_with_prefix(
+        instruction_content,
+        instruction_source_path,
+        instruction_entry_file,
+        instruction_siblings,
+        instruction_context_sections,
+        true,
+        include_heartbeat,
+    )
+}
+
+fn compose_instruction_context_with_prefix(
+    instruction_content: Option<&str>,
+    instruction_source_path: Option<&Path>,
+    instruction_entry_file: &str,
+    instruction_siblings: &[(String, String)],
+    instruction_context_sections: &[String],
+    include_operating_contract: bool,
+    include_heartbeat: bool,
+) -> Result<String, ClaudeExecutionError> {
     let mut sections = Vec::new();
-    if include_goal_runtime_prefix {
+    if include_operating_contract {
         // The legacy TypeScript contract keeps one trailing space on this
         // internal line; mirror its exact Goal prefix bytes.
         let operating_contract = RUDDER_AGENT_OPERATING_CONTRACT.trim().replace(
@@ -499,7 +540,7 @@ fn compose_instruction_context(
             .filter(|section| !section.is_empty())
             .map(str::to_owned),
     );
-    if include_goal_runtime_prefix {
+    if include_heartbeat {
         sections.push(wrap_system_prompt_section(
             "rudder_heartbeat_instruction",
             &format!(

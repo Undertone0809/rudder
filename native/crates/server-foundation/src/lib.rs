@@ -65,17 +65,24 @@ mod secrets;
 pub use secrets::SECRETS_ACTION;
 mod activity_link_reads;
 mod activity_reads;
+pub(crate) mod agent_run_context;
+pub(crate) mod agent_run_worker;
 mod approval_reads;
 mod automation_reads;
 pub mod browser_auth;
 mod cost_reads;
+mod desktop_broker;
+mod desktop_capability;
+mod desktop_validation;
 mod goal_reads;
 pub(crate) mod goal_run_context;
 mod issue_checkout;
 mod issue_metadata_reads;
+pub mod live_events;
 mod llm_reflection;
 pub mod local_account_auth;
 mod local_account_ingress;
+pub mod managed_mcp_runtime;
 mod member_directory_auth;
 mod native_bearer_auth;
 mod native_session_auth;
@@ -94,8 +101,13 @@ mod native_chat_startup;
 #[allow(unused_imports)]
 #[path = "../../native-chat-executor/tests/workflow/fixture.rs"]
 mod native_chat_test_fixture;
+#[cfg(all(test, unix))]
+use native_chat_test_fixture::support as postgres_test_support;
 mod organization_catalog_reads;
 mod overview_reads;
+#[cfg(all(test, not(unix)))]
+#[path = "../../d1-persistence/tests/support/mod.rs"]
+mod postgres_test_support;
 mod private_host_gate;
 mod project_reads;
 mod public_ingress;
@@ -1014,6 +1026,8 @@ struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
     session_revocation: NativeSessionRevocationRegistry,
+    live_event_publisher: live_events::LiveEventPublisher,
+    desktop_brokers: Arc<desktop_broker::DesktopBrokers>,
     d1_mutations: Option<MutationStore>,
     native_chat_worker: Option<native_chat_worker::Supervisor>,
     native_chat_public_runtime: Arc<Mutex<Option<NativeChatPublicRuntime>>>,
@@ -1202,6 +1216,13 @@ impl AppState {
             config: Arc::new(config),
             database,
             session_revocation: NativeSessionRevocationRegistry::default(),
+            live_event_publisher: live_events::LiveEventPublisher::new(),
+            desktop_brokers: Arc::new(desktop_broker::DesktopBrokers::new().map_err(|_| {
+                ConfigError::invalid(
+                    "RUDDER_NATIVE_DESKTOP_BROKERS",
+                    "could not initialize Desktop broker transport",
+                )
+            })?),
             d1_mutations,
             native_chat_worker,
             native_chat_public_runtime: Arc::new(Mutex::new(None)),
@@ -1411,6 +1432,11 @@ impl AppState {
     ) -> Result<VerifiedActor, ActorEnvelopeVerificationError> {
         let actor = envelope.actor.clone();
         if !matches!(actor.kind.as_str(), "user" | "agent")
+            && !(actor.kind == "system"
+                && actor.id == live_events::FORWARD_ACTOR
+                && action == live_events::FORWARD_ACTION
+                && request.path() == live_events::FORWARD_PATH
+                && request.method() == actix_web::http::Method::POST)
             && !(actor.kind == "anonymous"
                 && actor.id == "anonymous"
                 && ((org_id == "agent-core"
@@ -3003,12 +3029,17 @@ impl ServerRuntime {
         let http_server = HttpServer::new(move || {
             App::new()
                 .app_data(app_state.clone())
+                .app_data(web::Data::new(app_state.live_event_publisher.clone()))
                 .app_data(web::PayloadConfig::new(max_request_bytes))
                 .app_data(web::JsonConfig::default().limit(max_request_bytes))
                 .wrap(middleware::from_fn(request_guard))
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(
+                    "/internal/live-events/forward",
+                    web::post().to(live_events::forward_handler),
+                )
                 .service(
                     web::resource("/internal/run-workspace-ordinary-update")
                         .app_data(web::PayloadConfig::new(80 * 1024 * 1024))
@@ -3233,6 +3264,7 @@ impl ServerControl {
 
     /// Close shared dispatch before either private or public listener drains.
     pub fn begin_shutdown(&self) {
+        self.state.live_event_publisher.close();
         if let Some(worker) = &self.state.native_chat_worker {
             worker.begin_shutdown();
         }

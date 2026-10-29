@@ -200,6 +200,12 @@ async fn execute(
         }
     };
     if matches!(&endpoint, Endpoint::Start { .. }) && !native_goal_runtime_configured(&state) {
+        if state.config.identity_auth.is_some() {
+            return state.foundation.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_execution_unavailable",
+            );
+        }
         return forward_legacy_body(state, proxy, request, body).await;
     }
     if state.config.forwarding_policy.identity(&request).is_err() {
@@ -620,15 +626,7 @@ fn normalized_start_body(
 }
 
 fn native_goal_runtime_configured(state: &IngressState) -> bool {
-    state.config.identity_auth.is_some()
-        && state
-            .config
-            .native_chat_runtime
-            .as_ref()
-            .is_some_and(|runtime| {
-                runtime.host.claude_runtime().is_some()
-                    && runtime.host.has_trusted_executable_search_path()
-            })
+    state.config.identity_auth.is_some() && state.config.agent_run_host.is_some()
 }
 
 async fn forward_legacy_body(

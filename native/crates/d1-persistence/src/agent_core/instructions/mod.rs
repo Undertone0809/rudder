@@ -1064,6 +1064,79 @@ pub(crate) struct RuntimeInstructionRevision {
     pub sibling_content: Vec<(String, String)>,
 }
 
+/// Trusted Run preparation uses the same lock, path checks, non-overwriting
+/// materializer and legacy recovery as AgentCore. This is not a public write
+/// entrypoint and never writes an external instruction directory.
+pub(crate) fn materialize_for_claimed_run(
+    host: &Host,
+    org: &str,
+    row: &Value,
+    home: &Path,
+    cwd: &Path,
+    pending: Option<(&str, &str, bool)>,
+) -> io::Result<Value> {
+    if text(row, "orgId") != org
+        || text(row, "id").is_empty()
+        || !home.is_absolute()
+        || !cwd.is_absolute()
+    {
+        return Err(invalid("Invalid claimed Agent instruction identity"));
+    }
+    let workspace = validated_workspace_key(row)?;
+    let _guard = lock::Guard::acquire(Path::new(&host.workspace_home), &host.hostname)
+        .map_err(|_| invalid("Instruction workspace lock unavailable"))?;
+    let mut row = row.clone();
+    if let Some((entry, files, clear_legacy)) = pending {
+        let bundle = decode_durable_bundle(entry, files, clear_legacy)?;
+        let root = materialize_bundle_locked(host, org, &workspace, &bundle, cwd)?;
+        row["agentRuntimeConfig"]["instructionsBundleMode"] = json!("managed");
+        row["agentRuntimeConfig"]["instructionsRootPath"] = json!(root);
+        row["agentRuntimeConfig"]["instructionsEntryFile"] = json!(bundle.entry_file);
+        row["agentRuntimeConfig"]["instructionsFilePath"] = json!(root.join(&bundle.entry_file));
+        if bundle.clear_legacy_prompt_template
+            && let Some(config) = row["agentRuntimeConfig"].as_object_mut()
+        {
+            config.remove("promptTemplate");
+            config.remove("bootstrapPromptTemplate");
+        }
+    }
+    recover(host, &row, &home.to_string_lossy(), &cwd.to_string_lossy())?;
+    let config = &row["agentRuntimeConfig"];
+    let explicit = [
+        "instructionsRootPath",
+        "instructionsFilePath",
+        "agentsMdPath",
+    ]
+    .iter()
+    .any(|key| string(config, key).is_some_and(|value| !js_trim(value).is_empty()));
+    if !explicit && config["instructionsBundleMode"] != "external" {
+        let (storage_root, _) = storage::root(host, org)?;
+        let managed = storage_root
+            .join("agents")
+            .join(&workspace)
+            .join("instructions");
+        let legacy_memory = managed.parent().unwrap_or(&managed).join("MEMORY.md");
+        let mut bundle_files = defaults(text(&row, "role") == "ceo");
+        if !managed.join("MEMORY.md").is_file() && legacy_memory.is_file() {
+            preflight_file(&legacy_memory)?;
+            bundle_files.insert("MEMORY.md".into(), disk::read_to_string(&legacy_memory)?);
+        }
+        let bundle = DurableBundle {
+            entry_file: "SOUL.md".into(),
+            files: bundle_files,
+            deletions: Vec::new(),
+            replace_existing: false,
+            clear_legacy_prompt_template: false,
+        };
+        let root = materialize_bundle_locked(host, org, &workspace, &bundle, cwd)?;
+        row["agentRuntimeConfig"]["instructionsBundleMode"] = json!("managed");
+        row["agentRuntimeConfig"]["instructionsRootPath"] = json!(root);
+        row["agentRuntimeConfig"]["instructionsEntryFile"] = json!("SOUL.md");
+        row["agentRuntimeConfig"]["instructionsFilePath"] = json!(root.join("SOUL.md"));
+    }
+    Ok(row["agentRuntimeConfig"].clone())
+}
+
 pub(crate) fn managed_agent_workspace_path(
     instance_root: &Path,
     workspace_home: &Path,

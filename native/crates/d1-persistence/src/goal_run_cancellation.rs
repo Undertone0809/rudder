@@ -49,14 +49,14 @@ pub async fn resolve_native_goal_run_cancel_target(
     let (query, value) = if let Some(id) = parsed_uuid {
         (
             "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
-                    r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
+                    r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id,r.idempotency_key
              FROM heartbeat_runs r WHERE r.id=$1::uuid",
             id.to_string(),
         )
     } else if let Some(prefix) = run_id_prefix(reference) {
         (
             "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
-                    r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
+                    r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id,r.idempotency_key
              FROM heartbeat_runs r
              WHERE replace(r.id::text,'-','') LIKE $1 || '%'",
             prefix,
@@ -115,7 +115,7 @@ pub async fn resolve_native_goal_run_cancel_target(
         } else {
             sqlx::query(
                 "SELECT r.org_id::text AS organization_id,r.id::text AS run_id,
-                        r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id
+                        r.execution_authority,r.scene,r.target_type,r.goal_id::text AS goal_id,r.idempotency_key
                  FROM heartbeat_runs r WHERE replace(r.id::text,'-','') LIKE $1 || '%'
                  ORDER BY r.created_at DESC,r.id DESC LIMIT 2",
             )
@@ -131,7 +131,10 @@ pub async fn resolve_native_goal_run_cancel_target(
     let is_goal_run = row.try_get::<String, _>("execution_authority")? == "native_rust"
         && row.try_get::<String, _>("scene")? == "heartbeat"
         && row.try_get::<String, _>("target_type")? == "wakeup_request"
-        && row.try_get::<Option<String>, _>("goal_id")?.is_some();
+        && row.try_get::<Option<String>, _>("goal_id")?.is_some()
+        && row
+            .try_get::<Option<String>, _>("idempotency_key")?
+            .is_some_and(|key| key.starts_with("goal-wakeup:"));
     if !is_goal_run {
         return Ok(None);
     }
@@ -202,6 +205,7 @@ async fn request_in_transaction(
          FROM heartbeat_runs r
          WHERE r.org_id=$1::uuid AND r.id=$2::uuid
            AND r.execution_authority='native_rust' AND r.goal_id IS NOT NULL
+           AND r.idempotency_key LIKE 'goal-wakeup:%'
            AND r.scene='heartbeat' AND r.target_type='wakeup_request'
          FOR UPDATE",
     )

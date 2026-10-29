@@ -8,6 +8,7 @@ const emitter = new EventEmitter();
 emitter.setMaxListeners(0);
 
 let nextEventId = 0;
+const nativeTransportFrames = Symbol("native-live-event-transport");
 
 function toLiveEvent(input: {
   orgId: string;
@@ -34,6 +35,7 @@ export function publishLiveEvent(input: {
 }) {
   const event = toLiveEvent(input);
   emitter.emit(input.orgId, event);
+  emitter.emit(nativeTransportFrames, event);
   return event;
 }
 
@@ -49,6 +51,7 @@ export function publishGlobalLiveEvent(input: {
     dedupeKey: input.dedupeKey,
   });
   emitter.emit("*", event);
+  emitter.emit(nativeTransportFrames, event);
   return event;
 }
 
@@ -60,4 +63,10 @@ export function subscribeCompanyLiveEvents(orgId: string, listener: LiveEventLis
 export function subscribeGlobalLiveEvents(listener: LiveEventListener) {
   emitter.on("*", listener);
   return () => emitter.off("*", listener);
+}
+
+/** Temporary transport subscription; the supplied frame is never projected here. */
+export function subscribeLiveEventTransport(listener: LiveEventListener) {
+  emitter.on(nativeTransportFrames, listener);
+  return () => emitter.off(nativeTransportFrames, listener);
 }

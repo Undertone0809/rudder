@@ -5,6 +5,17 @@ import type { Config } from "../config.js";
 
 const startupSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
+it("omits the old Node WebSocket listener when native identity owns public events", () => {
+  const guard = startupSource.indexOf("if (!ingress.appOptions.rustPublicIngress?.identityAuth) {");
+  const end = startupSource.indexOf("void reconcilePersistedRuntimeServicesOnStartup", guard);
+  expect(guard).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(guard);
+  const legacy = startupSource.slice(guard, end);
+  expect(legacy).toContain("const liveEventsRuntime = setupLiveEventsWebSocketServer(");
+  expect(legacy).toContain('supervisor.own("live-events-websocket", () => liveEventsRuntime.close());');
+  expect(startupSource.match(/setupLiveEventsWebSocketServer\(server,/g)).toHaveLength(1);
+});
+
 describe("Rust member directory supported startup wiring", () => {
   it("passes the required member read default without enabling D1 writers", () => {
     const config = {
