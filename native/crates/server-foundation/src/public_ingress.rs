@@ -20,6 +20,8 @@ use uuid::Uuid;
 mod agent_core;
 mod agent_runs;
 mod approval_reads;
+mod asset_svg;
+mod assets;
 mod automation_reads;
 mod automation_writes;
 mod browser_session;
@@ -770,6 +772,9 @@ async fn proxy_request(
     }
     if project_reads::is_reserved_path(request.uri().path(), request.method()) {
         return project_reads::dispatch_alias(state, request, payload).await;
+    }
+    if assets::is_reserved_path(request.uri().path(), request.method()) {
+        return assets::handle(state, request, payload).await;
     }
     if label_writes::is_reserved_path(request.uri().path(), request.method()) {
         return label_writes::handle(state, request, payload).await;
@@ -2444,6 +2449,8 @@ mod tests {
     use std::{env, str::FromStr, time::Instant};
     use uuid::Uuid;
 
+    #[path = "asset_http_tests.rs"]
+    mod asset_http_tests;
     #[path = "automation_read_http_tests.rs"]
     mod automation_read_http_tests;
     #[path = "cost_read_http_tests.rs"]

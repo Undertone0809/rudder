@@ -1,3 +1,4 @@
+import { getVerifiedNativeSessionAssertion } from "../auth/native-session-assertion.js";
 import type { Db } from "@rudderhq/db";
 import { createAssetImageMetadataSchema } from "@rudderhq/shared";
 import createDOMPurify from "dompurify";
@@ -109,6 +110,11 @@ export function assetRoutes(db: Db, storage: StorageService) {
   }
 
   router.post("/orgs/:orgId/assets/images", async (req, res) => {
+    // A Rust-authenticated ingress request must never re-enter legacy Asset business logic.
+    if (getVerifiedNativeSessionAssertion(req)) {
+      res.status(404).json({ error: "Asset route is owned by Rust" });
+      return;
+    }
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
 
@@ -212,6 +218,11 @@ export function assetRoutes(db: Db, storage: StorageService) {
   });
 
   router.post("/orgs/:orgId/logo", async (req, res) => {
+    // A Rust-authenticated ingress request must never re-enter legacy Asset business logic.
+    if (getVerifiedNativeSessionAssertion(req)) {
+      res.status(404).json({ error: "Asset route is owned by Rust" });
+      return;
+    }
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
 
@@ -311,6 +322,11 @@ export function assetRoutes(db: Db, storage: StorageService) {
   });
 
   router.get("/assets/:assetId/content", async (req, res, next) => {
+    // A Rust-authenticated ingress request must never re-enter legacy Asset business logic.
+    if (getVerifiedNativeSessionAssertion(req)) {
+      res.status(404).json({ error: "Asset route is owned by Rust" });
+      return;
+    }
     const assetId = req.params.assetId as string;
     const asset = await svc.getById(assetId);
     if (!asset) {

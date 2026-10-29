@@ -3106,6 +3106,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "uuid",
+ "xmlparser",
  "zip",
 ]
 
