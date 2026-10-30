@@ -67,3 +67,27 @@ test("prints the profile and identity tuple in the aggregate check", () => {
   }
   assert.match(summary, /SOURCE_TREE_SHA/);
 });
+
+test("isolates real-entry Cargo caches by compilation profile before native builds", () => {
+  const cases = [
+    ["rust-d1-real-entry.yml", "d1-real-entry-dev-debug0-incremental0"],
+    ["rust-authority-boundaries.yml", "authority-boundaries-dev-default"],
+  ];
+  const keys = new Set();
+  for (const [file, key] of cases) {
+    const source = readFileSync(join(repoRoot, ".github/workflows", file), "utf8");
+    const caches = [...source.matchAll(/uses: Swatinem\/rust-cache@v2\n        with:\n          workspaces: native -> target\n          key: ([^\n]+)/g)];
+    assert.equal(caches.length, 1, `${file} must configure exactly one native workspace cache`);
+    assert.equal(caches[0][1], key);
+    assert(caches[0].index > source.indexOf("uses: dtolnay/rust-toolchain@stable"), `${file} resolves the compiler before its cache`);
+    assert(caches[0].index < source.indexOf("cargo build --locked"), `${file} restores cache before its first Cargo build`);
+    assert(!keys.has(key), "different debug/incremental settings must not share a cache key");
+    keys.add(key);
+    if (file === "rust-d1-real-entry.yml") {
+      assert.match(source, /CARGO_PROFILE_DEV_DEBUG: "0"/);
+      assert.match(source, /CARGO_INCREMENTAL: "0"/);
+    } else {
+      assert.doesNotMatch(source, /CARGO_PROFILE_DEV_DEBUG:|CARGO_INCREMENTAL:/);
+    }
+  }
+});
