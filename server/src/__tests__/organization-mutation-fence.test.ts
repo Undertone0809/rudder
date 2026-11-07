@@ -11,9 +11,9 @@ const PROJECT_ID = "00000000-0000-0000-0000-000000000002";
 const RESOURCE_ID = "00000000-0000-0000-0000-000000000003";
 const ATTACHMENT_ID = "00000000-0000-0000-0000-000000000004";
 
-function createFailClosedDb(selectRows: unknown[] = []) {
+function createFailClosedDb(selectRows: unknown[] = [], executeRows: unknown[] = []) {
   const tx = {
-    execute: vi.fn().mockResolvedValue([]),
+    execute: vi.fn().mockResolvedValue(executeRows),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => Promise.resolve(selectRows)),
@@ -93,6 +93,21 @@ describe("organization mutation authority fence", () => {
 
     await expect(lockNodeMutationAuthority({ execute }, "00000000-0000-0000-0000-000000000001"))
       .rejects.toMatchObject<HttpError>({ status: 409 });
+  });
+
+  it.each([
+    ["name", { name: "Rust-owned organization" }],
+    ["name plus issue prefix", { name: "Rust-owned organization", issuePrefix: "RUST" }],
+  ] as const)("rejects a stale organization %s writer before its business update", async (_name, patch) => {
+    const { db, tx } = createFailClosedDb([], [{
+      owner: "rust",
+      mutation_version: "3",
+      fence_epoch: "1",
+      fence_token: "11111111-1111-4111-8111-111111111111",
+    }]);
+
+    await expect(organizationService(db).update(ORGANIZATION_ID, patch)).rejects.toMatchObject<HttpError>({ status: 409 });
+    expect(tx.update).not.toHaveBeenCalled();
   });
 
   it.each([

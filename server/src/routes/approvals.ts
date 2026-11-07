@@ -1,4 +1,4 @@
-import { issueLabels, issues, labels, type Db } from "@rudderhq/db";
+import { approvals, chatConversations, issueLabels, issues, labels, type Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -8,7 +8,7 @@ import {
 } from "@rudderhq/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
-import { forbidden, unprocessable } from "../errors.js";
+import { conflict, forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactApprovalPayload } from "../redaction.js";
@@ -23,6 +23,10 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
+import type {
+  OrganizationMutationIntentCoordinator,
+  OrganizationMutationIntentRow,
+} from "../services/organization-mutation-intents.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   wakeIssueAssigneeAfterChatConversion,
@@ -44,13 +48,93 @@ function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { i
   );
 }
 
-export function approvalRoutes(db: Db) {
+function organizationChatOperationProposal(approval: {
+  type: string;
+  orgId: string;
+  payload: Record<string, unknown>;
+}) {
+  if (approval.type !== "chat_operation") return null;
+  const nested = approval.payload.operationProposal;
+  const proposal = nested && typeof nested === "object" && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : approval.payload;
+  if (proposal.targetType !== "organization" || proposal.targetId !== approval.orgId) return null;
+  const conversationId = typeof approval.payload.chatConversationId === "string"
+    ? approval.payload.chatConversationId.trim()
+    : "";
+  const proposalMessageId = typeof approval.payload.chatMessageId === "string"
+    ? approval.payload.chatMessageId.trim()
+    : null;
+  const patch = proposal.patch;
+  if (
+    !conversationId
+    || !patch
+    || typeof patch !== "object"
+    || Array.isArray(patch)
+  ) return null;
+  return {
+    conversationId,
+    proposalMessageId: proposalMessageId || null,
+    patch: patch as Record<string, unknown>,
+    summary: typeof proposal.summary === "string" ? proposal.summary : "organization settings",
+  };
+}
+
+export type ApprovalRoutesOptions = {
+  organizationMutationCoordinator?: OrganizationMutationIntentCoordinator;
+};
+
+function durableString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function durableStringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    : [];
+}
+
+function approvalSnapshotFromIntent(intent: OrganizationMutationIntentRow): typeof approvals.$inferSelect {
+  const targets = intent.downstreamTargets;
+  const conversationId = durableString(targets.conversationId) ?? intent.conversationId;
+  const proposalMessageId = durableString(targets.proposalMessageId) ?? intent.proposalMessageId;
+  const approvalId = durableString(targets.approvalId) ?? intent.approvalId ?? intent.sourceId;
+  const summary = durableString(targets.summary) ?? "organization settings";
+  const requestedByAgentId = durableString(targets.requestedByAgentId);
+  return {
+    id: approvalId,
+    orgId: intent.orgId,
+    type: "chat_operation",
+    requestedByAgentId,
+    requestedByUserId: null,
+    status: "approved",
+    payload: {
+      chatConversationId: conversationId,
+      ...(proposalMessageId ? { chatMessageId: proposalMessageId } : {}),
+      operationProposal: {
+        targetType: "organization",
+        targetId: intent.orgId,
+        summary,
+        patch: intent.patch,
+      },
+    },
+    decisionNote: intent.decisionNote,
+    decidedByUserId: intent.decidedByUserId,
+    decidedAt: null,
+    createdAt: intent.createdAt,
+    updatedAt: intent.updatedAt,
+  };
+}
+
+export function approvalRoutes(db: Db, options: ApprovalRoutesOptions = {}) {
   const router = Router();
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const goalsSvc = goalService(db);
-  const chatsSvc = chatService(db);
+  const chatsSvc = chatService(db, undefined, {
+    organizationMutationCoordinator: options.organizationMutationCoordinator,
+  });
   const issueApprovalsSvc = issueApprovalService(db);
   const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
@@ -149,6 +233,285 @@ export function approvalRoutes(db: Db) {
         labelCount,
       },
     );
+  }
+
+  async function applyApprovedChatEffects(
+    approval: Awaited<ReturnType<typeof svc.getById>>,
+    actorUserId: string,
+    intentId?: string,
+    intent?: OrganizationMutationIntentRow,
+  ) {
+    const durableApproval = approval ?? (intent ? approvalSnapshotFromIntent(intent) : null);
+    if (!durableApproval) return;
+    const key = (suffix: string) => intentId
+      ? `organization-mutation-intent:${intentId}:${suffix}`
+      : undefined;
+    let chatAppliedIssue: Awaited<ReturnType<typeof chatsSvc.applyApprovedApproval>> = null;
+    let conversationPresent = true;
+    if (intentId) {
+      const [conversation] = await db
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, durableApproval.payload.chatConversationId as string),
+          eq(chatConversations.orgId, durableApproval.orgId),
+        ));
+      conversationPresent = Boolean(conversation);
+    }
+    if (conversationPresent) {
+      chatAppliedIssue = await chatsSvc.applyApprovedApproval(
+        durableApproval,
+        actorUserId,
+        intentId
+          ? {
+              organizationMutationAlreadyApplied: true,
+              intentId,
+              organizationMutationDownstreamClaimToken: intent?.downstreamClaimToken,
+            }
+          : undefined,
+      );
+    } else if (intentId) {
+      // The accepted intent owns the organization change after claim. A
+      // deleted/expired Side Chat may no longer accept a system message, but
+      // its organization activity must remain recoverable and idempotent.
+      const proposal = durableApproval.payload.operationProposal;
+      const proposalPatch = proposal && typeof proposal === "object" && !Array.isArray(proposal)
+        ? (proposal as Record<string, unknown>).patch
+        : null;
+      await logActivity(db, {
+        orgId: durableApproval.orgId,
+        actorType: "user",
+        actorId: actorUserId,
+        action: "organization.updated",
+        entityType: "organization",
+        entityId: durableApproval.orgId,
+        details: {
+          source: "chat_approval_recovery",
+          sourceMessageId: durableApproval.payload.chatMessageId ?? null,
+          decisionNote: durableApproval.decisionNote,
+          ...(proposalPatch && typeof proposalPatch === "object" && !Array.isArray(proposalPatch)
+            ? proposalPatch
+            : {}),
+        },
+        idempotencyKey: key("activity"),
+      });
+    }
+
+    if (durableApproval.type === "chat_issue_creation" && isChatConvertedIssue(chatAppliedIssue)) {
+      await wakeIssueAssigneeAfterChatConversion({
+        db,
+        heartbeat,
+        issue: chatAppliedIssue,
+        reason: "issue_assigned",
+        mutation: "chat_approval_approved",
+        contextSource: "chat.approval_approved",
+        requestedByActorType: "user",
+        requestedByActorId: actorUserId,
+        activityAction: "chat.issue_assignee_wakeup_queued",
+        activityEntityType: "chat",
+        activityEntityId:
+          typeof durableApproval.payload?.chatConversationId === "string"
+            ? durableApproval.payload.chatConversationId
+            : durableApproval.id,
+        activityDetails: {
+          approvalId: durableApproval.id,
+          issueIdentifier: chatAppliedIssue.identifier ?? null,
+        },
+        logActivityFn: logActivity,
+      });
+    }
+    const snapshotIssueIds = intent?.downstreamTargets
+      ? durableStringList(intent.downstreamTargets.linkedIssueIds)
+      : [];
+    const linkedIssues = intent
+      ? (await Promise.all(snapshotIssueIds.map((issueId) => issuesSvc.getById(issueId))))
+        .filter((issue): issue is NonNullable<typeof issue> => Boolean(issue && issue.orgId === durableApproval.orgId))
+      : await issueApprovalsSvc.listIssuesForApproval(durableApproval.id);
+    const linkedIssueIds = linkedIssues.map((issue) => issue.id);
+    const primaryIssueId = linkedIssueIds[0] ?? null;
+    const reactivatedLinkedIssueIds: string[] = [];
+
+    for (const linkedIssue of linkedIssues) {
+      if (linkedIssue.status !== "blocked") continue;
+
+      const nextStatus = linkedIssue.assigneeAgentId || linkedIssue.assigneeUserId ? "in_progress" : "todo";
+      const updatedIssue = await issuesSvc.update(linkedIssue.id, { status: nextStatus });
+      if (!updatedIssue) continue;
+      reactivatedLinkedIssueIds.push(updatedIssue.id);
+
+      await logActivity(db, {
+        orgId: durableApproval.orgId,
+        actorType: "user",
+        actorId: actorUserId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: updatedIssue.id,
+        details: {
+          status: updatedIssue.status,
+          source: "approval.approved",
+          approvalId: durableApproval.id,
+          identifier: updatedIssue.identifier,
+          _previous: { status: "blocked" },
+        },
+        idempotencyKey: key(`linked-issue:${updatedIssue.id}:activity`),
+      });
+
+      if (updatedIssue.assigneeAgentId && updatedIssue.assigneeAgentId !== durableApproval.requestedByAgentId) {
+        try {
+          const wakeRun = await heartbeat.wakeup(updatedIssue.assigneeAgentId, {
+            source: "assignment",
+            triggerDetail: "system",
+            reason: "approval_approved",
+            payload: {
+              approvalId: durableApproval.id,
+              approvalStatus: durableApproval.status,
+              issueId: updatedIssue.id,
+              mutation: "approval_approved",
+            },
+            requestedByActorType: "user",
+            requestedByActorId: actorUserId,
+            idempotencyKey: key(`linked-issue:${updatedIssue.id}:wakeup`),
+            contextSnapshot: {
+              source: "approval.approved",
+              approvalId: durableApproval.id,
+              approvalStatus: durableApproval.status,
+              issueId: updatedIssue.id,
+              taskId: updatedIssue.id,
+              wakeSource: "assignment",
+              wakeReason: "approval_approved",
+              issue: {
+                id: updatedIssue.id,
+                title: updatedIssue.title,
+                description: updatedIssue.description,
+                status: updatedIssue.status,
+                priority: updatedIssue.priority,
+              },
+            },
+          });
+
+          await logActivity(db, {
+            orgId: durableApproval.orgId,
+            actorType: "user",
+            actorId: actorUserId,
+            action: "approval.linked_issue_assignee_wakeup_queued",
+            entityType: "approval",
+            entityId: durableApproval.id,
+            details: {
+              issueId: updatedIssue.id,
+              assigneeAgentId: updatedIssue.assigneeAgentId,
+              wakeRunId: wakeRun?.id ?? null,
+            },
+            idempotencyKey: key(`linked-issue:${updatedIssue.id}:wakeup-activity`),
+          });
+        } catch (err) {
+          logger.warn(
+            {
+              err,
+              approvalId: durableApproval.id,
+              issueId: updatedIssue.id,
+              assigneeAgentId: updatedIssue.assigneeAgentId,
+            },
+            "failed to queue linked issue assignee wakeup after approval",
+          );
+          await logActivity(db, {
+            orgId: durableApproval.orgId,
+            actorType: "user",
+            actorId: actorUserId,
+            action: "approval.linked_issue_assignee_wakeup_failed",
+            entityType: "approval",
+            entityId: durableApproval.id,
+            details: {
+              issueId: updatedIssue.id,
+              assigneeAgentId: updatedIssue.assigneeAgentId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            idempotencyKey: key(`linked-issue:${updatedIssue.id}:wakeup-failed`),
+          });
+        }
+      }
+    }
+
+    await logActivity(db, {
+      orgId: durableApproval.orgId,
+      actorType: "user",
+      actorId: actorUserId,
+      action: "approval.approved",
+      entityType: "approval",
+      entityId: durableApproval.id,
+      details: {
+        type: durableApproval.type,
+        requestedByAgentId: durableApproval.requestedByAgentId,
+        linkedIssueIds,
+        reactivatedLinkedIssueIds,
+      },
+      idempotencyKey: key("approval-activity"),
+    });
+
+    if (durableApproval.requestedByAgentId) {
+      try {
+        const wakeRun = await heartbeat.wakeup(durableApproval.requestedByAgentId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "approval_approved",
+          payload: {
+            approvalId: durableApproval.id,
+            approvalStatus: durableApproval.status,
+            issueId: primaryIssueId,
+            issueIds: linkedIssueIds,
+          },
+          requestedByActorType: "user",
+          requestedByActorId: actorUserId,
+          idempotencyKey: key("requester-wakeup"),
+          contextSnapshot: {
+            source: "approval.approved",
+            approvalId: durableApproval.id,
+            approvalStatus: durableApproval.status,
+            issueId: primaryIssueId,
+            issueIds: linkedIssueIds,
+            taskId: primaryIssueId,
+            wakeReason: "approval_approved",
+          },
+        });
+
+        await logActivity(db, {
+          orgId: durableApproval.orgId,
+          actorType: "user",
+          actorId: actorUserId,
+          action: "approval.requester_wakeup_queued",
+          entityType: "approval",
+          entityId: durableApproval.id,
+          details: {
+            requesterAgentId: durableApproval.requestedByAgentId,
+            wakeRunId: wakeRun?.id ?? null,
+            linkedIssueIds,
+          },
+          idempotencyKey: key("requester-wakeup-activity"),
+        });
+      } catch (err) {
+        logger.warn(
+          {
+            err,
+            approvalId: durableApproval.id,
+            requestedByAgentId: durableApproval.requestedByAgentId,
+          },
+          "failed to queue requester wakeup after approval",
+        );
+        await logActivity(db, {
+          orgId: durableApproval.orgId,
+          actorType: "user",
+          actorId: actorUserId,
+          action: "approval.requester_wakeup_failed",
+          entityType: "approval",
+          entityId: durableApproval.id,
+          details: {
+            requesterAgentId: durableApproval.requestedByAgentId,
+            linkedIssueIds,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          idempotencyKey: key("requester-wakeup-failed"),
+        });
+      }
+    }
   }
 
   router.get("/orgs/:orgId/approvals", async (req, res) => {
@@ -315,6 +678,82 @@ export function approvalRoutes(db: Db) {
     if (approvalForValidation?.type === "chat_issue_creation") {
       await assertCanApproveChatIssueConversion(req, approvalForValidation);
       await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
+    }
+    const organizationProposal = pendingApproval
+      ? organizationChatOperationProposal(pendingApproval)
+      : null;
+    if (
+      options.organizationMutationCoordinator
+      && pendingApproval
+      && (
+        pendingApproval.status === "pending"
+        || pendingApproval.status === "revision_requested"
+        || pendingApproval.status === "approved"
+      )
+      && organizationProposal
+    ) {
+      const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(pendingApproval.id);
+      const source = {
+        kind: "chat_approval" as const,
+        sourceId: pendingApproval.id,
+        approvalId: pendingApproval.id,
+        conversationId: organizationProposal.conversationId,
+        proposalMessageId: organizationProposal.proposalMessageId,
+      };
+      let approvedForEffects: typeof pendingApproval | null = null;
+      const result = await options.organizationMutationCoordinator.run({
+        orgId: pendingApproval.orgId,
+        source,
+        actorUserId: req.actor.userId ?? null,
+        // Rust's Board actor principal is the closed value "board"; the
+        // immutable human identity is carried separately in actorUserId.
+        actorPrincipal: "board",
+        decidedByUserId: req.body.decidedByUserId ?? "board",
+        decisionNote: req.body.decisionNote ?? null,
+        generation: 1n,
+        patch: organizationProposal.patch,
+        rustIdempotencyKey: `chat-approval:${pendingApproval.id}:organization-settings`,
+        downstreamTargets: {
+          approvalId: pendingApproval.id,
+          conversationId: organizationProposal.conversationId,
+          proposalMessageId: organizationProposal.proposalMessageId,
+          summary: organizationProposal.summary,
+          requestedByAgentId: pendingApproval.requestedByAgentId,
+          linkedIssueIds: linkedIssues.map((issue) => issue.id),
+        },
+      }, {
+        beforeRust: async (context) => {
+          const decision = await svc.approve(
+            id,
+            req.body.decidedByUserId ?? "board",
+            req.body.decisionNote,
+            payloadOverride,
+            { organizationMutationClaimToken: context.claimToken },
+          );
+          if (decision.approval.status !== "approved") {
+            throw unprocessable("Organization chat approval did not reach approved state");
+          }
+          approvedForEffects = decision.approval;
+        },
+        applyEffects: async ({ intent, runStep }) => {
+          await runStep("approval_effects", `approval:${pendingApproval.id}`, async () => {
+            const approved = approvedForEffects ?? await svc.getById(pendingApproval.id);
+            await applyApprovedChatEffects(
+              approved,
+              intent.actorUserId ?? req.actor.userId ?? "board",
+              intent.id,
+              intent,
+            );
+          });
+        },
+      });
+      if (result.status === "in_progress") {
+        throw conflict("Organization chat approval is already being applied");
+      }
+      const approval = await svc.getById(id);
+      if (!approval) throw unprocessable("Organization chat approval disappeared after its decision");
+      res.json(redactApprovalPayload(approval));
+      return;
     }
     const { approval, applied } = await svc.approve(
       id,

@@ -14,7 +14,8 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
-  organizations
+  organizations,
+  type OrganizationSettingsPatch,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
@@ -100,6 +101,10 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import {
+  assertOrganizationMutationMessageWritable,
+  type OrganizationMutationIntentCoordinator,
+} from "./organization-mutation-intents.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
@@ -137,13 +142,22 @@ class InvalidQueueDeliveryActionLinkError extends Error {}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
-export function chatService(db: Db, storage?: StorageService) {
+export type ChatServiceOptions = {
+  organizationMutationCoordinator?: OrganizationMutationIntentCoordinator;
+};
+
+export function chatService(
+  db: Db,
+  storage?: StorageService,
+  options: ChatServiceOptions = {},
+) {
   const generationProtocol = chatGenerationProtocolService(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
+  const organizationMutationCoordinator = options.organizationMutationCoordinator;
   const agentsSvc = agentService(db);
   const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
   const getUserMessageMutationByClientMutationId = createChatMessageMutationLookup(db, getMessage);
@@ -4325,6 +4339,9 @@ export function chatService(db: Db, storage?: StorageService) {
         approvalId?: string | null;
         runId?: string | null;
         replyingAgentId?: string | null;
+        clientMutationId?: string | null;
+        organizationMutationProposalMessageId?: string | null;
+        organizationMutationDownstreamClaimToken?: string | null;
         chatTurnId?: string | null;
         turnVariant?: number;
       },
@@ -4335,8 +4352,16 @@ export function chatService(db: Db, storage?: StorageService) {
       const sanitizedPayload = sanitizeChatStructuredPayload(input.structuredPayload ?? null);
       const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
       const transcript = input.transcript ?? transcriptFromPayload;
-      const { message } = await db.transaction(async (tx) => {
-        const [inserted] = await tx
+      const { message, created } = await db.transaction(async (tx) => {
+        if (input.organizationMutationProposalMessageId) {
+          await assertOrganizationMutationMessageWritable(
+            tx,
+            input.organizationMutationProposalMessageId,
+            null,
+            input.organizationMutationDownstreamClaimToken,
+          );
+        }
+        const insert = tx
           .insert(chatMessages)
           .values({
             orgId: input.orgId,
@@ -4349,22 +4374,37 @@ export function chatService(db: Db, storage?: StorageService) {
             approvalId: input.approvalId ?? null,
             runId: input.runId ?? null,
             replyingAgentId: input.replyingAgentId ?? null,
+            clientMutationId: input.clientMutationId ?? null,
             chatTurnId: input.chatTurnId ?? null,
             turnVariant: input.turnVariant ?? 0,
-          })
-          .returning();
+          });
+        const rows = input.clientMutationId
+          ? await insert.onConflictDoNothing().returning()
+          : await insert.returning();
+        let inserted = rows[0] ?? null;
+        const created = Boolean(inserted);
+        if (!inserted && input.clientMutationId) {
+          inserted = await tx
+            .select()
+            .from(chatMessages)
+            .where(and(
+              eq(chatMessages.conversationId, conversationId),
+              eq(chatMessages.clientMutationId, input.clientMutationId),
+            ))
+            .then((existing) => existing[0] ?? null);
+        }
         if (!inserted) throw new Error("Failed to create chat message");
-        if (transcript.length > 0) {
+        if (created && transcript.length > 0) {
           await replaceDetachedChatTranscript(tx, {
             orgId: input.orgId,
             messageId: inserted.id,
             entries: transcript,
           });
         }
-        return { message: inserted };
+        return { message: inserted, created };
       });
       if (!message) throw new Error("Failed to create chat message");
-      if (input.role === "user" || isVisibleIncomingChatMessage(message)) {
+      if (created && (input.role === "user" || isVisibleIncomingChatMessage(message))) {
         await refreshConversationTouch(conversationId, message.createdAt);
       }
       const [hydrated] = await hydrateMessages([message]);
@@ -4420,6 +4460,18 @@ export function chatService(db: Db, storage?: StorageService) {
           ? chatTranscriptFromPayload(sanitizedPayload)
           : undefined;
       const { updated } = await db.transaction(async (tx) => {
+        // Lock the proposal row before the intent row so edits serialize with
+        // the coordinator's source -> intent claim order.
+        const lockedExisting = await tx
+          .select({ kind: chatMessages.kind })
+          .from(chatMessages)
+          .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!lockedExisting) return { updated: null };
+        if (lockedExisting.kind === "operation_proposal") {
+          await assertOrganizationMutationMessageWritable(tx, messageId);
+        }
         const transcript = hasPayloadUpdate
           ? await transcriptSnapshotForWrite(tx, existing, requestedTranscript)
           : null;
@@ -4505,6 +4557,7 @@ export function chatService(db: Db, storage?: StorageService) {
       conversationId: string,
       messageId: string,
       structuredPayload: Record<string, unknown> | null,
+      options: { organizationMutationDownstreamClaimToken?: string | null } = {},
     ) {
       const existing = await db
         .select()
@@ -4517,7 +4570,22 @@ export function chatService(db: Db, storage?: StorageService) {
         ? chatTranscriptFromPayload(sanitizedPayload)
         : undefined;
       const { updated } = await db.transaction(async (tx) => {
-        const transcript = await transcriptSnapshotForWrite(tx, existing, requestedTranscript);
+        const lockedExisting = await tx
+          .select()
+          .from(chatMessages)
+          .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!lockedExisting) return { updated: null };
+        if (lockedExisting.kind === "operation_proposal") {
+          await assertOrganizationMutationMessageWritable(
+            tx,
+            messageId,
+            null,
+            options.organizationMutationDownstreamClaimToken,
+          );
+        }
+        const transcript = await transcriptSnapshotForWrite(tx, lockedExisting, requestedTranscript);
         const [next] = await tx
           .update(chatMessages)
           .set({
@@ -4528,8 +4596,8 @@ export function chatService(db: Db, storage?: StorageService) {
           .returning();
         if (next) {
           await replaceDetachedChatTranscript(tx, {
-            orgId: existing.orgId,
-            messageId: existing.id,
+            orgId: lockedExisting.orgId,
+            messageId: lockedExisting.id,
             entries: transcript,
           });
         }
@@ -4750,8 +4818,213 @@ export function chatService(db: Db, storage?: StorageService) {
       const decisionNote = safeTrim(input.decisionNote);
       const decidedAtIso = new Date().toISOString();
 
+      const persistDecisionAndSystemMessage = async () => {
+        const decisionStatus = input.action === "requestRevision" ? "revision_requested" : "rejected" as const;
+        const systemClientMutationId = `organization-mutation-proposal:${messageId}:${input.action}:system-message`;
+        const systemBody = input.action === "requestRevision"
+          ? `Requested changes before applying lightweight change: ${proposal.summary}.`
+          : `Rejected lightweight change: ${proposal.summary}.`;
+        const durableSystemBody = await normalizeLocalLibraryPathMarkdown(systemBody, conversation.orgId);
+        const result = await db.transaction(async (tx) => {
+          // The source row is locked first; the intent guard then uses the
+          // same source -> intent order as enqueueAndClaim.
+          const locked = await tx
+            .select()
+            .from(chatMessages)
+            .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (!locked || locked.kind !== "operation_proposal") return null;
+          if (operationProposalDecisionStatusFromPayload(locked.structuredPayload).status !== "pending") {
+            throw unprocessable("Only pending lightweight changes can be resolved");
+          }
+          await assertOrganizationMutationMessageWritable(tx, messageId);
+
+          const nextPayload = withOperationProposalDecisionState(locked.structuredPayload, {
+            status: decisionStatus,
+            decisionNote,
+            decidedByUserId: input.actorUserId,
+            decidedAt: decidedAtIso,
+          });
+          const sanitizedPayload = sanitizeChatStructuredPayload(nextPayload);
+          const requestedTranscript = Object.hasOwn(sanitizedPayload ?? {}, CHAT_TRANSCRIPT_KEY)
+            ? chatTranscriptFromPayload(sanitizedPayload)
+            : undefined;
+          const transcript = await transcriptSnapshotForWrite(tx, locked, requestedTranscript);
+          const [updated] = await tx
+            .update(chatMessages)
+            .set({
+              structuredPayload: stripChatMetadataFromPayload(sanitizedPayload),
+              updatedAt: new Date(),
+            })
+            .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+            .returning();
+          if (!updated) return null;
+          await replaceDetachedChatTranscript(tx, {
+            orgId: locked.orgId,
+            messageId: locked.id,
+            entries: transcript,
+          });
+
+          const [inserted] = await tx
+            .insert(chatMessages)
+            .values({
+              orgId: conversation.orgId,
+              conversationId,
+              role: "system",
+              kind: "system_event",
+              status: "completed",
+              body: durableSystemBody,
+              structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload({
+                eventType: input.action === "requestRevision" ? "operation_revision_requested" : "operation_rejected",
+                source: "chat",
+                sourceMessageId: messageId,
+                targetType: proposal.targetType,
+                targetId: proposal.targetId,
+                decisionNote,
+              })),
+              approvalId: null,
+              runId: null,
+              replyingAgentId: null,
+              clientMutationId: systemClientMutationId,
+              chatTurnId: null,
+              turnVariant: 0,
+            })
+            .onConflictDoNothing()
+            .returning();
+          const system = inserted ?? await tx
+            .select()
+            .from(chatMessages)
+            .where(and(
+              eq(chatMessages.conversationId, conversationId),
+              eq(chatMessages.clientMutationId, systemClientMutationId),
+            ))
+            .then((rows) => rows[0] ?? null);
+          if (!system) throw new Error("Failed to persist lightweight proposal decision message");
+          return { updated, system, systemCreated: Boolean(inserted) };
+        });
+        if (!result) throw notFound("Operation proposal not found");
+        if (result.systemCreated && isVisibleIncomingChatMessage(result.system)) {
+          await refreshConversationTouch(conversationId, result.system.createdAt);
+        }
+        const [updatedMessage] = await hydrateMessages([result.updated]);
+        const [systemMessage] = await hydrateMessages([result.system]);
+        return { message: updatedMessage, systemMessage };
+      };
+
       if (input.action === "approve") {
         if (proposal.targetType === "organization") {
+          if (organizationMutationCoordinator) {
+            const source = {
+              kind: "chat_lightweight" as const,
+              sourceId: messageId,
+              approvalId: null,
+              conversationId,
+              proposalMessageId: messageId,
+            };
+            // A lightweight proposal is immutable at this message identity;
+            // the stable idempotency key replays the same generation after a
+            // crash instead of creating a second organization mutation.
+            const generation = 1n;
+            let updatedMessage: Awaited<ReturnType<typeof updateMessageStructuredPayload>> | null = null;
+            let systemMessage: Awaited<ReturnType<typeof addMessage>> | null = null;
+            await organizationMutationCoordinator.run({
+              orgId: conversation.orgId,
+              source,
+              actorUserId: input.actorUserId,
+              // Rust binds board authorization to the closed principal
+              // "board"; keep the human identity in actorUserId.
+              actorPrincipal: "board",
+              decidedByUserId: input.actorUserId,
+              decisionNote,
+              generation,
+              patch: proposal.patch as OrganizationSettingsPatch,
+              rustIdempotencyKey: `chat-lightweight:${messageId}:organization-settings`,
+              downstreamTargets: {
+                conversationId,
+                proposalMessageId: messageId,
+                summary: proposal.summary,
+              },
+            }, {
+              applyEffects: async ({ intent, runStep }) => {
+                await runStep("proposal_decision", messageId, async () => {
+                  const current = await getMessage(conversationId, messageId);
+                  if (!current) return;
+                  updatedMessage = await updateMessageStructuredPayload(
+                    conversationId,
+                    messageId,
+                    withOperationProposalDecisionState(current.structuredPayload, {
+                      status: "approved",
+                      decisionNote,
+                      decidedByUserId: input.actorUserId,
+                      decidedAt: decidedAtIso,
+                    }),
+                    { organizationMutationDownstreamClaimToken: intent.downstreamClaimToken },
+                  );
+                });
+                await runStep("system_message", `conversation:${conversationId}`, async () => {
+                  const [conversationStillPresent] = await db
+                    .select({ id: chatConversations.id })
+                    .from(chatConversations)
+                    .where(and(
+                      eq(chatConversations.id, conversationId),
+                      eq(chatConversations.orgId, intent.orgId),
+                    ));
+                  if (!conversationStillPresent) return;
+                  systemMessage = await addMessage(conversationId, {
+                    orgId: conversation.orgId,
+                    role: "system",
+                    kind: "system_event",
+                    body: `Applied lightweight change: ${proposal.summary}.`,
+                    clientMutationId: `organization-mutation-intent:${messageId}:system-message`,
+                    organizationMutationProposalMessageId: messageId,
+                    organizationMutationDownstreamClaimToken: intent.downstreamClaimToken,
+                    structuredPayload: {
+                      eventType: "operation_applied",
+                      source: "chat",
+                      sourceMessageId: messageId,
+                      targetType: "organization",
+                      targetId: proposal.targetId,
+                      decisionNote,
+                    },
+                  });
+                });
+                await runStep("activity", `organization:${proposal.targetId}`, async () => {
+                  await logActivity(db, {
+                    orgId: conversation.orgId,
+                    actorType: "user",
+                    actorId: input.actorUserId ?? "board",
+                    action: "organization.updated",
+                    entityType: "organization",
+                    entityId: proposal.targetId,
+                    details: {
+                      source: "chat_lightweight_change",
+                      sourceMessageId: messageId,
+                      decisionNote,
+                      ...proposal.patch,
+                    },
+                    idempotencyKey: `organization-mutation-intent:${messageId}:activity`,
+                  });
+                });
+              },
+            });
+            if (!updatedMessage) {
+              updatedMessage = await getMessage(conversationId, messageId) as Awaited<ReturnType<typeof updateMessageStructuredPayload>> | null;
+            }
+            if (!systemMessage) {
+              systemMessage = await db
+                .select({ id: chatMessages.id })
+                .from(chatMessages)
+                .where(and(
+                  eq(chatMessages.conversationId, conversationId),
+                  eq(chatMessages.clientMutationId, `organization-mutation-intent:${messageId}:system-message`),
+                ))
+                .then((rows) => rows[0]
+                  ? getMessage(conversationId, rows[0].id) as Promise<Awaited<ReturnType<typeof addMessage>> | null>
+                  : null);
+            }
+            return { message: updatedMessage, systemMessage };
+          }
           const updated = await organizationsSvc.update(
             proposal.targetId,
             proposal.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
@@ -4853,42 +5126,18 @@ export function chatService(db: Db, storage?: StorageService) {
         return { message: updatedMessage, systemMessage };
       }
 
-      const updatedMessage = await updateMessageStructuredPayload(
-        conversationId,
-        messageId,
-        withOperationProposalDecisionState(message.structuredPayload, {
-          status: input.action === "requestRevision" ? "revision_requested" : "rejected",
-          decisionNote,
-          decidedByUserId: input.actorUserId,
-          decidedAt: decidedAtIso,
-        }),
-      );
-      if (!updatedMessage) {
-        throw notFound("Operation proposal not found");
-      }
-
-      const systemMessage = await addMessage(conversationId, {
-        orgId: conversation.orgId,
-        role: "system",
-        kind: "system_event",
-        body:
-          input.action === "requestRevision"
-            ? `Requested changes before applying lightweight change: ${proposal.summary}.`
-            : `Rejected lightweight change: ${proposal.summary}.`,
-        structuredPayload: {
-          eventType: input.action === "requestRevision" ? "operation_revision_requested" : "operation_rejected",
-          source: "chat",
-          sourceMessageId: messageId,
-          targetType: proposal.targetType,
-          targetId: proposal.targetId,
-          decisionNote,
-        },
-      });
-
-      return { message: updatedMessage, systemMessage };
+      return persistDecisionAndSystemMessage();
   }
 
-  async function applyApprovedApproval(approval: ApprovalRow, actorUserId: string | null) {
+  async function applyApprovedApproval(
+    approval: ApprovalRow,
+    actorUserId: string | null,
+    options: {
+      organizationMutationAlreadyApplied?: boolean;
+      intentId?: string;
+      organizationMutationDownstreamClaimToken?: string | null;
+    } = {},
+  ) {
       if (approval.type !== "chat_issue_creation" && approval.type !== "chat_operation") {
         return null;
       }
@@ -4999,16 +5248,23 @@ export function chatService(db: Db, storage?: StorageService) {
       }
 
       if (proposal.targetType === "organization") {
-        const updated = await organizationsSvc.update(
-          proposal.targetId,
-          proposal.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
-        );
+        let updated = options.organizationMutationAlreadyApplied
+          ? await organizationsSvc.getById(proposal.targetId)
+          : await organizationsSvc.update(
+            proposal.targetId,
+            proposal.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
+          );
         if (!updated) throw notFound("Organization not found");
         await addMessage(conversationId, {
           orgId: approval.orgId,
           role: "system",
           kind: "system_event",
           body: `Applied approved organization change: ${proposal.summary}.`,
+          clientMutationId: options.intentId
+            ? `organization-mutation-intent:${options.intentId}:system-message`
+            : null,
+          organizationMutationProposalMessageId: messageId,
+          organizationMutationDownstreamClaimToken: options.organizationMutationDownstreamClaimToken,
           structuredPayload: {
             eventType: "operation_applied",
             approvalId: approval.id,
@@ -5024,6 +5280,9 @@ export function chatService(db: Db, storage?: StorageService) {
           entityType: "organization",
           entityId: proposal.targetId,
           details: proposal.patch,
+          idempotencyKey: options.intentId
+            ? `organization-mutation-intent:${options.intentId}:activity`
+            : undefined,
         });
         return updated;
       }

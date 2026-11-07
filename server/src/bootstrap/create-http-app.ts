@@ -21,6 +21,7 @@ import {
   handoffProjectGoalMutationAuthorityInTransaction,
 } from "../services/project-goal-mutation-fence.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
+import { startOrganizationMutationIntentPublisher } from "../services/organization-mutation-intents.js";
 import { createRustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { workspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import { applyUiBranding } from "../ui-branding.js";
@@ -58,6 +59,7 @@ export async function createHttpApp(
     binaryPath: opts.rustFoundationBinaryPath,
     actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey,
   });
+  let organizationMutationIntentPublisher: ReturnType<typeof startOrganizationMutationIntentPublisher> | null = null;
   let closeVite: (() => Promise<void>) | null = null;
   let closeInFlight: Promise<void> | null = null;
   const close = () => {
@@ -69,6 +71,7 @@ export async function createHttpApp(
         Promise.resolve().then(() => chatBackgroundRuntime.close()),
         Promise.resolve().then(() => disposeVite?.()),
         Promise.resolve().then(() => rustFoundationBridge.close()),
+        Promise.resolve().then(() => organizationMutationIntentPublisher?.close()),
       ]);
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -260,6 +263,11 @@ export async function createHttpApp(
           );
         }
       });
+    }
+    if (opts.organizationMutationCoordinator) {
+      organizationMutationIntentPublisher = startOrganizationMutationIntentPublisher(
+        opts.organizationMutationCoordinator,
+      );
     }
     return { app, close };
   } catch (error) {

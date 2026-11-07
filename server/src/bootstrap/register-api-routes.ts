@@ -104,6 +104,7 @@ export function registerApiRoutes(
     opts.storageService,
     chatBackgroundRuntime,
     opts.registerNetworkWaitingRunHandler,
+    { organizationMutationCoordinator: opts.organizationMutationCoordinator },
   ));
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
@@ -122,7 +123,9 @@ export function registerApiRoutes(
     hostEnv: opts.mcpHostEnv ?? process.env,
   }));
   api.use(goalRoutes(db));
-  api.use(approvalRoutes(db));
+  api.use(approvalRoutes(db, {
+    organizationMutationCoordinator: opts.organizationMutationCoordinator,
+  }));
   api.use(requestRoutes(db));
   api.use(secretRoutes(db));
   api.use(costRoutes(db));

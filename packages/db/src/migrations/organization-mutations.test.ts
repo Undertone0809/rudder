@@ -53,6 +53,53 @@ async function activity(org: string): Promise<string> {
   return id;
 }
 
+async function chatSource(org: string) {
+  const conversationId = randomUUID();
+  const messageId = randomUUID();
+  const approvalId = randomUUID();
+  await db`INSERT INTO chat_conversations (id, org_id)
+    VALUES (${conversationId}, ${org})`;
+  await db`INSERT INTO chat_messages (id, org_id, conversation_id, role, kind, body)
+    VALUES (${messageId}, ${org}, ${conversationId}, 'assistant', 'operation_proposal', 'Synthetic proposal')`;
+  await db`INSERT INTO approvals (id, org_id, type, payload)
+    VALUES (${approvalId}, ${org}, 'chat_operation', '{}'::jsonb)`;
+  return { conversationId, messageId, approvalId };
+}
+
+async function intent(
+  org: string,
+  source: { kind: "chat_lightweight" | "chat_approval"; sourceId: string; approvalId: string | null; conversationId: string; proposalMessageId: string | null },
+  key = `intent-${randomUUID()}`,
+  patch = JSON.stringify({ name: "Next organization name" }),
+) {
+  const [row] = await db.unsafe<{ id: string }[]>(
+    `INSERT INTO organization_mutation_intents
+      (org_id, source_kind, source_id, approval_id, conversation_id, proposal_message_id,
+       actor_user_id, actor_principal, decided_by_user_id, decision_note, generation,
+       patch, patch_fingerprint, intent_fingerprint, rust_idempotency_key)
+     VALUES ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+       $7, $8, $9, $10, 1, $11::jsonb, $12, $13, $14)
+     RETURNING id`,
+    [
+      org,
+      source.kind,
+      source.sourceId,
+      source.approvalId,
+      source.conversationId,
+      source.proposalMessageId,
+      "original-actor-user",
+      "board",
+      "approving-user",
+      "Original decision note",
+      patch,
+      "a".repeat(64),
+      "b".repeat(64),
+      key,
+    ],
+  );
+  return row!.id;
+}
+
 async function receipt(
   sql: postgres.Sql | postgres.TransactionSql,
   org: string,
@@ -467,5 +514,211 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(
       await db`SELECT id FROM activity_log WHERE org_id = ${own} AND id = ${localAudit}`,
     ).toHaveLength(0);
+  });
+
+  it("rejects cross-organization lightweight, approval, conversation, and proposal sources", async () => {
+    const own = await organization();
+    const foreign = await organization();
+    const ownSource = await chatSource(own);
+    const foreignSource = await chatSource(foreign);
+
+    await expect(
+      intent(own, {
+        kind: "chat_lightweight",
+        sourceId: foreignSource.messageId,
+        approvalId: null,
+        conversationId: foreignSource.conversationId,
+        proposalMessageId: foreignSource.messageId,
+      }),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      intent(own, {
+        kind: "chat_approval",
+        sourceId: foreignSource.approvalId,
+        approvalId: foreignSource.approvalId,
+        conversationId: ownSource.conversationId,
+        proposalMessageId: null,
+      }),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      intent(own, {
+        kind: "chat_approval",
+        sourceId: ownSource.approvalId,
+        approvalId: ownSource.approvalId,
+        conversationId: ownSource.conversationId,
+        proposalMessageId: foreignSource.messageId,
+      }),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      intent(own, {
+        kind: "chat_lightweight",
+        sourceId: ownSource.messageId,
+        approvalId: null,
+        conversationId: foreignSource.conversationId,
+        proposalMessageId: ownSource.messageId,
+      }),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("keeps intents recoverable when Side Chat source rows are cleaned up", async () => {
+    const org = await organization();
+    const source = await chatSource(org);
+    const lightweightId = await intent(org, {
+      kind: "chat_lightweight",
+      sourceId: source.messageId,
+      approvalId: null,
+      conversationId: source.conversationId,
+      proposalMessageId: source.messageId,
+    });
+    const approvalId = await intent(org, {
+      kind: "chat_approval",
+      sourceId: source.approvalId,
+      approvalId: source.approvalId,
+      conversationId: source.conversationId,
+      proposalMessageId: null,
+    });
+
+    await expect(
+      db`DELETE FROM chat_conversations WHERE id = ${source.conversationId}`,
+    ).resolves.toBeDefined();
+    await expect(
+      db`DELETE FROM approvals WHERE id = ${source.approvalId}`,
+    ).resolves.toBeDefined();
+
+    const [claimed] = await db`UPDATE organization_mutation_intents
+      SET phase = 'claimed',
+          claim_token = gen_random_uuid(),
+          claim_owner = 'cleanup-recovery-test',
+          lease_expires_at = now() + interval '1 minute'
+      WHERE id = ${lightweightId}
+      RETURNING source_id, conversation_id, proposal_message_id, phase`;
+    expect(claimed).toMatchObject({
+      source_id: source.messageId,
+      conversation_id: source.conversationId,
+      proposal_message_id: source.messageId,
+      phase: "claimed",
+    });
+    const [claimedApproval] = await db`UPDATE organization_mutation_intents
+      SET phase = 'claimed',
+          claim_token = gen_random_uuid(),
+          claim_owner = 'cleanup-recovery-test',
+          lease_expires_at = now() + interval '1 minute'
+      WHERE id = ${approvalId}
+      RETURNING source_id, approval_id, conversation_id, phase`;
+    expect(claimedApproval).toMatchObject({
+      source_id: source.approvalId,
+      approval_id: source.approvalId,
+      conversation_id: source.conversationId,
+      phase: "claimed",
+    });
+  });
+
+  it("binds decision attribution and command identity, then protects downstream progress", async () => {
+    const org = await organization();
+    const source = await chatSource(org);
+    await expect(
+      intent(
+        org,
+        {
+          kind: "chat_lightweight",
+          sourceId: source.messageId,
+          approvalId: null,
+          conversationId: source.conversationId,
+          proposalMessageId: source.messageId,
+        },
+        `empty-patch-${randomUUID()}`,
+        "{}",
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      intent(
+        org,
+        {
+          kind: "chat_lightweight",
+          sourceId: source.messageId,
+          approvalId: null,
+          conversationId: source.conversationId,
+          proposalMessageId: source.messageId,
+        },
+        `array-patch-${randomUUID()}`,
+        "[]",
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    const id = await intent(org, {
+      kind: "chat_lightweight",
+      sourceId: source.messageId,
+      approvalId: null,
+      conversationId: source.conversationId,
+      proposalMessageId: source.messageId,
+    });
+
+    expect(
+      await db`SELECT actor_user_id, actor_principal, decided_by_user_id, decision_note
+        FROM organization_mutation_intents WHERE id = ${id}`,
+    ).toEqual([
+      {
+        actor_user_id: "original-actor-user",
+        actor_principal: "board",
+        decided_by_user_id: "approving-user",
+        decision_note: "Original decision note",
+      },
+    ]);
+
+    for (const column of [
+      "actor_user_id",
+      "actor_principal",
+      "decided_by_user_id",
+      "decision_note",
+      "patch",
+      "intent_fingerprint",
+    ]) {
+      await expect(
+        db.unsafe(
+          `UPDATE organization_mutation_intents SET ${column} = ${
+            column === "patch"
+              ? "'{\"name\":\"tampered\"}'::jsonb"
+              : column === "intent_fingerprint"
+                ? `'${"c".repeat(64)}'`
+                : "'tampered'"
+          } WHERE id = $1`,
+          [id],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    }
+
+    await db`UPDATE organization_mutation_intents
+      SET downstream_targets = '{"linkedIssueId":"issue-1"}'::jsonb
+      WHERE id = ${id}`;
+    await expect(
+      db`UPDATE organization_mutation_intents
+        SET downstream_targets = '{"linkedIssueId":"issue-2"}'::jsonb
+        WHERE id = ${id}`,
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      db`UPDATE organization_mutation_intents SET phase = 'completed' WHERE id = ${id}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_mutation_intents
+        SET phase = 'downstream_pending', rust_receipt = '{}'::jsonb
+        WHERE id = ${id}`,
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await db`UPDATE organization_mutation_intents
+      SET phase = 'downstream_pending',
+          rust_receipt = '{"kind":"organization_settings"}'::jsonb,
+          rust_committed_at = now()
+      WHERE id = ${id}`;
+    await db`UPDATE organization_mutation_intents
+      SET downstream_progress = '{"approval":"completed"}'::jsonb,
+          downstream_completed_at = now(),
+          phase = 'completed'
+      WHERE id = ${id}`;
+    expect(await db`SELECT phase FROM organization_mutation_intents WHERE id = ${id}`).toEqual([
+      { phase: "completed" },
+    ]);
   });
 });

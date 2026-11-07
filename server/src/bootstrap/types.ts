@@ -11,6 +11,7 @@ import type { LocalAccountExchangePolicy } from "../services/local-account-auth.
 import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js";
 import type { RustFoundationMode } from "../services/rust-foundation-bridge.js";
+import type { OrganizationMutationIntentCoordinator } from "../services/organization-mutation-intents.js";
 import type { StorageService } from "../storage/types.js";
 
 export type UiMode = "none" | "static" | "vite-dev";
@@ -60,6 +61,12 @@ export interface RudderAppOptions {
   rustOrganizationBrandingMode?: RustFoundationMode;
   /** Transitional private Actix Project-Goal replacement write mode. */
   rustProjectGoalSetMode?: RustFoundationMode;
+  /**
+   * Optional transitional Chat organization-settings coordinator. It is
+   * injected only by a caller that also supplies a real Rust executor and
+   * recovery callbacks; omission keeps the legacy Node path authoritative.
+   */
+  organizationMutationCoordinator?: OrganizationMutationIntentCoordinator;
   rustFoundationBinaryPath?: string;
   rustFoundationActorEnvelopeKey?: string;
   hostVersion?: string;

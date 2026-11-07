@@ -8,10 +8,11 @@
 mod branding;
 mod goal_sets;
 mod links;
+mod settings;
 mod transaction;
 
 use rudder_organization_mutation_core::{
-    OrganizationBrandingCommand, OrganizationSettingsSnapshot,
+    OrganizationBrandingCommand, OrganizationSettingsCommand, OrganizationSettingsSnapshot,
 };
 use rudder_project_goal_link_core::{
     Operation, ProjectGoalLinkCommand, ProjectGoalLinkState, ProjectGoalSetState,
@@ -21,8 +22,10 @@ use sqlx::{PgPool, Row};
 use thiserror::Error;
 
 const COMMAND_KIND_BRANDING: &str = "organization_branding";
+const COMMAND_KIND_SETTINGS: &str = "organization_settings";
 const COMMAND_KIND_PROJECT_GOAL_LINK: &str = "project_goal_link";
 const COMMAND_KIND_PROJECT_GOAL_SET: &str = "project_goal_set_replacement";
+pub const SETTINGS_RECEIPT_FORMAT: i32 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +48,10 @@ impl Outcome {
 pub enum ResultState {
     OrganizationBranding {
         state: OrganizationSettingsSnapshot,
+        state_integrity: String,
+    },
+    OrganizationSettings {
+        state: rudder_organization_mutation_core::OrganizationSettingsMutationSnapshot,
         state_integrity: String,
     },
     ProjectGoalLink {
@@ -114,6 +121,10 @@ pub enum StoreError {
     StaleVersion,
     #[error("organization ownership fence is stale")]
     StaleFence,
+    #[error("organization mutation intent claim is stale")]
+    StaleClaim,
+    #[error("organization mutation intent is invalid")]
+    InvalidIntent,
     #[error("version exceeds the PostgreSQL BIGINT range")]
     VersionRange,
     #[error("organization idempotency key conflicts with its original command")]
@@ -122,6 +133,8 @@ pub enum StoreError {
     InvalidReceipt,
     #[error("branding contract rejected the command: {0}")]
     Branding(#[from] rudder_organization_mutation_core::MutationError),
+    #[error("organization settings contract rejected the command: {0}")]
+    Settings(rudder_organization_mutation_core::MutationError),
     #[error("link contract rejected the command: {0}")]
     Link(#[from] rudder_project_goal_link_core::LinkMutationError),
     #[error("database transaction failed")]
@@ -335,6 +348,19 @@ impl MutationStore {
         transaction::finish(tx, result).await
     }
 
+    /// Apply a complete organization settings command privately. This does not
+    /// activate any public writer; callers must already hold the organization
+    /// authority and, when present, a trusted immutable mutation intent.
+    pub async fn settings(
+        &self,
+        command: OrganizationSettingsCommand,
+    ) -> Result<CommittedMutation, StoreError> {
+        let metadata = transaction::Metadata::settings(&command)?;
+        let mut tx = transaction::begin(&self.pool).await?;
+        let result = settings::apply(&mut tx, command, &metadata).await;
+        transaction::finish(tx, result).await
+    }
+
     /// Apply an already validated Project↔Goal command and its explicit legacy
     /// `projects.goal_id` projection in one private transaction.
     pub async fn project_goal(
@@ -366,6 +392,10 @@ impl MutationStore {
 
 pub(crate) const fn branding_kind() -> &'static str {
     COMMAND_KIND_BRANDING
+}
+
+pub(crate) const fn settings_kind() -> &'static str {
+    COMMAND_KIND_SETTINGS
 }
 
 pub(crate) const fn project_goal_kind() -> &'static str {

@@ -988,12 +988,16 @@ impl AppState {
             StoreError::InvalidInput | StoreError::Branding(_) | StoreError::Link(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "mutation_invalid")
             }
+            StoreError::Settings(_) | StoreError::InvalidIntent => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "mutation_invalid")
+            }
             StoreError::InvalidProjection => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "mutation_invalid_projection",
             ),
             StoreError::StaleVersion => (StatusCode::CONFLICT, "mutation_stale_version"),
             StoreError::StaleFence => (StatusCode::CONFLICT, "mutation_stale_fence"),
+            StoreError::StaleClaim => (StatusCode::CONFLICT, "mutation_stale_claim"),
             StoreError::VersionRange => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "mutation_version_range")
             }
@@ -1336,14 +1340,13 @@ impl AppState {
             Ok(patch) => patch,
             Err(_) => return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "branding_invalid"),
         };
-        if patch.name.is_some()
-            || patch.description.is_some()
+        if patch.description.is_some()
             || patch.logo_asset_id.is_some()
-            || patch.brand_color.is_none()
+            || (patch.name.is_none() && patch.brand_color.is_none())
         {
             return self.json_error(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "branding_scalar_brand_color_required",
+                "branding_name_brand_color_only",
             );
         }
         let Some(store) = self.d1_mutations.as_ref() else {

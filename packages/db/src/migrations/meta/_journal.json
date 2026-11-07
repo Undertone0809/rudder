@@ -1226,6 +1226,13 @@
       "when": 1790112006000,
       "tag": "0174_organization_mutation_outbox_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1790112007000,
+      "tag": "0175_organization_settings_mutation_intents",
+      "breakpoints": true
     }
   ]
 }

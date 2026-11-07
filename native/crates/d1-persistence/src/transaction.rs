@@ -1,9 +1,10 @@
 use crate::{
-    CommittedMutation, Outcome, Receipt, ResultState, StoreError, branding_kind, project_goal_kind,
-    project_goal_set_kind,
+    CommittedMutation, Outcome, Receipt, ResultState, SETTINGS_RECEIPT_FORMAT, StoreError,
+    branding_kind, project_goal_kind, project_goal_set_kind, settings_kind,
 };
 use rudder_organization_mutation_core::{
-    OrganizationBrandingCommand, OrganizationSettingsSnapshot,
+    OrganizationBrandingCommand, OrganizationSettingsCommand, OrganizationSettingsMutationSnapshot,
+    OrganizationSettingsPatch, OrganizationSettingsSnapshot,
 };
 use rudder_project_goal_link_core::{
     Operation, ProjectGoalLinkCommand, ProjectGoalSetReplacementCommand,
@@ -37,6 +38,9 @@ pub(crate) enum ExpectedReceipt {
         brand_color: Option<Option<String>>,
         logo_asset_id: Option<Option<String>>,
     },
+    OrganizationSettings {
+        patch: OrganizationSettingsPatch,
+    },
     ProjectGoalLink {
         operation: Operation,
         link_identifier: String,
@@ -68,6 +72,8 @@ pub(crate) struct Metadata {
     pub link_identifier: Option<String>,
     pub expected_receipt: ExpectedReceipt,
     pub receipt_format: i32,
+    pub settings_intent:
+        Option<rudder_organization_mutation_core::OrganizationSettingsIntentContext>,
 }
 
 #[derive(Clone, Debug)]
@@ -80,13 +86,12 @@ pub(crate) struct LockedScope {
 impl Metadata {
     pub fn branding(command: &OrganizationBrandingCommand) -> Result<Self, StoreError> {
         let view = command.as_integration_view()?;
-        // The first public Rust writer owns only the scalar brandColor slice.
-        // Names, descriptions, and logo storage remain on the fenced Node
-        // path until their own component handoffs are complete.
-        if view.name().is_some()
-            || view.description().is_some()
+        // Rust owns the name/brandColor scalar component. Descriptions and
+        // logo storage remain on the fenced Node path until their own
+        // component handoffs are complete.
+        if view.description().is_some()
             || view.logo_asset_id().is_some()
-            || view.brand_color().is_none()
+            || (view.name().is_none() && view.brand_color().is_none())
         {
             return Err(StoreError::InvalidInput);
         }
@@ -101,6 +106,7 @@ impl Metadata {
             "idempotency_key": key,
             "expected_version": view.expected_version(),
             "fence_epoch": view.fence_epoch(),
+            "name": view.name(),
             "brand_color": view.brand_color(),
         });
         ensure_json_size(&body, MAX_COMMAND_BYTES)?;
@@ -119,12 +125,53 @@ impl Metadata {
             goal_id: None,
             link_identifier: None,
             expected_receipt: ExpectedReceipt::OrganizationBranding {
-                name: None,
+                name: view.name().map(str::to_owned),
                 description: None,
                 brand_color: view.brand_color().map(|value| value.map(str::to_owned)),
                 logo_asset_id: None,
             },
             receipt_format: BRANDING_RECEIPT_FORMAT,
+            settings_intent: None,
+        })
+    }
+
+    pub fn settings(command: &OrganizationSettingsCommand) -> Result<Self, StoreError> {
+        let command = command.normalized().map_err(StoreError::Settings)?;
+        let actor = actor_metadata(command.actor.kind(), command.actor.principal_id())?;
+        let org = uuid(&command.organization_id)?.to_owned();
+        let key = bounded_text(&command.idempotency_key, false)?;
+        let core_fingerprint = command.fingerprint().map_err(StoreError::Settings)?;
+        let fingerprint = adapter_fingerprint(settings_kind(), &core_fingerprint, None)?;
+        let body = json!({
+            "organization_id": org,
+            "actor_kind": actor.kind,
+            "actor_id": actor.principal_id,
+            "idempotency_key": key,
+            "expected_version": command.expected_version,
+            "fence_epoch": command.fence_epoch,
+            "patch": command.patch,
+            "intent_id": command.intent.as_ref().map(|intent| &intent.intent_id),
+        });
+        ensure_json_size(&body, MAX_COMMAND_BYTES)?;
+        signed(command.expected_version)?;
+        signed(command.fence_epoch)?;
+        Ok(Self {
+            org,
+            key,
+            kind: settings_kind(),
+            fingerprint,
+            expected_version: command.expected_version,
+            fence_epoch: command.fence_epoch,
+            actor,
+            run_id: None,
+            project_id: None,
+            goal_id: None,
+            link_identifier: None,
+            expected_receipt: ExpectedReceipt::OrganizationSettings {
+                patch: command.patch.clone(),
+            },
+            receipt_format: SETTINGS_RECEIPT_FORMAT,
+            settings_intent: command.intent.clone(),
         })
     }
 
@@ -194,6 +241,7 @@ impl Metadata {
                 primary_goal_after: primary_goal_after.clone(),
             },
             receipt_format: PROJECT_GOAL_RECEIPT_FORMAT,
+            settings_intent: None,
         })
     }
 
@@ -247,6 +295,7 @@ impl Metadata {
                 primary_goal_after: context.primary_goal_after().map(str::to_owned),
             },
             receipt_format: PROJECT_GOAL_SET_RECEIPT_FORMAT,
+            settings_intent: None,
         })
     }
 
@@ -357,6 +406,80 @@ pub(crate) async fn lock_scope(
     // Legacy Node writers acquire this fence row before touching any business
     // row. Keep Rust's lock order identical so an ownership handoff cannot
     // deadlock on organizations versus organization_mutation_state.
+    let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
+        .bind(&metadata.org)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if organization.is_none() {
+        return Err(StoreError::NotFound);
+    }
+
+    if metadata.actor.kind == "ceo_agent" || metadata.actor.kind == "agent" {
+        let agent = sqlx::query(
+            "SELECT role, status
+             FROM agents
+             WHERE id=$1::uuid AND org_id=$2::uuid
+             FOR UPDATE",
+        )
+        .bind(&metadata.actor.principal_id)
+        .bind(&metadata.org)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(StoreError::Unauthorized)?;
+        if agent.try_get::<String, _>("role")? != "ceo"
+            || matches!(
+                agent.try_get::<String, _>("status")?.as_str(),
+                "terminated" | "pending_approval"
+            )
+        {
+            return Err(StoreError::Unauthorized);
+        }
+    } else if metadata.actor.kind != "board" {
+        return Err(StoreError::Unauthorized);
+    }
+
+    let fence_token = state.try_get::<String, _>("fence_token")?;
+    uuid(&fence_token)?;
+    Ok(LockedScope {
+        version: unsigned(state.try_get::<i64, _>("mutation_version")?)?,
+        fence_epoch: unsigned(state.try_get::<i64, _>("fence_epoch")?)?,
+        fence_token,
+    })
+}
+
+/// Lock the organization-wide mutation state and business row in the order
+/// used by the Node organization writer. Settings callers lock their optional
+/// approval/message/intent sources before entering this function.
+pub(crate) async fn lock_organization_scope(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<LockedScope, StoreError> {
+    let state = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+         FROM organization_mutation_state
+         WHERE org_id=$1::uuid
+         FOR UPDATE",
+    )
+    .bind(&metadata.org)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(state) = state else {
+        let organization_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+        )
+        .bind(&metadata.org)
+        .fetch_one(&mut **tx)
+        .await?;
+        return Err(if organization_exists {
+            StoreError::NotOwned
+        } else {
+            StoreError::NotFound
+        });
+    };
+    if state.try_get::<String, _>("owner")? != "rust" {
+        return Err(StoreError::NotOwned);
+    }
+
     let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
         .bind(&metadata.org)
         .fetch_optional(&mut **tx)
@@ -870,6 +993,164 @@ pub(crate) async fn persist_branding(
     })
 }
 
+pub(crate) async fn persist_settings(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    scope: &LockedScope,
+    effect: Effect,
+) -> Result<CommittedMutation, StoreError> {
+    signed(effect.version)?;
+    signed(effect.fence_epoch)?;
+    if effect.fence_epoch < scope.fence_epoch
+        || effect.fence_epoch > scope.fence_epoch.saturating_add(1)
+    {
+        return Err(StoreError::StaleFence);
+    }
+    ensure_json_size(&effect.details, MAX_RESULT_BYTES)?;
+    let receipt = Receipt {
+        organization_id: metadata.org.clone(),
+        version: effect.version,
+        fence_epoch: effect.fence_epoch,
+        fingerprint: metadata.fingerprint.clone(),
+        activity_id: String::new(),
+        outcome: effect.outcome,
+        result: effect.result,
+    };
+    validate_receipt_result(metadata, &receipt)?;
+    let result_without_activity =
+        serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    ensure_json_size(&result_without_activity, MAX_RESULT_BYTES)?;
+
+    let updated = sqlx::query(
+        "UPDATE organization_mutation_state
+         SET mutation_version=$2,
+             fence_epoch=$3,
+             fence_token=CASE WHEN $3 > $5 THEN gen_random_uuid() ELSE fence_token END,
+             updated_at=now()
+         WHERE org_id=$1::uuid
+           AND owner='rust'
+           AND mutation_version=$4
+           AND fence_epoch=$5
+           AND fence_token=$6::uuid",
+    )
+    .bind(&metadata.org)
+    .bind(signed(effect.version)?)
+    .bind(signed(effect.fence_epoch)?)
+    .bind(signed(metadata.expected_version)?)
+    .bind(signed(metadata.fence_epoch)?)
+    .bind(&scope.fence_token)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(StoreError::StaleFence);
+    }
+
+    let details = serde_json::to_string(&effect.details).map_err(|_| StoreError::InvalidReceipt)?;
+    let actor_type = if metadata.actor.kind == "board" {
+        "user"
+    } else {
+        "agent"
+    };
+    let activity_id: String = sqlx::query_scalar(
+        "INSERT INTO activity_log
+          (org_id, actor_type, actor_id, action, entity_type, entity_id,
+           agent_id, run_id, details, idempotency_key)
+         VALUES ($1::uuid, $2, $3, 'organization.updated',
+                 'organization', $4, $5::uuid, $6::uuid, $7::jsonb, $8)
+         RETURNING id::text",
+    )
+    .bind(&metadata.org)
+    .bind(actor_type)
+    .bind(&metadata.actor.principal_id)
+    .bind(&effect.entity_id)
+    .bind(metadata.actor.agent_id.as_deref())
+    .bind(metadata.run_id.as_deref())
+    .bind(&details)
+    .bind(activity_idempotency_key(&metadata.key))
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let mut receipt = receipt;
+    receipt.activity_id = activity_id.clone();
+    let receipt_json = serde_json::to_string(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if receipt_json.len() > MAX_RESULT_BYTES {
+        return Err(StoreError::InvalidInput);
+    }
+    sqlx::query(
+        "INSERT INTO organization_mutation_receipts
+          (org_id, idempotency_key, command_kind, command_fingerprint, receipt_format,
+           outcome, resulting_version, fence_epoch, activity_id, result)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&metadata.key)
+    .bind(metadata.kind)
+    .bind(&metadata.fingerprint)
+    .bind(metadata.receipt_format)
+    .bind(receipt.outcome.as_str())
+    .bind(signed(receipt.version)?)
+    .bind(signed(receipt.fence_epoch)?)
+    .bind(&receipt.activity_id)
+    .bind(&receipt_json)
+    .execute(&mut **tx)
+    .await?;
+
+    let event_payload = json!({
+        "actorType": actor_type,
+        "actorId": metadata.actor.principal_id,
+        "action": "organization.updated",
+        "entityType": "organization",
+        "entityId": effect.entity_id,
+        "agentId": metadata.actor.agent_id,
+        "runId": metadata.run_id,
+        "details": effect.details,
+    });
+    ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_outbox
+          (org_id, activity_id, event_type, payload)
+         VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&receipt.activity_id)
+    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
+    .execute(&mut **tx)
+    .await?;
+
+    if let Some(intent) = &metadata.settings_intent {
+        let updated = sqlx::query(
+            "UPDATE organization_mutation_intents
+             SET phase='rust_committed',
+                 rust_receipt=$2::jsonb,
+                 rust_committed_at=now(),
+                 claim_token=NULL,
+                 claim_owner=NULL,
+                 lease_expires_at=NULL,
+                 updated_at=now()
+             WHERE id=$1::uuid
+               AND org_id=$3::uuid
+               AND (
+                 (phase='pending' AND claim_token IS NULL)
+                 OR (phase='claimed' AND claim_token=$4::uuid)
+               )",
+        )
+        .bind(&intent.intent_id)
+        .bind(&receipt_json)
+        .bind(&metadata.org)
+        .bind(intent.claim_token.as_deref())
+        .execute(&mut **tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::StaleClaim);
+        }
+    }
+
+    Ok(CommittedMutation {
+        replayed: false,
+        receipt,
+    })
+}
+
 fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(), StoreError> {
     if receipt.organization_id != metadata.org
         || !is_sha256_hex(&receipt.fingerprint)
@@ -933,6 +1214,99 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                     .as_ref()
                     .is_some_and(|value| value.as_deref() != state.brand_color.as_deref())
                 || logo_asset_id
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.logo_asset_id.as_deref())
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+        }
+        (
+            ResultState::OrganizationSettings {
+                state,
+                state_integrity,
+            },
+            kind,
+        ) if *kind == *settings_kind() => {
+            if state.organization_id != metadata.org
+                || state.version != receipt.version
+                || state.fence_epoch != receipt.fence_epoch
+                || !is_sha256_hex(state_integrity)
+                || settings_state_integrity(state)? != *state_integrity
+                || !valid_issue_prefix(&state.issue_prefix)
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            bounded_text(&state.organization_id, false)?;
+            bounded_text(&state.name, false)?;
+            bounded_text(&state.status, false)?;
+            bounded_text(&state.default_chat_issue_creation_mode, false)?;
+            if state.budget_monthly_cents > i32::MAX as u64
+                || state.spent_monthly_cents > i32::MAX as u64
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            for alias in &state.issue_prefix_aliases {
+                if !valid_issue_prefix(alias) {
+                    return Err(StoreError::InvalidReceipt);
+                }
+            }
+            if let Some(value) = &state.description {
+                bounded_text(value, true)?;
+            }
+            if let Some(value) = &state.brand_color {
+                bounded_text(value, true)?;
+                if !valid_brand_color(value) {
+                    return Err(StoreError::InvalidReceipt);
+                }
+            }
+            if let Some(value) = &state.logo_asset_id {
+                uuid(value)?;
+            }
+            let ExpectedReceipt::OrganizationSettings { patch } = &metadata.expected_receipt else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            let expected_version = metadata
+                .expected_version
+                .checked_add(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if receipt.outcome != Outcome::Applied
+                || receipt.version != expected_version
+                || receipt.fence_epoch != metadata.fence_epoch
+                || patch
+                    .name
+                    .as_deref()
+                    .is_some_and(|value| value != state.name.as_str())
+                || patch
+                    .description
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.description.as_deref())
+                || patch
+                    .status
+                    .as_deref()
+                    .is_some_and(|value| value != state.status.as_str())
+                || patch
+                    .budget_monthly_cents
+                    .is_some_and(|value| value != state.budget_monthly_cents)
+                || patch
+                    .spent_monthly_cents
+                    .is_some_and(|value| value != state.spent_monthly_cents)
+                || patch
+                    .default_chat_issue_creation_mode
+                    .as_deref()
+                    .is_some_and(|value| value != state.default_chat_issue_creation_mode.as_str())
+                || patch
+                    .require_board_approval_for_new_agents
+                    .is_some_and(|value| value != state.require_board_approval_for_new_agents)
+                || patch
+                    .issue_prefix
+                    .as_deref()
+                    .is_some_and(|value| value != state.issue_prefix.as_str())
+                || patch
+                    .brand_color
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.brand_color.as_deref())
+                || patch
+                    .logo_asset_id
                     .as_ref()
                     .is_some_and(|value| value.as_deref() != state.logo_asset_id.as_deref())
             {
@@ -1153,6 +1527,19 @@ pub(crate) fn branding_state_integrity(
     )))
 }
 
+pub(crate) fn settings_state_integrity(
+    state: &OrganizationSettingsMutationSnapshot,
+) -> Result<String, StoreError> {
+    let value = json!({
+        "schema": "rudder.d1.organization-settings-state.v1",
+        "state": state,
+    });
+    ensure_json_size(&value, MAX_RESULT_BYTES)?;
+    Ok(hex_digest(Sha256::digest(
+        serde_json::to_vec(&value).map_err(|_| StoreError::InvalidReceipt)?,
+    )))
+}
+
 fn activity_idempotency_key(key: &str) -> String {
     format!("rust-d1:{}", hex_digest(Sha256::digest(key.as_bytes())))
 }
@@ -1210,6 +1597,16 @@ pub(crate) fn is_sha256_hex(value: &str) -> bool {
 fn valid_brand_color(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
+}
+
+fn valid_issue_prefix(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    value.len() <= 12
+        && first.is_ascii_uppercase()
+        && chars.all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
 }
 
 fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {

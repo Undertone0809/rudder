@@ -356,8 +356,9 @@ export function organizationService(db: Db) {
       data: Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
     ) =>
       db.transaction(async (tx) => {
+        const writesName = Object.prototype.hasOwnProperty.call(data, "name");
         const writesBrandColor = Object.prototype.hasOwnProperty.call(data, "brandColor");
-        if (writesBrandColor) await lockNodeOrganizationBrandingAuthority(tx, id);
+        if (writesName || writesBrandColor) await lockNodeOrganizationBrandingAuthority(tx, id);
         await lockNodeMutationAuthority(tx, id);
         const existing = await getCompanyQuery(tx)
           .where(eq(organizations.id, id))

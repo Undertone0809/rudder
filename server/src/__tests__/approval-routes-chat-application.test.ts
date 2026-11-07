@@ -41,6 +41,7 @@ const mockIssueApprovalService = vi.hoisted(() => ({
 }));
 
 const mockIssueService = vi.hoisted(() => ({
+  getById: vi.fn(),
   update: vi.fn(),
 }));
 
@@ -71,7 +72,7 @@ vi.mock("../services/index.js", () => ({
 
 const activeServers = new Set<Server>();
 
-async function createApp(db: any = {}) {
+async function createApp(db: any = {}, routeOptions: any = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -84,7 +85,7 @@ async function createApp(db: any = {}) {
     };
     next();
   });
-  app.use("/api", approvalRoutes(db));
+  app.use("/api", approvalRoutes(db, routeOptions));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -106,6 +107,7 @@ describe("approval routes chat application", () => {
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.update.mockResolvedValue(null);
+    mockIssueService.getById.mockResolvedValue(null);
     mockChatService.applyApprovedApproval.mockResolvedValue(null);
     mockAccessService.canUser.mockResolvedValue(true);
     mockApprovalService.getById.mockResolvedValue({
@@ -337,6 +339,130 @@ describe("approval routes chat application", () => {
         }),
       }),
     );
+  });
+
+  it("claims an organization Chat approval before finalizing its approval state", async () => {
+    const events: string[] = [];
+    const pendingApproval = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_operation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        chatMessageId: "message-1",
+        operationProposal: {
+          targetType: "organization",
+          targetId: "organization-1",
+          summary: "Rename organization",
+          patch: { name: "Renamed organization" },
+        },
+      },
+      requestedByAgentId: null,
+    };
+    const approvedApproval = { ...pendingApproval, status: "approved" };
+    mockApprovalService.getById
+      .mockResolvedValueOnce(pendingApproval)
+      .mockResolvedValueOnce(approvedApproval);
+    mockApprovalService.approve.mockImplementation(async () => {
+      events.push("approval-finalized");
+      return { approval: approvedApproval, applied: true };
+    });
+    const coordinator = {
+      run: vi.fn(async (_input: unknown, callbacks: any) => {
+        events.push("claim-persisted");
+        await callbacks.beforeRust({ claimToken: "claim-token" });
+        await callbacks.applyEffects({
+          intent: { id: "intent-1" },
+          runStep: async (_name: string, _target: string, action: (tx: unknown) => Promise<void>) => action({}),
+        });
+        return { status: "completed", intent: { id: "intent-1" } };
+      }),
+    };
+
+    const res = await request(await createApp({
+      select: () => ({
+        from: () => ({
+          where: async () => [{ id: "chat-1" }],
+        }),
+      }),
+    }, { organizationMutationCoordinator: coordinator }))
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Looks good" });
+
+    expect(res.status).toBe(200);
+    expect(events).toEqual(["claim-persisted", "approval-finalized"]);
+    expect(coordinator.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: {
+          kind: "chat_approval",
+          sourceId: "approval-1",
+          approvalId: "approval-1",
+          conversationId: "chat-1",
+          proposalMessageId: "message-1",
+        },
+        patch: { name: "Renamed organization" },
+        downstreamTargets: {
+          approvalId: "approval-1",
+          conversationId: "chat-1",
+          proposalMessageId: "message-1",
+          summary: "Rename organization",
+          requestedByAgentId: null,
+          linkedIssueIds: ["issue-1"],
+        },
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("replays an already-approved organization Chat intent after a process-loss window", async () => {
+    const approvedApproval = {
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_operation",
+      status: "approved",
+      payload: {
+        chatConversationId: "chat-1",
+        chatMessageId: "message-1",
+        operationProposal: {
+          targetType: "organization",
+          targetId: "organization-1",
+          summary: "Rename organization",
+          patch: { name: "Renamed organization" },
+        },
+      },
+      requestedByAgentId: null,
+    };
+    mockApprovalService.getById.mockResolvedValue(approvedApproval);
+    mockApprovalService.approve.mockResolvedValue({ approval: approvedApproval, applied: false });
+    const coordinator = {
+      run: vi.fn(async (_input: unknown, callbacks: any) => {
+        await callbacks.beforeRust({ claimToken: "recovery-claim-token" });
+        await callbacks.applyEffects({
+          intent: {
+            id: "intent-1",
+            actorUserId: "user-1",
+            downstreamClaimToken: "recovery-downstream-token",
+          },
+          runStep: async (_name: string, _target: string, action: (tx: unknown) => Promise<void>) => action({}),
+        });
+        return { status: "replayed", intent: { id: "intent-1" } };
+      }),
+    };
+
+    const res = await request(await createApp({
+      select: () => ({
+        from: () => ({
+          where: async () => [{ id: "chat-1" }],
+        }),
+      }),
+    }, { organizationMutationCoordinator: coordinator }))
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Retry after restart" });
+
+    expect(res.status).toBe(200);
+    expect(coordinator.run).toHaveBeenCalledOnce();
+    expect(mockApprovalService.approve).toHaveBeenCalledOnce();
   });
 
   it("reactivates blocked linked issues and wakes their assignee after approval is applied", async () => {

@@ -11,6 +11,14 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+mod settings;
+
+pub use settings::{
+    OrganizationSettingsAuditField, OrganizationSettingsCommand, OrganizationSettingsIntentContext,
+    OrganizationSettingsIntentSourceKind, OrganizationSettingsMutationSnapshot,
+    OrganizationSettingsPatch,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
@@ -655,6 +663,16 @@ pub enum MutationError {
     VersionOverflow,
     #[error("mutation fingerprint could not be encoded")]
     FingerprintFailed,
+    #[error("organization status is invalid")]
+    InvalidOrganizationStatus,
+    #[error("chat issue creation mode is invalid")]
+    InvalidChatIssueCreationMode,
+    #[error("organization issue prefix is invalid")]
+    InvalidIssuePrefix,
+    #[error("organization budget must fit a PostgreSQL integer")]
+    InvalidBudget,
+    #[error("organization settings intent context is invalid")]
+    InvalidIntentContext,
 }
 
 fn valid_brand_color(value: &str) -> bool {
@@ -836,6 +854,23 @@ mod tests {
         assert_eq!(outcome.state().brand_color.as_deref(), Some("#12aBcD"));
         assert_eq!(outcome.state().version, 4);
         assert_eq!(outcome.state().fence_epoch, 7);
+    }
+
+    #[test]
+    fn applies_name_and_brand_color_together_as_one_versioned_mutation() {
+        let command = command_from_patch(
+            "branding-name-and-color",
+            serde_json::json!({
+                "name": "Rudder Cloud",
+                "brandColor": "#336699"
+            }),
+        );
+
+        let outcome = state().apply(command).unwrap();
+
+        assert_eq!(outcome.version(), 4);
+        assert_eq!(outcome.state().name, "Rudder Cloud");
+        assert_eq!(outcome.state().brand_color.as_deref(), Some("#336699"));
     }
 
     #[test]

@@ -208,6 +208,12 @@ fn branding_at(key: &str, version: u64, fence_epoch: u64) -> OrganizationBrandin
         .with_brand_color(Some(branding_color(key)))
 }
 
+fn branding_name_and_color(key: &str, version: u64) -> OrganizationBrandingCommand {
+    OrganizationBrandingCommand::board(ORG, "board-user", key, version, 7)
+        .with_name(Some("Rudder Cloud".to_owned()))
+        .with_brand_color(Some(branding_color(key)))
+}
+
 fn branding_color(key: &str) -> String {
     let digest = Sha256::digest(key.as_bytes());
     format!("#{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2])
@@ -245,6 +251,79 @@ async fn branding_applies_state_activity_and_immutable_receipt_atomically() {
         Some(branding_color("branding-applied"))
     );
     assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_applies_name_and_brand_color_together_with_shared_receipt_effects() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+
+    let committed = store
+        .branding(branding_name_and_color("branding-name-and-color", 0))
+        .await
+        .unwrap();
+
+    assert_eq!(database.name().await, "Rudder Cloud");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-name-and-color"))
+    );
+    match &committed.receipt.result {
+        ResultState::OrganizationBranding { state, .. } => {
+            assert_eq!(state.name, "Rudder Cloud");
+            assert_eq!(
+                state.brand_color.as_deref(),
+                Some(branding_color("branding-name-and-color")).as_deref()
+            );
+        }
+        result => panic!("unexpected branding result: {result:?}"),
+    }
+    let details: String = sqlx::query_scalar(
+        "SELECT details::text
+         FROM activity_log
+         WHERE org_id=$1::uuid AND id=$2::uuid AND action='organization.branding_updated'",
+    )
+    .bind(ORG)
+    .bind(&committed.receipt.activity_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let details: serde_json::Value = serde_json::from_str(&details).unwrap();
+    assert_eq!(details["name"], "Rudder Cloud");
+    assert_eq!(
+        details["brandColor"],
+        branding_color("branding-name-and-color")
+    );
+    assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_replays_a_combined_name_and_color_receipt_after_later_mutation() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let first = store
+        .branding(branding_name_and_color("branding-name-replay", 0))
+        .await
+        .unwrap();
+    store
+        .branding(
+            OrganizationBrandingCommand::board(ORG, "board-user", "branding-name-later", 1, 7)
+                .with_name(Some("Later Name".to_owned()))
+                .with_brand_color(Some("#663399".to_owned())),
+        )
+        .await
+        .unwrap();
+
+    let replay = store
+        .branding(branding_name_and_color("branding-name-replay", 0))
+        .await
+        .unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, first.receipt);
+    assert_eq!(database.name().await, "Later Name");
+    assert_eq!(database.brand_color().await, Some("#663399".to_owned()));
+    assert_eq!(database.counts().await, (2, 2, 2));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -455,6 +534,12 @@ async fn branding_rejects_missing_and_cross_organization_resources() {
         store.branding(foreign_asset).await,
         Err(StoreError::InvalidInput)
     ));
+    let description =
+        branding("node-description", 0).with_description(Some("Node-owned".to_owned()));
+    assert!(matches!(
+        store.branding(description).await,
+        Err(StoreError::InvalidInput)
+    ));
     assert_eq!(database.name().await, "Original");
     assert_eq!(database.counts().await, (0, 0, 0));
 
@@ -484,12 +569,13 @@ async fn branding_rolls_back_business_state_version_activity_and_receipt_on_audi
         .await;
 
     let error = store
-        .branding(branding("audit-rollback", 0))
+        .branding(branding("audit-rollback", 0).with_name(Some("Should Roll Back".to_owned())))
         .await
         .unwrap_err();
 
     assert!(matches!(error, StoreError::Database(_)));
     assert_eq!(database.name().await, "Original");
+    assert_eq!(database.brand_color().await, None);
     assert_eq!(database.counts().await, (0, 0, 0));
     database
         .sql(

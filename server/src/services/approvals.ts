@@ -15,6 +15,7 @@ import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { assertOrganizationMutationApprovalWritable } from "./organization-mutation-intents.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
@@ -24,6 +25,7 @@ export function approvalService(db: Db) {
   const resolvableStatuses = Array.from(canResolveStatuses);
   type ApprovalRecord = typeof approvals.$inferSelect;
   type ResolutionResult = { approval: ApprovalRecord; applied: boolean };
+  type ResolutionOptions = { organizationMutationClaimToken?: string | null };
 
   function redactApprovalComment<T extends { body: string }>(comment: T, censorUsernameInLogs: boolean): T {
     return {
@@ -48,6 +50,7 @@ export function approvalService(db: Db) {
     decidedByUserId: string,
     decisionNote: string | null | undefined,
     payloadOverride?: Record<string, unknown>,
+    options: ResolutionOptions = {},
   ): Promise<ResolutionResult> {
     const existing = await getExistingApproval(id);
     if (!canResolveStatuses.has(existing.status)) {
@@ -60,19 +63,39 @@ export function approvalService(db: Db) {
     }
 
     const now = new Date();
-    const updated = await db
-      .update(approvals)
-      .set({
-        status: targetStatus,
-        ...(payloadOverride ? { payload: payloadOverride } : {}),
-        decidedByUserId,
-        decisionNote: decisionNote ?? null,
-        decidedAt: now,
-        updatedAt: now,
-      })
-      .where(and(eq(approvals.id, id), inArray(approvals.status, resolvableStatuses)))
-      .returning()
-      .then((rows) => rows[0] ?? null);
+    const updated = await db.transaction(async (tx) => {
+      const locked = await tx
+        .select()
+        .from(approvals)
+        .where(eq(approvals.id, id))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!locked) throw notFound("Approval not found");
+      if (!canResolveStatuses.has(locked.status)) {
+        if (locked.status === targetStatus) return null;
+        throw unprocessable(
+          `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
+        );
+      }
+      await assertOrganizationMutationApprovalWritable(
+        tx,
+        id,
+        options.organizationMutationClaimToken,
+      );
+      return tx
+        .update(approvals)
+        .set({
+          status: targetStatus,
+          ...(payloadOverride ? { payload: payloadOverride } : {}),
+          decidedByUserId,
+          decisionNote: decisionNote ?? null,
+          decidedAt: now,
+          updatedAt: now,
+        })
+        .where(and(eq(approvals.id, id), inArray(approvals.status, resolvableStatuses)))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+    });
 
     if (updated) {
       return { approval: updated, applied: true };
@@ -114,6 +137,7 @@ export function approvalService(db: Db) {
       decidedByUserId: string,
       decisionNote?: string | null,
       payloadOverride?: Record<string, unknown>,
+      options?: ResolutionOptions,
     ) => {
       const { approval: updated, applied } = await resolveApproval(
         id,
@@ -121,6 +145,7 @@ export function approvalService(db: Db) {
         decidedByUserId,
         decisionNote,
         payloadOverride,
+        options,
       );
 
       let hireApprovedAgentId: string | null = null;
@@ -209,18 +234,31 @@ export function approvalService(db: Db) {
       }
 
       const now = new Date();
-      return db
-        .update(approvals)
-        .set({
-          status: "revision_requested",
-          decidedByUserId,
-          decisionNote: decisionNote ?? null,
-          decidedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(approvals.id, id))
-        .returning()
-        .then((rows) => rows[0]);
+      return db.transaction(async (tx) => {
+        const locked = await tx
+          .select()
+          .from(approvals)
+          .where(eq(approvals.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("Approval not found");
+        if (locked.status !== "pending") {
+          throw unprocessable("Only pending approvals can request revision");
+        }
+        await assertOrganizationMutationApprovalWritable(tx, id);
+        return tx
+          .update(approvals)
+          .set({
+            status: "revision_requested",
+            decidedByUserId,
+            decisionNote: decisionNote ?? null,
+            decidedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(approvals.id, id))
+          .returning()
+          .then((rows) => rows[0]);
+      });
     },
 
     resubmit: async (id: string, payload?: Record<string, unknown>) => {
@@ -230,19 +268,32 @@ export function approvalService(db: Db) {
       }
 
       const now = new Date();
-      return db
-        .update(approvals)
-        .set({
-          status: "pending",
-          payload: payload ?? existing.payload,
-          decisionNote: null,
-          decidedByUserId: null,
-          decidedAt: null,
-          updatedAt: now,
-        })
-        .where(eq(approvals.id, id))
-        .returning()
-        .then((rows) => rows[0]);
+      return db.transaction(async (tx) => {
+        const locked = await tx
+          .select()
+          .from(approvals)
+          .where(eq(approvals.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("Approval not found");
+        if (locked.status !== "revision_requested") {
+          throw unprocessable("Only revision requested approvals can be resubmitted");
+        }
+        await assertOrganizationMutationApprovalWritable(tx, id);
+        return tx
+          .update(approvals)
+          .set({
+            status: "pending",
+            payload: payload ?? locked.payload,
+            decisionNote: null,
+            decidedByUserId: null,
+            decidedAt: null,
+            updatedAt: now,
+          })
+          .where(eq(approvals.id, id))
+          .returning()
+          .then((rows) => rows[0]);
+      });
     },
 
     listComments: async (approvalId: string) => {

@@ -84,6 +84,23 @@ export {
   handoffOrganizationBrandingAuthority,
   lockNodeOrganizationBrandingAuthority
 } from "./organization-branding-fence.js";
+export {
+  assertOrganizationMutationApprovalWritable,
+  assertOrganizationMutationMessageWritable,
+  organizationMutationIntentCoordinator,
+  startOrganizationMutationIntentPublisher,
+  organizationSettingsIntentFingerprint,
+  organizationSettingsPatchFingerprint,
+  type OrganizationMutationIntentCallbacks,
+  type OrganizationMutationIntentCoordinator,
+  type OrganizationMutationIntentCoordinatorOptions,
+  type OrganizationMutationIntentPublisherOptions,
+  type OrganizationMutationIntentRunResult,
+  type OrganizationSettingsIntentInput,
+  type OrganizationSettingsIntentSource,
+  type OrganizationSettingsRustContext,
+  type OrganizationSettingsRustExecutor,
+} from "./organization-mutation-intents.js";
 export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
 export { organizationIntelligenceRuntimeChainService } from "./organization-intelligence-runtime-chain.js";
 export { organizationMemberService } from "./organization-members.js";

@@ -79,6 +79,7 @@ import {
   projectService,
   sideChatService,
 } from "../services/index.js";
+import type { OrganizationMutationIntentCoordinator } from "../services/organization-mutation-intents.js";
 import {
   NETWORK_WAIT_EXHAUSTED_ERROR,
   NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
@@ -129,9 +130,12 @@ export function chatRoutes(
   storage: StorageService,
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
   registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void,
+  options: { organizationMutationCoordinator?: OrganizationMutationIntentCoordinator } = {},
 ) {
   const router = Router();
-  const svc = chatService(db, storage);
+  const svc = chatService(db, storage, {
+    organizationMutationCoordinator: options.organizationMutationCoordinator,
+  });
   const organizationsSvc = organizationService(db);
   const issuesSvc = issueService(db, storage);
   const projectsSvc = projectService(db);

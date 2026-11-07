@@ -287,6 +287,72 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     assert_eq!(first_json["result"]["state"]["brand_color"], "#336699");
     let activity_id = first_json["activity_id"].as_str().expect("activity id");
 
+    let combined = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-combined",
+        "branding-combined",
+        br##"{"name":"Rudder Cloud","brandColor":"#224466"}"##,
+        true,
+    );
+    assert!(combined.starts_with("HTTP/1.1 200"), "{combined}");
+    let combined_json = response_json(&combined);
+    assert_eq!(combined_json["version"], 2);
+    assert_eq!(combined_json["result"]["state"]["name"], "Rudder Cloud");
+    assert_eq!(combined_json["result"]["state"]["brand_color"], "#224466");
+
+    let name_only = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-name-only",
+        "branding-name-only",
+        br##"{"name":"Rudder Desktop"}"##,
+        true,
+    );
+    assert!(name_only.starts_with("HTTP/1.1 200"), "{name_only}");
+    let name_only_json = response_json(&name_only);
+    assert_eq!(name_only_json["version"], 3);
+    assert_eq!(name_only_json["result"]["state"]["name"], "Rudder Desktop");
+    assert_eq!(name_only_json["result"]["state"]["brand_color"], "#224466");
+
+    let unsupported = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-description",
+        "branding-description",
+        br##"{"name":"Nope","description":"Node-owned"}"##,
+        true,
+    );
+    assert!(unsupported.starts_with("HTTP/1.1 422"), "{unsupported}");
+    assert!(
+        unsupported.contains("branding_name_brand_color_only"),
+        "{unsupported}"
+    );
+    let unsupported_logo = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-logo",
+        "branding-logo",
+        br##"{"logoAssetId":"123e4567-e89b-12d3-a456-426614174000"}"##,
+        true,
+    );
+    assert!(
+        unsupported_logo.starts_with("HTTP/1.1 422"),
+        "{unsupported_logo}"
+    );
+    assert!(
+        unsupported_logo.contains("branding_name_brand_color_only"),
+        "{unsupported_logo}"
+    );
+
     let mismatched_idempotency = signed_patch_request_with_action_and_signed_key(
         bound_addr,
         &route,
@@ -365,7 +431,14 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
             .fetch_one(&pool)
             .await
             .expect("read rolled-back branding");
-    assert_eq!(persisted_color, Some("#336699".to_owned()));
+    assert_eq!(persisted_color, Some("#224466".to_owned()));
+    let persisted_name: String =
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&pool)
+            .await
+            .expect("read rolled-back organization name");
+    assert_eq!(persisted_name, "Rudder Desktop");
     sqlx::raw_sql(
         "DROP TRIGGER fail_branding_activity_trigger ON activity_log;
          DROP FUNCTION fail_branding_activity();",

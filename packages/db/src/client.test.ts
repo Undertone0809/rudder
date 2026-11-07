@@ -1477,6 +1477,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_branding_mutation_authority.sql",
           "0173_project_goal_mutation_authority.sql",
           "0174_organization_mutation_outbox_claims.sql",
+          "0175_organization_settings_mutation_intents.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1672,6 +1673,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_branding_mutation_authority.sql",
           "0173_project_goal_mutation_authority.sql",
           "0174_organization_mutation_outbox_claims.sql",
+          "0175_organization_settings_mutation_intents.sql",
         ],
         reason: "pending-migrations",
       });

@@ -53,10 +53,11 @@ pub(crate) async fn apply(
 
     sqlx::query(
         "UPDATE organizations
-         SET brand_color=$2, updated_at=now()
+         SET name=$2, brand_color=$3, updated_at=now()
          WHERE id=$1::uuid",
     )
     .bind(&metadata.org)
+    .bind(&next.name)
     .bind(&next.brand_color)
     .execute(&mut **tx)
     .await?;
