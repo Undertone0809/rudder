@@ -1515,6 +1515,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-product-analytics-collector"
+version = "0.7.24"
+dependencies = [
+ "rudder-product-analytics-collector-core",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rudder-product-analytics-collector-core"
+version = "0.7.24"
+dependencies = [
+ "actix-web",
+ "base64",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rudder-project-goal-link-core"
 version = "0.7.24"
 dependencies = [
