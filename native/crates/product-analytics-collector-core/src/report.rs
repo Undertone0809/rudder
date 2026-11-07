@@ -133,28 +133,6 @@ pub async fn handle_report(
             "meaningfulDau": metric(1, &meaningful),
             "productiveWau": metric(7, &productive),
         },
-        "metricStatus": {
-            "meaningfulActiveInstallations1d": report_window_status(range.to),
-            "meaningfulActiveInstallations7d": report_window_status(range.to),
-            "productiveInstallations7d": report_window_status(range.to),
-            "meaningfulDau": report_window_status(range.to),
-            "productiveWau": report_window_status(range.to),
-        },
-        "metricSemantics": {
-            "unit": "distinct_production_installations",
-            "timezone": "UTC",
-            "activityWindow": "trailing_elapsed_days_ending_at_window_to_utc_day_end_inclusive_clipped_to_window_from",
-            "dauStatus": "in_progress_until_window_to_utc_day_is_complete",
-            "retentionCohort": "utc_calendar_day_of_first_observed_production_event",
-            "retentionMaturity": "latest_exact_first_observed_production_event_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end",
-            "meaningfulEvents": meaningful,
-            "productiveEvents": productive,
-            "meaningfulDau": "installation_level_24_hour_proxy_not_account_dau",
-            "productiveWau": "installation_level_7_day_proxy_not_account_wau",
-            "meaningfulW1": "meaningful_activity_at_age_days_gte_7_and_lt_14_from_first_observed_production_event",
-            "loopW1": "valid_work_loop_completion_at_age_days_gte_7_and_lt_14_from_first_observed_production_event",
-            "loopW4": "valid_work_loop_completion_at_age_days_gte_28_and_lt_35_from_first_observed_production_event",
-        },
         "quality": {
             "receivedBatchCount": quality.received,
             "acceptedEventCount": quality.accepted,
@@ -204,17 +182,6 @@ fn active_installations(rows: &[Rollup], range: &Range, days: i64, names: &[&str
         .map(|row| row.installation_id.as_str())
         .collect::<BTreeSet<_>>()
         .len()
-}
-
-fn report_window_status(to: Date) -> &'static str {
-    let today = OffsetDateTime::now_utc().date();
-    if to < today {
-        "complete"
-    } else if to == today {
-        "in_progress"
-    } else {
-        "future"
-    }
 }
 
 async fn load_rollups(pool: &PgPool, range: &Range) -> Result<Vec<Rollup>, CollectorError> {
@@ -336,6 +303,7 @@ fn retention(
     threshold: i64,
 ) -> Vec<Value> {
     let mut first_seen = BTreeMap::<String, OffsetDateTime>::new();
+    let mut meaningful_events = BTreeMap::<String, Vec<OffsetDateTime>>::new();
     for row in rows {
         first_seen
             .entry(row.installation_id.clone())
@@ -345,22 +313,21 @@ fn retention(
                 }
             })
             .or_insert(row.first_occurred_at);
+        if matches!(
+            row.event_name.as_str(),
+            "human_work_started" | "review_decision_recorded" | "work_loop_completed"
+        ) {
+            meaningful_events
+                .entry(row.installation_id.clone())
+                .or_default()
+                .push(row.last_occurred_at);
+        }
     }
-    #[derive(Default)]
-    struct RetentionAggregate {
-        contributing_installations: Option<i64>,
-        latest_first_observed_at: Option<OffsetDateTime>,
-        meaningful_w1: Option<i64>,
-        loop_w1: Option<i64>,
-        loop_w4: Option<i64>,
-    }
-    let mut retention_aggregates = BTreeMap::<String, RetentionAggregate>::new();
-    for aggregate in aggregates.iter().filter(|row| {
-        matches!(
-            row.metric_name.as_str(),
-            "work_loop_retention" | "meaningful_work_retention"
-        )
-    }) {
+    let mut loop_retention = BTreeMap::<String, (i64, i64)>::new();
+    for aggregate in aggregates
+        .iter()
+        .filter(|row| row.metric_name == "work_loop_retention")
+    {
         let Some(cohort) = aggregate
             .dimensions
             .get("cohort_day")
@@ -374,126 +341,69 @@ fn retention(
         if !matches!(window, "w1" | "w4") {
             continue;
         }
-        let entry = retention_aggregates.entry(cohort.to_owned()).or_default();
-        entry.contributing_installations = Some(aggregate.contributing_installations);
-        if let Some(first_seen_us) = aggregate
-            .dimensions
-            .get("latest_first_observed_at_us")
-            .and_then(Value::as_i64)
-            && let Ok(first_seen_at) =
-                OffsetDateTime::from_unix_timestamp_nanos(i128::from(first_seen_us) * 1_000)
-        {
-            entry.latest_first_observed_at = Some(
-                entry
-                    .latest_first_observed_at
-                    .map_or(first_seen_at, |latest| latest.max(first_seen_at)),
-            );
-        }
-        match (aggregate.metric_name.as_str(), window) {
-            ("work_loop_retention", "w1") => entry.loop_w1 = Some(aggregate.metric_value),
-            ("work_loop_retention", "w4") => entry.loop_w4 = Some(aggregate.metric_value),
-            ("meaningful_work_retention", "w1") => {
-                entry.meaningful_w1 = Some(aggregate.metric_value)
-            }
-            _ => {}
+        let values = loop_retention.entry(cohort.to_owned()).or_default();
+        match window {
+            "w1" => values.0 = aggregate.metric_value,
+            "w4" => values.1 = aggregate.metric_value,
+            _ => unreachable!(),
         }
     }
     #[derive(Default)]
     struct Cohort {
         eligible: BTreeSet<String>,
-        aggregated_eligible: Option<i64>,
-        aggregated_meaningful_w1: Option<i64>,
-        latest_first_observed_at: Option<OffsetDateTime>,
+        meaningful_w1: i64,
     }
     let mut cohorts = BTreeMap::<Date, Cohort>::new();
+    let report_start = range.from.with_time(Time::MIDNIGHT).assume_utc();
+    let report_end = date_end_time(range.to);
     for (installation, first_seen_at) in first_seen {
         let cohort_day = first_seen_at.date();
-        if cohort_day < range.from || cohort_day > range.to {
+        if cohort_day < range.from {
             continue;
         }
         let entry = cohorts.entry(cohort_day).or_default();
-        entry.eligible.insert(installation.clone());
-        entry.latest_first_observed_at = Some(
-            entry
-                .latest_first_observed_at
-                .map_or(first_seen_at, |latest| latest.max(first_seen_at)),
-        );
-    }
-    for (cohort_name, aggregate) in &retention_aggregates {
-        let Ok(cohort_day) = parse_date(cohort_name) else {
-            continue;
-        };
-        if cohort_day < range.from || cohort_day > range.to {
-            continue;
-        }
-        if aggregate.latest_first_observed_at.is_none() && !cohorts.contains_key(&cohort_day) {
-            continue;
-        }
-        let entry = cohorts.entry(cohort_day).or_default();
-        entry.aggregated_eligible = aggregate.contributing_installations;
-        entry.aggregated_meaningful_w1 = aggregate.meaningful_w1;
-        if aggregate.latest_first_observed_at.is_some() {
-            entry.latest_first_observed_at = aggregate.latest_first_observed_at;
+        if first_seen_at >= report_start && first_seen_at <= report_end {
+            entry.eligible.insert(installation.clone());
+            let meaningful_start = first_seen_at + Duration::days(7);
+            let meaningful_end = first_seen_at + Duration::days(14);
+            if meaningful_events.get(&installation).is_some_and(|dates| {
+                dates
+                    .iter()
+                    .any(|date| *date >= meaningful_start && *date < meaningful_end)
+            }) {
+                entry.meaningful_w1 += 1;
+            }
         }
     }
-    cohorts.retain(|cohort_day, cohort| {
-        retention_aggregates.contains_key(&cohort_day.to_string())
-            || (cohort.eligible.len() as i64) < threshold
-    });
-    let report_end = date_end_time(range.to);
     cohorts
         .into_iter()
         .map(|(cohort_day, cohort)| {
-        let cohort_name = cohort_day.to_string();
-        let aggregate = retention_aggregates.get(&cohort_name);
-        let latest_first_observed_at = cohort
-            .latest_first_observed_at
-            .expect("cohort has an observed first-event timestamp");
-        let meaningful_w1_mature = latest_first_observed_at + Duration::days(14) <= report_end;
-        let loop_w1_mature = meaningful_w1_mature;
-        let loop_w4_mature = latest_first_observed_at + Duration::days(35) <= report_end;
-        let eligible_installations = cohort
-            .aggregated_eligible
-            .unwrap_or(cohort.eligible.len() as i64);
-        let meaningful_w1 = cohort.aggregated_meaningful_w1;
-        let suppressed = eligible_installations < threshold;
-        let status = |mature: bool, observed: bool| {
-            if suppressed {
-                "threshold_blocked"
-            } else if !mature {
-                "immature"
-            } else if observed {
-                "available"
+            let cohort_name = cohort_day.to_string();
+            let eligible_installations = cohort.eligible.len();
+            if (eligible_installations as i64) < threshold {
+                json!({
+                    "cohortDay": cohort_name,
+                    "eligibleInstallations": null,
+                    "meaningfulW1": null,
+                    "loopW1": null,
+                    "loopW4": null,
+                    "suppressed": true
+                })
             } else {
-                "not_observed"
+                let (loop_w1, loop_w4) = loop_retention
+                    .get(&cohort_name)
+                    .copied()
+                    .unwrap_or_default();
+                json!({
+                    "cohortDay": cohort_name,
+                    "eligibleInstallations": eligible_installations,
+                    "meaningfulW1": cohort.meaningful_w1,
+                    "loopW1": loop_w1,
+                    "loopW4": loop_w4,
+                    "suppressed": false
+                })
             }
-        };
-        if suppressed {
-            json!({
-                "cohortDay": cohort_name,
-                "eligibleInstallations": null,
-                "meaningfulW1": null,
-                "meaningfulW1Status": "threshold_blocked",
-                "loopW1": null,
-                "loopW1Status": "threshold_blocked",
-                "loopW4": null,
-                "loopW4Status": "threshold_blocked",
-                "suppressed": true
-            })
-        } else {
-            json!({
-                "cohortDay": cohort_name,
-                "eligibleInstallations": eligible_installations,
-                "meaningfulW1": if meaningful_w1_mature { meaningful_w1.map_or(Value::Null, |value| json!(value)) } else { Value::Null },
-                "meaningfulW1Status": status(meaningful_w1_mature, meaningful_w1.is_some()),
-                "loopW1": if loop_w1_mature { aggregate.and_then(|value| value.loop_w1).map_or(Value::Null, |value| json!(value)) } else { Value::Null },
-                "loopW1Status": status(loop_w1_mature, aggregate.and_then(|value| value.loop_w1).is_some()),
-                "loopW4": if loop_w4_mature { aggregate.and_then(|value| value.loop_w4).map_or(Value::Null, |value| json!(value)) } else { Value::Null },
-                "loopW4Status": status(loop_w4_mature, aggregate.and_then(|value| value.loop_w4).is_some()),
-                "suppressed": false
-            })
-        }
-    })
+        })
         .collect()
 }
 
@@ -537,7 +447,11 @@ fn date_start(value: Date) -> String {
         .unwrap_or_default()
 }
 fn date_end(value: Date) -> String {
-    date_end_time(value).format(&Rfc3339).unwrap_or_default()
+    date_end_time(value)
+        .replace_nanosecond(999_000_000)
+        .unwrap()
+        .format(&Rfc3339)
+        .unwrap_or_default()
 }
 fn date_end_time(value: Date) -> OffsetDateTime {
     value
@@ -568,6 +482,14 @@ mod tests {
         parse_time(value).unwrap()
     }
 
+    #[test]
+    fn report_window_end_matches_node_precision_without_changing_utc_boundary() {
+        let day = date("2026-08-10");
+
+        assert_eq!(date_end(day), "2026-08-10T23:59:59.999Z");
+        assert_eq!(date_end_time(day).nanosecond(), 999_999_000);
+    }
+
     fn rollup(installation_id: &str, event_name: &str, first: &str, last: &str) -> Rollup {
         let first_occurred_at = at(first);
         Rollup {
@@ -589,16 +511,6 @@ mod tests {
             contributing_installations: 2,
             privacy_threshold: 2,
             dimensions: json!({"cohort_day": cohort_day, "window": window}),
-        }
-    }
-
-    fn meaningful_aggregate(cohort_day: &str, metric_value: i64) -> Aggregate {
-        Aggregate {
-            metric_name: "meaningful_work_retention".to_owned(),
-            metric_value,
-            contributing_installations: 2,
-            privacy_threshold: 2,
-            dimensions: json!({"cohort_day": cohort_day, "window": "w1"}),
         }
     }
 
@@ -668,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn retention_uses_exact_first_observed_event_and_reports_maturity_separately() {
+    fn retention_matches_node_values_and_response_shape_for_unobserved_windows() {
         let rows = vec![
             rollup(
                 "old-a",
@@ -730,17 +642,26 @@ mod tests {
                 "2026-08-19T10:00:00Z",
                 "2026-08-19T10:00:00Z",
             ),
+            rollup(
+                "future-a",
+                "organization_created",
+                "2026-08-22T10:00:00Z",
+                "2026-08-22T10:00:00Z",
+            ),
+            rollup(
+                "future-b",
+                "organization_created",
+                "2026-08-22T15:00:00Z",
+                "2026-08-22T15:00:00Z",
+            ),
         ];
         let aggregates = vec![
             aggregate("2026-07-01", "w1", 1),
             aggregate("2026-07-01", "w4", 1),
-            meaningful_aggregate("2026-07-01", 1),
             aggregate("2026-08-01", "w1", 2),
             aggregate("2026-08-01", "w4", 0),
-            meaningful_aggregate("2026-08-01", 1),
             aggregate("2026-08-18", "w1", 0),
             aggregate("2026-08-18", "w4", 0),
-            meaningful_aggregate("2026-08-18", 0),
         ];
         let cohorts = retention(
             &rows,
@@ -752,39 +673,50 @@ mod tests {
             2,
         );
         let cohort = |day| cohorts.iter().find(|row| row["cohortDay"] == day).unwrap();
+        let retention_keys = BTreeSet::from([
+            "cohortDay",
+            "eligibleInstallations",
+            "meaningfulW1",
+            "loopW1",
+            "loopW4",
+            "suppressed",
+        ]);
+        let assert_retention_keys = |row: &Value| {
+            let actual = row
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual, retention_keys);
+        };
 
         let old = cohort("2026-07-01");
         assert_eq!(old["meaningfulW1"], 1, "cohort={old}");
-        assert_eq!(old["meaningfulW1Status"], "available");
         assert_eq!(old["loopW4"], 1);
-        assert_eq!(old["loopW4Status"], "available");
+        assert_retention_keys(old);
 
         let recent = cohort("2026-08-01");
         assert_eq!(recent["meaningfulW1"], 1);
-        assert_eq!(recent["meaningfulW1Status"], "available");
         assert_eq!(recent["loopW1"], 2);
-        assert_eq!(recent["loopW1Status"], "available");
-        assert_eq!(recent["loopW4"], Value::Null);
-        assert_eq!(recent["loopW4Status"], "immature");
+        assert_eq!(recent["loopW4"], 0);
+        assert_retention_keys(recent);
 
-        let immature = cohort("2026-08-18");
-        assert_eq!(immature["meaningfulW1"], Value::Null);
-        assert_eq!(immature["meaningfulW1Status"], "immature");
-        assert_eq!(immature["loopW1"], Value::Null);
-        assert_eq!(immature["loopW1Status"], "immature");
-        assert_eq!(immature["loopW4"], Value::Null);
-        assert_eq!(immature["loopW4Status"], "immature");
+        let unobserved = cohort("2026-08-18");
+        assert_eq!(unobserved["meaningfulW1"], 0);
+        assert_eq!(unobserved["loopW1"], 0);
+        assert_eq!(unobserved["loopW4"], 0);
 
         let suppressed = cohort("2026-08-19");
-        assert_eq!(suppressed["meaningfulW1Status"], "threshold_blocked");
-        assert_eq!(suppressed["loopW4Status"], "threshold_blocked");
-    }
+        assert_eq!(suppressed["eligibleInstallations"], Value::Null);
+        assert_eq!(suppressed["meaningfulW1"], Value::Null);
+        assert_eq!(suppressed["loopW1"], Value::Null);
+        assert_eq!(suppressed["loopW4"], Value::Null);
+        assert_eq!(suppressed["suppressed"], true);
+        assert_retention_keys(suppressed);
 
-    #[test]
-    fn report_window_status_identifies_incomplete_utc_day() {
-        let today = OffsetDateTime::now_utc().date();
-        assert_eq!(report_window_status(today), "in_progress");
-        assert_eq!(report_window_status(today - Duration::days(1)), "complete");
-        assert_eq!(report_window_status(today + Duration::days(1)), "future");
+        let future = cohort("2026-08-22");
+        assert_eq!(future["eligibleInstallations"], Value::Null);
+        assert_eq!(future["suppressed"], true);
     }
 }

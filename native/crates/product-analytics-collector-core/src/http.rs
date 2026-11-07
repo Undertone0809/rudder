@@ -2,11 +2,14 @@ use crate::{
     CollectorConfig, CollectorError,
     assertion::{AssertionVerificationContext, verify_product_analytics_assertion},
     contract::{Authorization, AuthorizationMode, installation_header_matches},
-    db::{CollectorPools, advance_consent, ingest_batch},
+    db::{CollectorPools, advance_consent, ingest_batch, reject_invalid_schema_batch},
     maintenance::run_maintenance_with_roles,
     report::{ReportQuery, ReportState, handle_report},
 };
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, web};
+use actix_web::{
+    App, HttpRequest, HttpResponse, HttpServer, Responder, error::JsonPayloadError,
+    http::StatusCode, web,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
@@ -32,12 +35,6 @@ impl StartedCollector {
         self.maintenance_task.abort();
         self.pools.close().await;
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BatchRequest {
-    events: Vec<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,7 +78,15 @@ pub async fn start(config: CollectorConfig) -> Result<StartedCollector, Collecto
             .app_data(web::JsonConfig::default().limit(crate::contract::MAX_BATCH_BYTES))
             .route("/healthz", web::get().to(health))
             .route("/api/health", web::get().to(health))
-            .route("/api/analytics/v1/events:batch", web::post().to(batch))
+            .service(
+                web::resource("/api/analytics/v1/events:batch")
+                    .app_data(
+                        web::JsonConfig::default()
+                            .limit(crate::contract::MAX_BATCH_BYTES)
+                            .error_handler(json_payload_error),
+                    )
+                    .route(web::post().to(batch)),
+            )
             .route("/api/analytics/v1/consent/revoke", web::post().to(revoke))
             .route(
                 "/api/analytics/v1/internal/anonymous/consent",
@@ -146,6 +151,18 @@ pub async fn start(config: CollectorConfig) -> Result<StartedCollector, Collecto
     })
 }
 
+fn json_payload_error(error: JsonPayloadError, _request: &HttpRequest) -> actix_web::Error {
+    let (status, error_code) = match &error {
+        JsonPayloadError::Overflow { .. } | JsonPayloadError::OverflowKnownLength { .. } => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "too_large")
+        }
+        JsonPayloadError::Deserialize(_) => (StatusCode::BAD_REQUEST, "invalid_schema"),
+        _ => return error.into(),
+    };
+    let response = HttpResponse::build(status).json(serde_json::json!({"errorCode": error_code}));
+    actix_web::error::InternalError::from_response(error, response).into()
+}
+
 pub async fn run_until_shutdown(config: CollectorConfig) -> Result<(), CollectorError> {
     let started = start(config).await?;
     let StartedCollector {
@@ -188,16 +205,15 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
 async fn batch(
     state: web::Data<AppState>,
     request: HttpRequest,
-    body: web::Json<BatchRequest>,
+    body: web::Json<Value>,
 ) -> Result<HttpResponse, CollectorError> {
     let authorization = authorize(&state.config, &request, None)?;
-    let response = ingest_batch(
-        &state.pools.ingest,
-        &authorization,
-        &body.events,
-        OffsetDateTime::now_utc(),
-    )
-    .await?;
+    let now = OffsetDateTime::now_utc();
+    let Some(events) = body.get("events").and_then(Value::as_array) else {
+        let response = reject_invalid_schema_batch(&state.pools.ingest, now).await?;
+        return Ok(HttpResponse::UnprocessableEntity().json(response));
+    };
+    let response = ingest_batch(&state.pools.ingest, &authorization, events, now).await?;
     let has_conflict = response
         .rejected
         .iter()
@@ -504,4 +520,57 @@ fn constant_time_equal(left: &str, right: &str) -> bool {
             .zip(right.as_bytes())
             .fold(0_u8, |acc, (left, right)| acc | (left ^ right))
             == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_payload_error;
+    use actix_web::{
+        App, HttpResponse,
+        http::{StatusCode, header::ContentType},
+        test, web,
+    };
+    use serde_json::{Value, json};
+
+    async fn accept_json(_body: web::Json<Value>) -> HttpResponse {
+        HttpResponse::Ok().finish()
+    }
+
+    #[actix_web::test]
+    async fn json_extractor_errors_match_node_collector_responses() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::JsonConfig::default().limit(crate::contract::MAX_BATCH_BYTES))
+                .service(
+                    web::resource("/")
+                        .app_data(
+                            web::JsonConfig::default()
+                                .limit(crate::contract::MAX_BATCH_BYTES)
+                                .error_handler(json_payload_error),
+                        )
+                        .route(web::post().to(accept_json)),
+                ),
+        )
+        .await;
+
+        let malformed_request = test::TestRequest::post()
+            .uri("/")
+            .insert_header(ContentType::json())
+            .set_payload("{malformed-json")
+            .to_request();
+        let malformed_response = test::call_service(&app, malformed_request).await;
+        assert_eq!(malformed_response.status(), StatusCode::BAD_REQUEST);
+        let malformed_body: Value = test::read_body_json(malformed_response).await;
+        assert_eq!(malformed_body, json!({"errorCode": "invalid_schema"}));
+
+        let oversized_request = test::TestRequest::post()
+            .uri("/")
+            .insert_header(ContentType::json())
+            .set_payload(vec![b' '; crate::contract::MAX_BATCH_BYTES + 1])
+            .to_request();
+        let oversized_response = test::call_service(&app, oversized_request).await;
+        assert_eq!(oversized_response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let oversized_body: Value = test::read_body_json(oversized_response).await;
+        assert_eq!(oversized_body, json!({"errorCode": "too_large"}));
+    }
 }

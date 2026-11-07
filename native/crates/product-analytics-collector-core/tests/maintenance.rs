@@ -10,7 +10,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
 };
-use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
+use time::{Duration, OffsetDateTime, Time, UtcOffset, format_description::well_known::Rfc3339};
 use tokio::time::sleep;
 
 const ENABLE: &str = "RUDDER_ANALYTICS_COLLECTOR_TEST_ENABLE";
@@ -71,9 +71,7 @@ async fn loopback_maintenance_matches_utc_windows_and_retention() {
         .expect("W1/W4 cohort appears in report");
     assert_eq!(main["eligibleInstallations"], 4);
     assert_eq!(main["loopW1"], 2);
-    assert_eq!(main["loopW1Status"], "available");
     assert_eq!(main["loopW4"], 2);
-    assert_eq!(main["loopW4Status"], "available");
     assert_eq!(main["suppressed"], false);
 
     let metrics = &outcome.report["metrics"];
@@ -85,25 +83,14 @@ async fn loopback_maintenance_matches_utc_windows_and_retention() {
         metrics["productiveWau"],
         metrics["productiveInstallations7d"]
     );
-    assert_eq!(
-        outcome.report["metricStatus"]["meaningfulDau"],
-        "in_progress"
-    );
-    assert_eq!(
-        outcome.report["metricSemantics"]["unit"],
-        "distinct_production_installations"
-    );
-
-    // W4 covers ages 28 through <35 days and is immature until that window ends.
+    // W4 covers ages 28 through <35 days; an unobserved aggregate remains zero in Node's report.
     let zero = cohorts
         .iter()
         .find(|row| row["cohortDay"] == outcome.zero_day)
         .expect("zero cohort appears in report");
     assert_eq!(zero["eligibleInstallations"], 3);
     assert_eq!(zero["loopW1"], 0);
-    assert_eq!(zero["loopW1Status"], "available");
-    assert_eq!(zero["loopW4"], Value::Null);
-    assert_eq!(zero["loopW4Status"], "immature");
+    assert_eq!(zero["loopW4"], 0);
     assert_eq!(zero["suppressed"], false);
 
     let suppressed = cohorts
@@ -247,8 +234,7 @@ async fn run_fixture() -> TestResult<Outcome> {
     }
     match result {
         Ok(outcome) => {
-            exercise_retention_cutoff_boundary(&admin, &maintenance_probe, &main[0].id, now)
-                .await?;
+            exercise_retention_cutoff_boundary(&admin, &maintenance_probe, &main, now).await?;
             Ok(outcome)
         }
         Err(error) => Err(error),
@@ -258,19 +244,34 @@ async fn run_fixture() -> TestResult<Outcome> {
 async fn exercise_retention_cutoff_boundary(
     admin: &PgPool,
     maintenance: &PgPool,
-    installation_id: &str,
+    installations: &[Installation],
     now: OffsetDateTime,
 ) -> TestResult<()> {
+    if installations.len() < 4 {
+        return Err("cutoff boundary fixture requires four installations".into());
+    }
     let submillisecond = 456_789;
     let boundary_now = now
-        .replace_nanosecond(now.nanosecond() / 1_000_000 * 1_000_000 + submillisecond)
-        .map_err(|error| error.to_string())?;
+        .date()
+        .with_time(Time::from_hms_nano(12, 34, 56, 789_456_789).unwrap())
+        .assume_utc();
     let cutoff = boundary_now - Duration::days(90) - Duration::nanoseconds(submillisecond.into());
     let before = cutoff - Duration::microseconds(1);
     let after = cutoff + Duration::microseconds(1);
-    let before_id = seed_retention_boundary_event(admin, installation_id, before).await?;
-    let at_id = seed_retention_boundary_event(admin, installation_id, cutoff).await?;
-    let after_id = seed_retention_boundary_event(admin, installation_id, after).await?;
+    assert_eq!(before.date(), cutoff.date());
+    assert_eq!(after.date(), cutoff.date());
+    let before_id = seed_retention_boundary_event(admin, &installations[0], before).await?;
+    let at_id = seed_retention_boundary_event(admin, &installations[1], cutoff).await?;
+    let after_id = seed_retention_boundary_event(admin, &installations[2], after).await?;
+    let after_second_id = seed_retention_boundary_event(admin, &installations[3], after).await?;
+    let cutoff_day = cutoff.date().to_string();
+    sqlx::query(&format!(
+        "INSERT INTO {AGGREGATES} (day, metric_name, dimension_set_version, dimension_hash, dimension_values, metric_value, contributing_installations, privacy_threshold, created_at, updated_at) VALUES ($1::date, 'human_work_started', 1, repeat('f', 64), '{{\"event_name\":\"human_work_started\",\"origin\":\"human\"}}'::jsonb, 4, 4, 3, now(), now())"
+    ))
+    .bind(&cutoff_day)
+    .execute(admin)
+    .await
+    .map_err(|error| error.to_string())?;
 
     let result = run_maintenance_at(maintenance, 90, 3, boundary_now)
         .await
@@ -282,7 +283,12 @@ async fn exercise_retention_cutoff_boundary(
         ));
     }
     let mut observed = Vec::new();
-    for (event_id, expected) in [(&before_id, false), (&at_id, true), (&after_id, true)] {
+    for (event_id, expected) in [
+        (&before_id, false),
+        (&at_id, true),
+        (&after_id, true),
+        (&after_second_id, true),
+    ] {
         let exists: bool = sqlx::query_scalar(&format!(
             "SELECT EXISTS (SELECT 1 FROM {EVENTS} WHERE event_id=$1::uuid)"
         ))
@@ -297,8 +303,38 @@ async fn exercise_retention_cutoff_boundary(
         }
         observed.push(exists);
     }
+    let installation_ids = installations
+        .iter()
+        .take(4)
+        .map(|installation| installation.id.clone())
+        .collect::<Vec<_>>();
+    let rebuilt_cutoff_rollup: i64 = sqlx::query_scalar(&format!(
+        "SELECT coalesce(sum(event_count), 0)::bigint FROM {ROLLUPS} WHERE day=$1::date AND installation_id=ANY($2::text[]) AND event_name='human_work_started'"
+    ))
+    .bind(&cutoff_day)
+    .bind(&installation_ids)
+    .fetch_one(admin)
+    .await
+    .map_err(|error| error.to_string())?;
+    if rebuilt_cutoff_rollup != 3 {
+        return Err(format!(
+            "cutoff-day rollup must contain only exact/after events, got {rebuilt_cutoff_rollup}"
+        ));
+    }
+    let rebuilt_cutoff_aggregate: Option<(i64, i64)> = sqlx::query_as(&format!(
+        "SELECT metric_value::bigint, contributing_installations::bigint FROM {AGGREGATES} WHERE day=$1::date AND metric_name='human_work_started' AND dimension_values->>'event_name'='human_work_started' AND dimension_values->>'origin'='human'"
+    ))
+    .bind(&cutoff_day)
+    .fetch_optional(admin)
+    .await
+    .map_err(|error| error.to_string())?;
+    if rebuilt_cutoff_aggregate != Some((3, 3)) {
+        return Err(format!(
+            "cutoff-day privacy aggregate must exclude the expired event: {rebuilt_cutoff_aggregate:?}"
+        ));
+    }
     println!(
-        "raw retention cutoff={} before={} exists={} at={} exists={} after={} exists={} deleted_raw_events={}",
+        "retention cutoff={} before={} exists={} at={} exists={} after={} exists={} second_after={} exists={} rebuilt_rollup={} rebuilt_aggregate={:?} deleted_raw_events={}",
         format_time(cutoff)?,
         before_id,
         observed[0],
@@ -306,6 +342,10 @@ async fn exercise_retention_cutoff_boundary(
         observed[1],
         after_id,
         observed[2],
+        after_second_id,
+        observed[3],
+        rebuilt_cutoff_rollup,
+        rebuilt_cutoff_aggregate,
         result.deleted_raw_events
     );
     Ok(())
@@ -313,16 +353,35 @@ async fn exercise_retention_cutoff_boundary(
 
 async fn seed_retention_boundary_event(
     admin: &PgPool,
-    installation_id: &str,
+    installation: &Installation,
     occurred_at: OffsetDateTime,
 ) -> TestResult<String> {
     let event_id = next_event_id();
     let timestamp = format_time(occurred_at)?;
     sqlx::query(&format!(
-        "INSERT INTO {EVENTS} (event_id, installation_id, event_name, schema_version, occurred_at, effective_at, environment, app_version, release_channel, deployment_mode, actor_kind, origin, properties, confidence, is_backfill, late, consent_version, consent_epoch, payload_sha256) VALUES ($1::uuid, $2, 'organization_created', 1, $3::timestamptz, $3::timestamptz, 'production', 'test', 'stable', 'desktop_local', 'user', 'human', '{{}}'::jsonb, 'exact', true, true, 'test-v1', 1, repeat('c', 64))"
+        "INSERT INTO {EVENTS} (event_id, installation_id, event_name, schema_version, occurred_at, effective_at, environment, app_version, release_channel, deployment_mode, actor_kind, origin, properties, confidence, is_backfill, late, consent_version, consent_epoch, payload_sha256) VALUES ($1::uuid, $2, 'human_work_started', 1, $3::timestamptz, $3::timestamptz, 'production', 'test', 'stable', 'desktop_local', 'user', 'human', '{{}}'::jsonb, 'exact', true, true, 'test-v1', 1, repeat('c', 64))"
     ))
     .bind(&event_id)
-    .bind(installation_id)
+    .bind(&installation.id)
+    .bind(&timestamp)
+    .execute(admin)
+    .await
+    .map_err(|error| error.to_string())?;
+    let dimensions = json!({
+        "environment": "production",
+        "app_version": "test",
+        "release_channel": "stable",
+        "deployment_mode": "desktop_local",
+        "confidence": "exact",
+        "analytics_mode": "anonymous"
+    });
+    sqlx::query(&format!(
+        "INSERT INTO {ROLLUPS} (day, installation_id, event_name, origin, dimension_hash, dimensions, event_count, first_occurred_at, last_occurred_at, updated_at) VALUES ($1::date, $2, 'human_work_started', 'human', $3, $4::jsonb, 1, $5::timestamptz, $5::timestamptz, now())"
+    ))
+    .bind(occurred_at.date().to_string())
+    .bind(&installation.id)
+    .bind(&installation.pseudonymous_id)
+    .bind(dimensions.to_string())
     .bind(timestamp)
     .execute(admin)
     .await

@@ -1518,6 +1518,8 @@ dependencies = [
 name = "rudder-product-analytics-collector"
 version = "0.7.24"
 dependencies = [
+ "base64",
+ "ring",
  "rudder-product-analytics-collector-core",
  "serde_json",
  "sha2",

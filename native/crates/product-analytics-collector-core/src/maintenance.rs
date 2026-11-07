@@ -104,11 +104,14 @@ pub async fn run_maintenance_at_with_roles(
     let mut tx = rollup_pool.begin().await?;
     let projected = project_work_loop_revisions(&mut tx).await?;
     apply_retention(&mut tx, &revision_from_timestamp, &revision_cutoff_day).await?;
-    let from = format_date(now - time::Duration::days(retention_days.min(30)));
-    let rebuilt_days = rebuild_daily_rollups(&mut tx, &from).await?;
+    // Rebuild the full retained range from the exact cutoff. The daily
+    // projection deletes the cutoff UTC day before recreating it, so its raw
+    // inputs must exclude events strictly before this timestamp.
+    let from = revision_from_timestamp.as_str();
+    let rebuilt_days = rebuild_daily_rollups(&mut tx, from).await?;
     let privacy_rows = rebuild_privacy_aggregates(
         &mut tx,
-        &from,
+        from,
         &revision_from_timestamp,
         &revision_cutoff_day,
         privacy_threshold,

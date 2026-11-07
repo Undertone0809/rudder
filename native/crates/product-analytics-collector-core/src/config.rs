@@ -109,7 +109,7 @@ impl CollectorConfig {
 #[derive(Clone, Debug)]
 pub struct MigrationConfig {
     pub database_url: String,
-    pub expected_role: Option<String>,
+    pub expected_role: String,
     pub collector_role: String,
     pub rollup_role: String,
     pub reader_role: String,
@@ -125,7 +125,7 @@ impl MigrationConfig {
                         "missing_rudder_telemetry_collector_migration_database_url".into(),
                     )
                 })?,
-            expected_role: optional("RUDDER_TELEMETRY_COLLECTOR_MIGRATION_ROLE"),
+            expected_role: required("RUDDER_TELEMETRY_COLLECTOR_MIGRATION_ROLE")?,
             collector_role: optional("TELEMETRY_COLLECTOR_USER")
                 .unwrap_or_else(|| "rudder_analytics_collector".into()),
             rollup_role: optional("TELEMETRY_ROLLUP_USER")

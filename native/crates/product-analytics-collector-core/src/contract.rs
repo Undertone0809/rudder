@@ -114,7 +114,7 @@ pub enum AckStatus {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum AckErrorCode {
     InvalidSchema,
     InvalidEvent,
@@ -522,5 +522,19 @@ mod tests {
             validate_event(&invalid, now).unwrap_err().error_code,
             Some(AckErrorCode::InvalidEvent)
         );
+    }
+
+    #[test]
+    fn error_codes_match_node_snake_case_contract() {
+        for (code, expected) in [
+            (AckErrorCode::InvalidSchema, "invalid_schema"),
+            (AckErrorCode::InvalidEvent, "invalid_event"),
+            (AckErrorCode::FutureEvent, "future_event"),
+            (AckErrorCode::Revoked, "revoked"),
+            (AckErrorCode::Conflict, "conflict"),
+            (AckErrorCode::TooLarge, "too_large"),
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), expected);
+        }
     }
 }

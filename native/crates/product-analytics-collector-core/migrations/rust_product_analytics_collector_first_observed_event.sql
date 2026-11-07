@@ -5,15 +5,31 @@ UPDATE rudder_analytics.product_analytics_collector_installations installation
 SET first_observed_event_at = observed.first_observed_at
 FROM (
   SELECT installation_id, min(occurred_at) AS first_observed_at
-  FROM (
-    SELECT installation_id, occurred_at
-    FROM rudder_analytics.product_analytics_collector_events
-    WHERE environment = 'production' AND is_internal = false
-    UNION ALL
-    SELECT installation_id, first_occurred_at AS occurred_at
-    FROM rudder_analytics.product_analytics_collector_daily_rollups
-    WHERE dimensions->>'environment' = 'production'
-  ) events
+  FROM rudder_analytics.product_analytics_collector_events
+  WHERE environment = 'production'
+    AND is_internal = false
+    AND event_name IN (
+      'organization_created',
+      'issue_created',
+      'chat_created',
+      'human_work_started',
+      'run_started',
+      'run_succeeded',
+      'run_failed',
+      'output_ready',
+      'review_decision_recorded',
+      'account_created',
+      'desktop_authorized',
+      'local_server_connected',
+      'first_agent_ready',
+      'work_loop_completed',
+      'work_loop_invalidated'
+    )
+    AND schema_version = 1
+    AND consent_version IS NOT NULL
+    AND btrim(consent_version) <> ''
+    AND char_length(consent_version) <= 80
+    AND consent_epoch >= 1
   GROUP BY installation_id
 ) observed
 WHERE installation.installation_id = observed.installation_id
@@ -54,6 +70,28 @@ BEGIN
     WHERE event.installation_id = installation.installation_id
       AND event.environment = 'production'
       AND event.is_internal = false
+      AND event.event_name IN (
+        'organization_created',
+        'issue_created',
+        'chat_created',
+        'human_work_started',
+        'run_started',
+        'run_succeeded',
+        'run_failed',
+        'output_ready',
+        'review_decision_recorded',
+        'account_created',
+        'desktop_authorized',
+        'local_server_connected',
+        'first_agent_ready',
+        'work_loop_completed',
+        'work_loop_invalidated'
+      )
+      AND event.schema_version = 1
+      AND event.consent_version IS NOT NULL
+      AND btrim(event.consent_version) <> ''
+      AND char_length(event.consent_version) <= 80
+      AND event.consent_epoch >= 1
   )
   WHERE installation.installation_id = ANY(COALESCE(affected_installations, ARRAY[]::text[]));
   DELETE FROM rudder_analytics.product_analytics_collector_daily_rollups;

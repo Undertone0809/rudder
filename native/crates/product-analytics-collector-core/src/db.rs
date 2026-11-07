@@ -195,6 +195,18 @@ async fn assert_table_privilege_profile(
         ));
     }
 
+    let has_column_grant_option: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') AND a.attacl IS NOT NULL AND acl.is_grantable AND acl.privilege_type IN ('SELECT','INSERT','UPDATE','REFERENCES') AND CASE WHEN acl.grantee=0 THEN true ELSE pg_has_role((SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user),acl.grantee,'USAGE') END)",
+    )
+    .bind(SCHEMA)
+    .fetch_one(pool)
+    .await?;
+    if has_column_grant_option {
+        return Err(CollectorError::Configuration(
+            "product_analytics_database_privilege_denied".into(),
+        ));
+    }
+
     let has_partial_column_privileges: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']::text[]) AS p(privilege) WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') AND has_column_privilege(current_user,c.oid,a.attnum,p.privilege) AND NOT has_table_privilege(current_user,c.oid,p.privilege))",
     )
@@ -426,6 +438,19 @@ pub async fn ingest_batch(
     })
 }
 
+pub async fn reject_invalid_schema_batch(
+    pool: &PgPool,
+    now: OffsetDateTime,
+) -> Result<BatchResponse, CollectorError> {
+    record_quality(pool, now, 0, 0, 1, 0).await?;
+    Ok(BatchResponse {
+        accepted: 0,
+        duplicate: 0,
+        rejected: vec![rejected("batch", AckErrorCode::InvalidSchema, false)],
+        received_at: format_time(now)?,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct ConsentState {
     pub consent_version: String,
@@ -629,20 +654,19 @@ pub async fn delete_subject(pool: &PgPool, analytics_subject: &str) -> Result<()
 
 pub async fn migrate(config: &MigrationConfig) -> Result<(), CollectorError> {
     let pool = connect_pool(&config.database_url, 1).await?;
-    if let Some(expected) = config.expected_role.as_deref() {
-        let current: String = sqlx::query_scalar("SELECT current_user::text")
-            .fetch_one(&pool)
-            .await?;
-        if current != expected {
-            pool.close().await;
-            return Err(CollectorError::Configuration(
-                "product_analytics_migration_role_mismatch".into(),
-            ));
-        }
+    let current: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(&pool)
+        .await?;
+    if current != config.expected_role {
+        pool.close().await;
+        return Err(CollectorError::Configuration(
+            "product_analytics_migration_role_mismatch".into(),
+        ));
     }
     sqlx::query("CREATE SCHEMA IF NOT EXISTS rudder_analytics")
         .execute(&pool)
         .await?;
+    assert_migration_ownership(&pool, &config.expected_role).await?;
     sqlx::query("CREATE TABLE IF NOT EXISTS rudder_analytics._product_analytics_migrations (tag text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").execute(&pool).await?;
     for (tag, content) in MIGRATIONS {
         let applied: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rudder_analytics._product_analytics_migrations WHERE tag=$1)").bind(*tag).fetch_one(&pool).await?;
@@ -666,6 +690,7 @@ pub async fn migrate(config: &MigrationConfig) -> Result<(), CollectorError> {
             .await?;
         tx.commit().await?;
     }
+    assert_migration_ownership(&pool, &config.expected_role).await?;
     grant_roles(
         &pool,
         &config.collector_role,
@@ -674,6 +699,24 @@ pub async fn migrate(config: &MigrationConfig) -> Result<(), CollectorError> {
     )
     .await?;
     pool.close().await;
+    Ok(())
+}
+
+async fn assert_migration_ownership(
+    pool: &PgPool,
+    expected_role: &str,
+) -> Result<(), CollectorError> {
+    let ownership_mismatch: bool = sqlx::query_scalar(
+        "SELECT n.nspowner <> r.oid OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace=n.oid AND c.relowner <> r.oid) OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.pronamespace=n.oid AND p.proowner <> r.oid) OR EXISTS (SELECT 1 FROM pg_catalog.pg_type t WHERE t.typnamespace=n.oid AND t.typowner <> r.oid) FROM pg_catalog.pg_namespace n JOIN pg_catalog.pg_roles r ON r.rolname=$1 WHERE n.nspname='rudder_analytics'",
+    )
+    .bind(expected_role)
+    .fetch_one(pool)
+    .await?;
+    if ownership_mismatch {
+        return Err(CollectorError::Configuration(
+            "product_analytics_migration_object_owner_mismatch".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -754,6 +797,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
             "/migrations/rust_product_analytics_collector_role_capabilities.sql"
         )),
     ),
+    // This column is SQLx-owned; the TypeScript schema is metadata only. Do not add a duplicate Drizzle migration.
     (
         "rust_product_analytics_collector_first_observed_event.sql",
         include_str!(concat!(

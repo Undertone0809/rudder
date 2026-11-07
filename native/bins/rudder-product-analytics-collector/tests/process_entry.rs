@@ -1,5 +1,11 @@
 #![cfg(unix)]
 
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
+use ring::signature::{Ed25519KeyPair, KeyPair};
+use rudder_product_analytics_collector_core::MAX_BATCH_BYTES;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -10,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     thread,
-    time::Duration as StdDuration,
+    time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::TempDir;
 use time::{Date, Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
@@ -19,9 +25,15 @@ const EVENTS: &str = "rudder_analytics.product_analytics_collector_events";
 const INSTALLATIONS: &str = "rudder_analytics.product_analytics_collector_installations";
 const SUBJECTS: &str = "rudder_analytics.product_analytics_collector_subjects";
 const DAILY_ROLLUPS: &str = "rudder_analytics.product_analytics_collector_daily_rollups";
+const PRIVACY_AGGREGATES: &str = "rudder_analytics.product_analytics_collector_privacy_aggregates";
+const QUALITY: &str = "rudder_analytics.product_analytics_collector_quality_counters";
+const WORK_LOOP_REVISIONS: &str =
+    "rudder_analytics.product_analytics_collector_work_loop_revisions";
+const MIGRATION_HISTORY: &str = "rudder_analytics._product_analytics_migrations";
 const REPORT_SECRET: &str = "local-process-test-report-secret";
 const ANONYMOUS_AUTHORIZATION: &str = "local-process-test-anonymous-secret";
-const IDENTITY_PUBLIC_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+const IDENTITY_CONSENT_SYNC_SECRET: &str = "local-process-test-identity-consent-sync";
+const IDENTITY_REVOKE_SECRET: &str = "local-process-test-identity-revoke";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hashed_binary_migrates_and_serves_real_loopback_report() {
@@ -41,6 +53,7 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     create_runtime_roles(&admin).await;
     run_migrations(&binary, &postgres.admin_url);
     verify_rollup_capabilities(&admin, &postgres).await;
+    verify_direct_role_boundaries(&postgres).await;
     verify_startup_rejects_privilege_drift(&binary, &postgres, &binary_sha256, &admin).await;
 
     let now = OffsetDateTime::now_utc();
@@ -52,11 +65,110 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
         seed_consent_before_event_cohort(&admin, today).await;
     seed_two_subject_rollup_events(&admin, now).await;
 
+    let node_port = unused_loopback_port();
+    let mut node_process = CollectorProcess::spawn_node(&postgres, node_port);
+    let node_address = SocketAddr::from(([127, 0, 0, 1], node_port));
+    let node_health = wait_for_health(&mut node_process, node_address);
+    assert_eq!(node_health["service"], "product-analytics-collector");
+
+    let node_installation = "node-parity-installation";
+    let node_pseudo = format!("{:064x}", 91_001);
+    let rust_installation = "rust-parity-installation";
+    let rust_pseudo = format!("{:064x}", 91_002);
+    for (installation, pseudo) in [
+        (node_installation, node_pseudo.as_str()),
+        (rust_installation, rust_pseudo.as_str()),
+    ] {
+        let consent = anonymous_consent(node_address, installation, pseudo);
+        assert_eq!(consent.0, 200, "Node consent response: {}", consent.1);
+    }
+
+    let node_event_id = event_uuid(91_101);
+    let node_event = parity_event(&node_event_id, &node_pseudo, now);
+    let node_accepted = anonymous_batch(node_address, node_installation, &node_pseudo, &node_event);
+    assert_eq!(
+        node_accepted.0, 200,
+        "Node accepted response: {}",
+        node_accepted.1
+    );
+    assert_eq!(node_accepted.1["accepted"], 1);
+    let node_duplicate =
+        anonymous_batch(node_address, node_installation, &node_pseudo, &node_event);
+    assert_eq!(
+        node_duplicate.0, 200,
+        "Node replay response: {}",
+        node_duplicate.1
+    );
+    assert_eq!(node_duplicate.1["duplicate"], 1);
+    let mut node_conflict_event = node_event.clone();
+    node_conflict_event["occurredAt"] = json!(format_time(now + Duration::seconds(1)));
+    let node_conflict = anonymous_batch(
+        node_address,
+        node_installation,
+        &node_pseudo,
+        &node_conflict_event,
+    );
+    assert_eq!(
+        node_conflict.0, 409,
+        "Node conflict response: {}",
+        node_conflict.1
+    );
+    assert_eq!(node_conflict.1["rejected"][0]["errorCode"], "conflict");
+    drop(node_process);
+
     let listener_port = unused_loopback_port();
     let mut process = CollectorProcess::spawn(&binary, &postgres, listener_port, &binary_sha256);
     let address = SocketAddr::from(([127, 0, 0, 1], listener_port));
     let health = wait_for_health(&mut process, address);
     assert_eq!(health["service"], "product-analytics-collector");
+
+    let rust_event_id = event_uuid(91_102);
+    let rust_event = parity_event(&rust_event_id, &rust_pseudo, now);
+    let rust_accepted = anonymous_batch(address, rust_installation, &rust_pseudo, &rust_event);
+    assert_eq!(
+        rust_accepted.0, 200,
+        "Rust accepted response: {}",
+        rust_accepted.1
+    );
+    assert_batch_response_parity(&node_accepted, &rust_accepted);
+
+    let rust_duplicate = anonymous_batch(address, rust_installation, &rust_pseudo, &rust_event);
+    assert_eq!(
+        rust_duplicate.0, 200,
+        "Rust replay response: {}",
+        rust_duplicate.1
+    );
+    assert_eq!(rust_duplicate.1["duplicate"], 1);
+    let rust_replay_of_node_event =
+        anonymous_batch(address, node_installation, &node_pseudo, &node_event);
+    assert_batch_response_parity(&node_duplicate, &rust_replay_of_node_event);
+
+    let mut rust_conflict_event = rust_event.clone();
+    rust_conflict_event["occurredAt"] = json!(format_time(now + Duration::seconds(1)));
+    let rust_conflict = anonymous_batch(
+        address,
+        rust_installation,
+        &rust_pseudo,
+        &rust_conflict_event,
+    );
+    assert_eq!(
+        rust_conflict.0, 409,
+        "Rust conflict response: {}",
+        rust_conflict.1
+    );
+    assert_batch_response_parity(&node_conflict, &rust_conflict);
+
+    drop(process);
+    let restart_port = unused_loopback_port();
+    let mut process = CollectorProcess::spawn(&binary, &postgres, restart_port, &binary_sha256);
+    let address = SocketAddr::from(([127, 0, 0, 1], restart_port));
+    let restarted_health = wait_for_health(&mut process, address);
+    assert_eq!(restarted_health["service"], "product-analytics-collector");
+    let replay_after_restart =
+        anonymous_batch(address, rust_installation, &rust_pseudo, &rust_event);
+    assert_eq!(replay_after_restart.0, 200);
+    assert_eq!(replay_after_restart.1["duplicate"], 1);
+    assert_batch_response_parity(&rust_duplicate, &replay_after_restart);
 
     let live_id = "loopback-ingested-installation";
     let live_pseudo = format!("{:064x}", 9001);
@@ -98,6 +210,87 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     assert_eq!(batch.0, 200, "batch response: {}", batch.1);
     assert_eq!(batch.1["accepted"], 1);
     assert_eq!(batch.1["rejected"].as_array().map(Vec::len), Some(0));
+    for malformed_body in [json!({}), json!({"events": null}), json!({"events": {}})] {
+        let malformed = request_json(
+            address,
+            "POST",
+            "/api/analytics/v1/events:batch",
+            vec![
+                ("authorization", ANONYMOUS_AUTHORIZATION),
+                ("x-rudder-installation-id", live_id),
+                ("x-rudder-telemetry-consent-version", "process-test-v1"),
+                ("x-rudder-telemetry-consent-epoch", "1"),
+                (
+                    "x-rudder-telemetry-pseudonymous-installation-id",
+                    &live_pseudo,
+                ),
+            ],
+            Some(malformed_body),
+        );
+        assert_eq!(
+            malformed.0, 422,
+            "malformed batch response: {}",
+            malformed.1
+        );
+        assert_eq!(malformed.1["accepted"], 0);
+        assert_eq!(malformed.1["duplicate"], 0);
+        assert_eq!(
+            malformed.1["rejected"][0],
+            json!({
+                "eventId": "batch",
+                "status": "rejected",
+                "errorCode": "invalid_schema",
+                "late": false
+            })
+        );
+    }
+    let malformed_json = request_raw(
+        address,
+        "POST",
+        "/api/analytics/v1/events:batch",
+        vec![
+            ("authorization", ANONYMOUS_AUTHORIZATION),
+            ("x-rudder-installation-id", live_id),
+            ("x-rudder-telemetry-consent-version", "process-test-v1"),
+            ("x-rudder-telemetry-consent-epoch", "1"),
+            (
+                "x-rudder-telemetry-pseudonymous-installation-id",
+                &live_pseudo,
+            ),
+        ],
+        b"{malformed-json",
+    );
+    assert_eq!(
+        malformed_json.0, 400,
+        "malformed JSON response: {}",
+        malformed_json.1
+    );
+    assert_eq!(malformed_json.1, json!({"errorCode": "invalid_schema"}));
+
+    let oversized_body = vec![b' '; MAX_BATCH_BYTES + 1];
+    let oversized_json = request_raw(
+        address,
+        "POST",
+        "/api/analytics/v1/events:batch",
+        vec![
+            ("authorization", ANONYMOUS_AUTHORIZATION),
+            ("x-rudder-installation-id", live_id),
+            ("x-rudder-telemetry-consent-version", "process-test-v1"),
+            ("x-rudder-telemetry-consent-epoch", "1"),
+            (
+                "x-rudder-telemetry-pseudonymous-installation-id",
+                &live_pseudo,
+            ),
+        ],
+        &oversized_body,
+    );
+    assert_eq!(
+        oversized_json.0, 413,
+        "oversized JSON response: {}",
+        oversized_json.1
+    );
+    assert_eq!(oversized_json.1, json!({"errorCode": "too_large"}));
+
     let first_observed_event_matches: bool = sqlx::query_scalar(&format!(
         "SELECT first_observed_event_at = $2::timestamptz FROM {INSTALLATIONS} WHERE installation_id = $1"
     ))
@@ -125,7 +318,7 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
         assert_eq!(response.0, 200, "report response: {}", response.1);
         report = response.1;
         let retention = report["retention"].as_array().expect("retention array");
-        if report["quality"]["acceptedEventCount"] == 1
+        if report["quality"]["acceptedEventCount"] == 3
             && report["metrics"]["meaningfulActiveInstallations1d"] == 2
             && report["metrics"]["meaningfulActiveInstallations7d"] == 5
             && retention
@@ -140,39 +333,84 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     let metrics = &report["metrics"];
     assert_eq!(metrics["meaningfulActiveInstallations1d"], 2);
     assert_eq!(metrics["meaningfulActiveInstallations7d"], 5);
+    assert_eq!(report["quality"]["receivedBatchCount"], 12);
+    assert_eq!(report["quality"]["acceptedEventCount"], 3);
+    assert_eq!(report["quality"]["duplicateEventCount"], 4);
+    assert_eq!(report["quality"]["rejectedEventCount"], 5);
     assert_eq!(
         metrics["meaningfulDau"],
         metrics["meaningfulActiveInstallations1d"]
     );
-    assert_eq!(report["metricStatus"]["meaningfulDau"], "in_progress");
-    assert_eq!(
-        report["metricStatus"]["meaningfulActiveInstallations1d"],
-        "in_progress"
+    assert_keys(
+        &report,
+        &[
+            "window",
+            "metrics",
+            "quality",
+            "privacy",
+            "coverage",
+            "dailyCreation",
+            "retention",
+        ],
     );
-    assert_eq!(
-        report["metricSemantics"]["meaningfulDau"],
-        "installation_level_24_hour_proxy_not_account_dau"
+    assert_keys(&report["window"], &["from", "to", "timezone"]);
+    assert_keys(
+        &report["metrics"],
+        &[
+            "meaningfulActiveInstallations1d",
+            "meaningfulActiveInstallations7d",
+            "productiveInstallations7d",
+            "weeklyCompletedWorkLoops",
+            "meaningfulDau",
+            "productiveWau",
+        ],
     );
-    assert_eq!(
-        report["metricSemantics"]["dauStatus"],
-        "in_progress_until_window_to_utc_day_is_complete"
+    assert_keys(
+        &report["quality"],
+        &[
+            "receivedBatchCount",
+            "acceptedEventCount",
+            "lateEventCount",
+            "duplicateEventCount",
+            "rejectedEventCount",
+            "aggregateRows",
+        ],
     );
-    assert_eq!(
-        report["metricSemantics"]["retentionMaturity"],
-        "latest_exact_first_observed_production_event_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end"
+    assert_keys(&report["privacy"], &["aggregateRows"]);
+    for row in report["privacy"]["aggregateRows"].as_array().unwrap() {
+        assert_keys(
+            row,
+            &[
+                "metricName",
+                "metricValue",
+                "contributingInstallations",
+                "privacyThreshold",
+            ],
+        );
+    }
+    assert_keys(
+        &report["coverage"],
+        &["accountLinkedEventCount", "anonymousEventCount"],
     );
-    assert_eq!(
-        report["metricSemantics"]["retentionCohort"],
-        "utc_calendar_day_of_first_observed_production_event"
-    );
-    assert_eq!(
-        report["metricSemantics"]["meaningfulW1"],
-        "meaningful_activity_at_age_days_gte_7_and_lt_14_from_first_observed_production_event"
-    );
-    assert_eq!(
-        report["metricSemantics"]["loopW4"],
-        "valid_work_loop_completion_at_age_days_gte_28_and_lt_35_from_first_observed_production_event"
-    );
+    assert_keys(&report["dailyCreation"], &["privacyThreshold", "days"]);
+    for day in report["dailyCreation"]["days"].as_array().unwrap() {
+        assert_keys(day, &["day", "issuesCreated", "chatsCreated"]);
+        assert_keys(&day["issuesCreated"], &["count", "status"]);
+        assert_keys(&day["chatsCreated"], &["count", "status"]);
+    }
+    for cohort in report["retention"].as_array().unwrap() {
+        assert_keys(
+            cohort,
+            &[
+                "cohortDay",
+                "eligibleInstallations",
+                "meaningfulW1",
+                "loopW1",
+                "loopW4",
+                "suppressed",
+            ],
+        );
+    }
 
     let cohorts = report["retention"].as_array().expect("retention array");
     assert!(
@@ -183,8 +421,64 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     );
     let consent_before_event = find_cohort(cohorts, &first_event_cohort_day);
     assert_eq!(consent_before_event["eligibleInstallations"], 2);
-    assert_eq!(consent_before_event["loopW4"], Value::Null);
-    assert_eq!(consent_before_event["loopW4Status"], "immature");
+    assert_eq!(consent_before_event["loopW4"], 0);
+
+    let backdated_event_at = now - Duration::days(1);
+    for index in 0..2 {
+        let installation_id = format!("backdated-under-current-consent-{index}");
+        let pseudo = format!("{:064x}", 91_000 + index);
+        let consent = request_json(
+            address,
+            "POST",
+            "/api/analytics/v1/internal/anonymous/consent",
+            vec![(
+                "x-rudder-telemetry-anonymous-authorization",
+                ANONYMOUS_AUTHORIZATION,
+            )],
+            Some(json!({
+                "installationId": installation_id,
+                "pseudonymousInstallationId": pseudo,
+                "consentVersion": "process-test-v1",
+                "consentEpoch": 1,
+                "revoked": false
+            })),
+        );
+        assert_eq!(consent.0, 200, "backdated consent response: {}", consent.1);
+
+        let event_id = event_uuid(91_000 + index);
+        let batch = request_json(
+            address,
+            "POST",
+            "/api/analytics/v1/events:batch",
+            vec![
+                ("authorization", ANONYMOUS_AUTHORIZATION),
+                ("x-rudder-installation-id", &installation_id),
+                ("x-rudder-telemetry-consent-version", "process-test-v1"),
+                ("x-rudder-telemetry-consent-epoch", "1"),
+                ("x-rudder-telemetry-pseudonymous-installation-id", &pseudo),
+            ],
+            Some(json!({
+                "events": [human_work_started_event(&event_id, &pseudo, backdated_event_at)]
+            })),
+        );
+        assert_eq!(batch.0, 200, "backdated batch response: {}", batch.1);
+        assert_eq!(batch.1["accepted"], 1);
+        assert_eq!(batch.1["rejected"].as_array().map(Vec::len), Some(0));
+
+        // Match Node's upload-time consent check without choosing the cohort anchor.
+        let stored_with_current_consent: bool = sqlx::query_scalar(&format!(
+            "SELECT event.occurred_at = $2::timestamptz AND event.occurred_at < installation.first_seen_at AND event.received_at >= installation.first_seen_at AND event.consent_version = 'process-test-v1' AND event.consent_epoch = 1 FROM {EVENTS} event JOIN {INSTALLATIONS} installation USING (installation_id) WHERE event.event_id = $1::uuid"
+        ))
+        .bind(&event_id)
+        .bind(format_time(backdated_event_at))
+        .fetch_one(&admin)
+        .await
+        .expect("read back event stored under current consent");
+        assert!(
+            stored_with_current_consent,
+            "an event timestamped before consent is stored only after current consent authorizes upload"
+        );
+    }
 
     let mut subject_rollup = (0_i64, 0_i64);
     for _ in 0..80 {
@@ -227,21 +521,152 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
         )
     );
     assert_eq!(w1["meaningfulW1"], 1, "cohort: {w1}");
-    assert_eq!(w1["meaningfulW1Status"], "available");
-    assert_eq!(w1["loopW4"], Value::Null);
-    assert_eq!(w1["loopW4Status"], "immature");
+    assert_eq!(w1["loopW4"], 0);
 
     let recent_day = (today - Duration::days(2)).to_string();
     let recent = find_cohort(cohorts, &recent_day);
-    assert_eq!(recent["meaningfulW1"], Value::Null);
-    assert_eq!(recent["meaningfulW1Status"], "immature");
-    assert_eq!(recent["loopW4"], Value::Null);
-    assert_eq!(recent["loopW4Status"], "immature");
+    assert_eq!(recent["meaningfulW1"], 0);
+    assert_eq!(recent["loopW4"], 0);
 
     let w4_day = (today - Duration::days(50)).to_string();
     let w4 = find_cohort(cohorts, &w4_day);
     assert_eq!(w4["loopW4"], 1);
-    assert_eq!(w4["loopW4Status"], "available");
+
+    let identity_installation = "identity-subject-binding-installation";
+    let identity_pseudo = format!("{:064x}", 92_000);
+    let subject_a = format!("{:064x}", 92_001);
+    let subject_b = format!("{:064x}", 92_002);
+    let assertion_without_grant = identity_batch(
+        address,
+        identity_installation,
+        &identity_pseudo,
+        &subject_a,
+        1,
+        92_003,
+    );
+    assert_eq!(assertion_without_grant.0, 422);
+    assert_eq!(
+        assertion_without_grant.1["rejected"][0]["errorCode"],
+        "revoked"
+    );
+    let no_subject_state: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*)::bigint FROM {SUBJECTS} WHERE installation_id=$1"
+    ))
+    .bind(identity_installation)
+    .fetch_one(&admin)
+    .await
+    .expect("check an assertion cannot create Identity consent state");
+    assert_eq!(no_subject_state, 0);
+
+    let current_grant = sync_identity_consent(address, identity_installation, &subject_a, 1, false);
+    assert_eq!(
+        current_grant.0, 200,
+        "current Identity grant: {}",
+        current_grant.1
+    );
+    assert_eq!(current_grant.1["consentEpoch"], 1);
+    assert_eq!(current_grant.1["revoked"], false);
+    let current_assertion = identity_batch(
+        address,
+        identity_installation,
+        &identity_pseudo,
+        &subject_a,
+        1,
+        92_004,
+    );
+    assert_eq!(
+        current_assertion.0, 200,
+        "subject-bound upload: {}",
+        current_assertion.1
+    );
+    assert_eq!(current_assertion.1["accepted"], 1);
+
+    let mismatched_subject = identity_batch(
+        address,
+        identity_installation,
+        &identity_pseudo,
+        &subject_b,
+        1,
+        92_005,
+    );
+    assert_eq!(mismatched_subject.0, 422);
+    assert_eq!(mismatched_subject.1["rejected"][0]["errorCode"], "revoked");
+    let mismatched_subject_state: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*)::bigint FROM {SUBJECTS} WHERE installation_id=$1 AND analytics_subject=$2"
+    ))
+    .bind(identity_installation)
+    .bind(&subject_b)
+    .fetch_one(&admin)
+    .await
+    .expect("check another signed subject cannot inherit the current grant");
+    assert_eq!(mismatched_subject_state, 0);
+
+    let revocation = revoke_identity_consent(address, identity_installation, &subject_a, 2);
+    assert_eq!(revocation.0, 200, "Identity revocation: {}", revocation.1);
+    assert_eq!(revocation.1["consentEpoch"], 2);
+    assert_eq!(revocation.1["revoked"], true);
+    for replayed_epoch in [1, 2] {
+        let replay = sync_identity_consent(
+            address,
+            identity_installation,
+            &subject_a,
+            replayed_epoch,
+            false,
+        );
+        assert_eq!(replay.0, 200, "consent replay response: {}", replay.1);
+        assert_eq!(replay.1["consentEpoch"], 2);
+        assert_eq!(replay.1["revoked"], true);
+    }
+    for (epoch, event_number) in [(1, 92_006), (2, 92_007)] {
+        let stale_or_revoked_assertion = identity_batch(
+            address,
+            identity_installation,
+            &identity_pseudo,
+            &subject_a,
+            epoch,
+            event_number,
+        );
+        assert_eq!(stale_or_revoked_assertion.0, 422);
+        assert_eq!(
+            stale_or_revoked_assertion.1["rejected"][0]["errorCode"],
+            "revoked"
+        );
+    }
+
+    let renewed_grant = sync_identity_consent(address, identity_installation, &subject_a, 3, false);
+    assert_eq!(renewed_grant.0, 200);
+    assert_eq!(renewed_grant.1["revoked"], false);
+    let renewed_assertion = identity_batch(
+        address,
+        identity_installation,
+        &identity_pseudo,
+        &subject_a,
+        3,
+        92_008,
+    );
+    assert_eq!(
+        renewed_assertion.0, 200,
+        "newer Identity grant: {}",
+        renewed_assertion.1
+    );
+    assert_eq!(renewed_assertion.1["accepted"], 1);
+    let identity_event_count: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*)::bigint FROM {EVENTS} WHERE installation_id=$1"
+    ))
+    .bind(identity_installation)
+    .fetch_one(&admin)
+    .await
+    .expect("count accepted events across revoke and stale replay");
+    assert_eq!(identity_event_count, 2);
+    let current_subject_state: (i32, bool) = sqlx::query_as(&format!(
+        "SELECT consent_epoch, revoked_at IS NOT NULL FROM {SUBJECTS} WHERE installation_id=$1 AND analytics_subject=$2"
+    ))
+    .bind(identity_installation)
+    .bind(&subject_a)
+    .fetch_one(&admin)
+    .await
+    .expect("read renewed subject consent state");
+    assert_eq!(current_subject_state, (3, false));
 
     let migrated_event_exists: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM {EVENTS} WHERE event_id=$1::uuid)"
@@ -317,6 +742,68 @@ async fn verify_startup_rejects_privilege_drift(
             "revoking {privilege} grant option must remove only that option"
         );
     }
+    for privilege in ["SELECT", "INSERT"] {
+        sqlx::query(&format!(
+            "GRANT {privilege} (properties) ON {EVENTS} TO rudder_analytics_collector WITH GRANT OPTION"
+        ))
+        .execute(admin)
+        .await
+        .expect("grant raw-event column privilege option for startup regression");
+        let table_grant_option_visible: bool = sqlx::query_scalar(&format!(
+            "SELECT has_table_privilege('rudder_analytics_collector', '{EVENTS}', '{privilege} WITH GRANT OPTION')"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check column grant option is not visible as a table grant option");
+        assert!(
+            !table_grant_option_visible,
+            "column-level {privilege} grant option must not appear as a table grant option"
+        );
+        assert_startup_rejected(
+            binary,
+            postgres,
+            binary_sha256,
+            "product_analytics_database_privilege_denied",
+        );
+        sqlx::query(&format!(
+            "REVOKE GRANT OPTION FOR {privilege} (properties) ON {EVENTS} FROM rudder_analytics_collector"
+        ))
+        .execute(admin)
+        .await
+        .expect("revoke only raw-event column grant option after startup regression");
+
+        let baseline_table_privilege: bool = sqlx::query_scalar(&format!(
+            "SELECT has_table_privilege('rudder_analytics_collector', '{EVENTS}', '{privilege}')"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check raw-event table privilege after revoking column grant option");
+        assert!(
+            baseline_table_privilege,
+            "revoking column-level {privilege} grant option must preserve table privilege"
+        );
+        let baseline_column_privilege: bool = sqlx::query_scalar(&format!(
+            "SELECT has_column_privilege('rudder_analytics_collector', '{EVENTS}', 'properties', '{privilege}')"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check raw-event column privilege after revoking column grant option");
+        assert!(
+            baseline_column_privilege,
+            "revoking column-level {privilege} grant option must preserve column privilege"
+        );
+        let column_grant_option_remains: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attname='properties' CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl WHERE c.oid='{EVENTS}'::regclass AND acl.grantee=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname='rudder_analytics_collector') AND acl.privilege_type='{privilege}' AND acl.is_grantable)"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check raw-event column grant option was removed");
+        assert!(
+            !column_grant_option_remains,
+            "revoking {privilege} grant option must remove the column grant option"
+        );
+    }
+
     let accepted_port = unused_loopback_port();
     let mut accepted_process =
         CollectorProcess::spawn(binary, postgres, accepted_port, binary_sha256);
@@ -665,6 +1152,220 @@ async fn verify_rollup_capabilities(admin: &PgPool, postgres: &PostgresHarness) 
     rollup.close().await;
 }
 
+async fn verify_direct_role_boundaries(postgres: &PostgresHarness) {
+    let collector = connect(&postgres.role_url("rudder_analytics_collector")).await;
+    for table in [EVENTS, INSTALLATIONS, SUBJECTS, QUALITY] {
+        assert_read_allowed(&collector, table).await;
+    }
+    for table in [
+        DAILY_ROLLUPS,
+        PRIVACY_AGGREGATES,
+        WORK_LOOP_REVISIONS,
+        MIGRATION_HISTORY,
+    ] {
+        assert_read_denied(
+            &collector,
+            &format!("SELECT count(*)::bigint FROM {table}"),
+            &format!("collector SELECT on {table}"),
+        )
+        .await;
+    }
+    for (label, sql) in [
+        (
+            "collector event update",
+            format!("UPDATE {EVENTS} SET event_name=event_name WHERE false"),
+        ),
+        (
+            "collector event delete",
+            format!("DELETE FROM {EVENTS} WHERE false"),
+        ),
+        ("collector rollup insert", empty_daily_rollup_insert()),
+        ("collector work-loop insert", empty_work_loop_insert()),
+    ] {
+        assert_write_denied(&collector, &sql, label).await;
+    }
+    assert_truncate_denied(&collector, EVENTS, "collector TRUNCATE raw events").await;
+
+    let rollup = connect(&postgres.role_url("rudder_analytics_rollup")).await;
+    for table in [EVENTS, INSTALLATIONS, QUALITY] {
+        assert_read_allowed(&rollup, table).await;
+    }
+    for table in [SUBJECTS, MIGRATION_HISTORY] {
+        assert_read_denied(
+            &rollup,
+            &format!("SELECT count(*)::bigint FROM {table}"),
+            &format!("rollup SELECT on {table}"),
+        )
+        .await;
+    }
+    for sql in [
+        empty_daily_rollup_insert(),
+        empty_privacy_aggregate_insert(),
+        empty_work_loop_insert(),
+        format!("UPDATE {DAILY_ROLLUPS} SET event_count=event_count WHERE false"),
+        format!("DELETE FROM {DAILY_ROLLUPS} WHERE false"),
+    ] {
+        assert_write_allowed(&rollup, &sql, "rollup derived-table write").await;
+    }
+    for (label, sql) in [
+        ("rollup raw-event insert", empty_raw_event_insert()),
+        (
+            "rollup raw-event update",
+            format!("UPDATE {EVENTS} SET event_name=event_name WHERE false"),
+        ),
+        (
+            "rollup raw-event delete",
+            format!("DELETE FROM {EVENTS} WHERE false"),
+        ),
+        (
+            "rollup installation update",
+            format!("UPDATE {INSTALLATIONS} SET updated_at=updated_at WHERE false"),
+        ),
+        ("rollup subject insert", empty_subject_insert()),
+        (
+            "rollup subject update",
+            format!("UPDATE {SUBJECTS} SET consent_epoch=consent_epoch WHERE false"),
+        ),
+        (
+            "rollup subject delete",
+            format!("DELETE FROM {SUBJECTS} WHERE false"),
+        ),
+    ] {
+        assert_write_denied(&rollup, &sql, label).await;
+    }
+    assert_truncate_denied(&rollup, EVENTS, "rollup TRUNCATE raw events").await;
+
+    let reader = connect(&postgres.role_url("rudder_analytics_reader")).await;
+    for table in [DAILY_ROLLUPS, PRIVACY_AGGREGATES, QUALITY] {
+        assert_read_allowed(&reader, table).await;
+    }
+    for table in [
+        EVENTS,
+        INSTALLATIONS,
+        SUBJECTS,
+        WORK_LOOP_REVISIONS,
+        MIGRATION_HISTORY,
+    ] {
+        assert_read_denied(
+            &reader,
+            &format!("SELECT count(*)::bigint FROM {table}"),
+            &format!("reader SELECT on {table}"),
+        )
+        .await;
+    }
+    for (label, sql) in [
+        ("reader raw-event insert", empty_raw_event_insert()),
+        (
+            "reader installation update",
+            format!("UPDATE {INSTALLATIONS} SET updated_at=updated_at WHERE false"),
+        ),
+        (
+            "reader subject delete",
+            format!("DELETE FROM {SUBJECTS} WHERE false"),
+        ),
+        ("reader daily-rollup insert", empty_daily_rollup_insert()),
+        (
+            "reader daily-rollup update",
+            format!("UPDATE {DAILY_ROLLUPS} SET event_count=event_count WHERE false"),
+        ),
+        (
+            "reader privacy-aggregate delete",
+            format!("DELETE FROM {PRIVACY_AGGREGATES} WHERE false"),
+        ),
+        (
+            "reader quality-counter update",
+            format!("UPDATE {QUALITY} SET updated_at=updated_at WHERE false"),
+        ),
+    ] {
+        assert_write_denied(&reader, &sql, label).await;
+    }
+    assert_truncate_denied(&reader, DAILY_ROLLUPS, "reader TRUNCATE report data").await;
+
+    collector.close().await;
+    rollup.close().await;
+    reader.close().await;
+}
+
+async fn assert_read_allowed(pool: &PgPool, table: &str) {
+    let _: i64 = sqlx::query_scalar(&format!("SELECT count(*)::bigint FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|error| panic!("expected SELECT access to {table}: {error}"));
+}
+
+async fn assert_read_denied(pool: &PgPool, sql: &str, label: &str) {
+    let error = sqlx::query_scalar::<_, i64>(sql)
+        .fetch_one(pool)
+        .await
+        .expect_err(label);
+    assert_pg_privilege_error(error, label);
+}
+
+async fn assert_write_allowed(pool: &PgPool, sql: &str, label: &str) {
+    sqlx::query(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("expected {label} to be allowed: {error}"));
+}
+
+async fn assert_write_denied(pool: &PgPool, sql: &str, label: &str) {
+    let error = sqlx::query(sql).execute(pool).await.expect_err(label);
+    assert_pg_privilege_error(error, label);
+}
+
+async fn assert_truncate_denied(pool: &PgPool, table: &str, label: &str) {
+    let mut transaction = pool
+        .begin()
+        .await
+        .expect("begin rollback-guarded truncate probe");
+    let error = sqlx::query(&format!("TRUNCATE TABLE {table}"))
+        .execute(&mut *transaction)
+        .await
+        .expect_err(label);
+    transaction
+        .rollback()
+        .await
+        .expect("roll back truncate privilege probe");
+    assert_pg_privilege_error(error, label);
+}
+
+fn assert_pg_privilege_error(error: sqlx::Error, label: &str) {
+    let code = error
+        .as_database_error()
+        .and_then(|database_error| database_error.code());
+    assert_eq!(code.as_deref(), Some("42501"), "{label}: {error}");
+}
+
+fn empty_raw_event_insert() -> String {
+    format!(
+        "INSERT INTO {EVENTS} (event_id, installation_id, event_name, schema_version, occurred_at, effective_at, environment, app_version, release_channel, deployment_mode, actor_kind, origin, properties, confidence, is_backfill, late, consent_version, consent_epoch, payload_sha256) SELECT '00000000-0000-4000-8000-000000009999'::uuid, 'permission-probe', 'account_created', 1, now(), now(), 'test', 'test', 'stable', 'desktop_local', 'user', 'system', jsonb_build_object(), 'exact', false, false, 'probe-v1', 1, repeat('a', 64) WHERE false"
+    )
+}
+
+fn empty_subject_insert() -> String {
+    format!(
+        "INSERT INTO {SUBJECTS} (installation_id, analytics_subject, consent_version, consent_epoch) SELECT 'permission-probe', repeat('b', 64), 'probe-v1', 1 WHERE false"
+    )
+}
+
+fn empty_daily_rollup_insert() -> String {
+    format!(
+        "INSERT INTO {DAILY_ROLLUPS} (day, installation_id, event_name, origin, dimension_hash, dimensions, event_count, first_occurred_at, last_occurred_at) SELECT current_date, 'permission-probe', 'account_created', 'system', repeat('c', 64), jsonb_build_object(), 0, now(), now() WHERE false"
+    )
+}
+
+fn empty_privacy_aggregate_insert() -> String {
+    format!(
+        "INSERT INTO {PRIVACY_AGGREGATES} (day, metric_name, dimension_set_version, dimension_hash, dimension_values, metric_value, contributing_installations, privacy_threshold) SELECT current_date, 'permission-probe', 1, repeat('d', 64), jsonb_build_object(), 0, 0, 2 WHERE false"
+    )
+}
+
+fn empty_work_loop_insert() -> String {
+    format!(
+        "INSERT INTO {WORK_LOOP_REVISIONS} (installation_id, pseudonymous_work_cycle_id, completion_revision, completion_event_id, completed_at, environment, release_channel, confidence) SELECT 'permission-probe', 'cycle', 1, 'event', now(), 'test', 'stable', 'exact' WHERE false"
+    )
+}
+
 async fn seed_metric_window(admin: &PgPool, now: OffsetDateTime, today: Date) {
     let timestamps = [
         (
@@ -961,6 +1662,221 @@ fn human_work_started_event(event_id: &str, pseudo: &str, occurred_at: OffsetDat
     })
 }
 
+fn parity_event(event_id: &str, pseudo: &str, occurred_at: OffsetDateTime) -> Value {
+    let mut event = human_work_started_event(event_id, pseudo, occurred_at);
+    event["eventName"] = json!("account_created");
+    event["origin"] = json!("system");
+    event
+}
+
+fn anonymous_consent(address: SocketAddr, installation_id: &str, pseudo: &str) -> (u16, Value) {
+    request_json(
+        address,
+        "POST",
+        "/api/analytics/v1/internal/anonymous/consent",
+        vec![(
+            "x-rudder-telemetry-anonymous-authorization",
+            ANONYMOUS_AUTHORIZATION,
+        )],
+        Some(json!({
+            "installationId": installation_id,
+            "pseudonymousInstallationId": pseudo,
+            "consentVersion": "process-test-v1",
+            "consentEpoch": 1,
+            "revoked": false
+        })),
+    )
+}
+
+fn anonymous_batch(
+    address: SocketAddr,
+    installation_id: &str,
+    pseudo: &str,
+    event: &Value,
+) -> (u16, Value) {
+    request_json(
+        address,
+        "POST",
+        "/api/analytics/v1/events:batch",
+        vec![
+            ("authorization", ANONYMOUS_AUTHORIZATION),
+            ("x-rudder-installation-id", installation_id),
+            ("x-rudder-telemetry-consent-version", "process-test-v1"),
+            ("x-rudder-telemetry-consent-epoch", "1"),
+            ("x-rudder-telemetry-pseudonymous-installation-id", pseudo),
+        ],
+        Some(json!({"events": [event]})),
+    )
+}
+
+fn assert_batch_response_parity(expected: &(u16, Value), actual: &(u16, Value)) {
+    assert_eq!(expected.0, actual.0, "HTTP status parity");
+    assert_eq!(
+        normalized_batch_response(&expected.1),
+        normalized_batch_response(&actual.1),
+        "Node/Rust batch response parity"
+    );
+}
+
+fn normalized_batch_response(response: &Value) -> Value {
+    let mut normalized = response.clone();
+    let object = normalized.as_object_mut().expect("batch response object");
+    let received_at = object
+        .remove("receivedAt")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .expect("batch response receivedAt timestamp");
+    OffsetDateTime::parse(&received_at, &Rfc3339)
+        .expect("batch response receivedAt must be RFC3339");
+    if let Some(rejected) = object.get_mut("rejected").and_then(Value::as_array_mut) {
+        for acknowledgement in rejected {
+            if acknowledgement.get("eventId").is_some() {
+                acknowledgement["eventId"] = json!("<event-id>");
+            }
+        }
+    }
+    normalized
+}
+
+fn identity_key_pair() -> Ed25519KeyPair {
+    Ed25519KeyPair::from_seed_unchecked(&[0x5a; 32])
+        .expect("create deterministic Identity test key")
+}
+
+fn identity_public_key() -> String {
+    STANDARD.encode(identity_key_pair().public_key().as_ref())
+}
+
+fn identity_assertion(
+    installation_id: &str,
+    pseudo: &str,
+    subject: &str,
+    consent_epoch: u64,
+    jti: &str,
+) -> String {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_millis() as u64;
+    let header = json!({
+        "alg": "EdDSA",
+        "typ": "rudder-telemetry-assertion+jwt",
+        "kid": "process-test-key"
+    });
+    let claims = json!({
+        "version": 1,
+        "issuer": "https://identity.test",
+        "audience": "telemetry-collector",
+        "installationId": installation_id,
+        "pseudonymousInstallationId": pseudo,
+        "analyticsSubject": subject,
+        "consentVersion": "identity-test-v1",
+        "consentEpoch": consent_epoch,
+        "issuedAtMs": now_ms,
+        "expiresAtMs": now_ms + 5 * 60 * 1000,
+        "jti": jti
+    });
+    let signing_input = format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(header.to_string()),
+        URL_SAFE_NO_PAD.encode(claims.to_string())
+    );
+    let signature = identity_key_pair().sign(signing_input.as_bytes());
+    format!(
+        "{signing_input}.{}",
+        URL_SAFE_NO_PAD.encode(signature.as_ref())
+    )
+}
+
+fn identity_batch(
+    address: SocketAddr,
+    installation_id: &str,
+    pseudo: &str,
+    subject: &str,
+    consent_epoch: u64,
+    event_number: u64,
+) -> (u16, Value) {
+    let assertion = identity_assertion(
+        installation_id,
+        pseudo,
+        subject,
+        consent_epoch,
+        &format!("process-test-assertion-{event_number}"),
+    );
+    let bearer = format!("Bearer {assertion}");
+    let event_id = event_uuid(event_number);
+    request_json(
+        address,
+        "POST",
+        "/api/analytics/v1/events:batch",
+        vec![
+            ("authorization", &bearer),
+            ("x-rudder-installation-id", installation_id),
+        ],
+        Some(
+            json!({"events": [human_work_started_event(&event_id, pseudo, OffsetDateTime::now_utc())]}),
+        ),
+    )
+}
+
+fn sync_identity_consent(
+    address: SocketAddr,
+    installation_id: &str,
+    subject: &str,
+    consent_epoch: u64,
+    revoked: bool,
+) -> (u16, Value) {
+    request_json(
+        address,
+        "POST",
+        "/api/analytics/v1/internal/consent/sync",
+        vec![(
+            "x-rudder-telemetry-consent-sync-secret",
+            IDENTITY_CONSENT_SYNC_SECRET,
+        )],
+        Some(json!({
+            "installationId": installation_id,
+            "analyticsSubject": subject,
+            "consentVersion": "identity-test-v1",
+            "consentEpoch": consent_epoch,
+            "revoked": revoked
+        })),
+    )
+}
+
+fn revoke_identity_consent(
+    address: SocketAddr,
+    installation_id: &str,
+    subject: &str,
+    consent_epoch: u64,
+) -> (u16, Value) {
+    request_json(
+        address,
+        "POST",
+        "/api/analytics/v1/internal/consent/revoke",
+        vec![("x-rudder-telemetry-revoke-secret", IDENTITY_REVOKE_SECRET)],
+        Some(json!({
+            "installationId": installation_id,
+            "analyticsSubject": subject,
+            "consentVersion": "identity-test-v1",
+            "consentEpoch": consent_epoch
+        })),
+    )
+}
+
+fn assert_keys(value: &Value, expected: &[&str]) {
+    let actual = value
+        .as_object()
+        .expect("JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = expected
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected, "unexpected JSON object keys: {value}");
+}
+
 fn wait_for_health(process: &mut CollectorProcess, address: SocketAddr) -> Value {
     for _ in 0..100 {
         if let Some(status) = process.0.try_wait().expect("poll collector process") {
@@ -1002,7 +1918,28 @@ fn request_json_result(
     headers: Vec<(&str, &str)>,
     body: Option<Value>,
 ) -> Result<(u16, Value), String> {
-    let body = body.map(|value| value.to_string()).unwrap_or_default();
+    let body = body.map(|value| value.to_string().into_bytes());
+    request_body_result(address, method, path, headers, body.as_deref())
+}
+
+fn request_raw(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: Vec<(&str, &str)>,
+    body: &[u8],
+) -> (u16, Value) {
+    request_body_result(address, method, path, headers, Some(body))
+        .unwrap_or_else(|error| panic!("{method} {path} failed: {error}"))
+}
+
+fn request_body_result(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: Vec<(&str, &str)>,
+    body: Option<&[u8]>,
+) -> Result<(u16, Value), String> {
     let mut stream = TcpStream::connect_timeout(&address, StdDuration::from_secs(2))
         .map_err(|error| error.to_string())?;
     stream
@@ -1016,7 +1953,7 @@ fn request_json_result(
     for (name, value) in headers {
         write!(stream, "{name}: {value}\r\n").map_err(|error| error.to_string())?;
     }
-    if !body.is_empty() {
+    if let Some(body) = body {
         write!(
             stream,
             "Content-Type: application/json\r\nContent-Length: {}\r\n",
@@ -1025,8 +1962,11 @@ fn request_json_result(
         .map_err(|error| error.to_string())?;
     }
     stream
-        .write_all(format!("\r\n{body}").as_bytes())
+        .write_all(b"\r\n")
         .map_err(|error| error.to_string())?;
+    if let Some(body) = body {
+        stream.write_all(body).map_err(|error| error.to_string())?;
+    }
     let mut response = Vec::new();
     stream
         .read_to_end(&mut response)
@@ -1128,7 +2068,31 @@ struct CollectorProcess(Child);
 
 impl CollectorProcess {
     fn spawn(binary: &Path, postgres: &PostgresHarness, port: u16, binary_hash: &str) -> Self {
-        let mut command = Command::new(binary);
+        let mut command = Command::new("bash");
+        command
+            .arg(collector_launcher())
+            .env("RUDDER_ANALYTICS_COLLECTOR_BIN", binary);
+        let process = Self::spawn_with_command(command, postgres, port);
+        println!("collector_launcher_binary_sha256={binary_hash}");
+        process
+    }
+
+    fn spawn_node(postgres: &PostgresHarness, port: u16) -> Self {
+        let server_dir = repository_root().join("server");
+        let tsx = server_dir.join("node_modules/.bin/tsx");
+        assert!(
+            tsx.is_file(),
+            "Node/Rust process parity requires workspace dependencies; run pnpm install before the PostgreSQL integration test"
+        );
+        let mut command = Command::new(tsx);
+        command
+            .arg(server_dir.join("src/product-analytics-collector-server.ts"))
+            .current_dir(server_dir);
+        Self::spawn_with_command(command, postgres, port)
+    }
+
+    fn spawn_with_command(mut command: Command, postgres: &PostgresHarness, port: u16) -> Self {
+        let identity_public_key = identity_public_key();
         command
             .env(
                 "RUDDER_TELEMETRY_COLLECTOR_DATABASE_URL",
@@ -1162,7 +2126,7 @@ impl CollectorProcess {
             .env("RUDDER_TELEMETRY_COLLECTOR_PORT", port.to_string())
             .env(
                 "RUDDER_TELEMETRY_COLLECTOR_IDENTITY_PUBLIC_KEY",
-                IDENTITY_PUBLIC_KEY,
+                identity_public_key,
             )
             .env(
                 "RUDDER_TELEMETRY_COLLECTOR_IDENTITY_ISSUER",
@@ -1176,6 +2140,14 @@ impl CollectorProcess {
                 "RUDDER_TELEMETRY_COLLECTOR_ANONYMOUS_AUTHORIZATION",
                 ANONYMOUS_AUTHORIZATION,
             )
+            .env(
+                "RUDDER_TELEMETRY_COLLECTOR_CONSENT_SYNC_SECRET",
+                IDENTITY_CONSENT_SYNC_SECRET,
+            )
+            .env(
+                "RUDDER_TELEMETRY_COLLECTOR_REVOKE_SECRET",
+                IDENTITY_REVOKE_SECRET,
+            )
             .env("RUDDER_TELEMETRY_COLLECTOR_REPORT_SECRET", REPORT_SECRET)
             .env("RUDDER_TELEMETRY_COLLECTOR_RETENTION_DAYS", "90")
             .env("RUDDER_TELEMETRY_COLLECTOR_PRIVACY_THRESHOLD", "2")
@@ -1184,9 +2156,9 @@ impl CollectorProcess {
             .env_remove("DATABASE_URL")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let child = command.spawn().unwrap_or_else(|error| {
-            panic!("spawn hash-identified collector {binary_hash}: {error}")
-        });
+        let child = command
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn analytics collector process: {error}"));
         Self(child)
     }
 
@@ -1224,6 +2196,17 @@ impl Drop for CollectorProcess {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn repository_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .expect("resolve Rudder repository root")
+}
+
+fn collector_launcher() -> PathBuf {
+    repository_root().join("deploy/product-analytics/rust-collector-launcher.sh")
 }
 
 struct PostgresHarness {
