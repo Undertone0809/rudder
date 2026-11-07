@@ -167,7 +167,8 @@ pub async fn prepare(
                 s.selector_json, b.agent_id::text AS agent_id, b.host_id, b.profile_id,
                 b.runtime_type AS binding_runtime_type, b.target_type, b.target_id,
                 b.principal_scope_ref, n.runtime_type AS segment_runtime_type,
-                n.state AS segment_state, a.runtime_type AS attempt_runtime_type,
+                n.state AS segment_state, n.native_session_id AS segment_thread_id,
+                a.runtime_type AS attempt_runtime_type,
                 a.status AS attempt_status, a.attempt_epoch AS run_attempt_epoch,
                 a.generation_attempt_epoch, a.connection_epoch, a.protocol_phase,
                 a.checkpoint_json, a.provider_thread_id AS attempt_thread_id,
@@ -349,7 +350,11 @@ pub async fn prepare(
         && row
             .try_get::<Option<String>, _>("segment_state")?
             .as_deref()
-            == Some("sealed")
+            .is_some_and(|state| matches!(state, "open" | "sealed"))
+        && row
+            .try_get::<Option<String>, _>("segment_thread_id")?
+            .as_deref()
+            == Some(thread_id.as_str())
         && row.try_get::<Option<String>, _>("target_type")?.as_deref() == Some("chat_conversation")
         && row.try_get::<Option<String>, _>("target_id")?.as_deref()
             == Some(conversation_id.as_str())
@@ -460,7 +465,7 @@ pub async fn complete(
                 s.segment_id::text AS segment_id, s.attempt_id::text AS attempt_id,
                 s.attempt_epoch AS span_attempt_epoch, s.state AS span_state,
                 s.completeness AS span_completeness, s.native_execution_ref,
-                s.selector_json, n.state AS segment_state,
+                s.selector_json, n.state AS segment_state, n.native_session_id AS segment_thread_id,
                 n.runtime_type AS segment_runtime_type,
                 a.runtime_type AS attempt_runtime_type, a.status AS attempt_status,
                 a.attempt_epoch AS run_attempt_epoch, a.generation_attempt_epoch,
@@ -535,7 +540,14 @@ pub async fn complete(
         && row.try_get::<String, _>("protocol_phase")? == "execution_terminal_committed"
         && row.try_get::<String, _>("span_state")? == "sealed"
         && row.try_get::<String, _>("span_completeness")? == "terminal_only"
-        && row.try_get::<String, _>("segment_state")? == "sealed"
+        && matches!(
+            row.try_get::<String, _>("segment_state")?.as_str(),
+            "open" | "sealed"
+        )
+        && row
+            .try_get::<Option<String>, _>("segment_thread_id")?
+            .as_deref()
+            == Some(plan.thread_id.as_str())
         && row.try_get::<String, _>("generation_status")? == "completed"
         && row.try_get::<String, _>("run_status")? == "succeeded"
         && row.try_get::<i64, _>("primary_span_count")? == 1
