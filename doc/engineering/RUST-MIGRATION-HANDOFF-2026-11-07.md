@@ -50,3 +50,7 @@ Work through existing PRs before duplicating their domains. Keep independent imp
 ## Local-only preservation
 
 Before deleting worktrees, ignored databases, profiles and non-rebuildable verification data are moved outside them to `/Users/zeeland/.codex/rudder-rust-handoff/2026-11-07/private-data/`. They are intentionally not uploaded to this public GitHub repository. Existing `~/.rudder`, the primary checkout, unrelated worktrees and external evidence directories are retained. This Git handoff transfers code and written evidence, not credentials or a production database. The local snapshot/push/cleanup receipts are retained in the same handoff directory.
+
+## Cleanup completion (2026-11-08)
+
+All 46 listed local worktree paths were removed after their remote snapshot SHAs were verified. All 33 private-data preservation destinations exist. The primary checkout status and unrelated registered worktree HEADs were unchanged. See `rust-handoff/2026-11-07-cleanup.json` for the final receipt. CI was not awaited; no merge or release was performed.
