@@ -12,7 +12,7 @@ git switch -c resume-rust origin/codex/rust-automation-execution-20261028
 pnpm install --frozen-lockfile
 ```
 
-Read `AGENTS.md`, `doc/engineering/BACKEND_ARCHITECTURE.md` and the snapshot manifest beside this document. Fetching the snapshot namespace recovers all 41 former workspace tips, including unfinished code. Each manifest row binds its original branch/HEAD, remote snapshot ref/SHA/tree, staged checkpoint (when any), added source files, and original status. Recreate any one with `git worktree add ../resume-topic origin/<snapshot_ref>`. Snapshot refs preserve separate alternatives; do not merge all historical snapshots indiscriminately.
+Read `AGENTS.md`, `doc/engineering/BACKEND_ARCHITECTURE.md` and the snapshot manifest beside this document. Fetching the snapshot namespace recovers all 46 former workspace tips, including unfinished code. Each manifest row binds its original branch/HEAD, remote snapshot ref/SHA/tree, staged checkpoint (when any), added source files, and original status. Recreate any one with `git worktree add ../resume-topic origin/<snapshot_ref>`. Snapshot refs preserve separate alternatives; do not merge all historical snapshots indiscriminately.
 
 ## Active implementation PRs
 
@@ -28,7 +28,7 @@ These implementation PRs and their branches remain intact. When #398 lands, reta
 
 ## Newly preserved unfinished work
 
-The snapshot namespace also contains uncommitted Native Chat finalizer code (135 original status entries, including 33 newly discovered source files), two analytics variants, the Request test-module ordering fix, and historical workspace deletions. Staged content has its own parent checkpoint before the final working-tree checkpoint where applicable. Deleted Desktop icons are preserved as observed WIP, not endorsed as intended product changes. Untracked dependency symlinks and Python bytecode were intentionally excluded. Use the manifest for exact source identities rather than relying on this narrative.
+The snapshot namespace also contains uncommitted Native Chat finalizer code (135 original status entries, including 33 newly discovered source files), two analytics variants, the Request test-module ordering fix, Pi native protocol changes, and older Rust branding/outbox/main-reconciliation work. Historical workspace deletions are also retained. Staged content has its own parent checkpoint before the final working-tree checkpoint where applicable. Deleted Desktop icons are preserved as observed WIP, not endorsed as intended product changes. Untracked dependency symlinks and Python bytecode were intentionally excluded. Use the manifest for exact source identities rather than relying on this narrative.
 
 ## Historical evidence and known gaps
 
