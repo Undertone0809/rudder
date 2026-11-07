@@ -2,14 +2,26 @@ schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-23
 status: in_progress
-next_main_reconciliation:
+current_main_reconciliation:
   worktree: /Users/zeeland/.codex/worktrees/rudder-main-e739-reconcile-20260923/rudder-oss
   branch: codex/rudder-main-e739-reconcile-20260923
   source_sha: 007b8d0ecc02e95586b8e17d75dcf19c98dd99b3
   source_tree: 6bc97e98c9d8621a08655e8a87233af0c046a764
   base_sha: e73976f0fa0662b1605838e92232b2b27cdc0faa
   prior_packaging_repair_checkpoint: ed1fed277
-  state: clean_rebase_complete_affected_checks_and_fresh_package_pending
+  state: source007b8_checks_passed_default_account_gate_PASS_auto_update_FAIL_probation_budget_repair_in_progress
+  pending_product_patch: bounded60s_probation_and_async_recovery_with_two_probe_outer_budget_not_yet_frozen_or_accepted
+  pending_patch_checks:
+    rust_helper: PASS14_including_process_group_generation_fence_and_recovery_fail_closed
+    rust_helper_log: /tmp/codex-rudder-e739-helper-generation-fence.log
+    desktop_full_suite: 1016_PASS_17_skipped_1_unchanged_Local_App_EPERM_timing_failure
+    desktop_local_app_isolated_rerun: PASS1_unchanged_test_4136ms_log_tmp_codex_rudder_e739_local_apps_idle_rerun_log
+    safety_open: packaged_timeout_descendant_postgres_port_descriptor_evidence_and_independent_review_still_required
+    rust_fmt: PASS
+    rust_release_helper: PASS_dedicated_APFS_cloned_target_no_shared_cache_mutation_for_new_code
+    desktop_recovery_worker: Sagan_helper_and_tests_in_progress_parent_owns_callers_Rust_and_smoke
+  fresh_packaged_log: /tmp/codex-rudder-e739-packaged.tuYl4E/smoke.log
+  reproduced_timing: target_activated190156596_ready190204188_shutdown190206452_10s_deadline_leaves_no_final_drain_budget
   equivalence: native_packages_db_server_and_cli_identical_to_ed1_source_only_Main_release_notes_UI_and_release_checks_changed
   publication: blocked_pending_affected_package_verifier_and_final_review_no_push
   checks:
@@ -17,6 +29,9 @@ next_main_reconciliation:
     desktop_release_notes_and_packaging: PASS14
     release_contracts: PASS46
     ui_release_notes: PASS4
+    full_typecheck: PASS_after_packaging_restored_dependencies
+    full_lint: PASS2990_one_repository_baseline_exception
+    package_validation: PASS_including_identity_dependency_containment
   prior_diagnostic_package:
     account_gate: PASS_author_Sagan
     account_gate_log: /tmp/codex-rudder-v20-account-gate.hzyZnX/smoke.log
@@ -26,7 +41,20 @@ next_main_reconciliation:
     direct_preserved_target_probation: PASS_exit0_4451ms_existing_fixture
     limitation: diagnostic_artifact_not_final_e739_package_unexplained_helper_failure_still_blocks_update_acceptance
   packaging_stage_review: Arendt_accept_ed1fed27700df2ea84fa2855fc55f39538a7ab51_no_final_handoff_claim
-current_main_reconciliation:
+settings_entry_integration_checkpoint:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-branding-name-authority-20260923/rudder-oss
+  owner: Volta_Node_entries_and_schema_Epicurus_Rust
+  checks: schema_fence17_manifest11_legacy_upgrade2_PASS_db_typecheck_build_PASS_Rust_settings8_PASS
+  source_lifecycle: immutable_source_IDs_without_source_FKs_insert_time_org_validation_supports_Side_Chat_cleanup_and_intent_recovery
+  next: enqueue_before_approval_completion_two_Chat_entry_paths_claim_retry_receipt_downstream_effects_real_workflow_tests; Volta coordinator implementation in progress and not yet verified
+  authority: wide_organization_owner_not_activated_writer_closure_reject_remains
+analytics_collector_checkpoint:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-rust-analytics-collector-20260923/rudder-oss
+  state: Rust_startup_lifecycle_fix_private_checks_passed_real_loopback_fixture_expired
+  checks: cargo_check_PASS_core_tests_PASS_diff_check_PASS
+  real_fixture: /tmp/codex-rudder-analytics-loopback.eHSIlY_expired_bind_failure_and_zero_maintenance_connections
+  remaining: rerun_distinct_ingest_maintenance_reader_role_fixture_and_real_entry_verifier; Node_collector_still_authority
+historical_main38_reconciliation:
   worktree: /Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss
   branch: codex/rudder-main-lineage-reconcile-20260923
   base_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
@@ -507,4 +535,4 @@ interrupt_resume:
   last_durable_commit: 007b8d0ecc02e95586b8e17d75dcf19c98dd99b3
   prior_accepted_candidate: e80deae94a441cc8cfa0411cf37a0a5949614285
   remaining_work: account_gate_and_auto_update_probation_diagnosis_Main_e739_delta_reconciliation_final_review_PR_update_then_complete_settings_approval_and_analytics_slices
-  next_command: collect_v20_diagnostic_packaged_smokes_then_build_and_verify_e739_reconciled_candidate_with_compiled_identity_payload
+  next_command: run_exact_candidate_desktop_helper_tests_and_native_generation_fence_then_stage_review_rebuild_helper_package_and_independent_packaged_timeout_verifier

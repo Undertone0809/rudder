@@ -132,6 +132,9 @@ export interface ManagedStartedServer {
     descriptorPath: string;
     lockPath: string;
     startedAt: string | null;
+    postgresDataDir?: string;
+    postgresPort?: number;
+    postgresPid?: number;
   };
   stop(): Promise<void>;
   dispose(): Promise<void>;
@@ -684,7 +687,14 @@ async function startServerRuntime(
   let activeDatabaseConnectionString: string;
   let startupDbInfo:
     | { mode: "external-postgres"; connectionString: string }
-    | { mode: "embedded-postgres"; provider: string; dataDir: string; port: number; postgresBinDir?: string };
+    | {
+        mode: "embedded-postgres";
+        provider: string;
+        dataDir: string;
+        port: number;
+        postgresBinDir?: string;
+        postgresPid?: number;
+      };
   options.onEvent?.({ stage: "database", message: "Preparing database" });
   if (config.databaseUrl) {
     migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL", {
@@ -890,7 +900,17 @@ async function startServerRuntime(
       logger.info("Embedded PostgreSQL ready");
     }
     activeDatabaseConnectionString = embeddedConnectionString;
-    startupDbInfo = { mode: "embedded-postgres", provider: localPostgresProvider, dataDir, port, ...(localPostgresBinDir ? { postgresBinDir: localPostgresBinDir } : {}) };
+    const postmaster = readLivePostmasterPidFile(resolve(dataDir, "postmaster.pid"), {
+      expectedDataDir: dataDir,
+    });
+    startupDbInfo = {
+      mode: "embedded-postgres",
+      provider: localPostgresProvider,
+      dataDir,
+      port,
+      ...(localPostgresBinDir ? { postgresBinDir: localPostgresBinDir } : {}),
+      ...(postmaster?.pid ? { postgresPid: postmaster.pid } : {}),
+    };
   }
 
   supervisor.own("database-pool", async () => {
@@ -1512,6 +1532,13 @@ async function startServerRuntime(
         ? {
             postgresBinDir: descriptorPostgresBinDir,
             ...(postgresRuntimeKey ? { postgresRuntimeKey } : {}),
+          }
+        : {}),
+      ...(startupDbInfo.mode === "embedded-postgres"
+        ? {
+            postgresDataDir: startupDbInfo.dataDir,
+            postgresPort: startupDbInfo.port,
+            ...(startupDbInfo.postgresPid ? { postgresPid: startupDbInfo.postgresPid } : {}),
           }
         : {}),
     };

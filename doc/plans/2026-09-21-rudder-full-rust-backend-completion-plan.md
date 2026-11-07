@@ -41,7 +41,32 @@ updated_at: 2026-09-23
 
 # Purpose and terminal outcome
 
-## Main lineage integration checkpoint (2026-09-23)
+## Current Main and relocated-package checkpoint (2026-09-23)
+
+The current source is `007b8d0ecc02e95586b8e17d75dcf19c98dd99b3`, rebased
+onto Main `e73976f0fa0662b1605838e92232b2b27cdc0faa` in the independent
+`rudder-main-e739-reconcile-20260923` worktree. This retains Main's Chinese
+release notes and update-flow acceptance additions. Backend, native, database,
+and CLI source remain equivalent to the preceding accepted workflow candidate.
+
+Relocated packaged acceptance exposed a missing `identity-core` dependency
+masked by ancestor-checkout resolution. The repair stages its compiled payload
+and rejects package resolution outside the installed app. Independent stage
+review and the diagnostic account gate passed. A further updater `dual_failure`
+remains under investigation; direct retained target and rollback probes passed,
+which alone does not prove automatic recovery. The current full build,
+typecheck, lint, package validation, and 64 affected tests passed. The follow-up
+working-tree patch has 14 native helper tests and 68 focused Desktop update
+tests passing, with a persisted probation process/group fence. Fresh packaged
+acceptance is still required; v19 package receipts are explicitly invalidated
+and the follow-up patch is not frozen.
+See `artifacts/2026-09-23-rudder-relocated-desktop-identity-repair.md`.
+
+Organization settings/Chat intent and standalone analytics implementation
+continue in separate lanes. No wide organization ownership activation, Node
+Identity retirement, release-readiness, or production completion is claimed.
+
+## Historical Main38 lineage checkpoint (2026-09-23)
 
 The isolated integration branch now contains Main `38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf`
 and the installed Desktop member-directory default increment. Main migrations

@@ -18,6 +18,9 @@ export type LocalRuntimeDescriptor = {
   startedAt: string;
   postgresBinDir?: string;
   postgresRuntimeKey?: string;
+  postgresDataDir?: string;
+  postgresPort?: number;
+  postgresPid?: number;
 };
 
 export type RuntimeHealthSnapshot = {
@@ -137,6 +140,9 @@ export async function readLocalRuntimeDescriptor(instanceId = resolveRudderInsta
     const descriptor = { ...parsed };
     if (typeof descriptor.postgresBinDir !== "string") delete descriptor.postgresBinDir;
     if (typeof descriptor.postgresRuntimeKey !== "string") delete descriptor.postgresRuntimeKey;
+    if (typeof descriptor.postgresDataDir !== "string") delete descriptor.postgresDataDir;
+    if (typeof descriptor.postgresPort !== "number") delete descriptor.postgresPort;
+    if (typeof descriptor.postgresPid !== "number") delete descriptor.postgresPid;
     return descriptor;
   } catch {
     return null;

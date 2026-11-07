@@ -862,6 +862,17 @@ describe("desktop update flow", () => {
         stagedPath: artifactPath,
         candidateSha256: digest,
         targetVersion: candidate.version,
+        probation: {
+          args: ["--rudder-update-probation"],
+          timeoutMs: 60_000,
+          runtime: {
+            descriptorPath: expect.stringContaining("instances/default/runtime/server.json"),
+            instanceId: "default",
+            apiPort: 3200,
+            postgresDataDir: expect.stringContaining("instances/default/db"),
+            postgresPort: 54339,
+          },
+        },
         installPath: expect.any(String),
         lkgPath: expect.stringContaining("update-helper/lkg/Rudder.app"),
         journalPath: expect.stringContaining(`${candidate.updateId}.journal.json`),

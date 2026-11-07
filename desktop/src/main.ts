@@ -89,6 +89,8 @@ import {
 import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
+  desktopUpdateRuntimeReceiptsMatch,
+  DESKTOP_UPDATE_PROBATION_TIMEOUT_MS,
   ensureExternalDesktopUpdateHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
@@ -96,9 +98,11 @@ import {
   readDesktopUpdateJournal,
   recoverDesktopUpdateWithExternalHelper,
   requestMatchesAutomaticCandidate,
+  resolveDesktopUpdateRuntimeReceipt,
   resolveDesktopUpdateTransactionPaths,
   spawnDesktopUpdateHelper,
   type DesktopUpdateHelperRequest,
+  type DesktopUpdateRuntimeReceipt,
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
 import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
@@ -807,6 +811,7 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   getMainWindow: () => mainWindow,
   getServerHandle: () => serverHandle,
   getBootState: () => currentBootState,
+  getRuntimeReceipt: resolveCurrentDesktopUpdateRuntimeReceipt,
   listRunningRunsForUpdate,
   formatUpdateRunDetail,
   promptForDeferredUpdate: promptRendererForDeferredUpdate,
@@ -908,6 +913,19 @@ function resolveSharedInstancePaths(instanceId: string): NonNullable<BootState["
     configPath: path.resolve(instanceRoot, "config.json"),
     envPath: path.resolve(instanceRoot, ".env"),
   };
+}
+
+function resolveCurrentDesktopUpdateRuntimeReceipt(): DesktopUpdateRuntimeReceipt {
+  const profile = resolveDesktopLocalEnvProfile();
+  const instanceRoot = currentBootState.paths?.instanceRoot
+    ?? resolveSharedInstancePaths(profile.instanceId).instanceRoot!;
+  const ownedPorts = resolveDesktopOwnedPorts(profile);
+  return resolveDesktopUpdateRuntimeReceipt({
+    instanceRoot,
+    instanceId: profile.instanceId,
+    apiPort: Number(ownedPorts.port),
+    postgresPort: Number(ownedPorts.embeddedPostgresPort),
+  });
 }
 
 function resolveDesktopRuntimeIconPath(profile: LocalEnvProfile): string | null {
@@ -3038,12 +3056,14 @@ async function bootstrap(): Promise<void> {
           });
           const request = readDesktopUpdateHelperRequest(requestPath);
           const helper = getDesktopUpdateHelperAttestation();
+          const runtimeReceipt = resolveCurrentDesktopUpdateRuntimeReceipt();
           if (!request || !requestMatchesAutomaticCandidate({
             request,
             candidate,
             statePath: autoUpdateStatePath,
             paths: transactionPaths,
             helper: helper ?? undefined,
+            runtimeReceipt,
           })) {
             quarantineDesktopUpdateRequest(requestPath);
             autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
@@ -3114,6 +3134,7 @@ async function bootstrap(): Promise<void> {
       } else if (journal && (journal.recoveryRequired || journal.stage === "previous_moved")) {
         const helper = getDesktopUpdateHelperAttestation();
         const journalHelper = journal.helper;
+        const runtimeReceipt = resolveCurrentDesktopUpdateRuntimeReceipt();
         const expectedTransactionPaths = resolveDesktopUpdateTransactionPaths({
           userDataPath: app.getPath("userData"),
           transactionId: journal.transactionId,
@@ -3131,10 +3152,11 @@ async function bootstrap(): Promise<void> {
           && journal.stagedPath === candidate.stagedArtifactPath;
         const journalCandidateMatch = journal.candidateSha256 === candidate.stagedArtifactDigest
           && journal.targetVersion === candidate.version;
+        const journalRuntimeReceiptMatch = desktopUpdateRuntimeReceiptsMatch(journal.probationRuntime, runtimeReceipt);
         if (!helper || !helperMatchesJournal || !journalPathsMatch || !journalCandidateMatch || !journal.ownerToken
           || !journal.admission || !journal.checkpoint || !journal.installPath
           || !journal.stagedPath || !journal.lkgPath || !journal.checkpointPath
-          || !journal.targetVersion || !journal.candidateSha256) {
+          || !journal.targetVersion || !journal.candidateSha256 || !journalRuntimeReceiptMatch) {
           autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
             const current = readDesktopAutoUpdateState(autoUpdateStatePath);
             const next = {
@@ -3166,10 +3188,11 @@ async function bootstrap(): Promise<void> {
             probation: {
               executable: path.join(journal.installPath, "Contents", "MacOS", "Rudder"),
               args: ["--rudder-update-probation"],
-              timeoutMs: 10_000,
+              timeoutMs: DESKTOP_UPDATE_PROBATION_TIMEOUT_MS,
+              runtime: journal.probationRuntime!,
             },
           };
-          const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });
+          const recovery = await recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });
           if (recovery.recoveryRequired || !recovery.stage || !["rolled_back", "committed"].includes(recovery.stage)) {
             autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
               const current = readDesktopAutoUpdateState(autoUpdateStatePath);
@@ -3339,16 +3362,16 @@ async function runAutomaticUpdateProbation(): Promise<void> {
       await readHealth();
     }
     ipcMain.removeHandler(probationVersionChannel);
-    probationWindow.destroy();
-    probationWindow = null;
     await handle.stop();
     handle = null;
+    probationWindow.destroy();
+    probationWindow = null;
     process.stdout.write("rudder-update-probation ready\n");
     app.exit(0);
   } catch (error) {
     ipcMain.removeHandler(probationVersionChannel);
-    probationWindow?.destroy();
     await handle?.stop().catch(() => undefined);
+    probationWindow?.destroy();
     console.error("[rudder-desktop] update probation failed", error);
     app.exit(1);
   }
@@ -3394,6 +3417,11 @@ if (desktopCliArgv) {
     });
 
     app.on("window-all-closed", () => {
+      // Update probation owns a hidden BrowserWindow only long enough to verify
+      // the replacement renderer. Destroying it must not start the normal quit
+      // flow while the probation runtime is still draining; the explicit
+      // handle.stop() below is the cleanup boundary for this short-lived mode.
+      if (process.argv.includes("--rudder-update-probation")) return;
       if (isQuitting()) return;
       if (shouldHideToResidentShell()) return;
       app.quit();

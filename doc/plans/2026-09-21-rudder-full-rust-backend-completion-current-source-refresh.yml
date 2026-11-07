@@ -2,6 +2,17 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-23
 candidate:
+  source_sha: 007b8d0ecc02e95586b8e17d75dcf19c98dd99b3
+  branch: codex/rudder-main-e739-reconcile-20260923
+  worktree: /Users/zeeland/.codex/worktrees/rudder-main-e739-reconcile-20260923/rudder-oss
+  tree_sha: 6bc97e98c9d8621a08655e8a87233af0c046a764
+  main_base_sha: e73976f0fa0662b1605838e92232b2b27cdc0faa
+  source_equivalence: backend_native_database_cli_identical_to_ceb08_only_packaging_identity_fix_and_Main_release_notes_changes
+  counts_status: preceding_ceb08_backend_inventory_unchanged_by_exact_changed_path_audit_no_new_full_semantic_audit_claim
+  acceptance: new_package_baseline_running_v19_package_receipts_invalidated_no_final_handoff_native14_desktop68_focused_pass_packaged_timeout_evidence_pending
+  pending_worktree_patch: probation_budget_async_recovery_and_generation_fence_in_progress_after_new_package_auto_update_failed_no_frozen_patch_claim
+  evidence: artifacts/2026-09-23-rudder-relocated-desktop-identity-repair.md
+historical_ceb08_candidate:
   source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
   branch: codex/rudder-main-lineage-reconcile-20260923
   worktree: /Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss

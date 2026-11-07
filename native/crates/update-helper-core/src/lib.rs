@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,7 +15,9 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const JOURNAL_VERSION: u32 = 1;
-const DEFAULT_PROBATION_TIMEOUT_MS: u64 = 10_000;
+// Covers cold runtime startup, renderer readiness, the stability window and
+// shutdown. Ten seconds can kill a healthy candidate during its final drain.
+const DEFAULT_PROBATION_TIMEOUT_MS: u64 = 60_000;
 static ATOMIC_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -87,6 +90,10 @@ pub struct Probation {
     pub executable: Option<PathBuf>,
     pub args: Vec<String>,
     pub timeout_ms: u64,
+    /// The runtime resources the probe is allowed to create. This receipt is
+    /// journaled before the probe starts so recovery can fail closed even if
+    /// the helper dies before it observes the child PID.
+    pub runtime: Option<ProbationRuntime>,
 }
 
 impl Default for Probation {
@@ -95,8 +102,25 @@ impl Default for Probation {
             executable: None,
             args: Vec::new(),
             timeout_ms: DEFAULT_PROBATION_TIMEOUT_MS,
+            runtime: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbationRuntime {
+    pub descriptor_path: PathBuf,
+    pub instance_id: String,
+    pub api_port: u16,
+    pub postgres_data_dir: PathBuf,
+    pub postgres_port: u16,
+    /// Filled by the helper after the runtime descriptor is observed. The
+    /// request may only provide the expected descriptor/port/data identity.
+    #[serde(default)]
+    pub api_pid: Option<u32>,
+    #[serde(default)]
+    pub postgres_pid: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -108,6 +132,7 @@ pub struct FaultInjection {
     pub fail_after_previous_moved: bool,
     pub fail_after_target_activated: bool,
     pub fail_after_probation_passed: bool,
+    pub fail_after_probation_started: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130,6 +155,23 @@ pub struct Journal {
     pub stage: Stage,
     pub recovery_required: bool,
     pub recovery_code: Option<String>,
+    /// The last probation process identity is retained when cleanup needs a
+    /// later recovery pass. Recovery must prove both the leader and its
+    /// process group are gone before starting another generation.
+    #[serde(default)]
+    pub probation_pid: Option<u32>,
+    #[serde(default)]
+    pub probation_process_group: Option<i32>,
+    /// Persisted expected and observed runtime resources for the current
+    /// probation generation. This is intentionally separate from the helper
+    /// process identity: PostgreSQL is detached from that process group.
+    #[serde(default)]
+    pub probation_runtime: Option<ProbationRuntime>,
+    /// The exit result is persisted separately from process disappearance.
+    /// A signal/non-zero/unknown result may not take the ordinary rollback
+    /// path during the same helper invocation.
+    #[serde(default)]
+    pub probation_leader_exit_success: Option<bool>,
     pub updated_at: String,
 }
 
@@ -165,6 +207,13 @@ pub enum HelperError {
     Invalid(String),
     Io(io::Error),
     Journal(String),
+    ProbationCleanup {
+        pid: u32,
+        process_group: i32,
+        confirmed: bool,
+        forced: bool,
+        leader_exit_success: bool,
+    },
 }
 
 impl std::fmt::Display for HelperError {
@@ -173,6 +222,21 @@ impl std::fmt::Display for HelperError {
             Self::Invalid(message) => write!(f, "invalid request: {message}"),
             Self::Io(error) => write!(f, "io error: {error}"),
             Self::Journal(message) => write!(f, "journal error: {message}"),
+            Self::ProbationCleanup {
+                pid,
+                process_group,
+                confirmed,
+                forced,
+                leader_exit_success,
+            } => write!(
+                f,
+                "probation cleanup {} after timeout (pid={pid}, process_group={process_group}, forced={forced}, leader_exit_success={leader_exit_success})",
+                if *confirmed {
+                    "confirmed"
+                } else {
+                    "unconfirmed"
+                }
+            ),
         }
     }
 }
@@ -314,10 +378,17 @@ fn validate_request(request: &UpdateRequest) -> Result<(), HelperError> {
             ));
         }
     }
-    if matches!(request.operation, Operation::Apply) && request.probation.executable.is_none() {
-        return Err(HelperError::Invalid(
-            "probation executable is required".into(),
-        ));
+    if matches!(request.operation, Operation::Apply) {
+        if request.probation.executable.is_none() {
+            return Err(HelperError::Invalid(
+                "probation executable is required".into(),
+            ));
+        }
+        if request.probation.runtime.is_none() {
+            return Err(HelperError::Invalid(
+                "probation runtime identity is required".into(),
+            ));
+        }
     }
     if let Some(executable) = &request.probation.executable {
         let Some(relative) = executable.strip_prefix(&request.install_path).ok() else {
@@ -338,6 +409,41 @@ fn validate_request(request: &UpdateRequest) -> Result<(), HelperError> {
             ));
         }
         reject_symlink_chain(executable)?;
+    }
+    if let Some(runtime) = request.probation.runtime.as_ref() {
+        if runtime.instance_id.trim().is_empty()
+            || runtime.instance_id.len() > 128
+            || runtime.api_port == 0
+            || runtime.postgres_port == 0
+            || runtime.api_port == runtime.postgres_port
+        {
+            return Err(HelperError::Invalid(
+                "probation runtime identity is incomplete".into(),
+            ));
+        }
+        for path in [&runtime.descriptor_path, &runtime.postgres_data_dir] {
+            if path.as_os_str().is_empty()
+                || path.is_relative()
+                || path
+                    .components()
+                    .any(|component| component == Component::ParentDir)
+            {
+                return Err(HelperError::Invalid(
+                    "probation runtime paths must be absolute".into(),
+                ));
+            }
+            reject_symlink_chain(path)?;
+        }
+        for pid in [runtime.api_pid, runtime.postgres_pid]
+            .into_iter()
+            .flatten()
+        {
+            if pid == 0 {
+                return Err(HelperError::Invalid(
+                    "probation runtime pid must be positive".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -384,6 +490,10 @@ fn apply(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
         stage: Stage::Prepared,
         recovery_required: false,
         recovery_code: None,
+        probation_pid: None,
+        probation_process_group: None,
+        probation_runtime: None,
+        probation_leader_exit_success: None,
         updated_at: now_string(),
     };
     write_journal(&request.journal_path, &journal)?;
@@ -463,7 +573,21 @@ fn apply(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
             "fault after target activated",
         )));
     }
-    if !probe(request, &request.install_path, false) {
+    // Arm the runtime/resource fence before the replacement process is
+    // spawned. A helper crash between activation and spawn must still leave a
+    // durable identity that recovery can inspect without probing again.
+    arm_probation(&request.journal_path, &mut journal, request, false)?;
+    let target_probe_passed = match probe_journaled(request, &mut journal, false) {
+        Ok(passed) => passed,
+        Err(error @ HelperError::ProbationCleanup { .. }) => {
+            return Ok(recovery_from_probation_cleanup(
+                &journal,
+                &error.to_string(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    if !target_probe_passed {
         let result = rollback(request, journal, "target_probe_failed");
         if let Some(extraction_root) = extraction_root {
             let _ = fs::remove_dir_all(extraction_root);
@@ -480,6 +604,10 @@ fn apply(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
     journal.stage = Stage::Committed;
     journal.recovery_required = false;
     journal.recovery_code = None;
+    journal.probation_pid = None;
+    journal.probation_process_group = None;
+    journal.probation_runtime = None;
+    journal.probation_leader_exit_success = None;
     write_journal(&request.journal_path, &journal)?;
     remove_retired_lkg(&retired_lkg_path)?;
     let _ = clear_desktop_candidate_state(request);
@@ -761,7 +889,18 @@ fn rollback(
         });
     }
     fs::rename(&request.lkg_path, &request.install_path)?;
-    if !probe(request, &request.install_path, true) {
+    arm_probation(&request.journal_path, &mut journal, request, true)?;
+    let lkg_probe_passed = match probe_journaled(request, &mut journal, true) {
+        Ok(passed) => passed,
+        Err(error @ HelperError::ProbationCleanup { .. }) => {
+            return Ok(recovery_from_probation_cleanup(
+                &journal,
+                &error.to_string(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    if !lkg_probe_passed {
         // Preserve the failed previous generation at its durable recovery
         // location. The next helper invocation can retry or surface recovery
         // without losing the only rollback copy.
@@ -781,7 +920,12 @@ fn rollback(
         });
     }
     journal.stage = Stage::RolledBack;
+    journal.recovery_required = false;
     journal.recovery_code = Some(code.into());
+    journal.probation_pid = None;
+    journal.probation_process_group = None;
+    journal.probation_runtime = None;
+    journal.probation_leader_exit_success = None;
     write_journal(&request.journal_path, &journal)?;
     Ok(HelperResult {
         ok: false,
@@ -813,8 +957,206 @@ fn remove_retired_lkg(path: &Path) -> Result<(), HelperError> {
     Ok(())
 }
 
+fn probation_cleanup_is_confirmed(journal: &Journal) -> bool {
+    let (Some(pid), Some(process_group)) = (journal.probation_pid, journal.probation_process_group)
+    else {
+        return false;
+    };
+    // Older or interrupted journals may have no exit receipt. Resource
+    // disappearance alone is not enough to infer that the helper observed a
+    // controlled probe termination.
+    if journal.probation_leader_exit_success.is_none() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        process_is_gone(pid as libc::pid_t)
+            && process_group_is_gone(process_group as libc::pid_t)
+            && runtime_resources_are_gone(journal)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, process_group);
+        runtime_resources_are_gone(journal)
+    }
+}
+
+fn runtime_resources_are_gone(journal: &Journal) -> bool {
+    let Some(runtime) = journal.probation_runtime.as_ref() else {
+        return false;
+    };
+    if fs::symlink_metadata(&runtime.descriptor_path).is_ok() {
+        return false;
+    }
+    if let Some(api_pid) = runtime.api_pid
+        && !process_is_gone(api_pid as libc::pid_t)
+    {
+        return false;
+    }
+    if let Some(postgres_pid) = runtime.postgres_pid
+        && !process_is_gone(postgres_pid as libc::pid_t)
+    {
+        return false;
+    }
+    let postmaster_pid_path = runtime.postgres_data_dir.join("postmaster.pid");
+    if fs::symlink_metadata(&postmaster_pid_path).is_ok() {
+        return false;
+    }
+    listener_is_gone(runtime.api_port) && listener_is_gone(runtime.postgres_port)
+}
+
+fn listener_is_gone(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_err()
+}
+
+fn capture_runtime_descriptor(journal: &mut Journal) -> bool {
+    let Some(runtime) = journal.probation_runtime.as_mut() else {
+        return false;
+    };
+    let bytes = match fs::read(&runtime.descriptor_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    if !runtime_descriptor_matches(runtime, &value) {
+        return false;
+    }
+    runtime.api_pid = value
+        .get("pid")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok());
+    runtime.postgres_pid = value
+        .get("postgresPid")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok());
+    runtime.api_pid.is_some() && runtime.postgres_pid.is_some()
+}
+
+fn runtime_descriptor_matches(runtime: &ProbationRuntime, value: &serde_json::Value) -> bool {
+    let Some(instance_id) = value.get("instanceId").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(pid) = value.get("pid").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Some(listen_port) = value.get("listenPort").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Some(postgres_data_dir) = value
+        .get("postgresDataDir")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return false;
+    };
+    let Some(postgres_port) = value
+        .get("postgresPort")
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return false;
+    };
+    let Some(postgres_pid) = value.get("postgresPid").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    instance_id == runtime.instance_id
+        && pid > 0
+        && listen_port == u64::from(runtime.api_port)
+        && Path::new(postgres_data_dir) == runtime.postgres_data_dir
+        && postgres_port == u64::from(runtime.postgres_port)
+        && postgres_pid > 0
+}
+
+#[cfg(unix)]
+fn process_is_gone(pid: libc::pid_t) -> bool {
+    let result = unsafe { libc::kill(pid, 0) };
+    result != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(unix)]
+fn process_group_is_gone(process_group: libc::pid_t) -> bool {
+    if process_group <= 0 {
+        return false;
+    }
+    let result = unsafe { libc::kill(-process_group, 0) };
+    result != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+fn process_is_gone(_pid: libc::pid_t) -> bool {
+    true
+}
+
+fn runtime_identity_matches(left: &ProbationRuntime, right: &ProbationRuntime) -> bool {
+    left.descriptor_path == right.descriptor_path
+        && left.instance_id == right.instance_id
+        && left.api_port == right.api_port
+        && left.postgres_data_dir == right.postgres_data_dir
+        && left.postgres_port == right.postgres_port
+}
+
+fn arm_probation(
+    journal_path: &Path,
+    journal: &mut Journal,
+    request: &UpdateRequest,
+    lkg: bool,
+) -> Result<(), HelperError> {
+    journal.probation_runtime = request.probation.runtime.clone();
+    journal.probation_pid = None;
+    journal.probation_process_group = None;
+    journal.probation_leader_exit_success = None;
+    journal.recovery_required = true;
+    journal.recovery_code = Some(
+        if lkg {
+            "lkg_probation_pending"
+        } else {
+            "target_probation_pending"
+        }
+        .into(),
+    );
+    write_journal(journal_path, journal)
+}
+
+fn probation_cleanup_pending(code: Option<&str>) -> bool {
+    matches!(
+        code,
+        Some(
+            "target_probation_pending"
+                | "target_probation_running"
+                | "target_probation_cleanup_unconfirmed"
+                | "target_probation_cleanup_still_present"
+                | "target_probation_cleanup_forced"
+                | "target_probation_cleanup_confirmed"
+                | "lkg_probation_pending"
+                | "lkg_probation_running"
+                | "lkg_probation_cleanup_unconfirmed"
+                | "lkg_probation_cleanup_still_present"
+                | "lkg_probation_cleanup_forced"
+                | "lkg_probation_cleanup_confirmed"
+        )
+    )
+}
+
+fn is_target_probation_code(code: Option<&str>) -> bool {
+    code.is_some_and(|value| value.starts_with("target_probation_"))
+}
+
+fn is_lkg_probation_code(code: Option<&str>) -> bool {
+    code.is_some_and(|value| value.starts_with("lkg_probation_"))
+}
+
+fn recovery_from_probation_cleanup(journal: &Journal, message: &str) -> HelperResult {
+    let mut result = result_from_journal(journal, message);
+    result.ok = false;
+    result.rolled_back = false;
+    result.recovery_required = true;
+    result
+}
+
 fn recover(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
-    let journal = read_journal(&request.journal_path)?;
+    let mut journal = read_journal(&request.journal_path)?;
     if journal.owner_token != request.owner_token
         || journal.helper != request.helper
         || journal.install_path != request.install_path
@@ -826,6 +1168,13 @@ fn recover(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
         || journal.candidate_sha256 != request.candidate_sha256
         || journal.admission != request.admission
         || journal.checkpoint != request.checkpoint
+        || match (&journal.probation_runtime, &request.probation.runtime) {
+            (Some(journal_runtime), Some(request_runtime)) => {
+                !runtime_identity_matches(journal_runtime, request_runtime)
+            }
+            (None, _) => false,
+            (Some(_), None) => true,
+        }
     {
         return Err(HelperError::Journal("journal owner fence mismatch".into()));
     }
@@ -849,6 +1198,44 @@ fn recover(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
     {
         return Ok(result_from_journal(&journal, "no recovery required"));
     }
+
+    // Cleanup is a hard fence. It must be resolved before any generation
+    // exchange, target probe, LKG probe, or candidate-state mutation.
+    if probation_cleanup_pending(journal.recovery_code.as_deref()) {
+        if !probation_cleanup_is_confirmed(&journal) {
+            journal.stage = Stage::RecoveryRequired;
+            journal.recovery_required = true;
+            journal.recovery_code = Some(
+                if is_lkg_probation_code(journal.recovery_code.as_deref()) {
+                    "lkg_probation_cleanup_still_present"
+                } else {
+                    "target_probation_cleanup_still_present"
+                }
+                .into(),
+            );
+            write_journal(&request.journal_path, &journal)?;
+            return Ok(recovery_from_probation_cleanup(
+                &journal,
+                "probation resource cleanup is not confirmed",
+            ));
+        }
+        let was_target = is_target_probation_code(journal.recovery_code.as_deref());
+        journal.probation_pid = None;
+        journal.probation_process_group = None;
+        journal.probation_runtime = None;
+        journal.probation_leader_exit_success = None;
+        journal.recovery_required = true;
+        journal.recovery_code = Some(
+            if was_target {
+                "target_probe_failed"
+            } else {
+                "lkg_recovery_probe_failed"
+            }
+            .into(),
+        );
+        write_journal(&request.journal_path, &journal)?;
+    }
+
     let retired_lkg = retired_lkg_path(request, &journal.transaction_id);
     if journal.stage == Stage::ExchangePrepared {
         // ExchangePrepared means the target has not been journaled as active.
@@ -877,21 +1264,55 @@ fn recover(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
             "no recoverable install generation",
         ));
     }
+    let target_failed = journal.recovery_code.as_deref() == Some("target_probe_failed");
+    let target_passed = journal.recovery_code.as_deref() == Some("target_probation_passed")
+        || journal.stage == Stage::ProbationPassed;
     let target_stage = matches!(
         journal.stage,
         Stage::TargetActivated | Stage::ProbationPassed
-    );
-    if target_stage && probe(request, &request.install_path, false) {
+    ) && !target_failed;
+    if target_stage && !target_passed {
+        arm_probation(&request.journal_path, &mut journal, request, false)?;
+        match probe_journaled(request, &mut journal, false) {
+            Ok(true) => {
+                journal.stage = Stage::Committed;
+                journal.recovery_required = false;
+                journal.recovery_code = None;
+                journal.probation_pid = None;
+                journal.probation_process_group = None;
+                journal.probation_runtime = None;
+                journal.probation_leader_exit_success = None;
+                write_journal(&request.journal_path, &journal)?;
+                remove_retired_lkg(&retired_lkg)?;
+                let _ = clear_desktop_candidate_state(request);
+                return Ok(result_from_journal(&journal, "recovered activated target"));
+            }
+            Ok(false) => {}
+            Err(error @ HelperError::ProbationCleanup { .. }) => {
+                return Ok(recovery_from_probation_cleanup(
+                    &journal,
+                    &error.to_string(),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if target_passed {
         let mut journal = journal;
         journal.stage = Stage::Committed;
         journal.recovery_required = false;
         journal.recovery_code = None;
+        journal.probation_pid = None;
+        journal.probation_process_group = None;
+        journal.probation_runtime = None;
+        journal.probation_leader_exit_success = None;
         write_journal(&request.journal_path, &journal)?;
         remove_retired_lkg(&retired_lkg)?;
         let _ = clear_desktop_candidate_state(request);
         return Ok(result_from_journal(&journal, "recovered activated target"));
     }
-    if target_stage && request.install_path.exists() && request.lkg_path.exists() {
+    if (target_stage || target_failed) && request.install_path.exists() && request.lkg_path.exists()
+    {
         let failed_path = request
             .lkg_path
             .with_extension(format!("failed-{}", journal.transaction_id));
@@ -908,21 +1329,36 @@ fn recover(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
     } else if !request.install_path.exists() && retired_lkg.exists() {
         fs::rename(&retired_lkg, &request.install_path)?;
     }
-    if !probe(request, &request.install_path, true) {
-        let mut journal = journal;
-        journal.stage = Stage::RecoveryRequired;
-        journal.recovery_required = true;
-        journal.recovery_code = Some("lkg_recovery_probe_failed".into());
-        write_journal(&request.journal_path, &journal)?;
-        return Ok(result_from_journal(
-            &journal,
-            "last-known-good recovery probe failed",
-        ));
+    arm_probation(&request.journal_path, &mut journal, request, true)?;
+    match probe_journaled(request, &mut journal, true) {
+        Err(error @ HelperError::ProbationCleanup { .. }) => {
+            return Ok(recovery_from_probation_cleanup(
+                &journal,
+                &error.to_string(),
+            ));
+        }
+        Err(error) => return Err(error),
+        Ok(true) => {}
+        Ok(false) => {
+            let mut journal = journal;
+            journal.stage = Stage::RecoveryRequired;
+            journal.recovery_required = true;
+            journal.recovery_code = Some("lkg_recovery_probe_failed".into());
+            write_journal(&request.journal_path, &journal)?;
+            return Ok(result_from_journal(
+                &journal,
+                "last-known-good recovery probe failed",
+            ));
+        }
     }
     let mut journal = journal;
     journal.stage = Stage::RolledBack;
     journal.recovery_required = false;
     journal.recovery_code = Some("recovered_previous_generation".into());
+    journal.probation_pid = None;
+    journal.probation_process_group = None;
+    journal.probation_runtime = None;
+    journal.probation_leader_exit_success = None;
     write_journal(&request.journal_path, &journal)?;
     remove_retired_lkg(&retired_lkg)?;
     let _ = clear_desktop_candidate_state(request);
@@ -942,6 +1378,13 @@ fn status(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
         || journal.candidate_sha256 != request.candidate_sha256
         || journal.admission != request.admission
         || journal.checkpoint != request.checkpoint
+        || match (&journal.probation_runtime, &request.probation.runtime) {
+            (Some(journal_runtime), Some(request_runtime)) => {
+                !runtime_identity_matches(journal_runtime, request_runtime)
+            }
+            (None, _) => false,
+            (Some(_), None) => true,
+        }
     {
         return Err(HelperError::Journal("journal owner fence mismatch".into()));
     }
@@ -1003,24 +1446,160 @@ fn result_from_journal(journal: &Journal, message: &str) -> HelperResult {
     }
 }
 
-fn probe(request: &UpdateRequest, install_path: &Path, lkg: bool) -> bool {
+fn probe_journaled(
+    request: &UpdateRequest,
+    journal: &mut Journal,
+    lkg: bool,
+) -> Result<bool, HelperError> {
+    arm_probation(&request.journal_path, journal, request, lkg)?;
+    match probe(request, &request.install_path, lkg, journal) {
+        Ok(outcome) => {
+            if !outcome.spawned {
+                journal.probation_pid = None;
+                journal.probation_process_group = None;
+                journal.probation_runtime = None;
+                journal.recovery_code = Some(
+                    if lkg {
+                        "lkg_probe_failed"
+                    } else {
+                        "target_probe_failed"
+                    }
+                    .into(),
+                );
+                write_journal(&request.journal_path, journal)?;
+                return Ok(outcome.passed);
+            }
+            if !probation_cleanup_is_confirmed(journal) {
+                journal.stage = Stage::RecoveryRequired;
+                journal.recovery_required = true;
+                journal.recovery_code = Some(
+                    if lkg {
+                        "lkg_probation_cleanup_unconfirmed"
+                    } else {
+                        "target_probation_cleanup_unconfirmed"
+                    }
+                    .into(),
+                );
+                write_journal(&request.journal_path, journal)?;
+                return Err(HelperError::ProbationCleanup {
+                    pid: journal.probation_pid.unwrap_or_default(),
+                    process_group: journal.probation_process_group.unwrap_or_default(),
+                    confirmed: false,
+                    forced: false,
+                    leader_exit_success: journal.probation_leader_exit_success == Some(true),
+                });
+            }
+            journal.probation_pid = None;
+            journal.probation_process_group = None;
+            journal.probation_runtime = None;
+            journal.recovery_code = Some(
+                if lkg {
+                    "lkg_probation_passed"
+                } else {
+                    "target_probation_passed"
+                }
+                .into(),
+            );
+            write_journal(&request.journal_path, journal)?;
+            Ok(outcome.passed)
+        }
+        Err(error @ HelperError::ProbationCleanup { .. }) => {
+            let HelperError::ProbationCleanup {
+                pid,
+                process_group,
+                confirmed,
+                forced,
+                leader_exit_success,
+            } = error
+            else {
+                unreachable!();
+            };
+            let cleanup_confirmed = !forced
+                && confirmed
+                && leader_exit_success
+                && probation_cleanup_is_confirmed(journal);
+            journal.stage = Stage::RecoveryRequired;
+            journal.recovery_required = true;
+            journal.recovery_code = Some(
+                match (lkg, cleanup_confirmed, forced) {
+                    (true, true, false) => "lkg_probation_cleanup_confirmed",
+                    (true, true, true) => "lkg_probation_cleanup_forced",
+                    (true, false, true) => "lkg_probation_cleanup_forced",
+                    (true, false, false) => "lkg_probation_cleanup_unconfirmed",
+                    (false, true, false) => "target_probation_cleanup_confirmed",
+                    (false, true, true) => "target_probation_cleanup_forced",
+                    (false, false, true) => "target_probation_cleanup_forced",
+                    (false, false, false) => "target_probation_cleanup_unconfirmed",
+                }
+                .into(),
+            );
+            journal.probation_pid = Some(pid);
+            journal.probation_process_group = Some(process_group);
+            write_journal(&request.journal_path, journal)?;
+            if cleanup_confirmed {
+                // The entire owned process group is gone, so the normal LKG
+                // rollback is safe. Forced termination remains latched even
+                // when the OS reports that the group disappeared.
+                return Ok(false);
+            }
+            Err(HelperError::ProbationCleanup {
+                pid,
+                process_group,
+                confirmed,
+                forced,
+                leader_exit_success,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProbeOutcome {
+    passed: bool,
+    spawned: bool,
+}
+
+fn probe(
+    request: &UpdateRequest,
+    install_path: &Path,
+    lkg: bool,
+    journal: &mut Journal,
+) -> Result<ProbeOutcome, HelperError> {
     if !install_path.is_dir() {
-        return false;
+        return Ok(ProbeOutcome {
+            passed: false,
+            spawned: false,
+        });
     }
     if (lkg && request.fault.fail_lkg_probe) || (!lkg && request.fault.fail_target_probe) {
-        return false;
+        return Ok(ProbeOutcome {
+            passed: false,
+            spawned: false,
+        });
     }
     let Some(executable) = request.probation.executable.as_ref() else {
-        return true;
+        return Ok(ProbeOutcome {
+            passed: true,
+            spawned: false,
+        });
     };
     let relative = executable.strip_prefix(&request.install_path).ok();
     let Some(relative) = relative else {
-        return false;
+        return Ok(ProbeOutcome {
+            passed: false,
+            spawned: false,
+        });
     };
     let executable = install_path.join(relative);
     let meta = match executable.symlink_metadata() {
         Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => meta,
-        _ => return false,
+        _ => {
+            return Ok(ProbeOutcome {
+                passed: false,
+                spawned: false,
+            });
+        }
     };
     let _ = meta;
     let timeout = Duration::from_millis(request.probation.timeout_ms.max(1));
@@ -1039,6 +1618,11 @@ fn probe(request: &UpdateRequest, install_path: &Path, lkg: bool) -> bool {
         command.args(&request.probation.args);
         command
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1046,21 +1630,144 @@ fn probe(request: &UpdateRequest, install_path: &Path, lkg: bool) -> bool {
         .spawn()
     {
         Ok(child) => child,
-        Err(_) => return false,
+        Err(_) => {
+            return Ok(ProbeOutcome {
+                passed: false,
+                spawned: false,
+            });
+        }
     };
+    let child_pid = child.id();
+    journal.probation_pid = Some(child_pid);
+    journal.probation_process_group = Some(child_pid as i32);
+    if let Some(runtime) = journal.probation_runtime.as_mut() {
+        runtime.api_pid = Some(child_pid);
+    }
+    journal.recovery_code = Some(
+        if lkg {
+            "lkg_probation_running"
+        } else {
+            "target_probation_running"
+        }
+        .into(),
+    );
+    write_journal(&request.journal_path, journal)?;
+    if request.fault.fail_after_probation_started {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(HelperError::Io(io::Error::other(
+            "fault after probation started",
+        )));
+    }
     let started = std::time::Instant::now();
     loop {
+        if journal
+            .probation_runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.postgres_pid.is_none())
+            && capture_runtime_descriptor(journal)
+        {
+            write_journal(&request.journal_path, journal)?;
+        }
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => {
+                journal.probation_leader_exit_success = Some(status.success());
+                return Ok(ProbeOutcome {
+                    passed: status.success(),
+                    spawned: true,
+                });
+            }
             Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
+                let cleanup = stop_timed_out_probe(&mut child, journal)?;
+                return Err(HelperError::ProbationCleanup {
+                    pid: cleanup.pid,
+                    process_group: cleanup.process_group,
+                    confirmed: cleanup.confirmed,
+                    forced: cleanup.forced,
+                    leader_exit_success: cleanup.leader_exit_success,
+                });
             }
             Ok(None) => thread::sleep(Duration::from_millis(10)),
-            Err(_) => return false,
+            Err(error) => return Err(error.into()),
         }
     }
+}
+
+struct ProbationCleanup {
+    pid: u32,
+    process_group: i32,
+    confirmed: bool,
+    forced: bool,
+    leader_exit_success: bool,
+}
+
+fn stop_timed_out_probe(
+    child: &mut std::process::Child,
+    journal: &mut Journal,
+) -> Result<ProbationCleanup, HelperError> {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as libc::pid_t;
+        let _ = capture_runtime_descriptor(journal);
+        // Each probe has its own process group. Give the runtime supervisor a
+        // chance to stop PostgreSQL and native children before considering LKG.
+        let _term_sent = unsafe { libc::kill(pid, libc::SIGTERM) } == 0;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut reaped = false;
+        let mut leader_exit_success = false;
+        while std::time::Instant::now() < deadline {
+            if !reaped {
+                if let Some(status) = child.try_wait()? {
+                    leader_exit_success = status.success();
+                    journal.probation_leader_exit_success = Some(leader_exit_success);
+                    reaped = true;
+                }
+            }
+            if reaped
+                && unsafe { libc::kill(-pid, 0) } != 0
+                && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return Ok(ProbationCleanup {
+                    pid: pid as u32,
+                    process_group: pid,
+                    confirmed: true,
+                    forced: false,
+                    leader_exit_success,
+                });
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _kill_sent = unsafe { libc::kill(-pid, libc::SIGKILL) } == 0;
+        let _ = capture_runtime_descriptor(journal);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = capture_runtime_descriptor(journal);
+        let _ = child.kill();
+    }
+    let reap_deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let mut reaped = false;
+    let mut leader_exit_success = journal.probation_leader_exit_success == Some(true);
+    while std::time::Instant::now() < reap_deadline {
+        if let Some(status) = child.try_wait()? {
+            leader_exit_success = status.success();
+            journal.probation_leader_exit_success = Some(leader_exit_success);
+            reaped = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    #[cfg(unix)]
+    let process_group_gone = process_group_is_gone(child.id() as libc::pid_t);
+    #[cfg(not(unix))]
+    let process_group_gone = true;
+    Ok(ProbationCleanup {
+        pid: child.id(),
+        process_group: child.id() as i32,
+        confirmed: reaped && process_group_gone,
+        forced: true,
+        leader_exit_success,
+    })
 }
 
 fn ensure_directory(path: &Path) -> Result<(), HelperError> {
@@ -1420,6 +2127,15 @@ mod tests {
                 executable: Some(bundle_executable(&root.join("Rudder.app"))),
                 args: vec![],
                 timeout_ms: 5_000,
+                runtime: Some(ProbationRuntime {
+                    descriptor_path: root.join("runtime/server.json"),
+                    instance_id: "default".into(),
+                    api_port: 39_101,
+                    postgres_data_dir: root.join("postgres"),
+                    postgres_port: 39_102,
+                    api_pid: None,
+                    postgres_pid: None,
+                }),
             },
             fault: FaultInjection::default(),
         }
@@ -1604,6 +2320,32 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn real_probation_process_obeys_budget_and_preserves_rollback() {
+        for (label, timeout_ms, expected_stage) in [
+            ("slow-healthy", 5_000, Stage::Committed),
+            ("slow-timeout", 1_000, Stage::RecoveryRequired),
+        ] {
+            let root = temp_root(label);
+            let install = root.join("Rudder.app");
+            let staged = root.join("staged/Rudder.app");
+            make_bundle(&install, true);
+            make_bundle(&staged, true);
+            write(bundle_executable(&staged), "#!/bin/sh\nexec sleep 3\n").unwrap();
+            let mut request = request(&root, bundle_manifest_digest(&staged).unwrap());
+            request.probation.timeout_ms = timeout_ms;
+            let result = execute(&request).unwrap();
+            assert_eq!(result.stage, expected_stage);
+            assert_eq!(result.rolled_back, expected_stage == Stage::RolledBack);
+            assert_eq!(
+                result.recovery_required,
+                expected_stage == Stage::RecoveryRequired
+            );
+            assert!(install.exists());
+        }
+    }
+
     #[test]
     fn live_owner_fence_rejects_second_helper() {
         let root = temp_root("owner-fence");
@@ -1612,5 +2354,273 @@ mod tests {
         assert!(OwnershipFence::acquire(&lock, "other-owner-token-012345").is_err());
         drop(first);
         assert!(OwnershipFence::acquire(&lock, "other-owner-token-012345").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forced_probe_termination_requires_recovery_after_group_confirmation() {
+        let root = temp_root("forced-probe");
+        let install = root.join("Rudder.app");
+        let staged = root.join("staged/Rudder.app");
+        make_bundle(&install, true);
+        make_bundle(&staged, true);
+        write(
+            bundle_executable(&staged),
+            "#!/bin/sh\ntrap '' TERM\necho $$ > \"$1\"\nwhile :; do sleep 1; done\n",
+        )
+        .unwrap();
+        let mut request = request(&root, bundle_manifest_digest(&staged).unwrap());
+        let pid_path = root.join("probe.pid");
+        request.probation.args = vec![pid_path.to_string_lossy().into_owned()];
+        // Permit cold process startup before the fixture installs its TERM
+        // handler; the test is about forced cleanup, not launch latency.
+        request.probation.timeout_ms = 5_000;
+        let result = execute(&request).unwrap();
+        assert_eq!(result.stage, Stage::RecoveryRequired);
+        assert!(!result.rolled_back);
+        assert!(result.recovery_required);
+        let journal = read_journal(&request.journal_path).unwrap();
+        assert_eq!(journal.stage, Stage::RecoveryRequired);
+        assert_eq!(
+            journal.recovery_code.as_deref(),
+            Some("target_probation_cleanup_forced")
+        );
+        assert_eq!(
+            journal.probation_pid,
+            Some(
+                fs::read_to_string(&pid_path)
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap()
+            )
+        );
+        assert!(journal.probation_process_group.is_some());
+        let pid: libc::pid_t = fs::read_to_string(pid_path)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+
+        assert!(
+            fs::read_to_string(bundle_executable(&install))
+                .unwrap()
+                .contains("while :")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_keeps_generation_fenced_while_probation_group_is_alive() {
+        let root = temp_root("recovery-group-fence");
+        let install = root.join("Rudder.app");
+        let staged = root.join("staged/Rudder.app");
+        let lkg = root.join("lkg/Rudder.app");
+        make_bundle(&install, true);
+        make_bundle(&staged, true);
+        make_bundle(&lkg, true);
+        let mut request = request(&root, bundle_manifest_digest(&staged).unwrap());
+        request.operation = Operation::Recover;
+        let journal = Journal {
+            version: JOURNAL_VERSION,
+            transaction_id: "recovery-fence".into(),
+            owner_token: request.owner_token.clone(),
+            target_version: request.target_version.clone(),
+            install_path: request.install_path.clone(),
+            staged_path: request.staged_path.clone(),
+            lkg_path: request.lkg_path.clone(),
+            checkpoint_path: request.checkpoint_path.clone(),
+            state_path: request.state_path.clone(),
+            candidate_sha256: request.candidate_sha256.clone(),
+            helper: request.helper.clone(),
+            admission: request.admission.clone(),
+            checkpoint: request.checkpoint.clone(),
+            stage: Stage::RecoveryRequired,
+            recovery_required: true,
+            recovery_code: Some("target_probation_cleanup_unconfirmed".into()),
+            probation_pid: Some(std::process::id()),
+            probation_process_group: Some(unsafe { libc::getpgrp() }),
+            probation_runtime: request.probation.runtime.clone(),
+            probation_leader_exit_success: None,
+            updated_at: now_string(),
+        };
+        write_journal(&request.journal_path, &journal).unwrap();
+
+        let result = execute(&request).unwrap();
+        assert_eq!(result.stage, Stage::RecoveryRequired);
+        assert!(result.recovery_required);
+        assert_eq!(
+            result.recovery_code.as_deref(),
+            Some("target_probation_cleanup_still_present")
+        );
+        assert!(install.exists());
+        assert!(lkg.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detached_runtime_resource_blocks_recovery_until_its_receipt_is_cleared() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::CommandExt;
+
+        let root = temp_root("detached-runtime-resource");
+        let install = root.join("Rudder.app");
+        let staged = root.join("staged/Rudder.app");
+        make_bundle(&install, true);
+        make_bundle(&staged, true);
+
+        let mut detached_postgres = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let postgres_pid = detached_postgres.id();
+        let descriptor = root.join("runtime/server.json");
+        let postgres_data_dir = root.join("postgres");
+        let postgres_port = 39_102;
+        let postgres_pid_arg = postgres_pid.to_string();
+        write(
+            bundle_executable(&staged),
+            r#"#!/bin/sh
+set -eu
+descriptor="$1"
+data_dir="$2"
+port="$3"
+postgres_pid="$4"
+mkdir -p "$data_dir" "$(dirname "$descriptor")"
+printf '{"instanceId":"default","pid":%s,"listenPort":39101,"postgresDataDir":"%s","postgresPort":%s,"postgresPid":%s}\n' "$$" "$data_dir" "$port" "$postgres_pid" > "$descriptor"
+printf '%s\n%s\n\n%s\n' "$postgres_pid" "$data_dir" "$port" > "$data_dir/postmaster.pid"
+trap '' TERM
+while :; do sleep 1; done
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(bundle_executable(&staged))
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(bundle_executable(&staged), permissions).unwrap();
+
+        let mut request = request(&root, bundle_manifest_digest(&staged).unwrap());
+        request.probation.args = vec![
+            descriptor.to_string_lossy().into_owned(),
+            postgres_data_dir.to_string_lossy().into_owned(),
+            postgres_port.to_string(),
+            postgres_pid_arg,
+        ];
+        // Run the helper concurrently so the test can wait for the fixture's
+        // descriptor and postmaster receipt before exercising timeout cleanup.
+        // A one-second budget is otherwise sensitive to the load from the
+        // other process-lifecycle tests in the same Rust test binary.
+        request.probation.timeout_ms = 5_000;
+        let probe_request = request.clone();
+        let probe = std::thread::spawn(move || execute(&probe_request));
+        let ready_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < ready_deadline
+            && (!descriptor.exists() || !postgres_data_dir.join("postmaster.pid").exists())
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(descriptor.exists());
+        assert!(postgres_data_dir.join("postmaster.pid").exists());
+        let result = probe.join().unwrap().unwrap();
+        assert_eq!(result.stage, Stage::RecoveryRequired);
+        assert!(matches!(
+            result.recovery_code.as_deref(),
+            Some("target_probation_cleanup_forced" | "target_probation_cleanup_unconfirmed")
+        ));
+
+        request.operation = Operation::Recover;
+        let blocked = execute(&request).unwrap();
+        assert_eq!(blocked.stage, Stage::RecoveryRequired);
+        assert_eq!(
+            blocked.recovery_code.as_deref(),
+            Some("target_probation_cleanup_still_present")
+        );
+        assert!(install.exists());
+        assert!(root.join("lkg/Rudder.app").exists());
+
+        detached_postgres.kill().unwrap();
+        detached_postgres.wait().unwrap();
+        fs::remove_file(&descriptor).unwrap();
+        fs::remove_file(postgres_data_dir.join("postmaster.pid")).unwrap();
+
+        let recovered = execute(&request).unwrap();
+        assert_eq!(recovered.stage, Stage::RolledBack);
+        assert!(!recovered.recovery_required);
+        assert!(install.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probation_start_crash_window_without_pid_keeps_generations_fenced() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_root("probation-start-crash-window");
+        let install = root.join("Rudder.app");
+        let staged = root.join("staged/Rudder.app");
+        let lkg = root.join("lkg/Rudder.app");
+        let marker = root.join("probe-started");
+        make_bundle(&install, true);
+        make_bundle(&staged, true);
+        make_bundle(&lkg, true);
+        write(
+            bundle_executable(&install),
+            format!(
+                "#!/bin/sh\necho started > \"{}\"\nexit 0\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(bundle_executable(&install))
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(bundle_executable(&install), permissions).unwrap();
+
+        let mut request = request(&root, bundle_manifest_digest(&staged).unwrap());
+        request.operation = Operation::Recover;
+        let journal = Journal {
+            version: JOURNAL_VERSION,
+            transaction_id: "probation-start-crash".into(),
+            owner_token: request.owner_token.clone(),
+            target_version: request.target_version.clone(),
+            install_path: request.install_path.clone(),
+            staged_path: request.staged_path.clone(),
+            lkg_path: request.lkg_path.clone(),
+            checkpoint_path: request.checkpoint_path.clone(),
+            state_path: request.state_path.clone(),
+            candidate_sha256: request.candidate_sha256.clone(),
+            helper: request.helper.clone(),
+            admission: request.admission.clone(),
+            checkpoint: request.checkpoint.clone(),
+            stage: Stage::TargetActivated,
+            recovery_required: true,
+            recovery_code: Some("target_probation_pending".into()),
+            probation_pid: None,
+            probation_process_group: None,
+            probation_runtime: request.probation.runtime.clone(),
+            probation_leader_exit_success: None,
+            updated_at: now_string(),
+        };
+        write_journal(&request.journal_path, &journal).unwrap();
+
+        let result = execute(&request).unwrap();
+        assert_eq!(result.stage, Stage::RecoveryRequired);
+        assert_eq!(
+            result.recovery_code.as_deref(),
+            Some("target_probation_cleanup_still_present")
+        );
+        assert!(
+            !marker.exists(),
+            "recovery must not start a new probe without a PID receipt"
+        );
+        assert!(install.exists());
+        assert!(lkg.exists());
     }
 }

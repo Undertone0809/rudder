@@ -20,6 +20,7 @@ export const DESKTOP_UPDATE_REQUEST_STALE_AFTER_MS = 5 * 60 * 1_000;
 // Keep the bound finite without turning a transient launch delay into a
 // permanently unavailable update capability.
 export const DESKTOP_UPDATE_HELPER_ATTESTATION_TIMEOUT_MS = 5_000;
+export const DESKTOP_UPDATE_PROBATION_TIMEOUT_MS = 60_000;
 
 export type HelperAttestation = {
   path: string;
@@ -30,6 +31,98 @@ export type HelperAttestation = {
 };
 
 export type DesktopUpdateHelperIdentity = Pick<HelperAttestation, "path" | "ownerUid" | "mode" | "sha256">;
+
+export type DesktopUpdateRuntimeReceipt = {
+  descriptorPath: string;
+  instanceId: string;
+  apiPort: number;
+  postgresDataDir: string;
+  postgresPort: number;
+  /** Native helper may add observed process identities to its journal. */
+  apiPid?: number;
+  postgresPid?: number;
+  /** Legacy helper journal field retained as an observed-only value. */
+  postmasterPid?: number;
+};
+
+function isRuntimePort(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 1
+    && value <= 65_535;
+}
+
+function isRuntimePid(value: unknown): value is number | null | undefined {
+  return value === undefined
+    || value === null
+    || (typeof value === "number" && Number.isSafeInteger(value) && value >= 1);
+}
+
+function isRuntimePath(value: unknown): value is string {
+  return typeof value === "string"
+    && path.isAbsolute(value)
+    && path.normalize(value) === value
+    && !value.split(path.sep).includes("..");
+}
+
+function parseDesktopUpdateRuntimeReceipt(value: unknown): DesktopUpdateRuntimeReceipt | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (!isRuntimePath(candidate.descriptorPath)
+    || typeof candidate.instanceId !== "string"
+    || !/^[A-Za-z0-9_-]+$/u.test(candidate.instanceId)
+    || !isRuntimePort(candidate.apiPort)
+    || !isRuntimePath(candidate.postgresDataDir)
+    || !isRuntimePort(candidate.postgresPort)
+    || candidate.apiPort === candidate.postgresPort
+    || !isRuntimePid(candidate.apiPid)
+    || !isRuntimePid(candidate.postgresPid)
+    || !isRuntimePid(candidate.postmasterPid)) return null;
+  return {
+    descriptorPath: candidate.descriptorPath,
+    instanceId: candidate.instanceId,
+    apiPort: candidate.apiPort,
+    postgresDataDir: candidate.postgresDataDir,
+    postgresPort: candidate.postgresPort,
+    ...(typeof candidate.apiPid === "number" ? { apiPid: candidate.apiPid } : {}),
+    ...(typeof candidate.postgresPid === "number" ? { postgresPid: candidate.postgresPid } : {}),
+    ...(typeof candidate.postmasterPid === "number" ? { postmasterPid: candidate.postmasterPid } : {}),
+  };
+}
+
+export function isDesktopUpdateRuntimeReceipt(value: unknown): value is DesktopUpdateRuntimeReceipt {
+  return parseDesktopUpdateRuntimeReceipt(value) !== null;
+}
+
+/** Compare the persisted runtime identity, excluding helper-observed PIDs. */
+export function desktopUpdateRuntimeReceiptsMatch(actual: unknown, expected: unknown): boolean {
+  const parsedActual = parseDesktopUpdateRuntimeReceipt(actual);
+  const parsedExpected = parseDesktopUpdateRuntimeReceipt(expected);
+  if (!parsedActual || !parsedExpected) return false;
+  return parsedActual.descriptorPath === parsedExpected.descriptorPath
+    && parsedActual.instanceId === parsedExpected.instanceId
+    && parsedActual.apiPort === parsedExpected.apiPort
+    && parsedActual.postgresDataDir === parsedExpected.postgresDataDir
+    && parsedActual.postgresPort === parsedExpected.postgresPort;
+}
+
+export function resolveDesktopUpdateRuntimeReceipt(options: {
+  instanceRoot: string;
+  instanceId: string;
+  apiPort: number;
+  postgresDataDir?: string;
+  postgresPort: number;
+}): DesktopUpdateRuntimeReceipt {
+  const receipt: DesktopUpdateRuntimeReceipt = {
+    descriptorPath: path.resolve(options.instanceRoot, "runtime", "server.json"),
+    instanceId: options.instanceId,
+    apiPort: options.apiPort,
+    postgresDataDir: path.resolve(options.postgresDataDir ?? path.join(options.instanceRoot, "db")),
+    postgresPort: options.postgresPort,
+  };
+  if (!isDesktopUpdateRuntimeReceipt(receipt)) throw new Error("Invalid Desktop runtime receipt.");
+  return receipt;
+}
 
 export type DesktopUpdateHelperRequest = {
   operation: "apply" | "recover" | "status";
@@ -60,6 +153,7 @@ export type DesktopUpdateHelperRequest = {
     executable: string;
     args: string[];
     timeoutMs: number;
+    runtime: DesktopUpdateRuntimeReceipt;
   };
 };
 
@@ -80,6 +174,7 @@ export type DesktopUpdateJournalSnapshot = {
   statePath?: string;
   targetVersion?: string;
   candidateSha256?: string;
+  probationRuntime?: DesktopUpdateRuntimeReceipt;
   helper?: DesktopUpdateHelperIdentity;
   admission?: { closed: boolean; activeRuns: number; drainToken: string };
   checkpoint?: { instanceId: string; databaseRevision: string; migrationCompatible: boolean };
@@ -230,6 +325,7 @@ export function readDesktopUpdateJournal(
     if (parsed.transactionId !== transactionId || typeof parsed.stage !== "string") {
       return { transactionId, stage: "invalid", recoveryRequired: true, recoveryCode: "journal_identity_mismatch" };
     }
+    const probationRuntime = parseDesktopUpdateRuntimeReceipt(parsed.probationRuntime);
     return {
       transactionId,
       ...(typeof parsed.ownerToken === "string" ? { ownerToken: parsed.ownerToken } : {}),
@@ -240,6 +336,7 @@ export function readDesktopUpdateJournal(
       ...(typeof parsed.statePath === "string" ? { statePath: parsed.statePath } : {}),
       ...(typeof parsed.targetVersion === "string" ? { targetVersion: parsed.targetVersion } : {}),
       ...(typeof parsed.candidateSha256 === "string" ? { candidateSha256: parsed.candidateSha256 } : {}),
+      ...(probationRuntime ? { probationRuntime } : {}),
       ...(parsed.helper && typeof parsed.helper === "object" ? { helper: parsed.helper as DesktopUpdateHelperIdentity } : {}),
       ...(parsed.admission && typeof parsed.admission === "object" ? { admission: parsed.admission as DesktopUpdateJournalSnapshot["admission"] } : {}),
       ...(parsed.checkpoint && typeof parsed.checkpoint === "object" ? { checkpoint: parsed.checkpoint as DesktopUpdateJournalSnapshot["checkpoint"] } : {}),
@@ -272,6 +369,10 @@ export function readDesktopUpdateHelperRequest(requestPath: string): DesktopUpda
     const parsed = JSON.parse(readFileSync(requestPath, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const request = parsed as Partial<DesktopUpdateHelperRequest>;
+    const probation = request.probation;
+    const probationRuntime = probation && typeof probation === "object"
+      ? parseDesktopUpdateRuntimeReceipt((probation as Partial<DesktopUpdateHelperRequest["probation"]>).runtime)
+      : null;
     if (request.operation !== "apply"
       || typeof request.ownerToken !== "string"
       || typeof request.transactionId !== "string"
@@ -286,8 +387,12 @@ export function readDesktopUpdateHelperRequest(requestPath: string): DesktopUpda
       || !request.helper
       || !request.admission
       || !request.checkpoint
-      || !request.probation) return null;
-    return request as DesktopUpdateHelperRequest;
+      || !probation
+      || !probationRuntime) return null;
+    return {
+      ...request,
+      probation: { ...probation, runtime: probationRuntime },
+    } as DesktopUpdateHelperRequest;
   } catch {
     return null;
   }
@@ -298,17 +403,21 @@ export function requestMatchesAutomaticCandidate(input: {
   candidate: {
     updateId: string;
     version: string;
+    instanceId?: string;
     stagedArtifactPath?: string;
     stagedArtifactDigest?: string;
   };
   statePath: string;
   paths: DesktopUpdateTransactionPaths;
   helper?: DesktopUpdateHelperIdentity;
+  runtimeReceipt?: DesktopUpdateRuntimeReceipt;
 }): boolean {
-  const { request, candidate, statePath, paths, helper } = input;
+  const { request, candidate, statePath, paths, helper, runtimeReceipt } = input;
   return request.operation === "apply"
     && request.transactionId === candidate.updateId
     && request.targetVersion === candidate.version
+    && typeof candidate.instanceId === "string"
+    && candidate.instanceId === runtimeReceipt?.instanceId
     && request.statePath === statePath
     && request.installPath === paths.installPath
     && request.lkgPath === paths.lkgPath
@@ -328,7 +437,8 @@ export function requestMatchesAutomaticCandidate(input: {
     && (request.checkpoint.migrationCompatible === true || request.checkpoint.migrationCompatible === false)
     && typeof request.probation.executable === "string"
     && Array.isArray(request.probation.args)
-    && request.probation.args.every((arg) => typeof arg === "string");
+    && request.probation.args.every((arg) => typeof arg === "string")
+    && desktopUpdateRuntimeReceiptsMatch(request.probation.runtime, runtimeReceipt);
 }
 
 /** Move an orphaned request out of the active transaction namespace. */
@@ -366,6 +476,9 @@ export function handoffDesktopUpdateToExternalHelper(options: {
 }
 
 export function writeDesktopUpdateHelperRequest(request: DesktopUpdateHelperRequest): string {
+  if (!isDesktopUpdateRuntimeReceipt(request.probation.runtime)) {
+    throw new Error("Desktop update runtime receipt is required.");
+  }
   const requestPath = `${request.journalPath}.request.json`;
   const temporaryPath = `${requestPath}.${process.pid}.${Date.now()}.tmp`;
   mkdirSync(path.dirname(requestPath), { recursive: true, mode: 0o700 });
@@ -388,12 +501,195 @@ export function spawnDesktopUpdateHelper(options: {
   return child;
 }
 
-export function recoverDesktopUpdateWithExternalHelper(options: {
+type DesktopUpdateRecoveryResult = {
+  ok: boolean;
+  stage?: string;
+  recoveryRequired?: boolean;
+  recoveryCode?: string | null;
+  error?: string;
+};
+
+type ExternalDesktopUpdateHelperOutput = {
+  output: string;
+  error?: Error;
+  timedOut: boolean;
+  signal?: NodeJS.Signals | null;
+  outputTooLarge: boolean;
+  exitConfirmed: boolean;
+};
+
+const DESKTOP_UPDATE_HELPER_OUTPUT_TAIL_BYTES = 64 * 1024;
+const DESKTOP_UPDATE_HELPER_OUTPUT_MAX_BYTES = 1024 * 1024;
+export const DESKTOP_UPDATE_HELPER_TERMINATION_GRACE_MS = 5_000;
+
+function collectExternalDesktopUpdateHelperOutput(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<ExternalDesktopUpdateHelperOutput> {
+  return new Promise((resolve) => {
+    let outputTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let outputBytes = 0;
+    let settled = false;
+    let timedOut = false;
+    let processError: Error | undefined;
+    let timeout: NodeJS.Timeout | undefined;
+    let terminationTimer: NodeJS.Timeout | undefined;
+    let terminationPhase: "sigterm" | "sigkill" | null = null;
+
+    const onStdout = (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      outputBytes += bytes.length;
+      const combined = bytes.length >= DESKTOP_UPDATE_HELPER_OUTPUT_TAIL_BYTES
+        ? bytes.subarray(bytes.length - DESKTOP_UPDATE_HELPER_OUTPUT_TAIL_BYTES)
+        : Buffer.concat([outputTail, bytes]);
+      outputTail = combined.length > DESKTOP_UPDATE_HELPER_OUTPUT_TAIL_BYTES
+        ? combined.subarray(combined.length - DESKTOP_UPDATE_HELPER_OUTPUT_TAIL_BYTES)
+        : combined;
+    };
+    const onStderr = () => {
+      // Drain stderr so a noisy helper cannot block on a full pipe.
+    };
+    const removeStreamListeners = () => {
+      child.stdout?.removeListener("data", onStdout);
+      child.stderr?.removeListener("data", onStderr);
+    };
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (terminationTimer) clearTimeout(terminationTimer);
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+      removeStreamListeners();
+    };
+    const outputResult = (): Pick<ExternalDesktopUpdateHelperOutput, "output" | "outputTooLarge"> => ({
+      output: outputTail.toString("utf8"),
+      outputTooLarge: outputBytes > DESKTOP_UPDATE_HELPER_OUTPUT_MAX_BYTES,
+    });
+    const retainExitListeners = () => {
+      const onLateError = () => {
+        // A process error does not prove that the process has exited. Keep a
+        // sink installed until close so a late kill error is never unhandled.
+      };
+      const onLateClose = () => {
+        child.removeListener("error", onLateError);
+        child.removeListener("close", onLateClose);
+      };
+      child.on("error", onLateError);
+      child.once("close", onLateClose);
+    };
+    const finishConfirmed = (signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({
+        ...outputResult(),
+        ...(processError ? { error: processError } : {}),
+        timedOut,
+        signal,
+        exitConfirmed: true,
+      });
+    };
+    const finishUnconfirmed = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (terminationTimer) clearTimeout(terminationTimer);
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+      removeStreamListeners();
+      retainExitListeners();
+      resolve({
+        ...outputResult(),
+        error: processError,
+        timedOut: true,
+        exitConfirmed: false,
+      });
+    };
+    const onError = (error: Error) => {
+      // Node emits error before close for spawn failures. Record it, but wait
+      // for close because error alone does not prove that the child stopped.
+      processError ??= error;
+    };
+    const onClose = (_code: number | null, signal: NodeJS.Signals | null) => finishConfirmed(signal);
+
+    const scheduleTerminationEscalation = () => {
+      if (settled) return;
+      terminationTimer = setTimeout(() => {
+        if (settled) return;
+        if (terminationPhase === "sigterm") {
+          terminationPhase = "sigkill";
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Wait for close; if no close arrives, preserve the request below.
+          }
+          scheduleTerminationEscalation();
+          return;
+        }
+        finishUnconfirmed();
+      }, DESKTOP_UPDATE_HELPER_TERMINATION_GRACE_MS);
+    };
+    const beginTermination = () => {
+      if (settled) return;
+      timedOut = true;
+      terminationPhase = "sigterm";
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Escalate after the same bounded grace period if SIGTERM cannot be sent.
+      }
+      scheduleTerminationEscalation();
+    };
+
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.on("error", onError);
+    child.once("close", onClose);
+    timeout = setTimeout(beginTermination, timeoutMs);
+  });
+}
+
+function parseExternalDesktopUpdateHelperResult(output: string): DesktopUpdateRecoveryResult {
+  const lines = output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return { ok: false, error: "automatic_update_recovery_no_result" };
+
+  let terminal: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(lines.at(-1)!) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("terminal result is not an object");
+    terminal = parsed as Record<string, unknown>;
+    if (typeof terminal.ok !== "boolean") throw new Error("terminal result has no boolean ok field");
+  } catch {
+    return { ok: false, error: "automatic_update_recovery_invalid_result" };
+  }
+
+  const ok = terminal.ok === true;
+  const stage = typeof terminal.stage === "string" ? terminal.stage : undefined;
+  const recoveryCode = typeof terminal.recoveryCode === "string" || terminal.recoveryCode === null
+    ? terminal.recoveryCode
+    : undefined;
+  const error = typeof terminal.error === "string"
+    ? terminal.error
+    : typeof terminal.message === "string"
+    ? terminal.message
+    : "automatic_update_recovery_failed";
+  return {
+    ok,
+    stage,
+    recoveryRequired: terminal.recoveryRequired === true,
+    recoveryCode,
+    ...(!ok && { error }),
+  };
+}
+
+export async function recoverDesktopUpdateWithExternalHelper(options: {
   request: DesktopUpdateHelperRequest;
   helperPath: string;
-  spawnProcess?: typeof spawnSync;
-}): { ok: boolean; stage?: string; recoveryRequired?: boolean; recoveryCode?: string | null; error?: string } {
-  const spawnProcess = options.spawnProcess ?? spawnSync;
+  spawnProcess?: typeof spawn;
+}): Promise<DesktopUpdateRecoveryResult> {
+  if (!isDesktopUpdateRuntimeReceipt(options.request.probation.runtime)) {
+    return { ok: false, error: "automatic_update_runtime_receipt_invalid" };
+  }
+  const spawnProcess = options.spawnProcess ?? spawn;
   const requestPath = `${options.request.journalPath}.request.json`;
   try {
     mkdirSync(path.dirname(requestPath), { recursive: true, mode: 0o700 });
@@ -403,33 +699,36 @@ export function recoverDesktopUpdateWithExternalHelper(options: {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+  let exitConfirmed = false;
   try {
-    const result = spawnProcess(options.helperPath, ["--request", requestPath], {
-      encoding: "utf8",
-      timeout: 15_000,
+    const child = spawnProcess(options.helperPath, ["--request", requestPath], {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const output = result.stdout?.toString().trim().split(/\r?\n/u).filter(Boolean).at(-1);
-    const parsed = output ? JSON.parse(output) as {
-      ok?: boolean;
-      stage?: string;
-      recoveryRequired?: boolean;
-      recoveryCode?: string | null;
-      error?: string;
-      message?: string;
-    } : null;
-    if (!parsed) return { ok: false, error: "automatic_update_recovery_no_result" };
-    return {
-      ok: parsed.ok === true,
-      stage: parsed.stage,
-      recoveryRequired: parsed.recoveryRequired === true,
-      recoveryCode: parsed.recoveryCode,
-      ...(!parsed.ok && { error: parsed.error ?? parsed.message ?? "automatic_update_recovery_failed" }),
-    };
+    const recoveryTimeoutMs = (2 * options.request.probation.timeoutMs) + 15_000;
+    const result = await collectExternalDesktopUpdateHelperOutput(child, recoveryTimeoutMs);
+    exitConfirmed = result.exitConfirmed;
+    if (!result.exitConfirmed) {
+      return {
+        ok: false,
+        recoveryRequired: true,
+        recoveryCode: "automatic_update_recovery_process_exit_unconfirmed",
+        error: result.error?.message ?? "automatic_update_recovery_timeout",
+      };
+    }
+    if (result.timedOut) return { ok: false, error: "automatic_update_recovery_timeout" };
+    if (result.outputTooLarge) return { ok: false, error: "automatic_update_recovery_output_too_large" };
+    if (result.signal) return { ok: false, error: "automatic_update_recovery_terminated_by_signal" };
+    if (result.error) return { ok: false, error: result.error.message };
+    return parseExternalDesktopUpdateHelperResult(result.output);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      recoveryRequired: true,
+      recoveryCode: "automatic_update_recovery_process_exit_unconfirmed",
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
-    rmSync(requestPath, { force: true });
+    if (exitConfirmed) rmSync(requestPath, { force: true });
   }
 }
 

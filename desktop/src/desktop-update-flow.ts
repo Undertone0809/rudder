@@ -24,21 +24,25 @@ import {
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";
 import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
+import { resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 import {
   appendBoundedDesktopUpdateOutput,
   summarizeDesktopUpdateChildOutput,
 } from "./desktop-update-diagnostics.js";
 import {
   attestExternalDesktopUpdateHelper,
+  DESKTOP_UPDATE_PROBATION_TIMEOUT_MS,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
   readDesktopUpdateHelperRequest,
   readDesktopUpdateJournal,
   requestMatchesAutomaticCandidate,
+  resolveDesktopUpdateRuntimeReceipt,
   resolveDesktopUpdateTransactionPaths,
   spawnDesktopUpdateHelper,
   writeDesktopUpdateHelperRequest,
   type DesktopUpdateHelperRequest,
+  type DesktopUpdateRuntimeReceipt,
   type HelperAttestation,
 } from "./desktop-update-helper.js";
 import { resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
@@ -47,6 +51,7 @@ import {
   writePostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import { createDesktopUpdateChildEnvironment } from "./postgres-runtime.js";
+import { resolveSharedRudderHomeDir } from "./runtime-cache.js";
 import {
   normalizeDesktopUpdateChannel,
   readDesktopUpdateChannel,
@@ -99,6 +104,7 @@ export function createDesktopUpdateFlow(context: {
   showMainWindow: () => void;
   getUserDataPath?: () => string;
   getUpdateInstallPath?: () => string | undefined;
+  getRuntimeReceipt?: () => DesktopUpdateRuntimeReceipt | null;
   isAutomaticUpdateAllowed?: () => boolean;
   /** True only when the stable, externally installed updater is attested. */
   hasExternalUpdateHelperCapability?: () => boolean;
@@ -161,6 +167,27 @@ export function createDesktopUpdateFlow(context: {
         ? runtime.instanceId
         : (process.env.RUDDER_INSTANCE_ID?.trim() || null),
     };
+  }
+
+  function automaticRuntimeReceipt(): DesktopUpdateRuntimeReceipt | null {
+    if (context.getRuntimeReceipt) return context.getRuntimeReceipt();
+    const identity = automaticRuntimeIdentity();
+    if (identity.profile !== "prod_local" || identity.instanceId !== "default") return null;
+    const profile: LocalEnvProfile = {
+      name: "prod_local",
+      instanceId: "default",
+      port: "3200",
+      embeddedPostgresPort: "54339",
+    };
+    const ports = resolveDesktopOwnedPorts(profile);
+    const instanceRoot = context.getBootState()?.paths?.instanceRoot
+      ?? path.join(resolveSharedRudderHomeDir(), "instances", profile.instanceId);
+    return resolveDesktopUpdateRuntimeReceipt({
+      instanceRoot,
+      instanceId: profile.instanceId,
+      apiPort: Number(ports.port),
+      postgresPort: Number(ports.embeddedPostgresPort),
+    });
   }
 
   function automaticUpdateScopeAllowed(): boolean {
@@ -270,6 +297,7 @@ export function createDesktopUpdateFlow(context: {
       execPath: process.execPath,
       installPath: context.getUpdateInstallPath?.(),
     });
+    const runtimeReceipt = automaticRuntimeReceipt();
     const existingRequestPath = `${transactionPaths.journalPath}.request.json`;
     if (candidate.status === "claimed" && !journal) {
       // A claimed transaction may already be owned by a detached helper. Never
@@ -289,6 +317,7 @@ export function createDesktopUpdateFlow(context: {
             statePath: autoUpdateStatePath(),
             paths: transactionPaths,
             helper: currentHelper ?? undefined,
+            runtimeReceipt: runtimeReceipt ?? undefined,
           })) return "continue";
           quarantineDesktopUpdateRequest(existingRequestPath);
           mutateAutomaticState((current) => ({
@@ -340,6 +369,10 @@ export function createDesktopUpdateFlow(context: {
       return "continue";
     }
     if (candidate.installId !== automaticInstallId()) { trace({ blocked: "install_identity", expected: automaticInstallId(), actual: candidate.installId }); return "continue"; }
+    if (!runtimeReceipt) {
+      trace({ blocked: "runtime_receipt" });
+      return "continue";
+    }
     if (!hasExactStagedAutomaticArtifact(candidate)) {
       console.warn("[rudder-desktop] automatic update deferred: staged artifact proof is missing or invalid");
       trace({ blocked: "artifact_proof", stagedArtifactPath: candidate.stagedArtifactPath, stagedArtifactDigest: candidate.stagedArtifactDigest });
@@ -423,7 +456,8 @@ export function createDesktopUpdateFlow(context: {
       probation: {
         executable: path.join(transactionPaths.installPath, "Contents", "MacOS", "Rudder"),
         args: ["--rudder-update-probation"],
-        timeoutMs: 10_000,
+        timeoutMs: DESKTOP_UPDATE_PROBATION_TIMEOUT_MS,
+        runtime: runtimeReceipt,
       },
     };
 

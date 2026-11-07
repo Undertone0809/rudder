@@ -445,7 +445,21 @@ async function writePackagedUpdateHelperRequest(root, input = {}) {
       migrationCompatible: true,
     },
     helper: input.helper ?? { path: input.helperPath ?? process.env.RUDDER_DESKTOP_SMOKE_EXECUTABLE ?? "", ownerUid: 0, mode: 0o755, sha256: "" },
-    probation: { executable: probationExecutable, args: [], timeoutMs: 10_000 },
+    // Keep every packaged helper fixture bound to the current probation
+    // receipt contract. The shell probe exits immediately, so these paths are
+    // identity-only fixtures rather than a claim about a live runtime.
+    probation: {
+      executable: probationExecutable,
+      args: [],
+      timeoutMs: 10_000,
+      runtime: {
+        descriptorPath: path.join(root, "runtime", "server.json"),
+        instanceId: "default",
+        apiPort: 39_101,
+        postgresDataDir: path.join(root, "postgres"),
+        postgresPort: 39_102,
+      },
+    },
     fault: input.fault ?? {},
   };
   const requestPath = path.join(root, "request.json");
@@ -3450,11 +3464,12 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
     }, { timeoutMs: 75_000 });
     assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
     const requestPath = `${transactionPaths.journalPath}.request.json`;
-    await waitForSmokeCondition("full-only public helper journal", async () => {
+    const terminalJournal = await waitForSmokeCondition("full-only public helper journal", async () => {
       if (!(await pathExists(transactionPaths.journalPath))) return null;
       const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
-      return journal.stage === "committed" ? journal : null;
-    }, { timeoutMs: 90_000 });
+      return ["committed", "rolled_back", "recovery_required"].includes(journal.stage) ? journal : null;
+    }, { timeoutMs: 2 * fixture.helperModule.DESKTOP_UPDATE_PROBATION_TIMEOUT_MS + 60_000 });
+    assert.equal(terminalJournal.stage, "committed", `public update terminated with ${terminalJournal.recoveryCode ?? terminalJournal.stage}`);
     const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
     assert.equal(journal.transactionId, updateId);
     assert.equal(journal.candidateSha256, fixture.fullAssetChecksum);
@@ -3722,11 +3737,12 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     }, { timeoutMs: 75_000 });
     assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
     const requestPath = `${transactionPaths.journalPath}.request.json`;
-    await waitForSmokeCondition("public helper journal", async () => {
+    const terminalJournal = await waitForSmokeCondition("public helper journal", async () => {
       if (!(await pathExists(transactionPaths.journalPath))) return null;
       const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
-      return journal.stage === "committed" ? journal : null;
-    }, { timeoutMs: 90_000 });
+      return ["committed", "rolled_back", "recovery_required"].includes(journal.stage) ? journal : null;
+    }, { timeoutMs: 2 * helperModule.DESKTOP_UPDATE_PROBATION_TIMEOUT_MS + 60_000 });
+    assert.equal(terminalJournal.stage, "committed", `public update terminated with ${terminalJournal.recoveryCode ?? terminalJournal.stage}`);
     const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
     assert.equal(journal.transactionId, updateId);
     assert.equal(journal.candidateSha256, shellAssetChecksum);
