@@ -33,6 +33,8 @@ async function makePiFixture(directory: string, options: {
   appendParentDuringFork?: boolean;
   invalidFrameAfterUsage?: boolean;
   stallPrompt?: boolean;
+  promptRpcError?: string;
+  terminalAuthError?: string;
   exitOnAbort?: boolean;
   captureRuntimeContext?: boolean;
 } = {}): Promise<string> {
@@ -71,6 +73,8 @@ const fixtureOptions = ${JSON.stringify({
   appendParentDuringFork: options.appendParentDuringFork === true,
   invalidFrameAfterUsage: options.invalidFrameAfterUsage === true,
   stallPrompt: options.stallPrompt === true,
+  promptRpcError: options.promptRpcError ?? null,
+  terminalAuthError: options.terminalAuthError ?? null,
   exitOnAbort: options.exitOnAbort === true,
 })};
 let forked = false;
@@ -79,6 +83,10 @@ const extensionUiWaiters = new Map();
 
 function response(command, data = null) {
   process.stdout.write(JSON.stringify({ type: "response", command, success: true, data }) + "\\n");
+}
+
+function failedResponse(command, error) {
+  process.stdout.write(JSON.stringify({ type: "response", command, success: false, error }) + "\\n");
 }
 
 function loadEntries() {
@@ -172,8 +180,20 @@ input.on("line", async (line) => {
       process.stdout.write(JSON.stringify({ type: "extension_ui_request", ...event }) + "\\n");
       if (reply) await reply;
     }
+    if (fixtureOptions.promptRpcError) {
+      failedResponse("prompt", fixtureOptions.promptRpcError);
+      return;
+    }
     response("prompt", {});
     if (fixtureOptions.stallPrompt) return;
+    if (fixtureOptions.terminalAuthError) {
+      process.stdout.write(JSON.stringify({
+        type: "agent_end",
+        willRetry: false,
+        messages: [{ role: "assistant", stopReason: "error", errorMessage: fixtureOptions.terminalAuthError }],
+      }) + "\\n");
+      return;
+    }
     const retryStates = fixtureOptions.agentEndWillRetry;
     for (let index = 0; index < retryStates.length; index += 1) {
       if (index > 0) process.stdout.write(JSON.stringify({ type: "auto_retry_start" }) + "\\n");
@@ -451,12 +471,55 @@ describe("Pi native protocol contract", () => {
       timedOut: true,
       nativeWriterQuiescence: { status: "unconfirmed", reason: expect.any(String) },
     });
+    expect(result.submissionPhase).toBeUndefined();
     const requests = (await fs.readFile(path.join(directory, "requests.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { type: string });
     expect(requests.map((request) => request.type)).toContain("prompt");
     expect(requests.map((request) => request.type)).not.toContain("abort");
+  });
+
+  it.each([
+    { label: "terminal agent_end", options: { terminalAuthError: "401 status code (no body)" }, quiescence: "confirmed" },
+    { label: "prompt RPC rejection", options: { promptRpcError: "HTTP 401 Unauthorized" }, quiescence: "unconfirmed" },
+  ])("maps an explicit Pi HTTP 401 from $label to a rejected submission", async ({ options, quiescence }) => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-auth-rejection-");
+    const command = await makePiFixture(directory, options);
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, "", "utf8");
+
+    const result = await executePiNativeChat({
+      command,
+      cwd: directory,
+      env: { HOME: directory },
+      sessionFile,
+      sessionDir: directory,
+      prompt: "must be rejected before provider acceptance",
+      model: "provider/model",
+      timeoutSec: 10,
+      binding: { hostId: "local", profileId: "pi-profile" },
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      submissionPhase: "pre_submission",
+      errorCode: "pi_auth_required",
+      errorMessage: "Pi provider rejected the prompt with HTTP 401.",
+      nativeWriterQuiescence: quiescence === "confirmed"
+        ? { status: "confirmed", source: "provider_terminal" }
+        : { status: "unconfirmed", reason: expect.any(String) },
+      resultJson: {
+        providerFailure: {
+          classification: "authentication",
+          retryable: false,
+          reason: "pi_auth_required",
+          statusCode: 401,
+        },
+      },
+    });
   });
 
   it("bridges Pi extension select, confirm, and text input through runtime approvals", async () => {

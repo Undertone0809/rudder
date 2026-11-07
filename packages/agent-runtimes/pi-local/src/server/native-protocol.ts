@@ -104,6 +104,14 @@ export class PiNativeCapabilityError extends Error {
   }
 }
 
+class PiProviderAuthenticationRejectedError extends Error {
+  override readonly name = "PiProviderAuthenticationRejectedError";
+
+  constructor(readonly terminalProviderEventObserved: boolean) {
+    super("Pi provider rejected the prompt with HTTP 401.");
+  }
+}
+
 type PiTranscriptIndexLimit = { reason: "total_bytes" | "total_items"; maximum: number };
 
 class PiTranscriptIndexLimitError extends Error {
@@ -190,6 +198,23 @@ function boundedDiagnostic(value: unknown, maxChars = 2_000): string {
   const text = value instanceof Error ? value.message : typeof value === "string" ? value : String(value);
   const compact = text.replace(/\s+/gu, " ").trim();
   return compact.length > maxChars ? `${compact.slice(0, maxChars)}... [truncated]` : compact;
+}
+
+function isExplicitPiHttp401(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return /\b(?:http(?:\/\d(?:\.\d)?)?\s+401|401\s+(?:status(?:\s+code)?|unauthorized)|status(?:\s+code)?\s*[:=]?\s*401)\b/iu.test(value);
+}
+
+function terminalPiProviderAuthenticationRejection(event: JsonRecord): PiProviderAuthenticationRejectedError | null {
+  if (event.type !== "agent_end" || event.willRetry === true || !Array.isArray(event.messages)) return null;
+  const assistant = event.messages
+    .map(asRecord)
+    .filter((message): message is JsonRecord => Boolean(message))
+    .findLast((message) => message.role === "assistant");
+  if (!assistant || (assistant.stopReason ?? assistant.stop_reason) !== "error") return null;
+  return isExplicitPiHttp401(assistant.errorMessage)
+    ? new PiProviderAuthenticationRejectedError(true)
+    : null;
 }
 
 function finiteNonNegative(value: unknown): number {
@@ -467,7 +492,10 @@ async function requireKnownProviderSession(
   }
 }
 
-function rpcError(response: PiRpcResponse): PiNativeCapabilityError {
+function rpcError(response: PiRpcResponse): Error {
+  if (response.command === "prompt" && isExplicitPiHttp401(response.error)) {
+    return new PiProviderAuthenticationRejectedError(false);
+  }
   return new PiNativeCapabilityError(
     response.error && /invalid|unsupported|unknown/i.test(response.error) ? "unsupported" : "unknown",
     `Pi RPC ${response.command} failed${response.error ? `: ${response.error}` : "."}`,
@@ -2195,6 +2223,8 @@ export async function executePiNativeChat(input: {
   };
   rpc = new PiRpcClient(rpcProcess, input.signal, async (event) => {
     recordPiEvent(eventSummary, event);
+    const providerAuthenticationRejection = terminalPiProviderAuthenticationRejection(event);
+    if (providerAuthenticationRejection) throw providerAuthenticationRejection;
     if (event.type === "extension_ui_request") {
       await handlePiExtensionUiRequest({
         event,
@@ -2306,6 +2336,7 @@ export async function executePiNativeChat(input: {
     };
   } catch (error) {
     const message = boundedDiagnostic(error);
+    const providerAuthenticationRejected = error instanceof PiProviderAuthenticationRejectedError;
     const metadata = eventMetadata(eventSummary);
     await input.onLog(
       "stderr",
@@ -2315,13 +2346,18 @@ export async function executePiNativeChat(input: {
       exitCode: 1,
       signal: null,
       timedOut: /timed out/iu.test(message),
-      ...(stopAcknowledged
+      ...(providerAuthenticationRejected && error.terminalProviderEventObserved
+        ? { nativeWriterQuiescence: { status: "confirmed" as const, source: "provider_terminal" as const } }
+        : stopAcknowledged
         ? { nativeWriterQuiescence: { status: "confirmed" as const, source: "provider_stop_ack" as const } }
         : promptSent
           ? { nativeWriterQuiescence: { status: "unconfirmed" as const, reason: "Pi RPC prompt ended without an observed agent_end or abort acknowledgement." } }
           : {}),
+      ...(providerAuthenticationRejected ? { submissionPhase: "pre_submission" as const } : {}),
       errorMessage: message,
-      errorCode: error instanceof PiNativeCapabilityError ? `pi_native_${error.status}` : "pi_native_rpc_error",
+      errorCode: providerAuthenticationRejected
+        ? "pi_auth_required"
+        : error instanceof PiNativeCapabilityError ? `pi_native_${error.status}` : "pi_native_rpc_error",
       sessionId: input.sessionFile,
       sessionParams: {
         sessionId: sessionFile,
@@ -2347,7 +2383,19 @@ export async function executePiNativeChat(input: {
       provider: input.model.includes("/") ? input.model.split("/", 1)[0] : null,
       model: input.model || null,
       billingType: "unknown",
-      resultJson: { transport: "pi_rpc", ...metadata, error: message },
+      resultJson: {
+        transport: "pi_rpc",
+        ...metadata,
+        ...(providerAuthenticationRejected ? {
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            reason: "pi_auth_required",
+            statusCode: 401,
+          },
+        } : {}),
+        error: message,
+      },
       usage: {
         inputTokens: eventSummary.usage.inputTokens,
         outputTokens: eventSummary.usage.outputTokens,
