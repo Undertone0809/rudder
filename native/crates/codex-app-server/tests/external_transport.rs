@@ -1,7 +1,9 @@
 #![cfg(unix)]
 //! Opt-in real external Rust host tests. Build rudder-process-host and pass its
 //! absolute path in RUDDER_TEST_PROCESS_HOST; no provider or credentials used.
-use rudder_codex_app_server::{OwnedTransport, ProcessLaunch, SessionObservation, TransportEvent};
+use rudder_codex_app_server::{
+    ConnectionLaunchPermit, OwnedTransport, ProcessLaunch, SessionObservation, TransportEvent,
+};
 use serde_json::json;
 use std::{
     collections::BTreeMap,
@@ -79,6 +81,33 @@ fn launch(root: &Path, script: &str) -> OwnedTransport {
     .unwrap()
 }
 
+fn launch_claimed(root: &Path, script: &str) -> OwnedTransport {
+    let host = std::env::var_os("RUDDER_TEST_PROCESS_HOST").expect("built host path");
+    let path = root.canonicalize().unwrap().to_string_lossy().into_owned();
+    OwnedTransport::launch_external_for_execution(
+        ProcessLaunch {
+            executable: "/bin/sh".into(),
+            argv: vec!["-c".into(), script.into()],
+            cwd: path.clone(),
+            env: BTreeMap::new(),
+            request_id: "external-test".into(),
+            run_id: "external-test-run".into(),
+            attempt_id: "external-test".into(),
+            owner_token: "external-test-owner".into(),
+            runtime_root: path,
+        },
+        Path::new(&host),
+        ConnectionLaunchPermit::from_claim(
+            "external-test-run".into(),
+            "external-test".into(),
+            "external-test-owner".into(),
+            9,
+            "external-test-claim".into(),
+        ),
+    )
+    .unwrap()
+}
+
 fn spawned(transport: &mut OwnedTransport) -> u32 {
     loop {
         if let TransportEvent::Lifecycle(event) =
@@ -96,7 +125,7 @@ fn spawned(transport: &mut OwnedTransport) -> u32 {
 #[ignore = "requires built Rust process host; no provider calls"]
 fn external_host_preserves_receipts_rpc_and_cleanup() {
     let root = tempfile::tempdir().unwrap();
-    let mut transport = launch(
+    let mut transport = launch_claimed(
         root.path(),
         "n=0; while IFS= read -r line; do printf '{\"id\":%s,\"result\":%s}\\n' \"$n\" \"$line\"; n=$((n+1)); done",
     );
@@ -137,6 +166,18 @@ fn external_host_preserves_receipts_rpc_and_cleanup() {
         .take_cleanup_receipt()
         .expect("typed external-host cleanup receipt");
     assert!(cleanup.matches_execution("external-test-run", "external-test", "external-test-owner"));
+    assert!(cleanup.matches_connection_claim(
+        "external-test-run",
+        "external-test",
+        "external-test-owner",
+        9,
+        "external-test-claim"
+    ));
+    assert!(
+        cleanup
+            .evidence_fingerprint()
+            .starts_with("codex-owned-cleanup-v1:")
+    );
 }
 
 #[test]

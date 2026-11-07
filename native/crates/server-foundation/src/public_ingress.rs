@@ -1,4 +1,4 @@
-//! Public listener with a direct Rust read and an explicit unmigrated proxy.
+//! Public listener with explicitly owned Rust routes and a bounded compatibility proxy.
 //! The private foundation router is deliberately not mounted on this socket.
 
 use super::*;
@@ -9,6 +9,7 @@ use actix_web::guard;
 use uuid::Uuid;
 
 mod browser_session;
+mod native_chat;
 mod runtime_bindings;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -47,6 +48,15 @@ impl PublicIngressRuntime {
                     ConfigError::invalid("RUDDER_NATIVE_BROWSER_AUTH_MODE", &error.to_string())
                 })?;
         }
+        if config.native_chat_runtime.is_some()
+            && (config.browser_auth.is_none() || config.native_chat_mutations.is_none())
+        {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_CHAT_RUNTIME",
+                "explicit browser authentication and mutation Origin policy are required",
+            )
+            .into());
+        }
         let listen_addr = config.listen_addr;
         let data = web::Data::new(IngressState {
             foundation: foundation.clone(),
@@ -65,6 +75,9 @@ impl PublicIngressRuntime {
                 .app_data(web::Data::new(proxy))
                 .app_data(web::Data::new(websocket_proxy))
                 .configure(|routes| {
+                    if config.native_chat_mutations.is_some() {
+                        native_chat::configure(routes, true);
+                    }
                     if config.browser_auth.is_some() {
                         routes.route("/api/auth/get-session", web::get().to(browser_session::get));
                     }
@@ -164,6 +177,8 @@ async fn proxy_request(
     // fall back to Node in required-Rust mode: exact migrated routes are
     // handled above, and every remaining /llms path is deliberately closed.
     if (state.config.browser_auth.is_some() && browser_session::reserved_path(request.uri().path()))
+        || (state.config.native_chat_mutations.is_some()
+            && native_chat::reserved_path(request.uri().path()))
         || runtime_bindings::reserved_path(request.uri().path())
         || request
             .uri()

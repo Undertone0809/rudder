@@ -426,3 +426,6 @@ mod effects_content;
 
 #[path = "native_chat_execution/control.rs"]
 mod control;
+
+#[path = "native_chat_execution/browser_principal.rs"]
+mod browser_principal;

@@ -1,5 +1,5 @@
 use super::{ExecutionFence, NATIVE_WRITE_MARKER, Result, context::lock_current_execution};
-use rudder_auth_core::VerifiedActor;
+use crate::native_chat::NativeChatExecutionActor;
 use sqlx::{PgPool, Row};
 
 pub struct LeaseReceipt {
@@ -22,7 +22,7 @@ impl LeaseReceipt {
 /// Attempt locks; an expired owner cannot revive itself.
 pub async fn renew_lease(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<LeaseReceipt> {
     renew(pool, actor, fence, None).await
@@ -30,7 +30,7 @@ pub async fn renew_lease(
 
 pub(super) async fn renew(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: Option<&super::stopping::StopIntent>,
 ) -> Result<LeaseReceipt> {
@@ -118,7 +118,7 @@ pub(super) async fn renew(
         generation_expires_at_unix_ms: row.try_get("generation_expiry")?,
         run_expires_at_unix_ms: row.try_get("run_expiry")?,
     };
-    super::super::auth::authorize_org(&mut tx, actor, &fence.organization_id).await?;
+    super::super::auth::authorize_execution_org(&mut tx, actor, fence).await?;
     tx.commit().await?;
     Ok(receipt)
 }

@@ -9,8 +9,12 @@ import {
   ChatComposerSurface,
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
+import { ChatSendRecoveryNotice, ChatSendRecoveryProblem, type ChatSendRecovery } from "@/components/chat/ChatSendRecoveryNotice";
+import { useChatSendRecoveryDiscovery } from "@/components/chat/useChatSendRecoveryDiscovery";
 import { Button } from "@/components/ui/button";
+import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { chatErrorMessage } from "@/lib/chat-errors";
+import * as chatSendMutationStorage from "@/lib/chat-send-mutation-storage";
 import {
   clearPendingChatStopRecovery,
   createChatStopRecoveryRetrier,
@@ -23,13 +27,23 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
-import { activeGenerationIdFromSnapshot } from "@/pages/Chat.workspace-helpers";
+import { mergeChatMessages } from "@/pages/Chat.parts";
+import { activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, EMPTY_CHAT_BODY_SHA256 } from "@/pages/Chat.workspace-helpers";
 import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Loader2, MessageSquare } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type GoalChatTarget = Extract<SidePanelTarget, { kind: "goal_chat" }>;
+
+function goalSendTargetScope(target: GoalChatTarget) {
+  return JSON.stringify([
+    target.organizationId,
+    target.goalId,
+    target.agentId,
+    target.conversationId ?? null,
+  ]);
+}
 
 function messageBody(message: ChatMessage) {
   return message.body?.trim() || message.kind;
@@ -58,10 +72,20 @@ export function GoalChatPanel({
   const [workingSeconds, setWorkingSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sendRecovery, setSendRecovery] = useState<ChatSendRecovery | null>(null);
+  const recoveryDiscovery = useChatSendRecoveryDiscovery(target.conversationId
+    ? { orgId: target.organizationId, conversationId: target.conversationId }
+    : null);
+  const activeSendRecovery = sendRecovery ?? recoveryDiscovery.recovery;
   const [failedBody, setFailedBody] = useState<string | null>(null);
+  const [failedUserMessageId, setFailedUserMessageId] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({});
   const targetRef = useRef(target);
+  const renderedTargetScopeRef = useRef(goalSendTargetScope(target));
+  const expectedTargetScopeRef = useRef(goalSendTargetScope(target));
+  const sendOperationRef = useRef(0);
+  const streamDraftRef = useRef<ChatStreamDraft | null>(null);
   const sendInFlightRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeBodyRef = useRef<string | null>(null);
@@ -75,6 +99,30 @@ export function GoalChatPanel({
     });
   }
   targetRef.current = target;
+
+  useEffect(() => {
+    const nextScope = goalSendTargetScope(target);
+    if (renderedTargetScopeRef.current === nextScope) return;
+    renderedTargetScopeRef.current = nextScope;
+    if (expectedTargetScopeRef.current === nextScope) return;
+    expectedTargetScopeRef.current = nextScope;
+    sendOperationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    activeBodyRef.current = null;
+    sendInFlightRef.current = false;
+    setSending(false);
+    setWorkingSince(null);
+    setError(null);
+    setNotice(null);
+    setSendRecovery(null);
+    setFailedBody(null);
+    setFailedUserMessageId(null);
+    setMessages([]);
+    streamDraftRef.current = null;
+    setStreamBody("");
+    setDraft(target.body);
+  }, [target]);
 
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(target.organizationId),
@@ -159,6 +207,7 @@ export function GoalChatPanel({
   const updateTarget = useCallback((patch: Partial<GoalChatTarget>) => {
     const current = targetRef.current;
     const next = { ...current, ...patch } satisfies GoalChatTarget;
+    expectedTargetScopeRef.current = goalSendTargetScope(next);
     targetRef.current = next;
     onReplaceTarget(sidePanelTargetKey(current), next);
   }, [onReplaceTarget]);
@@ -168,11 +217,45 @@ export function GoalChatPanel({
     if (conversationId) navigate(`/messenger/chat/${conversationId}`);
   }, [navigate]);
 
-  const handleSend = async (bodyOverride?: string) => {
+  const handleSend = async (bodyOverride?: string, retryUserMessageId?: string | null, resumeClientMutationId?: string) => {
+    const isResume = Boolean(resumeClientMutationId);
     const body = (bodyOverride ?? draft).trim();
     const sendTarget = targetRef.current;
-    if (!body || sending || !selectedAgent) return;
+    let expectedConversationId = sendTarget.conversationId;
+    if (!body || sending || (activeSendRecovery && !isResume)
+      || (recoveryDiscovery.checking && !isResume)
+      || (recoveryDiscovery.problem && !isResume) || !selectedAgent) return;
+    const sendOperation = ++sendOperationRef.current;
+    const streamKey = `goal-chat:${sendOperation}`;
+    const streamStartedAt = new Date();
+    streamDraftRef.current = {
+      chatId: sendTarget.conversationId,
+      streamKey,
+      userBody: body,
+      userCreatedAt: streamStartedAt,
+      userMessageId: retryUserMessageId ?? null,
+      chatTurnId: null,
+      turnVariant: 0,
+      editedFromCreatedAt: null,
+      body: "",
+      generationId: null,
+      attemptEpoch: null,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256,
+      state: "streaming",
+      createdAt: streamStartedAt,
+      transcript: [],
+      replyingAgentId: selectedAgent.id,
+    };
     const abortController = new AbortController();
+    const isCurrentSendTarget = () => {
+      const current = targetRef.current;
+      return sendOperationRef.current === sendOperation
+        && !abortController.signal.aborted
+        && current.organizationId === sendTarget.organizationId
+        && current.goalId === sendTarget.goalId
+        && current.agentId === sendTarget.agentId
+        && current.conversationId === expectedConversationId;
+    };
     abortControllerRef.current = abortController;
     activeBodyRef.current = body;
     sendInFlightRef.current = true;
@@ -181,21 +264,61 @@ export function GoalChatPanel({
     setError(null);
     setNotice(null);
     setFailedBody(null);
+    setFailedUserMessageId(null);
     setStreamBody("");
+    let committedUserMessageId = retryUserMessageId ?? null;
     let completedConversationId: string | null = null;
+    let pendingSend: Awaited<ReturnType<typeof chatSendMutationStorage.preparePendingChatSendMutation>> | null = null;
+    let mutationAcknowledged = false;
+    let mutationTerminal = false;
+    let requestDispatched = false;
     try {
+      let userMessageAcknowledged = false;
       const onEvent = async (event: Parameters<NonNullable<Parameters<typeof chatsApi.sendMessageStream>[2]["onEvent"]>>[0]) => {
+        if (!isCurrentSendTarget()) return;
         if (event.type === "ack") {
+          userMessageAcknowledged = true;
+          mutationAcknowledged = true;
+          committedUserMessageId = event.userMessage.id;
+          const currentStream = streamDraftRef.current;
+          if (currentStream?.streamKey === streamKey) {
+            streamDraftRef.current = {
+              ...currentStream,
+              chatId: event.userMessage.conversationId,
+              userMessageId: event.userMessage.id,
+              generationId: event.generationId ?? currentStream.generationId ?? null,
+              attemptEpoch: event.attemptEpoch ?? currentStream.attemptEpoch ?? null,
+              lastCommittedRenderSeq: event.generationSeq ?? currentStream.lastCommittedRenderSeq,
+              renderedBodyHash: event.bodyHash ?? currentStream.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+            };
+          }
           setMessages((current) => [...current, event.userMessage]);
+          expectedConversationId = event.userMessage.conversationId;
           const current = targetRef.current;
           updateTarget({
             conversationId: event.userMessage.conversationId,
-            body: current.body === body ? "" : current.body,
+            body: !isResume && current.body === body ? "" : current.body,
           });
-          setDraft((current) => current.trim() === body ? "" : current);
+          if (!isResume) setDraft((current) => current.trim() === body ? "" : current);
         }
-        if (event.type === "assistant_delta") setStreamBody((current) => current + event.delta);
+        if (event.type === "error" && !userMessageAcknowledged && event.messageId) {
+          committedUserMessageId = event.messageId;
+        }
+        if (event.type === "assistant_delta" || event.type === "assistant_snapshot") {
+          const currentStream = streamDraftRef.current;
+          if (currentStream?.streamKey === streamKey) {
+            const nextStream = applyChatStreamProgressEvent(currentStream, streamKey, event);
+            if (nextStream && nextStream !== currentStream) {
+              streamDraftRef.current = nextStream;
+              setStreamBody(nextStream.body);
+            }
+          }
+        }
         if (event.type === "final") {
+          mutationTerminal = true;
+          if (pendingSend) await pendingSend.settle();
+          setSendRecovery(null);
+          if (streamDraftRef.current?.streamKey === streamKey) streamDraftRef.current = null;
           setStreamBody("");
           setMessages((current) => [...current, ...event.messages]);
         }
@@ -203,10 +326,100 @@ export function GoalChatPanel({
       };
 
       if (sendTarget.conversationId) {
+        pendingSend = await chatSendMutationStorage.preparePendingChatSendMutation({
+          orgId: sendTarget.organizationId,
+          conversationId: sendTarget.conversationId,
+          editUserMessageId: retryUserMessageId,
+          reconcilePendingMutation: (clientMutationId, exactBody) => chatsApi.reconcilePendingMessageSend(sendTarget.conversationId!, {
+            clientMutationId,
+            body: exactBody,
+          }),
+          body,
+          files: [],
+          inlineAnnotations: [],
+          resumeClientMutationId,
+        });
+        if (!isCurrentSendTarget()) {
+          return;
+        }
+        if (pendingSend.status === "recovered") {
+          const recoveredMessage = pendingSend.reconciliation?.outcome === "accepted"
+            ? pendingSend.reconciliation.message
+            : null;
+          if (recoveredMessage) setMessages((current) => mergeChatMessages(current, [recoveredMessage]));
+          if (!isResume) setDraft((current) => current || body);
+          setSendRecovery(null);
+          setNotice("The earlier response already reached a terminal state. Your current draft was not sent.");
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(sendTarget.organizationId, sendTarget.conversationId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(sendTarget.organizationId, sendTarget.conversationId) }),
+          ]).catch(() => undefined);
+          return;
+        }
+        if (pendingSend.status === "resume_required") {
+          if (!isResume) setDraft((current) => current || body);
+          setSendRecovery({
+            clientMutationId: pendingSend.clientMutationId,
+            body: pendingSend.recoveryBody ?? (pendingSend.reconciliation?.outcome === "accepted"
+              ? pendingSend.reconciliation.message.body
+              : body),
+            action: "resume",
+          });
+          setNotice("The earlier message was accepted and is still unresolved. Resume its response below; the current draft was not sent.");
+          const acceptedMessage = pendingSend.reconciliation?.outcome === "accepted"
+            ? pendingSend.reconciliation.message
+            : null;
+          if (acceptedMessage) setMessages((current) => mergeChatMessages(current, [acceptedMessage]));
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(sendTarget.organizationId, sendTarget.conversationId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(sendTarget.organizationId, sendTarget.conversationId) }),
+          ]).catch(() => undefined);
+          return;
+        }
+        if (pendingSend.status === "retry_required") {
+          if (!isResume) setDraft((current) => current || body);
+          setSendRecovery({
+            clientMutationId: pendingSend.clientMutationId,
+            body: pendingSend.recoveryBody ?? body,
+            action: "retry",
+          });
+          setNotice("Rudder confirmed the earlier message was not accepted. Retry that exact message below; your current draft was not sent.");
+          return;
+        }
+        requestDispatched = true;
         await chatsApi.sendMessageStream(sendTarget.conversationId, body, {
-          onEvent,
+          clientMutationId: pendingSend.clientMutationId,
+          editUserMessageId: retryUserMessageId,
+          onEvent: async (event) => {
+            if (event.type === "ack") {
+              mutationAcknowledged = true;
+              await pendingSend!.markAccepted();
+            } else if (event.type === "queued") {
+              mutationAcknowledged = true;
+              await pendingSend!.markAccepted();
+            } else if (event.type === "error") {
+              if (event.messageId) {
+                mutationAcknowledged = true;
+                await pendingSend!.markAccepted();
+              }
+              if (event.terminal) {
+                mutationTerminal = true;
+                await pendingSend!.settle();
+                setSendRecovery(null);
+              } else if (mutationAcknowledged) {
+                await pendingSend!.markRecoverable();
+                setSendRecovery({ clientMutationId: pendingSend!.clientMutationId, body });
+              }
+            }
+            await onEvent(event);
+          },
           signal: abortController.signal,
         });
+        if (mutationAcknowledged && !mutationTerminal) {
+          await pendingSend.markRecoverable();
+          setSendRecovery({ clientMutationId: pendingSend.clientMutationId, body });
+          throw new Error("The message was accepted, but Rudder did not confirm the response's terminal state. Resume the response without sending it again.");
+        }
       } else {
         await chatsApi.sendFirstMessageStream(target.organizationId, body, {
           preferredAgentId: selectedAgent.id,
@@ -220,18 +433,47 @@ export function GoalChatPanel({
           onEvent,
         });
       }
-      completedConversationId = targetRef.current.conversationId ?? sendTarget.conversationId;
+      if (isCurrentSendTarget()) {
+        completedConversationId = targetRef.current.conversationId ?? sendTarget.conversationId;
+      }
     } catch (sendError) {
-      if (!abortController.signal.aborted) {
-        setFailedBody(body);
-        setError(chatErrorMessage(sendError, "side-chat"));
+      if (pendingSend && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+        await pendingSend.markUnknown();
+      }
+      if (pendingSend && mutationAcknowledged && !mutationTerminal) {
+        await pendingSend.markRecoverable();
+        setSendRecovery({ clientMutationId: pendingSend.clientMutationId, body });
+      }
+      if (!abortController.signal.aborted && isCurrentSendTarget()) {
+        if (pendingSend && requestDispatched && !mutationAcknowledged && !mutationTerminal) {
+          recoveryDiscovery.retry();
+        }
+        if (sendError instanceof chatSendMutationStorage.PendingChatSendAlreadyAcceptedError) {
+          setDraft((current) => current || body);
+          setFailedBody(null);
+          setFailedUserMessageId(null);
+          setError(null);
+          setNotice(`${sendError.message} The recovered message is being refreshed below.`);
+          if (sendTarget.conversationId) {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(sendTarget.organizationId, sendTarget.conversationId) }),
+              queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(sendTarget.organizationId, sendTarget.conversationId) }),
+            ]).catch(() => undefined);
+          }
+        } else {
+          setFailedBody(body);
+          setFailedUserMessageId(committedUserMessageId);
+          setError(chatErrorMessage(sendError, "side-chat"));
+        }
       }
     } finally {
-      if (abortControllerRef.current === abortController) abortControllerRef.current = null;
-      activeBodyRef.current = null;
-      sendInFlightRef.current = false;
-      setSending(false);
-      setWorkingSince(null);
+      if (sendOperationRef.current === sendOperation) {
+        if (abortControllerRef.current === abortController) abortControllerRef.current = null;
+        activeBodyRef.current = null;
+        sendInFlightRef.current = false;
+        setSending(false);
+        setWorkingSince(null);
+      }
     }
     if (completedConversationId) {
       await Promise.all([
@@ -469,13 +711,35 @@ export function GoalChatPanel({
         </div>
       </div>
 
-      {notice ? <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{notice}</div> : null}
+      {recoveryDiscovery.checking ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">
+          Checking the previous message before sending. Your current draft is preserved.
+        </div>
+      ) : null}
+      {recoveryDiscovery.problem ? (
+        <ChatSendRecoveryProblem message={recoveryDiscovery.problem} onRetry={recoveryDiscovery.retry} />
+      ) : null}
+      {recoveryDiscovery.completedNotice ? (
+        <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{recoveryDiscovery.completedNotice}</div>
+      ) : null}
+      {activeSendRecovery ? (
+        <ChatSendRecoveryNotice
+          disabled={sending}
+          action={activeSendRecovery.action}
+          onResume={() => {
+            setSendRecovery(null);
+            recoveryDiscovery.clearRecovery();
+            recoveryDiscovery.clearCompletedNotice();
+            void handleSend(activeSendRecovery.body, null, activeSendRecovery.clientMutationId);
+          }}
+        />
+      ) : notice ? <div role="status" className="px-4 pb-2 text-sm text-muted-foreground">{notice}</div> : null}
       {error || failedBody ? (
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-2">
           {error ? <span role="alert" className="text-sm text-destructive">{error}</span> : <span />}
           <div className="flex items-center gap-2">
             {failedBody ? (
-              <Button type="button" size="sm" variant="outline" disabled={sending} onClick={() => void handleSend(failedBody)}>
+              <Button type="button" size="sm" variant="outline" disabled={sending} onClick={() => void handleSend(failedBody, failedUserMessageId)}>
                 Retry message
               </Button>
             ) : null}
@@ -513,7 +777,9 @@ export function GoalChatPanel({
                       ? "Stop streaming"
                       : "Stop unavailable until chat starts"
                   : "Send message"}
-                disabled={sending ? stopping || !target.conversationId : !canSend}
+                disabled={sending
+                  ? stopping || !target.conversationId
+                  : !canSend || recoveryDiscovery.checking || Boolean(activeSendRecovery) || Boolean(recoveryDiscovery.problem)}
                 onClick={() => void (sending ? handleStop() : handleSend())}
               />
             )}

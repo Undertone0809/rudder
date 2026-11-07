@@ -1,3 +1,4 @@
+use rudder_codex_app_server::CleanupReceipt;
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use std::fmt;
 
@@ -18,6 +19,9 @@ pub struct ExecutionFence {
     pub(super) generation_attempt_epoch: i32,
     pub(super) run_attempt_epoch: i32,
     pub(super) connection_epoch: i32,
+    /// Random claim capability shared only with the move-only launch permit.
+    /// It distinguishes transports that otherwise share all durable identity.
+    pub(super) connection_claim_id: String,
     pub(super) generation_owner_token: String,
     pub(super) run_owner_token: String,
 }
@@ -48,6 +52,19 @@ impl ExecutionFence {
     pub fn run_execution_owner_token(&self) -> &str {
         &self.run_owner_token
     }
+
+    /// Check the full private launch identity without exposing the random
+    /// claim ID. A Run/Attempt/owner/epoch match alone is not cleanup proof.
+    pub fn matches_cleanup_receipt(&self, cleanup: &CleanupReceipt) -> bool {
+        let identity = self.identity();
+        cleanup.matches_connection_claim(
+            identity.run_id,
+            identity.attempt_id,
+            self.run_execution_owner_token(),
+            identity.connection_epoch,
+            &self.connection_claim_id,
+        )
+    }
 }
 
 impl fmt::Debug for ExecutionFence {
@@ -55,6 +72,7 @@ impl fmt::Debug for ExecutionFence {
         formatter
             .debug_struct("ExecutionFence")
             .field("identity", &self.identity())
+            .field("connection_claim_id", &"[REDACTED]")
             .field("generation_owner_token", &"[REDACTED]")
             .field("run_owner_token", &"[REDACTED]")
             .finish()

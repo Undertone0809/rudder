@@ -1,4 +1,5 @@
 use super::{CanonicalIdentity, IdentityInput, Result, VerifiedActor, http};
+use crate::native_chat::NativeChatActor;
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
@@ -32,7 +33,7 @@ pub(super) async fn ensure(
 /// Conversation; native admission must acquire it before any other row lock.
 pub(super) async fn ensure_tx(
     tx: &mut super::Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
     conversation_id: &str,
     input: &IdentityInput,

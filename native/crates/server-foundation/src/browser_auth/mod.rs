@@ -4,13 +4,16 @@
 use actix_web::{HttpRequest, http::header};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use rudder_d1_persistence::native_chat::{BrowserCredentialBinding, BrowserPrincipal};
+use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 
 mod config;
 mod issuer;
+mod mutation_origin;
 use config::Mode;
 pub use config::{BrowserAuthConfig, BrowserAuthConfigError, SessionPolicy};
+pub use mutation_origin::{BrowserMutationPolicy, BrowserMutationPolicyError};
 
 /// An authenticated identity, not a serialized client assertion or UI session ID.
 /// Organization access is checked during `authenticate` when a scope is supplied.
@@ -18,6 +21,21 @@ pub struct BrowserActor {
     user_id: String,
     session_id: String,
     source: &'static str,
+    credential: AuthenticatedBrowserCredential,
+}
+
+// Never Debug/Serialize this proof. It contains only row identity and a digest,
+// never a cookie, bearer token, or stored credential value.
+enum AuthenticatedBrowserCredential {
+    Session {
+        row_id: String,
+        fingerprint: [u8; 32],
+    },
+    BoardKey {
+        row_id: String,
+        fingerprint: [u8; 32],
+    },
+    LocalImplicit,
 }
 impl BrowserActor {
     pub fn user_id(&self) -> &str {
@@ -29,6 +47,39 @@ impl BrowserActor {
     pub fn source(&self) -> &str {
         self.source
     }
+
+    /// Adapt Foundation-verified browser state for a trusted Native Chat D1
+    /// handler. This public Rust API accepts only an already-authenticated
+    /// `BrowserActor`; it does not deserialize request identity or credential
+    /// fields.
+    /// The caller still must apply the request's mutation-origin policy before
+    /// using a local-implicit principal; this method does not certify Origin.
+    pub fn native_chat_principal(
+        &self,
+        organization_id: &str,
+    ) -> Result<BrowserPrincipal, BrowserAuthError> {
+        let binding = match &self.credential {
+            AuthenticatedBrowserCredential::Session {
+                row_id,
+                fingerprint,
+            } => BrowserCredentialBinding::session(row_id.clone(), *fingerprint),
+            AuthenticatedBrowserCredential::BoardKey {
+                row_id,
+                fingerprint,
+            } => BrowserCredentialBinding::board_key(row_id.clone(), *fingerprint),
+            AuthenticatedBrowserCredential::LocalImplicit => {
+                BrowserCredentialBinding::local_implicit()
+            }
+        };
+        BrowserPrincipal::from_trusted_browser_auth(
+            &self.user_id,
+            organization_id,
+            &self.session_id,
+            binding,
+        )
+        .map_err(|_| BrowserAuthError::Unauthorized)
+    }
+
     pub(crate) fn public_session(&self) -> serde_json::Value {
         serde_json::json!({
             "session": {"id": format!("rudder:{}:{}", self.source, self.user_id), "userId": self.user_id},
@@ -174,13 +225,38 @@ pub async fn authenticate(
     connection: &mut PgConnection,
     organization_id: Option<&str>,
 ) -> Result<BrowserActor, BrowserAuthError> {
+    authenticate_with_refresh(config, request, connection, organization_id, true).await
+}
+
+/// Resolve the same credential and organization scope as [`authenticate`],
+/// but do not slide a Better Auth session. Use this for handlers that must
+/// authorize a browser mutation's Origin before any session-refresh write.
+/// Such callers intentionally do not extend the browser session through this
+/// endpoint; the regular session endpoint retains its issuer refresh behavior.
+pub async fn authenticate_without_refresh(
+    config: &BrowserAuthConfig,
+    request: &HttpRequest,
+    connection: &mut PgConnection,
+    organization_id: Option<&str>,
+) -> Result<BrowserActor, BrowserAuthError> {
+    authenticate_with_refresh(config, request, connection, organization_id, false).await
+}
+
+async fn authenticate_with_refresh(
+    config: &BrowserAuthConfig,
+    request: &HttpRequest,
+    connection: &mut PgConnection,
+    organization_id: Option<&str>,
+    allow_session_refresh: bool,
+) -> Result<BrowserActor, BrowserAuthError> {
     let credential = credential(config, request)?;
-    let (session_id, user_id, source, allowed) = match credential {
+    let (session_id, user_id, source, allowed, credential_proof) = match credential {
         Credential::LocalImplicit => {
             return Ok(BrowserActor {
                 user_id: "local-board".into(),
                 session_id: "local-implicit".into(),
                 source: "local_implicit",
+                credential: AuthenticatedBrowserCredential::LocalImplicit,
             });
         }
         Credential::Session { token, refresh } => {
@@ -197,7 +273,7 @@ pub async fn authenticate(
                 return Err(BrowserAuthError::Unauthorized);
             }
             let (session, user, allowed, needs_refresh) = rows.into_iter().next().unwrap();
-            if refresh && needs_refresh {
+            if allow_session_refresh && refresh && needs_refresh {
                 // Current Better Auth defaults: seven-day lifetime, one-day
                 // update age. Local-account sessions and dont_remember cookies
                 // never slide. Guard the update against concurrent revocation.
@@ -211,7 +287,17 @@ pub async fn authenticate(
                 }
             }
 
-            (session, user, "session", allowed)
+            let fingerprint: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+            (
+                session.clone(),
+                user,
+                "session",
+                allowed,
+                AuthenticatedBrowserCredential::Session {
+                    row_id: session,
+                    fingerprint,
+                },
+            )
         }
         Credential::BoardKey(hash) => {
             let row = sqlx::query_as::<_, (String, String, bool)>(
@@ -221,9 +307,19 @@ pub async fn authenticate(
                     RETURNING k.id::text, u.id,
                     ($2::text IS NULL OR EXISTS (SELECT 1 FROM instance_user_roles r WHERE r.user_id=u.id AND r.role='instance_admin')
                     OR EXISTS (SELECT 1 FROM organization_memberships m WHERE m.principal_type='user' AND m.principal_id=u.id AND m.status='active' AND m.org_id::text=$2))"#,
-            ).bind(hash).bind(organization_id).fetch_optional(&mut *connection).await.map_err(|_| BrowserAuthError::Unavailable)?;
+            ).bind(&hash).bind(organization_id).fetch_optional(&mut *connection).await.map_err(|_| BrowserAuthError::Unavailable)?;
             let (key, user, allowed) = row.ok_or(BrowserAuthError::Unauthorized)?;
-            (format!("board-key:{key}"), user, "board_key", allowed)
+            let fingerprint = decode_sha256_hex(&hash).ok_or(BrowserAuthError::Unauthorized)?;
+            (
+                format!("board-key:{key}"),
+                user,
+                "board_key",
+                allowed,
+                AuthenticatedBrowserCredential::BoardKey {
+                    row_id: key,
+                    fingerprint,
+                },
+            )
         }
     };
     if !allowed {
@@ -233,7 +329,21 @@ pub async fn authenticate(
         user_id,
         session_id,
         source,
+        credential: credential_proof,
     })
+}
+
+fn decode_sha256_hex(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut digest = [0u8; 32];
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        let high = (pair[0] as char).to_digit(16)? as u8;
+        let low = (pair[1] as char).to_digit(16)? as u8;
+        digest[index] = (high << 4) | low;
+    }
+    Some(digest)
 }
 
 #[cfg(test)]

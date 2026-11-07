@@ -3,7 +3,7 @@ use super::{
     context::lock_current_execution,
 };
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
-use rudder_auth_core::VerifiedActor;
+use crate::native_chat::NativeChatExecutionActor;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
 use sqlx::PgPool;
@@ -109,7 +109,7 @@ impl CheckpointReceipt {
 /// provider-effect permit only for freshly committed pre-effect phases.
 pub async fn advance_checkpoint(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     expected_phase: NativeChatProtocolPhase,
     expected_revision: u64,
@@ -129,7 +129,7 @@ pub async fn advance_checkpoint(
 
 pub(super) async fn advance(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     expected_phase: NativeChatProtocolPhase,
     expected_revision: u64,
@@ -400,7 +400,7 @@ pub(super) async fn advance(
 /// This returns no effect permit, even when the stored phase is indeterminate.
 pub async fn current_checkpoint(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<CheckpointSnapshot> {
     let mut tx = pool.begin().await?;

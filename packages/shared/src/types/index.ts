@@ -71,7 +71,7 @@ export type {
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
-  ChatStreamAssistantDeltaEvent,
+  ChatStreamAssistantDeltaEvent, ChatStreamAssistantSnapshotEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, NativeChatTurnAdmissionReceipt, NativeChatTurnAdmissionRequest
 } from "./chat.js";

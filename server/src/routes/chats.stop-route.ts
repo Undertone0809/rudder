@@ -34,6 +34,10 @@ export function registerChatStopRoute(ctx: ChatStreamRouteContext) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration?.executionAuthority === "native_rust") {
+      throw conflict("Native Chat Stop must use the Rust control endpoint");
+    }
 
     const controlActionId = parsed.data.controlActionId ?? randomUUID();
     const startupGate = startingChatGenerationGates.get(conversation.id) ?? null;

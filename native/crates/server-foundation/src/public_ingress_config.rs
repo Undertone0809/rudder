@@ -1,16 +1,48 @@
-//! Explicit listener topology for the next public-ingress authority slice.
-//! This configuration does not enable a cutover by itself.
+//! Explicit listener topology for Rust-owned public ingress. Native Chat send
+//! remains off unless trusted Rust startup adds its runtime configuration.
 
+use rudder_d1_persistence::native_chat::config::LocalHostContext;
+use rudder_native_chat_executor::HostPaths;
 use std::net::SocketAddr;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Clone)]
 pub struct PublicIngressConfig {
     pub listen_addr: SocketAddr,
+    pub(crate) native_chat_mutations: Option<crate::browser_auth::BrowserMutationPolicy>,
     pub(crate) browser_auth: Option<crate::browser_auth::BrowserAuthConfig>,
     pub(crate) node_upstream: String,
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
+    pub(crate) native_chat_runtime: Option<NativeChatPublicRuntime>,
+}
+
+/// Trusted installation context required by the explicitly enabled public
+/// Native Chat send route. It is built by Rust startup code and cannot be
+/// sourced from an HTTP request or environment-provided per-chat override.
+#[derive(Clone)]
+pub struct NativeChatPublicRuntime {
+    pub(crate) host: LocalHostContext,
+    pub(crate) paths: HostPaths,
+    pub(crate) timeout: Duration,
+}
+
+impl NativeChatPublicRuntime {
+    pub fn new(
+        host: LocalHostContext,
+        paths: HostPaths,
+        timeout: Duration,
+    ) -> Result<Self, PublicIngressConfigError> {
+        if timeout.is_zero() || timeout > Duration::from_secs(3600) {
+            return Err(PublicIngressConfigError::InvalidNativeChatRuntime);
+        }
+        Ok(Self {
+            host,
+            paths,
+            timeout,
+        })
+    }
 }
 
 #[derive(Debug, Error)]
@@ -21,6 +53,8 @@ pub enum PublicIngressConfigError {
     OverlappingListener,
     #[error("public ingress authorization key must contain at least 32 bytes and no whitespace")]
     InvalidAuthorizationKey,
+    #[error("Native Chat public runtime timeout must be between 1 and 3600 seconds")]
+    InvalidNativeChatRuntime,
 }
 
 impl PublicIngressConfig {
@@ -102,9 +136,11 @@ impl PublicIngressConfig {
         Ok(Self {
             listen_addr,
             browser_auth: None,
+            native_chat_mutations: None,
             node_upstream: format!("http://{socket}"),
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
+            native_chat_runtime: None,
         })
     }
 
@@ -115,6 +151,25 @@ impl PublicIngressConfig {
         config.validate_listener(self.listen_addr)?;
         self.browser_auth = Some(config);
         Ok(self)
+    }
+
+    /// Explicit Rust Chat integration configuration. The application launcher
+    /// must not enable this until its send worker and UI protocol are ready.
+    /// No request Host or forwarded identity contributes trusted origins.
+    pub fn with_native_chat_mutation_policy(
+        mut self,
+        policy: crate::browser_auth::BrowserMutationPolicy,
+    ) -> Self {
+        self.native_chat_mutations = Some(policy);
+        self
+    }
+
+    /// Explicitly enable ordinary Chat sending with trusted local host
+    /// identity and executable paths. This is intentionally not populated by
+    /// `from_env`; the Rust launcher must construct and pass it directly.
+    pub fn with_native_chat_runtime(mut self, runtime: NativeChatPublicRuntime) -> Self {
+        self.native_chat_runtime = Some(runtime);
+        self
     }
 
     pub fn node_upstream(&self) -> &str {

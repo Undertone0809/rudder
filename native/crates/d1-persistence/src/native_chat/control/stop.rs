@@ -6,7 +6,7 @@ use serde_json::json;
 /// order as admission and finalization. No transport authority is returned.
 pub async fn request_stop(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     request: &StopRequest,
 ) -> Result<StopReceipt> {
     validate_ids(actor, &request.conversation_id, &request.generation_id)?;
@@ -193,6 +193,7 @@ pub async fn request_stop(
                 &request.generation_id,
                 request.expected_attempt_epoch,
                 request.requested_render_seq,
+                &hint.run_id,
             )
             .await?
             {
@@ -217,6 +218,7 @@ pub async fn request_stop(
                 &request.generation_id,
                 request.expected_attempt_epoch,
                 checkpoint.0,
+                &hint.run_id,
             )
             .await?
             .as_deref()

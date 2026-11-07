@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod lines;
+
 pub const PROTOCOL_MAJOR: u16 = 1;
 pub const PROTOCOL_MINOR: u16 = 0;
 pub const PROTOCOL_VERSION: &str = "1.0";

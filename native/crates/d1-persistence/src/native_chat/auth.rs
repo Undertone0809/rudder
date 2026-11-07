@@ -1,5 +1,6 @@
+use super::execution::ExecutionFence;
+use super::{NativeChatActor, NativeChatExecutionActor};
 use super::{Result, http};
-use rudder_auth_core::VerifiedActor;
 use sqlx::{Postgres, Row, Transaction};
 
 pub(super) type Tx<'a> = Transaction<'a, Postgres>;
@@ -14,51 +15,46 @@ pub(super) struct Conversation {
 
 pub(super) async fn authorize_org(
     tx: &mut Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
 ) -> Result<()> {
-    let local_implicit = actor.actor().kind == "user"
-        && actor.actor().id == "local-board"
-        && actor.session_id() == "local-implicit";
-    if local_implicit {
-        return Ok(());
-    }
-    let allowed = match actor.actor().kind.as_str() {
-        "user" => {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (
-                   SELECT 1 FROM organization_memberships
-                   WHERE org_id=$1::uuid AND principal_type='user' AND principal_id=$2 AND status='active'
-                 ) OR EXISTS (
-                   SELECT 1 FROM instance_user_roles WHERE user_id=$2 AND role='instance_admin'
-                 )",
-            )
-            .bind(organization_id)
-            .bind(&actor.actor().id)
-            .fetch_one(&mut **tx)
-            .await?
-        }
-        "agent" => {
-            let agent_id = super::validation::canonical_uuid(&actor.actor().id, "agent actor id")
-                .map_err(|_| http(401, "Agent authentication required"))?;
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (
-                   SELECT 1 FROM agents
-                   WHERE org_id=$1::uuid AND id=$2::uuid AND status NOT IN ('terminated','pending_approval')
-                 )",
-            )
-            .bind(organization_id)
-            .bind(agent_id)
-            .fetch_one(&mut **tx)
-            .await?
-        }
-        _ => return Err(http(401, "Unauthorized")),
-    };
-    if allowed {
-        Ok(())
-    } else {
-        Err(http(403, "Organization access denied"))
-    }
+    crate::runtime_bindings::authorize_native_chat_actor_org_tx(tx, actor, organization_id).await
+}
+
+pub(super) async fn preauthorize_org(
+    tx: &mut Tx<'_>,
+    actor: &impl NativeChatActor,
+    organization_id: &str,
+) -> Result<()> {
+    crate::runtime_bindings::preauthorize_native_chat_actor_org_tx(tx, actor, organization_id).await
+}
+
+pub(super) async fn authorize_execution_org(
+    tx: &mut Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+) -> Result<()> {
+    crate::runtime_bindings::authorize_native_chat_execution_actor_org_tx(
+        tx,
+        actor,
+        fence.identity().organization_id,
+        fence,
+    )
+    .await
+}
+
+pub(super) async fn preauthorize_execution_org(
+    tx: &mut Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+) -> Result<()> {
+    crate::runtime_bindings::preauthorize_native_chat_execution_actor_org_tx(
+        tx,
+        actor,
+        fence.identity().organization_id,
+        fence,
+    )
+    .await
 }
 
 pub(super) async fn lock_conversation(
@@ -88,7 +84,10 @@ pub(super) async fn lock_conversation(
     })
 }
 
-pub(super) fn authorize_agent_actor(actor: &VerifiedActor, selected_agent_id: &str) -> Result<()> {
+pub(super) fn authorize_agent_actor(
+    actor: &impl NativeChatActor,
+    selected_agent_id: &str,
+) -> Result<()> {
     if actor.actor().kind == "agent" && actor.actor().id != selected_agent_id {
         return Err(http(403, "Chat conversation access denied"));
     }

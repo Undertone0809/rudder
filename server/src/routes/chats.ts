@@ -1437,6 +1437,7 @@ export function chatRoutes(
             },
             onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
               await svc.markGenerationControlAttemptCompleted({
+                orgId: conversation.orgId,
                 generationId,
                 attemptEpoch,
                 ownerToken,
@@ -1803,6 +1804,7 @@ export function chatRoutes(
             },
             onAttemptCompleted: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken }) => {
               await svc.markGenerationControlAttemptCompleted({
+                orgId: conversation.orgId,
                 generationId: currentGenerationId,
                 attemptEpoch,
                 ownerToken: attemptOwnerToken,
@@ -3182,6 +3184,10 @@ export function chatRoutes(
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (actor.actorType === "agent") {
+      const latestGeneration = await svc.getLatestGeneration(conversation.id);
+      if (latestGeneration?.executionAuthority === "native_rust") {
+        throw conflict("This chat is controlled by the Rust Native Chat runtime");
+      }
       if (!req.body.body.trim()) {
         res.status(422).json({ error: "Agent-authored chat messages require a nonempty body" });
         return;
@@ -3213,6 +3219,11 @@ export function chatRoutes(
     if (replayedUserMessage) {
       res.status(200).json({ messages: [replayedUserMessage] });
       return;
+    }
+
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration?.executionAuthority === "native_rust") {
+      throw conflict("This chat is controlled by the Rust Native Chat runtime");
     }
 
     const preparedAnnotations = inlineAnnotationsProvided

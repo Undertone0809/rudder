@@ -36,6 +36,157 @@ async fn settled(worker: &Supervisor) {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn tracked_admission_survives_request_disconnect_and_blocks_shutdown_until_handoff() {
+    let worker = supervisor();
+    let reservation = worker.reserve_before_admission().unwrap();
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let receiver = worker
+        .spawn_reserved_admission(reservation, move |reservation| async move {
+            // Keep the reservation alive while admission is in flight.
+            let _reservation = reservation;
+            entered_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+            42_u8
+        })
+        .unwrap();
+
+    entered_rx.await.unwrap();
+    drop(receiver);
+    assert_eq!(worker.0.state.lock().unwrap().reservations, 1);
+    assert_eq!(worker.0.state.lock().unwrap().admission_tasks.len(), 1);
+
+    worker.begin_shutdown();
+    assert!(worker.shutdown(Duration::from_millis(20)).await.is_err());
+    assert_eq!(worker.0.state.lock().unwrap().admission_tasks.len(), 1);
+
+    release_tx.send(()).unwrap();
+    assert!(worker.shutdown(Duration::from_secs(1)).await.is_ok());
+    assert_eq!(worker.0.slots.available_permits(), MAX_ACTIVE);
+}
+
+#[tokio::test]
+async fn tracked_admission_panic_is_not_reported_as_a_clean_shutdown() {
+    let worker = supervisor();
+    let reservation = worker.reserve_before_admission().unwrap();
+    let receiver = worker
+        .spawn_reserved_admission::<(), _, _>(reservation, |_reservation| async move {
+            panic!("synthetic admission-to-dispatch panic");
+        })
+        .unwrap();
+    assert!(receiver.await.is_err());
+
+    assert!(worker.shutdown(Duration::from_secs(1)).await.is_err());
+    let state = worker.0.state.lock().unwrap();
+    assert!(state.admission_failure);
+    assert!(state.admission_tasks.is_empty());
+    assert_eq!(state.reservations, 0);
+}
+
+#[tokio::test]
+async fn tracked_admission_disconnect_before_or_after_commit_hands_off_once() {
+    let worker = supervisor();
+    let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    for (index, disconnect_after_commit) in [(41, false), (42, true)] {
+        let reservation = worker.reserve_before_admission().unwrap();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (committed_tx, mut committed_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let (handed_off_tx, handed_off_rx) = tokio::sync::oneshot::channel();
+        let task_starts = Arc::clone(&starts);
+        let response = worker
+            .spawn_reserved_admission(reservation, move |reservation| async move {
+                entered_tx.send(()).unwrap();
+                if disconnect_after_commit {
+                    committed_tx.send(()).unwrap();
+                    release_rx.await.unwrap();
+                } else {
+                    release_rx.await.unwrap();
+                    committed_tx.send(()).unwrap();
+                }
+                let ticket = reservation
+                    .start_with(key(index), move |_| {
+                        task_starts.fetch_add(1, Ordering::SeqCst);
+                        complete()
+                    })
+                    .unwrap();
+                drop(ticket);
+                handed_off_tx.send(()).unwrap();
+            })
+            .unwrap();
+        entered_rx.await.unwrap();
+        if disconnect_after_commit {
+            (&mut committed_rx).await.unwrap();
+        }
+        // This models the HTTP response future being dropped either before
+        // D1 commit or after commit but before the reserved worker handoff.
+        drop(response);
+        release_tx.send(()).unwrap();
+        if !disconnect_after_commit {
+            (&mut committed_rx).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), handed_off_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        settled(&worker).await;
+
+        assert_eq!(starts.load(Ordering::SeqCst), index - 40);
+        assert!(matches!(
+            worker.start(key(index), |_| panic!("exact retry dispatched twice")),
+            Err(StartError::Busy)
+        ));
+    }
+    assert!(worker.shutdown(Duration::from_secs(1)).await.is_ok());
+}
+
+#[tokio::test]
+async fn admission_reservations_consume_capacity_and_block_clean_shutdown_until_released() {
+    let worker = supervisor();
+    let first = worker.reserve_before_admission().unwrap();
+    let second = worker.reserve_before_admission().unwrap();
+    assert_eq!(worker.0.slots.available_permits(), 0);
+    assert!(matches!(
+        worker.reserve_before_admission(),
+        Err(StartError::Busy)
+    ));
+
+    worker.begin_shutdown();
+    assert!(matches!(
+        worker.reserve_before_admission(),
+        Err(StartError::Closed)
+    ));
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            worker.shutdown(Duration::from_secs(1))
+        )
+        .await
+        .is_err()
+    );
+
+    drop(first);
+    drop(second);
+    assert!(worker.shutdown(Duration::from_secs(1)).await.is_ok());
+    assert_eq!(worker.0.slots.available_permits(), MAX_ACTIVE);
+}
+
+#[tokio::test]
+async fn admission_reservation_transfers_its_slot_to_exactly_one_owned_job() {
+    let worker = supervisor();
+    let reservation = worker.reserve_before_admission().unwrap();
+    let ticket = reservation
+        .start_with(key(1), |_| complete())
+        .expect("turn reservation into one owned job");
+    assert_eq!(ticket.wait().await, Status::FinalizationCommitted);
+    settled(&worker).await;
+    assert_eq!(worker.0.slots.available_permits(), MAX_ACTIVE);
+    assert!(worker.shutdown(Duration::from_secs(1)).await.is_ok());
+}
+
 #[tokio::test]
 async fn duplicate_and_capacity_rejections_return_no_ticket_and_drop_is_observational() {
     let worker = supervisor();
@@ -191,9 +342,8 @@ async fn concurrent_duplicate_starts_have_one_owner_and_shutdown_closes_admissio
         Err(StartError::Closed)
     ));
 }
-#[allow(unused_imports)]
-#[path = "../../native-chat-executor/tests/workflow/fixture.rs"]
-mod fixture;
+#[cfg(unix)]
+use crate::native_chat_test_fixture as fixture;
 
 #[cfg(unix)]
 fn job(host: &fixture::FixtureHost, actor: VerifiedActor, run: &str, attempt: &str) -> Job {
@@ -212,6 +362,49 @@ fn job(host: &fixture::FixtureHost, actor: VerifiedActor, run: &str, attempt: &s
     .unwrap();
     Job::new(actor, context, paths, run, attempt, Duration::from_secs(30)).unwrap()
 }
+
+#[cfg(unix)]
+#[test]
+fn browser_job_derives_organization_from_authenticated_principal() {
+    use rudder_d1_persistence::native_chat::{BrowserCredentialBinding, BrowserPrincipal};
+
+    let host = fixture::FixtureHost::new("complete");
+    let paths = host.paths();
+    let root = paths.isolated_home.parent().unwrap();
+    let context = LocalHostContext::from_rust_host(
+        "native-chat-executor-fixture-host".into(),
+        root.join("instance"),
+        root.join("workspaces"),
+        root.join("previous-documents"),
+        false,
+        root.join("managed-profiles"),
+        root.join("operator-home"),
+        root.join("bin/codex-fixture"),
+    )
+    .unwrap();
+    let session_id = "browser-session-worker-test";
+    let actor = BrowserPrincipal::from_trusted_browser_auth(
+        "native-chat-executor-owner",
+        fixture::ORG,
+        session_id,
+        BrowserCredentialBinding::session(session_id, [7; 32]),
+    )
+    .unwrap();
+
+    let job = Job::new_browser(
+        actor,
+        context,
+        paths,
+        "21000000-0000-4000-8000-000000000391",
+        "22000000-0000-4000-8000-000000000391",
+        Duration::from_secs(30),
+    )
+    .unwrap();
+
+    assert_eq!(job.key.organization_id, fixture::ORG);
+    assert!(matches!(job.actor, RequestActor::Browser(_)));
+}
+
 #[cfg(unix)]
 async fn wait_file(path: &std::path::Path) {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -442,4 +635,154 @@ async fn real_owner_loss_without_cleanup_blocks_clean_runtime_shutdown() {
     assert!(worker.shutdown(Duration::from_millis(20)).await.is_err());
     control.shutdown().await;
     assert!(server.await.unwrap().is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST, disposable PostgreSQL and synthetic provider"]
+async fn worker_resolves_pre_submission_stop_only_after_owned_cleanup() {
+    use rudder_d1_persistence::native_chat::control::{StopOutcome, StopRequest, request_stop};
+
+    let (db, host, actor, run, attempt) =
+        fixture::database_and_admission("live-stop-late-thread").await;
+    let runtime = runtime(&db);
+    let control = runtime.control();
+    let worker = control.native_chat_worker().unwrap();
+    let server = tokio::spawn(runtime.run());
+    let ticket = worker
+        .try_start(job(&host, actor.clone(), &run, &attempt))
+        .unwrap();
+    wait_file(&host.probe_path("thread-start-pending")).await;
+    let (generation_id, control_version): (String, i32) = sqlx::query_as(
+        "SELECT g.id::text,g.control_version FROM chat_generations g
+         JOIN heartbeat_runs r ON r.org_id=g.org_id AND r.chat_generation_id=g.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let stop = StopRequest {
+        conversation_id: fixture::CHAT.into(),
+        generation_id,
+        control_action_id: "72000000-0000-4000-8000-000000000001".into(),
+        expected_attempt_epoch: 1,
+        expected_control_version: control_version,
+        requested_render_seq: 0,
+        requested_body_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            .into(),
+    };
+    assert_eq!(
+        request_stop(&db.pool, &actor, &stop).await.unwrap().outcome,
+        StopOutcome::StopIntentRecorded
+    );
+    std::fs::write(host.probe_path("release-thread-start"), "release").unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(20), ticket.wait())
+            .await
+            .unwrap(),
+        Status::FinalizationCommitted
+    );
+    assert_eq!(run_state(&db.pool, &run).await, ("cancelled".into(), false));
+    assert_eq!(
+        host.events()
+            .iter()
+            .filter(|event| matches!(
+                event["received"]["method"].as_str(),
+                Some("turn/start" | "turn/interrupt")
+            ))
+            .count(),
+        0
+    );
+    let no_turn_projection: (i64, String, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM chat_messages WHERE run_id=r.id AND role='assistant'),
+                a.protocol_phase,a.provider_turn_id
+         FROM heartbeat_runs r
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        no_turn_projection,
+        (0, "execution_terminal_committed".into(), None)
+    );
+    control.shutdown().await;
+    server.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST, disposable PostgreSQL and synthetic provider"]
+async fn worker_binds_cleanup_before_resolving_config_pending_stop() {
+    use rudder_d1_persistence::native_chat::control::{StopOutcome, StopRequest, request_stop};
+
+    let (db, host, actor, run, attempt) =
+        fixture::database_and_admission("live-stop-config-pending").await;
+    let runtime = runtime(&db);
+    let control = runtime.control();
+    let worker = control.native_chat_worker().unwrap();
+    let server = tokio::spawn(runtime.run());
+    let ticket = worker
+        .try_start(job(&host, actor.clone(), &run, &attempt))
+        .unwrap();
+    wait_file(&host.probe_path("config-read-pending")).await;
+
+    let (generation_id, control_version): (String, i32) = sqlx::query_as(
+        "SELECT g.id::text,g.control_version FROM chat_generations g
+         JOIN heartbeat_runs r ON r.org_id=g.org_id AND r.chat_generation_id=g.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let stop = StopRequest {
+        conversation_id: fixture::CHAT.into(),
+        generation_id,
+        control_action_id: "72000000-0000-4000-8000-000000000002".into(),
+        expected_attempt_epoch: 1,
+        expected_control_version: control_version,
+        requested_render_seq: 0,
+        requested_body_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            .into(),
+    };
+    assert_eq!(
+        request_stop(&db.pool, &actor, &stop).await.unwrap().outcome,
+        StopOutcome::StopIntentRecorded
+    );
+    std::fs::write(host.probe_path("release-config-read"), "release").unwrap();
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(20), ticket.wait())
+            .await
+            .unwrap(),
+        Status::FinalizationCommitted
+    );
+    assert_eq!(run_state(&db.pool, &run).await, ("cancelled".into(), false));
+    let action: (String, bool, Option<String>) = sqlx::query_as(
+        "SELECT local_disposition,
+                provider_evidence ? 'stoppingConnectionProof',
+                provider_evidence->'stopResolution'->>'inputDisposition'
+         FROM chat_control_actions WHERE id=$1::uuid",
+    )
+    .bind(&stop.control_action_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        action,
+        ("stopped".into(), true, Some("not_submitted".into()))
+    );
+    assert!(host.events().iter().all(|event| {
+        !matches!(
+            event["received"]["method"].as_str(),
+            Some("thread/start" | "turn/start")
+        )
+    }));
+
+    control.shutdown().await;
+    server.await.unwrap().unwrap();
 }

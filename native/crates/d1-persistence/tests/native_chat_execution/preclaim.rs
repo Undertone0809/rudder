@@ -1,5 +1,6 @@
 use super::*;
 use rudder_d1_persistence::native_chat::control::{FinalizeUnclaimedStop, finalize_unclaimed_stop};
+use rudder_d1_persistence::native_chat::{DispatchUnavailableRequest, record_dispatch_unavailable};
 
 fn finalize_request(request: &StopRequest) -> FinalizeUnclaimedStop {
     FinalizeUnclaimedStop {
@@ -16,6 +17,81 @@ async fn mutate(pool: &PgPool, sql: &str, run: &str) {
         .await
         .unwrap();
     sqlx::query(sql).bind(run).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+}
+
+async fn mark_dispatch_unavailable(
+    pool: &PgPool,
+    actor: &VerifiedActor,
+    run: &str,
+    attempt: &str,
+) -> Result<(), Error> {
+    let generation: String = sqlx::query_scalar(
+        "SELECT chat_generation_id::text FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(run)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    record_dispatch_unavailable(
+        pool,
+        actor,
+        &DispatchUnavailableRequest {
+            conversation_id: CHAT.into(),
+            generation_id: generation,
+            run_id: run.into(),
+            attempt_id: attempt.into(),
+        },
+    )
+    .await
+}
+
+async fn set_holds(pool: &PgPool, generation: &str, run: &str) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_preclaim',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE chat_generations SET native_admission_hold=true WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(generation)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE heartbeat_runs SET native_admission_hold=true WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(run)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
+async fn insert_dispatch_marker_event(pool: &PgPool, generation: &str, run: &str, payload: Value) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_preclaim',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO chat_generation_events(org_id,generation_id,generation_seq,attempt_epoch,
+            event_kind,payload,run_id)
+         SELECT $1::uuid,$2::uuid,COALESCE(max(generation_seq),0)+1,1,
+            'dispatch_unavailable',$3::jsonb,$4::uuid
+         FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(generation)
+    .bind(payload.to_string())
+    .bind(run)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -378,4 +454,505 @@ async fn preclaim_stop_rolls_back_all_terminal_writes_on_audit_failure() {
             .unwrap()
             .idempotent
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dispatch_unavailable_marker_allows_only_proven_atomic_preclaim_stop() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, run, attempt) = prepare(&database, &host).await;
+    mark_dispatch_unavailable(&database.pool, &actor, &run, &attempt)
+        .await
+        .unwrap();
+    let held: (bool, bool) = sqlx::query_as(
+        "SELECT g.native_admission_hold,r.native_admission_hold
+         FROM chat_generations g JOIN heartbeat_runs r ON r.chat_generation_id=g.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(held, (true, true));
+
+    // The hold prevents a claim after the definitive local dispatch failure.
+    assert_conflict(claim(&database.pool, &actor, ORG, &run, &attempt, host.context()).await);
+
+    let request = stop_request(&database.pool, &run).await;
+    request_stop(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    let final_request = finalize_request(&request);
+    let receipt = finalize_unclaimed_stop(&database.pool, &actor, &final_request)
+        .await
+        .unwrap();
+    assert!(!receipt.idempotent);
+    assert_eq!(receipt.input_disposition, "not_submitted");
+
+    let state: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('generation',g.status,'run',r.status,'attempt',a.status,
+          'generationHold',g.native_admission_hold,'runHold',r.native_admission_hold,
+          'phase',a.protocol_phase,'revision',a.checkpoint_json->'revision',
+          'result',r.result_json,'terminalization',c.provider_evidence->'terminalization')
+         FROM chat_generations g JOIN heartbeat_runs r ON r.org_id=g.org_id AND r.chat_generation_id=g.id
+         JOIN heartbeat_run_attempts a ON a.org_id=r.org_id AND a.run_id=r.id
+         JOIN chat_control_actions c ON c.expected_generation_id=g.id
+         WHERE g.id=$1::uuid AND r.id=$2::uuid AND a.id=$3::uuid",
+    )
+    .bind(&request.generation_id)
+    .bind(&run)
+    .bind(&attempt)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state["generation"], "stopped");
+    assert_eq!(state["run"], "cancelled");
+    assert_eq!(state["attempt"], "cancelled");
+    assert_eq!(state["generationHold"], false);
+    assert_eq!(state["runHold"], false);
+    assert_eq!(state["phase"], "execution_terminal_committed");
+    assert_eq!(state["revision"], 1);
+    assert_eq!(
+        state["result"]["nativeChatPreclaimStop"]["inputDisposition"],
+        "not_submitted"
+    );
+    let marker: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('generationCount',(SELECT count(*) FROM chat_generation_events
+            WHERE generation_id=$1::uuid AND event_kind='dispatch_unavailable'),
+          'runCount',(SELECT count(*) FROM heartbeat_run_events
+            WHERE run_id=$2::uuid AND event_type='runtime.native_chat_dispatch_unavailable'),
+          'activityCount',(SELECT count(*) FROM activity_log WHERE action='chat.native_dispatch_unavailable'
+            AND details->>'generationId'=$1 AND details->>'runId'=$2),
+          'activityDetails',(SELECT details FROM activity_log WHERE action='chat.native_dispatch_unavailable'
+            AND details->>'generationId'=$1 AND details->>'runId'=$2),
+          'proof',c.provider_evidence->'terminalization'->'dispatchUnavailable')
+         FROM chat_control_actions c WHERE c.id=$3::uuid",
+    )
+    .bind(&request.generation_id)
+    .bind(&run)
+    .bind(&request.control_action_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(marker["generationCount"], 1);
+    assert_eq!(marker["runCount"], 1);
+    assert_eq!(marker["activityCount"], 1);
+    assert_eq!(marker["activityDetails"]["producer"], "native_rust");
+    assert!(
+        marker["activityDetails"]
+            .get("executionAuthority")
+            .is_none()
+    );
+    assert!(marker["proof"]["generationEventSeq"].as_i64().is_some());
+    assert!(marker["proof"]["generationEventId"].as_str().is_some());
+    assert!(marker["proof"]["runEventId"].as_i64().is_some());
+    assert!(marker["proof"]["runEventSeq"].as_i64().is_some());
+    assert!(marker["proof"]["activityLogId"].as_str().is_some());
+
+    let retry = finalize_unclaimed_stop(&database.pool, &actor, &final_request)
+        .await
+        .unwrap();
+    assert!(retry.idempotent);
+    assert_eq!(retry.run_id, run);
+    let next_run = send(&database, &actor, &host, "after-dispatch-unavailable-stop").await["runId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(next_run, run);
+
+    // A second failed Turn in the same conversation has its own marker set.
+    // Retrying the first Stop must remain bound to its own Generation/Run, and
+    // the second Stop must not count the first Turn's activity row.
+    let next_attempt: String = sqlx::query_scalar(
+        "SELECT id::text FROM heartbeat_run_attempts WHERE org_id=$1::uuid AND run_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&next_run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    mark_dispatch_unavailable(&database.pool, &actor, &next_run, &next_attempt)
+        .await
+        .unwrap();
+    let mut next_stop = stop_request(&database.pool, &next_run).await;
+    next_stop.control_action_id = "71000000-0000-4000-8000-000000000004".into();
+    request_stop(&database.pool, &actor, &next_stop)
+        .await
+        .unwrap();
+    let next_final_request = finalize_request(&next_stop);
+    let next_receipt = finalize_unclaimed_stop(&database.pool, &actor, &next_final_request)
+        .await
+        .unwrap();
+    assert!(!next_receipt.idempotent);
+    assert!(
+        finalize_unclaimed_stop(&database.pool, &actor, &final_request)
+            .await
+            .unwrap()
+            .idempotent
+    );
+    assert!(
+        finalize_unclaimed_stop(&database.pool, &actor, &next_final_request)
+            .await
+            .unwrap()
+            .idempotent
+    );
+
+    let state_before_tamper: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+          'generation',to_jsonb(g),'action',to_jsonb(c))
+         FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+         JOIN chat_generations g ON g.id=r.chat_generation_id
+         JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    insert_dispatch_marker_event(
+        &database.pool,
+        &request.generation_id,
+        &run,
+        json!({"code":"tampered_after_terminalization"}),
+    )
+    .await;
+    assert_conflict(finalize_unclaimed_stop(&database.pool, &actor, &final_request).await);
+    let state_after_tamper: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+          'generation',to_jsonb(g),'action',to_jsonb(c))
+         FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+         JOIN chat_generations g ON g.id=r.chat_generation_id
+         JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state_before_tamper, state_after_tamper);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dispatch_unavailable_stop_rejects_bare_holds_partial_and_mismatched_markers() {
+    for kind in ["bare-holds", "partial-malformed", "duplicate-marker"] {
+        let database = Database::start().await;
+        let host = ExecutionHost::new();
+        let (actor, run, attempt) = prepare(&database, &host).await;
+        let request = stop_request(&database.pool, &run).await;
+        match kind {
+            "bare-holds" => {
+                set_holds(&database.pool, &request.generation_id, &run).await;
+            }
+            "partial-malformed" => {
+                set_holds(&database.pool, &request.generation_id, &run).await;
+                insert_dispatch_marker_event(
+                    &database.pool,
+                    &request.generation_id,
+                    &run,
+                    json!({"code":"different_failure"}),
+                )
+                .await;
+            }
+            "duplicate-marker" => {
+                mark_dispatch_unavailable(&database.pool, &actor, &run, &attempt)
+                    .await
+                    .unwrap();
+                insert_dispatch_marker_event(
+                    &database.pool,
+                    &request.generation_id,
+                    &run,
+                    json!({"code":"different_failure"}),
+                )
+                .await;
+            }
+            _ => unreachable!(),
+        }
+        request_stop(&database.pool, &actor, &request)
+            .await
+            .unwrap();
+        let before: Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+              'generation',to_jsonb(g),'action',to_jsonb(c))
+             FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+             JOIN chat_generations g ON g.id=r.chat_generation_id
+             JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+        )
+        .bind(&run)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        let before_counts = counts(&database.pool, &request.generation_id).await;
+        assert_conflict(
+            finalize_unclaimed_stop(&database.pool, &actor, &finalize_request(&request)).await,
+        );
+        let after: Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+              'generation',to_jsonb(g),'action',to_jsonb(c))
+             FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+             JOIN chat_generations g ON g.id=r.chat_generation_id
+             JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+        )
+        .bind(&run)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            before, after,
+            "failed dispatch recovery wrote rows for {kind}"
+        );
+        assert_eq!(
+            before_counts,
+            counts(&database.pool, &request.generation_id).await
+        );
+        let holds: (bool, bool) = sqlx::query_as(
+            "SELECT g.native_admission_hold,r.native_admission_hold
+             FROM chat_generations g JOIN heartbeat_runs r ON r.chat_generation_id=g.id
+             WHERE r.id=$1::uuid",
+        )
+        .bind(&run)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            holds,
+            (true, true),
+            "failed branch released holds for {kind}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dispatch_unavailable_stop_rolls_back_hold_release_when_audit_fails() {
+    let database = Database::start().await;
+    let host = ExecutionHost::new();
+    let (actor, run, attempt) = prepare(&database, &host).await;
+    mark_dispatch_unavailable(&database.pool, &actor, &run, &attempt)
+        .await
+        .unwrap();
+    let request = stop_request(&database.pool, &run).await;
+    request_stop(&database.pool, &actor, &request)
+        .await
+        .unwrap();
+    let before: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+          'generation',to_jsonb(g),'action',to_jsonb(c))
+         FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+         JOIN chat_generations g ON g.id=r.chat_generation_id
+         JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_dispatch_preclaim_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.action='runtime.native_chat.stopped_before_claim' THEN RAISE EXCEPTION 'injected audit failure'; END IF;
+          RETURN NEW; END $$;
+          CREATE TRIGGER test_dispatch_preclaim_audit_failure BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION test_dispatch_preclaim_audit_failure();",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    assert!(
+        finalize_unclaimed_stop(&database.pool, &actor, &finalize_request(&request))
+            .await
+            .is_err()
+    );
+    let after: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('run',to_jsonb(r),'attempt',to_jsonb(a),
+          'generation',to_jsonb(g),'action',to_jsonb(c))
+         FROM heartbeat_runs r JOIN heartbeat_run_attempts a ON a.run_id=r.id
+         JOIN chat_generations g ON g.id=r.chat_generation_id
+         JOIN chat_control_actions c ON c.expected_generation_id=g.id WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    sqlx::query("DROP TRIGGER test_dispatch_preclaim_audit_failure ON activity_log")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    let receipt = finalize_unclaimed_stop(&database.pool, &actor, &finalize_request(&request))
+        .await
+        .unwrap();
+    assert!(!receipt.idempotent);
+    let holds: (bool, bool) = sqlx::query_as(
+        "SELECT g.native_admission_hold,r.native_admission_hold
+         FROM chat_generations g JOIN heartbeat_runs r ON r.chat_generation_id=g.id
+         WHERE r.id=$1::uuid",
+    )
+    .bind(&run)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(holds, (false, false));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dispatch_unavailable_marker_and_claim_serialize_in_both_lock_orders() {
+    for marker_first in [true, false] {
+        let database = Database::start().await;
+        let host = ExecutionHost::new();
+        let (actor, run, attempt) = prepare(&database, &host).await;
+        let mut lock = database.pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM chat_conversations WHERE id=$1::uuid FOR UPDATE")
+            .bind(CHAT)
+            .fetch_one(&mut *lock)
+            .await
+            .unwrap();
+        let (marker_task, claim_task) = if marker_first {
+            let pool = database.pool.clone();
+            let marker_actor = actor.clone();
+            let marker_run = run.clone();
+            let marker_attempt = attempt.clone();
+            let marker = tokio::spawn(async move {
+                mark_dispatch_unavailable(&pool, &marker_actor, &marker_run, &marker_attempt).await
+            });
+            wait_for_lock_wait(&database.pool, "chat_conversations").await;
+            let pool = database.pool.clone();
+            let claim_actor = actor.clone();
+            let claim_run = run.clone();
+            let claim_attempt = attempt.clone();
+            let claim_host = host;
+            let claim_task = tokio::spawn(async move {
+                claim(
+                    &pool,
+                    &claim_actor,
+                    ORG,
+                    &claim_run,
+                    &claim_attempt,
+                    claim_host.context(),
+                )
+                .await
+            });
+            (marker, claim_task)
+        } else {
+            let pool = database.pool.clone();
+            let claim_actor = actor.clone();
+            let claim_run = run.clone();
+            let claim_attempt = attempt.clone();
+            let claim_host = host;
+            let claim_task = tokio::spawn(async move {
+                claim(
+                    &pool,
+                    &claim_actor,
+                    ORG,
+                    &claim_run,
+                    &claim_attempt,
+                    claim_host.context(),
+                )
+                .await
+            });
+            wait_for_lock_wait(&database.pool, "chat_conversations").await;
+            let pool = database.pool.clone();
+            let marker_actor = actor.clone();
+            let marker_run = run.clone();
+            let marker_attempt = attempt.clone();
+            let marker = tokio::spawn(async move {
+                mark_dispatch_unavailable(&pool, &marker_actor, &marker_run, &marker_attempt).await
+            });
+            (marker, claim_task)
+        };
+        lock.commit().await.unwrap();
+        let marker_result = marker_task.await.unwrap();
+        let claim_result = claim_task.await.unwrap();
+        if marker_first {
+            marker_result.unwrap();
+            assert_conflict(claim_result);
+            let holds: (bool, bool) = sqlx::query_as(
+                "SELECT g.native_admission_hold,r.native_admission_hold
+                 FROM chat_generations g JOIN heartbeat_runs r ON r.chat_generation_id=g.id
+                 WHERE r.id=$1::uuid",
+            )
+            .bind(&run)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+            assert_eq!(holds, (true, true));
+        } else {
+            assert_conflict(marker_result);
+            assert!(claim_result.is_ok());
+            let markers: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM chat_generation_events
+                 WHERE generation_id=(SELECT chat_generation_id FROM heartbeat_runs WHERE id=$1::uuid)
+                   AND event_kind='dispatch_unavailable'",
+            )
+            .bind(&run)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+            assert_eq!(markers, 0);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dispatch_unavailable_marker_serializes_with_stop() {
+    for marker_first in [true, false] {
+        let database = Database::start().await;
+        let (actor, run, attempt) = prepare(&database, &ExecutionHost::new()).await;
+        let request = stop_request(&database.pool, &run).await;
+        let mut lock = database.pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM chat_conversations WHERE id=$1::uuid FOR UPDATE")
+            .bind(CHAT)
+            .fetch_one(&mut *lock)
+            .await
+            .unwrap();
+        let (marker_task, stop_task) = if marker_first {
+            let pool = database.pool.clone();
+            let actor_for_marker = actor.clone();
+            let run_for_marker = run.clone();
+            let attempt_for_marker = attempt.clone();
+            let marker = tokio::spawn(async move {
+                mark_dispatch_unavailable(
+                    &pool,
+                    &actor_for_marker,
+                    &run_for_marker,
+                    &attempt_for_marker,
+                )
+                .await
+            });
+            wait_for_lock_wait(&database.pool, "chat_conversations").await;
+            let pool = database.pool.clone();
+            let actor_for_stop = actor.clone();
+            let request_for_stop = request.clone();
+            let stop = tokio::spawn(async move {
+                request_stop(&pool, &actor_for_stop, &request_for_stop).await
+            });
+            (marker, stop)
+        } else {
+            let pool = database.pool.clone();
+            let actor_for_stop = actor.clone();
+            let request_for_stop = request.clone();
+            let stop = tokio::spawn(async move {
+                request_stop(&pool, &actor_for_stop, &request_for_stop).await
+            });
+            wait_for_lock_wait(&database.pool, "chat_conversations").await;
+            let pool = database.pool.clone();
+            let actor_for_marker = actor.clone();
+            let run_for_marker = run.clone();
+            let attempt_for_marker = attempt.clone();
+            let marker = tokio::spawn(async move {
+                mark_dispatch_unavailable(
+                    &pool,
+                    &actor_for_marker,
+                    &run_for_marker,
+                    &attempt_for_marker,
+                )
+                .await
+            });
+            (marker, stop)
+        };
+        lock.commit().await.unwrap();
+        let marker_result = marker_task.await.unwrap();
+        stop_task.await.unwrap().unwrap();
+        if marker_first {
+            marker_result.unwrap();
+        } else {
+            assert_conflict(marker_result);
+        }
+        finalize_unclaimed_stop(&database.pool, &actor, &finalize_request(&request))
+            .await
+            .unwrap();
+    }
 }

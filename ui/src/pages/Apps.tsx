@@ -758,6 +758,7 @@ export function Apps() {
           if (!streamConversation) return;
           if (
             event.type === "assistant_delta"
+            || event.type === "assistant_snapshot"
             || event.type === "assistant_state"
             || event.type === "transcript_entry"
           ) {

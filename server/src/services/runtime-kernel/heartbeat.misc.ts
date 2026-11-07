@@ -29,6 +29,12 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 export function createHeartbeatMiscHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
 
+  function assertLegacyRunAuthority(run: any) {
+    if (run?.executionAuthority === "native_rust") {
+      throw conflict("Native Chat runs are controlled by the Rust runtime");
+    }
+  }
+
   async function resumeDeferredWakeupsForAgent(agentId: string) {
     const agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
@@ -118,6 +124,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .where(
         and(
           eq(heartbeatRuns.orgId, orgId),
+          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
           inArray(heartbeatRuns.status, ["queued", "running"]),
           sql`${effectiveProjectId} = ${projectId}`,
         ),
@@ -205,6 +212,7 @@ export function createHeartbeatMiscHandlers(context: any) {
   ) {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
+    assertLegacyRunAuthority(run);
     if (run.status !== "running" && run.status !== "queued") return run;
 
     const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
@@ -286,6 +294,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .select({ id: heartbeatRuns.id })
       .from(heartbeatRuns)
       .where(and(
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
         inArray(heartbeatRuns.status, ["queued", "running"]),
         or(
           sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
@@ -314,7 +323,11 @@ export function createHeartbeatMiscHandlers(context: any) {
     const runs = await db
       .select()
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])));
+      .where(and(
+        eq(heartbeatRuns.agentId, agentId),
+        eq(heartbeatRuns.executionAuthority, "legacy_ts"),
+        inArray(heartbeatRuns.status, ["queued", "running"]),
+      ));
 
     for (const run of runs) {
       const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
@@ -357,6 +370,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .where(
         and(
           eq(heartbeatRuns.orgId, scope.orgId),
+          eq(heartbeatRuns.executionAuthority, "legacy_ts"),
           inArray(heartbeatRuns.status, ["queued", "running"]),
         ),
       )
@@ -379,6 +393,7 @@ export function createHeartbeatMiscHandlers(context: any) {
   ) {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
+    assertLegacyRunAuthority(run);
     if (run.status !== "failed" && run.status !== "timed_out" && run.status !== "cancelled") {
       throw conflict("Only failed, timed out, or cancelled runs can be retried", {
         status: run.status,

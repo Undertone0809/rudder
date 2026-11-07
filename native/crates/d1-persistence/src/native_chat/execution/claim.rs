@@ -4,8 +4,9 @@ use crate::native_chat::config::{LocalHostContext, ResolvedCodexConfig, resolve_
 use crate::native_chat::locks::{
     lock_primary_issue_path_before_conversation, verify_selected_agent_hint,
 };
+use crate::native_chat::{NativeChatActor, NativeChatExecutionPrincipal};
 use crate::runtime_bindings;
-use rudder_auth_core::VerifiedActor;
+use rudder_codex_app_server::ConnectionLaunchPermit;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::json;
 use sqlx::{PgPool, Row};
@@ -17,6 +18,36 @@ use sqlx::{PgPool, Row};
 pub struct ClaimedExecution {
     pub fence: ExecutionFence,
     pub config: ResolvedCodexConfig,
+    execution_principal: NativeChatExecutionPrincipal,
+    /// One-use capability consumed by the executor when it launches the
+    /// transport. It is intentionally neither cloneable nor serializable.
+    connection_launch_permit: ConnectionLaunchPermit,
+}
+
+impl ClaimedExecution {
+    /// Consume the claim result and its one-use process launch authority.
+    pub fn into_parts(self) -> (ExecutionFence, ResolvedCodexConfig, ConnectionLaunchPermit) {
+        (self.fence, self.config, self.connection_launch_permit)
+    }
+
+    /// Consume the claim and return the move-only D1 execution identity. This
+    /// capability is intended for a worker only; it cannot authorize a new
+    /// admission or request-facing binding operation.
+    pub fn into_execution_parts(
+        self,
+    ) -> (
+        NativeChatExecutionPrincipal,
+        ExecutionFence,
+        ResolvedCodexConfig,
+        ConnectionLaunchPermit,
+    ) {
+        (
+            self.execution_principal,
+            self.fence,
+            self.config,
+            self.connection_launch_permit,
+        )
+    }
 }
 
 /// Claim the single admitted Native Chat execution for its first local owner.
@@ -24,7 +55,7 @@ pub struct ClaimedExecution {
 /// no expired or previously claimed owner can be adopted by this operation.
 pub async fn claim(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
     run_id: &str,
     attempt_id: &str,
@@ -47,7 +78,7 @@ pub async fn claim(
 #[allow(clippy::too_many_arguments)]
 pub async fn claim_with_preflight(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
     run_id: &str,
     attempt_id: &str,
@@ -61,9 +92,10 @@ pub async fn claim_with_preflight(
     if actor.organization_id() != organization_id {
         return Err(http(403, "Organization access denied"));
     }
+    let connection_claim_id = new_connection_claim_id()?;
 
     let mut tx = pool.begin().await?;
-    super::super::auth::authorize_org(&mut tx, actor, &organization_id).await?;
+    super::super::auth::preauthorize_org(&mut tx, actor, &organization_id).await?;
     super::super::budget::lock_policy_state(&mut tx, &organization_id).await?;
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
@@ -84,13 +116,10 @@ pub async fn claim_with_preflight(
     let generation_id =
         generation_id.ok_or_else(|| http(409, "Run is not attached to Native Chat"))?;
 
-    runtime_bindings::lock_native_chat_target_tx(&mut tx, &organization_id, &conversation_id)
-        .await?;
-
     // Authorize without taking a row lock first. The issue/project hint reads
     // below happen only after organization and target authorization; lock
     // acquisition itself follows the FK delete order before locking Chat.
-    runtime_bindings::authorize_chat_target_read_tx(
+    runtime_bindings::preauthorize_chat_target_read_tx(
         &mut tx,
         actor,
         &organization_id,
@@ -98,6 +127,9 @@ pub async fn claim_with_preflight(
         &agent_id,
     )
     .await?;
+
+    runtime_bindings::lock_native_chat_target_tx(&mut tx, &organization_id, &conversation_id)
+        .await?;
 
     verify_selected_agent_hint(&mut tx, &organization_id, &conversation_id, &agent_id).await?;
 
@@ -644,24 +676,54 @@ pub async fn claim_with_preflight(
         ));
     }
 
+    let fence = ExecutionFence {
+        organization_id: organization_id.clone(),
+        conversation_id: conversation_id.clone(),
+        generation_id: generation_id.clone(),
+        run_id: run_id.clone(),
+        attempt_id: attempt_id.clone(),
+        agent_id: agent_id.clone(),
+        binding_id: binding.binding_id,
+        segment_id: binding.segment_id,
+        selected_model: config.model.clone(),
+        generation_attempt_epoch: generation_epoch,
+        run_attempt_epoch,
+        connection_epoch,
+        connection_claim_id: connection_claim_id.clone(),
+        generation_owner_token: generation_owner_token.clone(),
+        run_owner_token: run_owner.clone(),
+    };
+    let execution_principal = NativeChatExecutionPrincipal::from_claim(actor, fence.clone())
+        .ok_or_else(|| http(403, "Native Chat execution actor is invalid"))?;
+    // Revalidate the original request identity after every wait and write.
+    // Browser expiry is time-based and can pass while the locked audit insert
+    // or later claim work is blocked; the final clock check must precede commit.
+    runtime_bindings::authorize_native_chat_actor_org_tx(&mut tx, actor, &organization_id).await?;
     tx.commit().await?;
+    let connection_launch_permit = ConnectionLaunchPermit::from_claim(
+        run_id.clone(),
+        attempt_id.clone(),
+        run_owner.clone(),
+        connection_epoch,
+        connection_claim_id.clone(),
+    );
     Ok(ClaimedExecution {
-        fence: ExecutionFence {
-            organization_id,
-            conversation_id,
-            generation_id,
-            run_id,
-            attempt_id,
-            agent_id,
-            binding_id: binding.binding_id,
-            segment_id: binding.segment_id,
-            selected_model: config.model.clone(),
-            generation_attempt_epoch: generation_epoch,
-            run_attempt_epoch,
-            connection_epoch,
-            generation_owner_token,
-            run_owner_token: run_owner,
-        },
+        fence,
         config,
+        execution_principal,
+        connection_launch_permit,
     })
+}
+
+fn new_connection_claim_id() -> Result<String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|_| http(500, "Native Chat connection claim could not be created"))?;
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut value, "{byte:02x}")
+            .map_err(|_| http(500, "Native Chat connection claim could not be created"))?;
+    }
+    Ok(value)
 }

@@ -4,6 +4,11 @@ use rudder_d1_persistence::native_chat::control::{
 };
 use sha2::{Digest, Sha256};
 
+#[path = "client_checkpoint.rs"]
+mod client_checkpoint;
+#[path = "output_projection.rs"]
+mod output_projection;
+
 #[path = "preclaim.rs"]
 mod preclaim;
 
@@ -11,7 +16,7 @@ fn hash(body: &str) -> String {
     format!("{:x}", Sha256::digest(body.as_bytes()))
 }
 
-async fn stop_request(pool: &PgPool, run: &str) -> StopRequest {
+pub(super) async fn stop_request(pool: &PgPool, run: &str) -> StopRequest {
     let generation: String =
         sqlx::query_scalar("SELECT chat_generation_id::text FROM heartbeat_runs WHERE id=$1::uuid")
             .bind(run)
@@ -29,7 +34,7 @@ async fn stop_request(pool: &PgPool, run: &str) -> StopRequest {
     }
 }
 
-async fn counts(pool: &PgPool, generation: &str) -> (i64, i64) {
+pub(super) async fn counts(pool: &PgPool, generation: &str) -> (i64, i64) {
     sqlx::query_as(
         "SELECT (SELECT count(*) FROM chat_control_actions WHERE expected_generation_id=$1::uuid),
       (SELECT count(*) FROM chat_generation_events WHERE generation_id=$1::uuid)",
@@ -40,7 +45,7 @@ async fn counts(pool: &PgPool, generation: &str) -> (i64, i64) {
     .unwrap()
 }
 
-async fn seed_text(pool: &PgPool, request: &StopRequest, run: &str) -> String {
+pub(super) async fn seed_text(pool: &PgPool, request: &StopRequest, run: &str) -> String {
     let mut tx = pool.begin().await.unwrap();
     sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_control',true)")
         .execute(&mut *tx)
@@ -294,7 +299,7 @@ async fn event_reader_enforces_count_and_byte_bounds_without_skipping_oversized_
         SELECT $1::uuid,$2::uuid,s,1,'assistant_delta',jsonb_build_object('delta',repeat('x',600),'bodyHash',$3::text) FROM generate_series(2,152) s")
         .bind(ORG).bind(&request.generation_id).bind(hash(&"x".repeat(600))).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO chat_generation_events(org_id,generation_id,generation_seq,attempt_epoch,event_kind,payload)
-        VALUES($1::uuid,$2::uuid,153,1,'assistant_delta',jsonb_build_object('delta',repeat('x',70000)))")
+        VALUES($1::uuid,$2::uuid,153,1,'assistant_delta',jsonb_build_object('delta',repeat('x',530000)))")
         .bind(ORG).bind(&request.generation_id).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     let mut read = ReadEvents {
@@ -459,4 +464,47 @@ async fn stopping_owner_path_rejects_tampered_action_and_cannot_revive_expired_l
             .await
             .unwrap();
     assert!(held);
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL binaries; disposable database only"]
+async fn event_reader_bounds_raw_private_payloads_before_public_projection() {
+    let database = Database::start().await;
+    let (actor, run, _, _) = seed_execution(&database).await;
+    let request = stop_request(&database.pool, &run).await;
+    let mut tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('rudder.native_chat_write','native_chat:test_control',true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO chat_generation_events(org_id,generation_id,generation_seq,attempt_epoch,event_kind,payload)
+        SELECT $1::uuid,$2::uuid,s,1,'generation_started',jsonb_build_object('private',repeat('x',300000)) FROM generate_series(2,7) s")
+        .bind(ORG).bind(&request.generation_id).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut read = ReadEvents {
+        conversation_id: CHAT.into(),
+        generation_id: request.generation_id,
+        after_seq: 1,
+        limit: 100,
+        max_bytes: 1024 * 1024,
+    };
+    let first = read_events(&database.pool, &actor, &read).await.unwrap();
+    assert_eq!(
+        first.events.len(),
+        4,
+        "raw budget must bound even redacted fields"
+    );
+    assert_eq!(first.next_seq, 5);
+    assert!(first.has_more);
+    assert!(
+        first
+            .events
+            .iter()
+            .all(|event| event.payload == serde_json::json!({}))
+    );
+    read.after_seq = first.next_seq;
+    let rest = read_events(&database.pool, &actor, &read).await.unwrap();
+    assert_eq!(rest.events.len(), 2);
+    assert_eq!(rest.next_seq, 7);
+    assert!(!rest.has_more);
 }

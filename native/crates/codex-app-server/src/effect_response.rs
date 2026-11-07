@@ -19,6 +19,17 @@ impl EffectResponseReceipt {
     pub fn matches_execution(&self, run: &str, attempt: &str, owner: &str) -> bool {
         self.identity.matches(run, attempt, owner)
     }
+    pub fn matches_connection_claim(
+        &self,
+        run: &str,
+        attempt: &str,
+        owner: &str,
+        connection_epoch: i32,
+        claim_id: &str,
+    ) -> bool {
+        self.identity
+            .matches_connection_claim(run, attempt, owner, connection_epoch, claim_id)
+    }
     pub fn correlation(&self) -> String {
         format!(
             "{}:{:?}",
@@ -168,7 +179,7 @@ mod tests {
             assert_eq!(proof.ready(), write_first);
             proof.written(Some(&id));
             assert!(proof.ready());
-            let proof = proof.finish(ReceiptIdentity::new(
+            let proof = proof.finish(ReceiptIdentity::unbound(
                 "run".into(),
                 "attempt".into(),
                 "owner".into(),

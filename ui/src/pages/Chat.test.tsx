@@ -128,6 +128,73 @@ describe("chat stream stop cutoff", () => {
     })).toBe(replacement);
   });
 
+  it("replaces streamed text with a newer snapshot and fences duplicate, stale, and wrong-scope events", () => {
+    const current = draft({
+      generationId: "generation-snapshot",
+      attemptEpoch: 4,
+      lastCommittedRenderSeq: 5,
+      body: "old partial",
+    });
+    const afterDelta = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "assistant_delta",
+      delta: " plus delta",
+      generationId: "generation-snapshot",
+      attemptEpoch: 4,
+      generationSeq: 6,
+      bodyHash: "1".repeat(64),
+    });
+    const snapshot = {
+      type: "assistant_snapshot" as const,
+      body: "authoritative persisted body",
+      generationId: "generation-snapshot",
+      attemptEpoch: 4,
+      generationSeq: 7,
+      bodyHash: "2".repeat(64),
+    };
+    const afterSnapshot = applyChatStreamProgressEvent(afterDelta, "stream-1", snapshot);
+    const afterTail = applyChatStreamProgressEvent(afterSnapshot, "stream-1", {
+      type: "assistant_delta",
+      delta: " then new delta",
+      generationId: "generation-snapshot",
+      attemptEpoch: 4,
+      generationSeq: 8,
+      bodyHash: "3".repeat(64),
+    });
+
+    expect(afterDelta?.body).toBe("old partial plus delta");
+    expect(afterSnapshot).toMatchObject({
+      body: "authoritative persisted body",
+      generationId: "generation-snapshot",
+      attemptEpoch: 4,
+      lastCommittedRenderSeq: 7,
+      renderedBodyHash: snapshot.bodyHash,
+    });
+    expect(afterTail?.body).toBe("authoritative persisted body then new delta");
+    expect(applyChatStreamProgressEvent(afterTail, "stream-1", snapshot)).toBe(afterTail);
+    expect(applyChatStreamProgressEvent(afterTail, "stream-1", {
+      ...snapshot,
+      attemptEpoch: 3,
+      generationSeq: 9,
+      body: "old attempt body",
+    })).toBe(afterTail);
+    expect(applyChatStreamProgressEvent(afterTail, "stream-1", {
+      ...snapshot,
+      generationId: "other-generation",
+      generationSeq: 9,
+      body: "other generation body",
+    })).toBe(afterTail);
+    expect(applyChatStreamProgressEvent(afterTail, "stream-2", {
+      ...snapshot,
+      generationSeq: 9,
+      body: "other stream body",
+    })).toBe(afterTail);
+    expect(applyChatStreamProgressEvent(afterTail, "stream-1", {
+      ...snapshot,
+      generationSeq: 9,
+      bodyHash: "not-a-sha256",
+    })).toBe(afterTail);
+  });
+
   it("does not mutate the current transcript while coalescing streamed entries", () => {
     const current = draft({
       transcript: [{

@@ -1,28 +1,16 @@
 //! One owned App Server connection. Durable permission to dispatch belongs to
 //! the Rust supervisor; a write receipt is not provider acceptance.
 
-use crate::receipts::{ReceiptIdentity, TurnReceiptTracker};
+use crate::receipts::{ConnectionLaunchPermit, TurnReceiptTracker};
 use crate::{
     FrameDecoder, MAX_CHUNK_BYTES, Message, ProtocolError, RequestId, RpcSession, SessionError,
     SessionObservation, encode_notification,
 };
+use rudder_native_process_transport::{HostConnection, HostError, HostEvent, OwnedHost};
 use rudder_native_protocol::{Command, ProtocolVersion};
-use rudder_process_host::{HostInput, LifecycleEvent, LifecycleSink, run_host};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, Write};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-
-mod external;
-
-const EVENT_CAPACITY: usize = 128;
-const COMMAND_CAPACITY: usize = 16;
 
 /// Trusted Rust configuration, not a wire DTO. Deliberately not Debug or
 /// serializable: environment values can contain provider credentials.
@@ -70,59 +58,6 @@ pub enum TransportEvent {
     FrameWritten { request_id: Option<RequestId> },
 }
 
-enum InputEvent {
-    Lifecycle(Value),
-    Stdout(Vec<u8>),
-    Failure,
-}
-
-struct EventQueue {
-    sender: mpsc::SyncSender<InputEvent>,
-    open: AtomicBool,
-    overflow: AtomicBool,
-}
-
-impl EventQueue {
-    fn emit(&self, event: InputEvent) -> io::Result<()> {
-        if !self.open.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Codex consumer closed",
-            ));
-        }
-        self.sender.try_send(event).map_err(|error| {
-            if matches!(error, mpsc::TrySendError::Full(_)) {
-                self.overflow.store(true, Ordering::Release);
-            }
-            self.open.store(false, Ordering::Release);
-            io::Error::new(io::ErrorKind::BrokenPipe, "Codex output queue unavailable")
-        })
-    }
-}
-
-struct HostEvents(Arc<EventQueue>);
-impl LifecycleSink for HostEvents {
-    fn emit(&self, event: LifecycleEvent) -> io::Result<()> {
-        self.0.emit(InputEvent::Lifecycle(event.into_value()))
-    }
-    fn is_closed(&self) -> bool {
-        !self.0.open.load(Ordering::Acquire)
-    }
-}
-
-struct Stdout(Arc<EventQueue>);
-impl Write for Stdout {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        for chunk in bytes.chunks(MAX_CHUNK_BYTES) {
-            self.0.emit(InputEvent::Stdout(chunk.to_vec()))?;
-        }
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 struct InFlight {
     bytes: String,
     offset: usize,
@@ -135,10 +70,7 @@ struct InFlight {
 /// never run its receive loop on an HTTP executor. Each instance is one process
 /// and connection epoch. All buffers and host commands are bounded.
 pub struct OwnedTransport {
-    commands: Option<mpsc::SyncSender<HostInput>>,
-    events: mpsc::Receiver<InputEvent>,
-    queue: Arc<EventQueue>,
-    host: Option<JoinHandle<i32>>,
+    host: OwnedHost,
     decoder: FrameDecoder,
     session: RpcSession,
     messages: VecDeque<Message>,
@@ -156,7 +88,7 @@ pub struct OwnedTransport {
 
 impl OwnedTransport {
     pub fn launch(launch: ProcessLaunch) -> Result<Self, TransportError> {
-        Self::launch_with_host(launch, None)
+        Self::launch_with_host(launch, None, None)
     }
 
     /// Launch the installed Rust host as a separate ownership process. Losing
@@ -176,12 +108,34 @@ impl OwnedTransport {
         if !host.is_file() {
             return Err(TransportError::InvalidLaunch);
         }
-        Self::launch_with_host(launch, Some(host))
+        Self::launch_with_host(launch, Some(host), None)
+    }
+
+    /// Launch the only transport authorized by a successful Native Chat D1
+    /// claim. The move-only permit binds this process connection to that exact
+    /// claim; an epoch-only launch is insufficient because two same-owner
+    /// transports could otherwise present interchangeable cleanup evidence.
+    pub fn launch_external_for_execution(
+        launch: ProcessLaunch,
+        host_executable: &std::path::Path,
+        permit: ConnectionLaunchPermit,
+    ) -> Result<Self, TransportError> {
+        if !host_executable.is_absolute() {
+            return Err(TransportError::InvalidLaunch);
+        }
+        let host = host_executable
+            .canonicalize()
+            .map_err(|_| TransportError::InvalidLaunch)?;
+        if !host.is_file() {
+            return Err(TransportError::InvalidLaunch);
+        }
+        Self::launch_with_host(launch, Some(host), Some(permit))
     }
 
     fn launch_with_host(
         launch: ProcessLaunch,
         external_host: Option<std::path::PathBuf>,
+        permit: Option<ConnectionLaunchPermit>,
     ) -> Result<Self, TransportError> {
         let request_id = launch.request_id.clone();
         if launch.run_id.is_empty()
@@ -194,11 +148,6 @@ impl OwnedTransport {
         let run_id = launch.run_id.clone();
         let attempt_id = launch.attempt_id.clone();
         let owner_token = launch.owner_token.clone();
-        let receipts = TurnReceiptTracker::new(ReceiptIdentity::new(
-            run_id.clone(),
-            attempt_id.clone(),
-            owner_token.clone(),
-        ));
         let start = Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some(launch.request_id),
@@ -215,29 +164,25 @@ impl OwnedTransport {
         start
             .validate()
             .map_err(|_| TransportError::InvalidLaunch)?;
-        let (sender, events) = mpsc::sync_channel(EVENT_CAPACITY);
-        let queue = Arc::new(EventQueue {
-            sender,
-            open: AtomicBool::new(true),
-            overflow: AtomicBool::new(false),
-        });
-        let (commands, input) = mpsc::sync_channel(COMMAND_CAPACITY);
-        let sink = Arc::new(HostEvents(Arc::clone(&queue)));
-        let output = Box::new(Stdout(Arc::clone(&queue)));
-        let host_queue = Arc::clone(&queue);
-        let host_request = request_id.clone();
-        let host_owner = owner_token.clone();
-        let host = thread::spawn(move || match external_host {
-            Some(executable) => {
-                external::run(executable, input, host_queue, &host_request, &host_owner)
-            }
-            None => run_host(input, sink, output, Box::new(io::sink())),
-        });
+        let connection = HostConnection {
+            request_id: request_id.clone(),
+            run_id,
+            attempt_id,
+            owner_token: owner_token.clone(),
+        };
+        let host = match external_host {
+            Some(executable) => OwnedHost::launch_external(connection, &executable, permit),
+            None => OwnedHost::launch_embedded(connection, permit, MAX_CHUNK_BYTES),
+        }
+        .map_err(|error| match error {
+            HostError::InvalidLaunch => TransportError::InvalidLaunch,
+            HostError::Closed => TransportError::Closed,
+            HostError::Timeout => TransportError::Timeout,
+            HostError::OutputOverflow => TransportError::OutputOverflow,
+        })?;
+        let receipts = TurnReceiptTracker::new(host.connection_identity());
         let transport = Self {
-            commands: Some(commands),
-            events,
-            queue,
-            host: Some(host),
+            host,
             decoder: FrameDecoder::default(),
             session: RpcSession::default(),
             messages: VecDeque::new(),
@@ -386,16 +331,17 @@ impl OwnedTransport {
         }
         let deadline = Instant::now() + timeout;
         loop {
-            if self.queue.overflow.load(Ordering::Acquire) {
-                return Err(TransportError::OutputOverflow);
-            }
             if let Some(message) = self.messages.pop_front() {
                 let observation = self.session.observe(message)?;
                 if let SessionObservation::Incoming(Message::Notification { method, params }) =
                     &observation
                     && matches!(
                         method.as_str(),
-                        "item/completed" | "thread/tokenUsage/updated" | "turn/completed"
+                        "item/started"
+                            | "item/agentMessage/delta"
+                            | "item/completed"
+                            | "thread/tokenUsage/updated"
+                            | "turn/completed"
                     )
                 {
                     self.receipts.observe(
@@ -409,17 +355,15 @@ impl OwnedTransport {
                 return Ok(TransportEvent::Rpc(observation));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let event = self
-                .events
-                .recv_timeout(remaining)
-                .map_err(|error| match error {
-                    mpsc::RecvTimeoutError::Timeout => TransportError::Timeout,
-                    mpsc::RecvTimeoutError::Disconnected => TransportError::Closed,
-                })?;
+            let event = self.host.receive(remaining).map_err(|error| match error {
+                HostError::InvalidLaunch | HostError::Closed => TransportError::Closed,
+                HostError::Timeout => TransportError::Timeout,
+                HostError::OutputOverflow => TransportError::OutputOverflow,
+            })?;
             match event {
-                InputEvent::Failure => return Err(TransportError::Closed),
-                InputEvent::Stdout(bytes) => self.messages.extend(self.decoder.push(&bytes)?),
-                InputEvent::Lifecycle(value) => {
+                HostEvent::Failure => return Err(TransportError::Closed),
+                HostEvent::Stdout(bytes) => self.messages.extend(self.decoder.push(&bytes)?),
+                HostEvent::Lifecycle(value) => {
                     let kind = value
                         .get("type")
                         .and_then(Value::as_str)
@@ -477,14 +421,17 @@ impl OwnedTransport {
                             self.stopped = true;
                             self.terminal_received = true;
                             if value["cleanupProven"] == true && value["receiptWritten"] == true {
-                                self.cleanup_receipt = Some(self.receipts.cleanup_receipt());
+                                self.cleanup_receipt = self
+                                    .host
+                                    .take_cleanup_proof()
+                                    .map(crate::CleanupReceipt::from_host_proof);
                             }
                             if self.receipts.is_armed() && self.receipts.has_terminal() {
                                 self.receipts.finish()?;
                             }
                             self.session.close();
                             self.decoder.finish()?;
-                            self.commands.take();
+                            self.host.close();
                         }
                         _ => {}
                     }
@@ -546,6 +493,20 @@ impl OwnedTransport {
             .to_owned()
     }
 
+    /// Opaque identity for registering this concrete transport against a
+    /// stopping D1 action. It carries no cleanup or provider-effect authority.
+    pub fn connection_receipt(&self) -> crate::ConnectionReceipt {
+        self.receipts.response_identity().connection_receipt()
+    }
+
+    /// Drain typed output observations for the exact armed Thread/Turn. Deltas
+    /// are safe only after item/started proves `agentMessage/final_answer`;
+    /// snapshots replace the message body. This receipt is not terminal or Run
+    /// authority, and callers should drain after every receive observation.
+    pub fn take_visible_output_receipts(&mut self) -> Vec<crate::VisibleOutputReceipt> {
+        self.receipts.take_visible_output_receipts()
+    }
+
     /// A turn receipt requires the exact `turn/completed` notification and the
     /// host terminal boundary that drained all provider output.
     pub fn take_turn_receipt(&mut self) -> Option<crate::TurnReceipt> {
@@ -567,28 +528,23 @@ impl OwnedTransport {
     }
 
     fn command(&self, command: Command) -> Result<(), TransportError> {
-        self.commands
-            .as_ref()
-            .ok_or(TransportError::Closed)?
-            .try_send(HostInput::Command(command))
-            .map_err(|_| TransportError::Closed)
+        self.host.send(command).map_err(|error| match error {
+            HostError::InvalidLaunch | HostError::Closed => TransportError::Closed,
+            HostError::Timeout => TransportError::Timeout,
+            HostError::OutputOverflow => TransportError::OutputOverflow,
+        })
     }
 
     fn fail_closed(&mut self) {
         self.stopped = true;
         self.session.close();
-        self.commands.take();
-        self.queue.open.store(false, Ordering::Release);
+        self.host.close();
     }
 }
 
 impl Drop for OwnedTransport {
     fn drop(&mut self) {
         self.fail_closed();
-        // The host's ownership monitor performs bounded stop/reap on channel
-        // loss. Joining here prevents an abandoned owned child after Drop.
-        if let Some(host) = self.host.take() {
-            let _ = host.join();
-        }
+        // OwnedHost closes the command pipe and joins its bounded monitor.
     }
 }

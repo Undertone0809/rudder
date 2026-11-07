@@ -29,6 +29,13 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
         let observed = observed.unwrap();
         assert!(host.provider_started());
         let generation = observed.fence.identity().generation_id.to_owned();
+        let streamed_message: String = sqlx::query_scalar(
+            "SELECT id::text FROM chat_messages WHERE run_id=$1::uuid AND role='assistant'",
+        )
+        .bind(&run)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
         let request = StopRequest {
             conversation_id: CHAT.into(),
             generation_id: generation.clone(),
@@ -83,16 +90,37 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
         blocker.commit().await.unwrap();
         let (final_result, observed) = final_task.await.unwrap();
         let stop_result = stop_task.await.unwrap().unwrap();
-        let (status,hold,messages,events):(String,bool,i64,i64)=sqlx::query_as(
-            "SELECT g.status,g.native_admission_hold,(SELECT count(*) FROM chat_messages WHERE run_id=$2::uuid AND role='assistant'),
-             (SELECT count(*) FROM chat_generation_events WHERE generation_id=g.id) FROM chat_generations g WHERE g.id=$1::uuid")
-            .bind(&generation).bind(&run).fetch_one(&database.pool).await.unwrap();
+        let (status, hold, messages): (String, bool, i64) = sqlx::query_as(
+            "SELECT g.status,g.native_admission_hold,
+             (SELECT count(*) FROM chat_messages WHERE run_id=$2::uuid AND role='assistant')
+             FROM chat_generations g WHERE g.id=$1::uuid",
+        )
+        .bind(&generation)
+        .bind(&run)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        let event_kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT event_kind FROM chat_generation_events
+             WHERE generation_id=$1::uuid AND run_id=$2::uuid ORDER BY generation_seq",
+        )
+        .bind(&generation)
+        .bind(&run)
+        .fetch_all(&database.pool)
+        .await
+        .unwrap();
         if terminal_first {
             final_result.unwrap();
             assert_eq!(stop_result.outcome, StopOutcome::CompletionCommitted);
+            assert_eq!((status, hold, messages), ("completed".into(), false, 1));
             assert_eq!(
-                (status, hold, messages, events),
-                ("completed".into(), false, 1, 3)
+                event_kinds,
+                vec![
+                    "generation_started".to_owned(),
+                    "runtime_output".to_owned(),
+                    "runtime_terminal".to_owned(),
+                    "terminal_projected".to_owned(),
+                ]
             );
             let body: String = sqlx::query_scalar(
                 "SELECT body FROM chat_messages WHERE run_id=$1::uuid AND role='assistant'",
@@ -105,9 +133,15 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
         } else {
             assert!(matches!(final_result, Err(Error::Http(409, _))));
             assert_eq!(stop_result.outcome, StopOutcome::StopIntentRecorded);
+            assert_eq!((status, hold, messages), ("stop_requested".into(), true, 1));
             assert_eq!(
-                (status, hold, messages, events),
-                ("stop_requested".into(), true, 0, 3)
+                event_kinds,
+                vec![
+                    "generation_started".to_owned(),
+                    "runtime_output".to_owned(),
+                    "stop_requested".to_owned(),
+                    "output_cutoff".to_owned(),
+                ]
             );
             let stop = rudder_d1_persistence::native_chat::execution::observe_stop(
                 &database.pool,
@@ -128,7 +162,18 @@ async fn durable_stop_and_real_terminal_finalizer_serialize_in_both_lock_orders(
             .await
             .unwrap();
             assert_eq!(cancelled["status"], "cancelled");
-            assert_eq!(cancelled["assistantMessageId"], serde_json::Value::Null);
+            assert_eq!(cancelled["assistantMessageId"], streamed_message);
+            let frozen: (String, String) =
+                sqlx::query_as("SELECT body,status FROM chat_messages WHERE id=$1::uuid")
+                    .bind(&streamed_message)
+                    .fetch_one(&database.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                frozen,
+                (String::new(), "stopped".into()),
+                "Stop at sequence zero must preserve the same row but hide its unseen tail"
+            );
             assert_eq!(cancelled["nativeAdmissionHold"], false);
         }
         let retry = request_stop(&database.pool, &actor, &request)

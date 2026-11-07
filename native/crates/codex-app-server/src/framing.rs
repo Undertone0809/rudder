@@ -1,69 +1,30 @@
 use crate::{Message, ProtocolError};
+use rudder_native_protocol::lines::{LineDecoder, LineError};
 
-pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-/// The process transport must feed bounded reads; a chunk may contain several
-/// frames, and a single UTF-8 code point may span multiple chunks.
-pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
+pub use rudder_native_protocol::lines::{
+    MAX_NATIVE_CHUNK_BYTES as MAX_CHUNK_BYTES, MAX_NATIVE_FRAME_BYTES as MAX_FRAME_BYTES,
+};
 
 #[derive(Default)]
-pub struct FrameDecoder {
-    pending: Vec<u8>,
-    failed: bool,
-    finished: bool,
-}
+pub struct FrameDecoder(LineDecoder);
 
 impl FrameDecoder {
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<Message>, ProtocolError> {
-        if self.failed || self.finished {
-            return Err(ProtocolError::StreamFailed);
-        }
-        let result = self.decode(chunk);
-        if result.is_err() {
-            self.pending.clear();
-            self.failed = true;
-        }
-        result
-    }
-
-    fn decode(&mut self, chunk: &[u8]) -> Result<Vec<Message>, ProtocolError> {
-        if chunk.len() > MAX_CHUNK_BYTES {
-            return Err(ProtocolError::ChunkTooLarge);
-        }
-        let mut messages = Vec::new();
-        for piece in chunk.split_inclusive(|byte| *byte == b'\n') {
-            let terminated = piece.last() == Some(&b'\n');
-            let content = if terminated {
-                &piece[..piece.len() - 1]
-            } else {
-                piece
-            };
-            if self.pending.len().saturating_add(content.len()) > MAX_FRAME_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            self.pending.extend_from_slice(content);
-            if terminated {
-                if self.pending.last() == Some(&b'\r') {
-                    self.pending.pop();
-                }
-                if !self.pending.is_empty() {
-                    messages.push(Message::decode(&self.pending)?);
-                }
-                self.pending.clear();
-            }
-        }
-        Ok(messages)
+        self.0.push(chunk, Message::decode)
     }
 
     pub fn finish(&mut self) -> Result<(), ProtocolError> {
-        if self.failed {
-            return Err(ProtocolError::StreamFailed);
+        self.0.finish().map_err(Into::into)
+    }
+}
+
+impl From<LineError> for ProtocolError {
+    fn from(error: LineError) -> Self {
+        match error {
+            LineError::ChunkTooLarge => Self::ChunkTooLarge,
+            LineError::FrameTooLarge => Self::FrameTooLarge,
+            LineError::TruncatedFrame => Self::TruncatedFrame,
+            LineError::StreamFailed => Self::StreamFailed,
         }
-        self.finished = true;
-        if self.pending.is_empty() {
-            return Ok(());
-        }
-        self.pending.clear();
-        self.failed = true;
-        Err(ProtocolError::TruncatedFrame)
     }
 }

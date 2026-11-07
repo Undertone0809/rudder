@@ -1980,6 +1980,7 @@ dependencies = [
 name = "rudder-codex-app-server"
 version = "0.7.24"
 dependencies = [
+ "rudder-native-process-transport",
  "rudder-native-protocol",
  "rudder-process-host",
  "serde",
@@ -2097,10 +2098,22 @@ dependencies = [
  "rudder-d1-persistence",
  "rudder-runtime-core",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "rudder-native-process-transport"
+version = "0.7.24"
+dependencies = [
+ "rudder-native-protocol",
+ "rudder-process-host",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

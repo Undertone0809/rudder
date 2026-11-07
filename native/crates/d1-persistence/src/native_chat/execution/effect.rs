@@ -9,8 +9,8 @@ use super::submission::SubmissionInput;
 use super::{
     EffectKind, EffectPermit, ExecutionFence, Result, context::lock_current_execution, http,
 };
+use crate::native_chat::NativeChatExecutionActor;
 use crate::native_chat::validation;
-use rudder_auth_core::VerifiedActor;
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use sqlx::{PgPool, Row};
 use std::time::{Duration, Instant};
@@ -76,7 +76,7 @@ impl AuthorizedEffect {
 /// never loads body text after entering the indeterminate phase.
 pub async fn authorize_effect(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     permit: EffectPermit,
     input: Option<SubmissionInput>,
 ) -> Result<AuthorizedEffect> {

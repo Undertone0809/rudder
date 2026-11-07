@@ -7,7 +7,8 @@ use rudder_auth_core::{
 use rudder_d1_persistence::native_chat::config::LocalHostContext;
 pub(crate) use rudder_d1_persistence::native_chat::execution::claim;
 pub(crate) use rudder_d1_persistence::native_chat::{
-    Request as AdmissionRequest, execute as admit,
+    FirstSendRequest, Request as AdmissionRequest, execute as admit,
+    execute_first_send as admit_first_send,
 };
 pub(crate) use rudder_native_chat_executor::Error as ExecutorError;
 use rudder_native_chat_executor::{
@@ -243,6 +244,15 @@ pub(crate) async fn admitted(
     host: &FixtureHost,
 ) -> (VerifiedActor, String, String) {
     sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at)
+         VALUES ($1,'Native Chat executor fixture','native-chat-executor@example.test',now(),now())
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed executor fixture user row");
+    sqlx::query(
         "INSERT INTO organization_memberships(org_id, principal_type, principal_id, membership_role, status)
          VALUES ($1::uuid, 'user', $2, 'member', 'active')",
     )
@@ -306,6 +316,78 @@ pub(crate) async fn admitted(
     )
 }
 
+pub(crate) async fn first_send_admitted(
+    database: &Database,
+    host: &FixtureHost,
+) -> (VerifiedActor, String, String, String) {
+    sqlx::query(
+        "INSERT INTO \"user\"(id,name,email,created_at,updated_at)
+         VALUES ($1,'Native Chat executor fixture','native-chat-executor@example.test',now(),now())
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed executor fixture user row");
+    sqlx::query(
+        "INSERT INTO organization_memberships(org_id, principal_type, principal_id, membership_role, status)
+         VALUES ($1::uuid, 'user', $2, 'member', 'active')",
+    )
+    .bind(ORG)
+    .bind(USER)
+    .execute(&database.pool)
+    .await
+    .expect("seed active organization membership");
+    sqlx::query(
+        "UPDATE agents SET agent_runtime_type='codex_local', status='idle',
+           workspace_key='codex-agent', agent_runtime_config=$1::jsonb
+         WHERE org_id=$2::uuid AND id=$3::uuid",
+    )
+    .bind(host.persisted_agent_config().to_string())
+    .bind(ORG)
+    .bind(CEO)
+    .execute(&database.pool)
+    .await
+    .expect("persist selected local Codex Agent config");
+
+    let actor = verified_actor();
+    let request: FirstSendRequest = serde_json::from_value(json!({
+        "clientMutationId": "native-chat-executor-first-send-1",
+        "preferredAgentId": CEO,
+        "body": BODY,
+    }))
+    .expect("typed first-send Chat admission request");
+    let receipt = admit_first_send(&database.pool, &actor, ORG, &request, host.context())
+        .await
+        .expect("atomically admit the first Chat message");
+    let conversation_id = receipt["conversationId"]
+        .as_str()
+        .expect("first-send conversation id")
+        .to_owned();
+
+    // A post-admission old message models an existing transcript while proving
+    // the fresh provider Turn receives only the exact admitted first input.
+    sqlx::query(
+        "INSERT INTO chat_messages (org_id, conversation_id, role, kind, status, body)
+         VALUES ($1::uuid, $2::uuid, 'assistant', 'message', 'completed', 'old private history')",
+    )
+    .bind(ORG)
+    .bind(&conversation_id)
+    .execute(&database.pool)
+    .await
+    .expect("seed transcript that must not be replayed to the provider");
+
+    (
+        actor,
+        conversation_id,
+        receipt["runId"].as_str().expect("Run id").to_owned(),
+        receipt["attemptId"]
+            .as_str()
+            .expect("Attempt id")
+            .to_owned(),
+    )
+}
+
 pub(crate) async fn database_and_admission(
     mode: &str,
 ) -> (Database, FixtureHost, VerifiedActor, String, String) {
@@ -313,6 +395,15 @@ pub(crate) async fn database_and_admission(
     let host = FixtureHost::new(mode);
     let (actor, run_id, attempt_id) = admitted(&database, &host).await;
     (database, host, actor, run_id, attempt_id)
+}
+
+pub(crate) async fn database_and_first_send_admission(
+    mode: &str,
+) -> (Database, FixtureHost, VerifiedActor, String, String, String) {
+    let database = Database::start().await;
+    let host = FixtureHost::new(mode);
+    let (actor, conversation_id, run_id, attempt_id) = first_send_admitted(&database, &host).await;
+    (database, host, actor, conversation_id, run_id, attempt_id)
 }
 
 pub(crate) async fn execute_on_worker(

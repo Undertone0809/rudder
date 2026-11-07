@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   ChatContextLink,
   ChatConversation,
+  ChatGenerationStatus,
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
@@ -16,6 +17,7 @@ import type {
   ChatStreamEvent,
   ChatStreamTranscriptEntry,
   ChatWorkManifestResponse,
+  HeartbeatRunStatus,
   ForkChatConversation,
 } from "@rudderhq/shared";
 import {
@@ -70,6 +72,151 @@ export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
   inlineAnnotations?: ChatInlineAnnotationInput[];
   onEvent: (event: ChatStreamEvent) => Promise<void> | void;
 };
+
+export type ChatMessageSendReconciliation =
+  | { outcome: "not_found"; clientMutationId: string }
+  | {
+    outcome: "accepted";
+    clientMutationId: string;
+    message: ChatMessage;
+    generationId: string;
+    runId: string;
+    attemptEpoch: number;
+    generationSeq: 0;
+    bodyHash: string;
+    generationStatus: ChatGenerationStatus;
+    runStatus: HeartbeatRunStatus;
+    runtimeTerminal: boolean;
+  };
+
+export type NativeChatCapabilities = {
+  executionAuthority: "native_rust";
+  firstSend: boolean;
+  readTurn: boolean;
+  nativeControls: boolean;
+};
+
+export type NativeChatTurnRead = {
+  executionAuthority: "native_rust";
+  generationId: string;
+  runId: string;
+  sourceMessage: ChatMessage;
+  assistantMessage: ChatMessage | null;
+  generationStatus: ChatGenerationStatus;
+  runStatus: HeartbeatRunStatus;
+  executionOwnerLive: boolean | null;
+  attemptEpoch: number;
+  controlVersion: number;
+  runtimeTerminal: boolean;
+  nativeAdmissionHold: boolean;
+  lastSequence: number;
+  lastClientCheckpointSeq: number | null;
+  lastClientCheckpointHash: string | null;
+} | {
+  executionAuthority: "legacy_ts";
+  generationId: string;
+  attemptEpoch: number;
+  controlVersion: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isChatMessageProjection(value: unknown): value is ChatMessage {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.orgId === "string"
+    && typeof value.conversationId === "string"
+    && typeof value.role === "string"
+    && typeof value.kind === "string"
+    && typeof value.status === "string"
+    && typeof value.body === "string";
+}
+
+const CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
+  "starting", "active", "running", "waiting_for_network", "tool_busy", "closing",
+  "stop_requested", "stopping", "completed", "failed", "stopped", "aborted",
+  "interrupted_unverified", "control_lost",
+]);
+const HEARTBEAT_RUN_STATUSES = new Set<HeartbeatRunStatus>([
+  "queued", "running", "succeeded", "failed", "cancelled", "timed_out",
+]);
+
+function parseNativeChatTurnRead(
+  value: unknown,
+  chatId: string,
+  orgId: string,
+  generationId: string,
+): NativeChatTurnRead {
+  if (!isRecord(value) || value.generationId !== generationId) {
+    throw new Error("Native Chat returned a mismatched turn fence");
+  }
+  if (value.executionAuthority === "legacy_ts") {
+    if (
+      !Number.isInteger(value.attemptEpoch)
+      || Number(value.attemptEpoch) < 1
+      || !Number.isInteger(value.controlVersion)
+      || Number(value.controlVersion) < 0
+    ) {
+      throw new Error("Legacy Chat returned an invalid turn epoch");
+    }
+    return {
+      executionAuthority: "legacy_ts",
+      generationId,
+      attemptEpoch: Number(value.attemptEpoch),
+      controlVersion: Number(value.controlVersion),
+    };
+  }
+  if (
+    value.executionAuthority !== "native_rust"
+    || typeof value.runId !== "string"
+    || !isChatMessageProjection(value.sourceMessage)
+    || value.sourceMessage.role !== "user"
+    || value.sourceMessage.conversationId !== chatId
+    || value.sourceMessage.orgId !== orgId
+    || (value.assistantMessage !== null && !isChatMessageProjection(value.assistantMessage))
+    || (value.assistantMessage !== null && value.assistantMessage.role !== "assistant")
+    || (value.assistantMessage !== null && value.assistantMessage.conversationId !== chatId)
+    || (value.assistantMessage !== null && value.assistantMessage.orgId !== orgId)
+    || typeof value.generationStatus !== "string"
+    || !CHAT_GENERATION_STATUSES.has(value.generationStatus as ChatGenerationStatus)
+    || typeof value.runStatus !== "string"
+    || !HEARTBEAT_RUN_STATUSES.has(value.runStatus as HeartbeatRunStatus)
+    || !(value.executionOwnerLive === null || typeof value.executionOwnerLive === "boolean")
+    || !Number.isInteger(value.attemptEpoch)
+    || Number(value.attemptEpoch) < 1
+    || !Number.isInteger(value.controlVersion)
+    || Number(value.controlVersion) < 0
+    || typeof value.runtimeTerminal !== "boolean"
+    || typeof value.nativeAdmissionHold !== "boolean"
+    || !Number.isInteger(value.lastSequence)
+    || Number(value.lastSequence) < 0
+    || !(value.lastClientCheckpointSeq === null || (
+      Number.isInteger(value.lastClientCheckpointSeq)
+      && Number(value.lastClientCheckpointSeq) >= 0
+      && Number(value.lastClientCheckpointSeq) <= Number(value.lastSequence)
+    ))
+    || !(value.lastClientCheckpointHash === null || (
+      typeof value.lastClientCheckpointHash === "string"
+      && /^[0-9a-f]{64}$/u.test(value.lastClientCheckpointHash)
+    ))
+    || ((value.lastClientCheckpointSeq === null) !== (value.lastClientCheckpointHash === null))
+  ) {
+    throw new Error("Native Chat returned an invalid turn projection");
+  }
+  return value as NativeChatTurnRead;
+}
+
+function isNativeChatCapabilities(value: unknown): value is NativeChatCapabilities {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return Object.keys(candidate).sort().join(",") === "executionAuthority,firstSend,nativeControls,readTurn"
+    && candidate.executionAuthority === "native_rust"
+    && typeof candidate.firstSend === "boolean"
+    && typeof candidate.readTurn === "boolean"
+    && typeof candidate.nativeControls === "boolean";
+}
 
 async function consumeChatStreamResponse(
   res: Response,
@@ -138,6 +285,23 @@ async function consumeChatStreamResponse(
 }
 
 export const chatsApi = {
+  getNativeChatCapabilities: async (): Promise<NativeChatCapabilities | null> => {
+    try {
+      const value: unknown = await api.get<unknown>("/native-chat/capabilities");
+      if (!isNativeChatCapabilities(value)) {
+        throw new Error("Native Chat capability response was invalid. Sending is paused.");
+      }
+      return value;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404
+        && error.body !== null && typeof error.body === "object"
+        && "error" in error.body
+        && (error.body as { error?: unknown }).error === "route_not_found") {
+        return null;
+      }
+      throw error;
+    }
+  },
   list: (
     orgId: string,
     status: "active" | "resolved" | "archived" | "all" = "active",
@@ -338,7 +502,7 @@ export const chatsApi = {
     body: string,
     options: {
       signal?: AbortSignal;
-      clientMutationId?: string;
+      clientMutationId: string;
       editUserMessageId?: string | null;
       queuedMessageId?: string | null;
       modelOverride?: string | null;
@@ -348,13 +512,16 @@ export const chatsApi = {
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
     },
   ) => {
+    if (!options.clientMutationId?.trim()) {
+      throw new Error("A stable chat submission identity is required. Retry from the composer.");
+    }
     const files = options.files ?? [];
     const inlineAnnotations = options.inlineAnnotations ?? [];
     const requestBody = files.length > 0
       ? (() => {
         const form = new FormData();
         form.append("body", body);
-        if (options.clientMutationId) form.append("clientMutationId", options.clientMutationId);
+        form.append("clientMutationId", options.clientMutationId);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
         if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
         form.append("modelOverride", options.modelOverride ?? "__rudder_agent_default__");
@@ -369,7 +536,7 @@ export const chatsApi = {
       })()
       : JSON.stringify({
         body,
-        ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
+        clientMutationId: options.clientMutationId,
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
         ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
         modelOverride: options.modelOverride ?? null,
@@ -401,6 +568,14 @@ export const chatsApi = {
     }
 
   },
+  reconcilePendingMessageSend: (
+    chatId: string,
+    data: { clientMutationId: string; body: string },
+    options?: { signal?: AbortSignal },
+  ) => api.post<ChatMessageSendReconciliation>(`/chats/${chatId}/messages/stream/reconcile`, data, {
+    signal: options?.signal,
+    timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
+  }),
   checkpointMessageStream: (chatId: string, data: ChatClientCheckpointRequest) =>
     api.post<{
       generationId: string;
@@ -416,6 +591,15 @@ export const chatsApi = {
     generationId: string | null;
     disposition?: string;
   }>(`/chats/${chatId}/messages/stream/stop`, data),
+  readNativeChatTurn: async (chatId: string, orgId: string, generationId: string) =>
+    parseNativeChatTurnRead(
+      await api.get<unknown>(
+        `/chats/${encodeURIComponent(chatId)}/messages/stream/turn?generationId=${encodeURIComponent(generationId)}`,
+      ),
+      chatId,
+      orgId,
+      generationId,
+    ),
   uploadAttachment: async (orgId: string, chatId: string, messageId: string, file: File) => {
     const buffer = await file.arrayBuffer();
     const safeFile = new File([buffer], file.name || "attachment", {

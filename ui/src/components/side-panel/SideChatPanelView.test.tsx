@@ -14,6 +14,7 @@ import {
   type ChatStreamDraft as ChatGenerationStreamDraft,
 } from "@/context/ChatGenerationContext";
 import { ToastProvider } from "@/context/ToastContext";
+import { preparePendingChatSendMutation, readPendingChatSendMutation } from "@/lib/chat-send-mutation-storage";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   sideChatGenerationScopeKey,
@@ -22,12 +23,13 @@ import {
 import type {
   Agent,
   ChatConversation,
+  ChatInlineAnnotation,
   ChatInlineAnnotationInput,
   ChatMessage,
   ChatStreamEvent,
 } from "@rudderhq/shared";
 import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SideChatPanelView } from "./SideChatPanelView";
@@ -55,6 +57,7 @@ vi.mock("@/api/chats", () => ({
     createSideChat: vi.fn(),
     destroySideChat: vi.fn(async () => undefined),
     sendMessageStream: vi.fn(),
+    reconcilePendingMessageSend: vi.fn(),
     update: vi.fn(),
   },
 }));
@@ -207,9 +210,60 @@ function streamDraft(overrides: Partial<ChatGenerationStreamDraft> = {}): ChatGe
 let root: Root;
 let host: HTMLDivElement;
 let queryClient: QueryClient;
+const baseNavigator = globalThis.navigator;
+
+function installWebLocksStub() {
+  const queues = new Map<string, Promise<void>>();
+  const locks = {
+    request: async <T,>(name: string, _options: LockOptions, callback: (lock: Lock) => T | Promise<T>) => {
+      const previous = queues.get(name) ?? Promise.resolve();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      queues.set(name, previous.then(() => gate));
+      await previous;
+      try {
+        return await callback({ name, mode: "exclusive" } as Lock);
+      } finally {
+        release();
+      }
+    },
+  } as LockManager;
+  const navigatorStub = Object.create(baseNavigator) as Navigator;
+  Object.defineProperty(navigatorStub, "locks", { configurable: true, value: locks });
+  vi.stubGlobal("navigator", navigatorStub);
+}
 let onReplaceTarget: ReturnType<typeof vi.fn>;
 let latestGenerationActions: ReturnType<typeof useChatGenerationActions> | null = null;
 let latestGenerations: ReturnType<typeof useChatGenerations> | null = null;
+
+function SideChatPanelHarness({
+  organizationId,
+  target: initialTarget,
+  onSelectResponseAnnotation,
+}: {
+  organizationId: string;
+  target: Extract<SidePanelTarget, { kind: "side_chat" }>;
+  onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+}) {
+  const [panelOrganizationId, setPanelOrganizationId] = useState(organizationId);
+  const [panelTarget, setPanelTarget] = useState(initialTarget);
+  useEffect(() => {
+    setPanelOrganizationId(organizationId);
+    setPanelTarget(initialTarget);
+  }, [initialTarget, organizationId]);
+  return (
+    <SideChatPanelView
+      organizationId={panelOrganizationId}
+      target={panelTarget}
+      onRegisterCloseHandler={vi.fn()}
+      onReplaceTarget={(key, next) => {
+        onReplaceTarget(key, next);
+        if (next.kind === "side_chat") setPanelTarget(next);
+      }}
+      onSelectResponseAnnotation={onSelectResponseAnnotation}
+    />
+  );
+}
 
 function GenerationProbe() {
   latestGenerationActions = useChatGenerationActions();
@@ -236,6 +290,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  installWebLocksStub();
+  localStorage.clear();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -276,6 +332,7 @@ beforeEach(() => {
   vi.mocked(chatsApi.listMessages).mockReset().mockResolvedValue([]);
   vi.mocked(chatsApi.createSideChat).mockReset().mockResolvedValue(sideConversation);
   vi.mocked(chatsApi.sendMessageStream).mockReset();
+  vi.mocked(chatsApi.reconcilePendingMessageSend).mockReset();
 });
 
 afterEach(() => {
@@ -288,9 +345,11 @@ afterEach(() => {
 
 async function renderView({
   viewTarget = target,
+  viewOrganizationId = sourceConversation.orgId,
   onSelectResponseAnnotation = vi.fn(),
 }: {
   viewTarget?: Extract<SidePanelTarget, { kind: "side_chat" }>;
+  viewOrganizationId?: string;
   onSelectResponseAnnotation?: ReturnType<typeof vi.fn>;
 } = {}) {
   act(() => {
@@ -298,11 +357,10 @@ async function renderView({
       <QueryClientProvider client={queryClient}>
         <ChatGenerationProvider>
           <ToastProvider>
-            <SideChatPanelView
-              organizationId={sourceConversation.orgId}
+            <GenerationProbe />
+            <SideChatPanelHarness
+              organizationId={viewOrganizationId}
               target={viewTarget}
-              onRegisterCloseHandler={vi.fn()}
-              onReplaceTarget={onReplaceTarget}
               onSelectResponseAnnotation={onSelectResponseAnnotation}
             />
             <ToastViewport />
@@ -331,6 +389,16 @@ function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   });
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }
 
 function dispatchSideChatPaste(target: Element, files: File[]) {
@@ -416,6 +484,149 @@ describe("SideChatPanelView composer controls", () => {
 });
 
 describe("SideChatPanelView streaming reconciliation", () => {
+  it("discovers an accepted send after remount without sending or replacing the empty draft", async () => {
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { randomUUID: vi.fn(() => "discovery-page-id") },
+    });
+    try {
+      const originalBody = "The accepted message from the previous page";
+      const pending = await preparePendingChatSendMutation({
+        orgId: sourceConversation.orgId,
+        conversationId: sideConversation.id,
+        body: originalBody,
+        files: [],
+        inlineAnnotations: [],
+      });
+      await pending.markAccepted();
+      const scopePrefix = "rudder:chat-send-mutations:v2:scope:";
+      const scopeKey = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+        .find((candidate) => candidate?.startsWith(scopePrefix)
+          && candidate.endsWith(encodeURIComponent(`${sourceConversation.orgId}:${sideConversation.id}:new`)));
+      expect(scopeKey).toBeTruthy();
+      const stored = JSON.parse(localStorage.getItem(scopeKey!)!) as {
+        mutations: Record<string, { pageInstanceId?: string }>;
+      };
+      stored.mutations[pending.clientMutationId].pageInstanceId = "previous-page-instance";
+      localStorage.setItem(scopeKey!, JSON.stringify(stored));
+
+      vi.mocked(chatsApi.reconcilePendingMessageSend).mockResolvedValue({
+        outcome: "accepted",
+        clientMutationId: pending.clientMutationId,
+        message: {
+          id: "70000000-0000-4000-8000-000000000190",
+          orgId: sourceConversation.orgId,
+          conversationId: sideConversation.id,
+          role: "user",
+          kind: "message",
+          status: "completed",
+          body: originalBody,
+          runId: "80000000-0000-4000-8000-000000000190",
+          structuredPayload: null,
+          approvalId: null,
+          approval: null,
+          attachments: [],
+          replyingAgentId: null,
+          chatTurnId: null,
+          turnVariant: 0,
+          supersededAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as ChatMessage,
+        generationId: "90000000-0000-4000-8000-000000000190",
+        runId: "80000000-0000-4000-8000-000000000190",
+        attemptEpoch: 1,
+        generationSeq: 0,
+        bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        generationStatus: "running",
+        runStatus: "running",
+        runtimeTerminal: false,
+      });
+
+      await renderView({ viewTarget: { ...target, conversationId: sideConversation.id, inlineAnnotations: [] } });
+      await vi.waitFor(() => expect(host.textContent).toContain("Resume response"));
+      const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!;
+      expect(editor.value).toBe("");
+      expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledWith(
+        sideConversation.id,
+        { clientMutationId: pending.clientMutationId, body: originalBody },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.disabled).toBe(true);
+    } finally {
+      if (cryptoDescriptor) Object.defineProperty(globalThis, "crypto", cryptoDescriptor);
+      else delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  });
+
+  it("keeps an accepted Side Chat mutation recoverable until explicit Resume", async () => {
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000090",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Original accepted Side Chat input",
+      attachments: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream)
+      .mockImplementationOnce(async (_conversationId, body, options) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: { ...userMessage, body },
+          generationId: "generation-side-recovery",
+          attemptEpoch: 1,
+          generationSeq: 0,
+          bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+      })
+      .mockImplementationOnce(async (_conversationId, body, options) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: { ...userMessage, body },
+          generationId: "generation-side-recovery",
+          attemptEpoch: 1,
+          generationSeq: 0,
+          bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+        await options.onEvent({ type: "final", messages: [] });
+      });
+
+    await renderView({ viewTarget: { ...target, conversationId: sideConversation.id, inlineAnnotations: [] } });
+    const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!;
+    changeTextarea(editor, "Original accepted Side Chat input");
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Resume response"));
+    const mutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
+    expect(readPendingChatSendMutation(sourceConversation.orgId, sideConversation.id)?.status).toBe("recoverable");
+    changeTextarea(editor, "A newer draft stays in the composer");
+    expect((host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')!).disabled).toBe(true);
+
+    await act(async () => {
+      Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Resume response")?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][1]).toBe("Original accepted Side Chat input");
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][2].clientMutationId).toBe(mutationId);
+    await vi.waitFor(() => expect(host.textContent).not.toContain("Resume response"));
+    expect(editor.value).toBe("A newer draft stays in the composer");
+    expect(readPendingChatSendMutation(sourceConversation.orgId, sideConversation.id)?.status).toBe("settled");
+  });
+
   it("keeps the active stream when the Side Chat view is unmounted and mounted again", async () => {
     const generationId = "80000000-0000-4000-8000-000000000020";
     const userMessage = {
@@ -448,11 +659,49 @@ describe("SideChatPanelView streaming reconciliation", () => {
         type: "ack",
         userMessage: { ...userMessage, conversationId, body },
         generationId,
+        attemptEpoch: 4,
+        generationSeq: 1,
+        bodyHash: "1".repeat(64),
       });
       await options.onEvent({
         type: "assistant_delta",
-        delta: "The answer is still streaming.",
+        delta: "obsolete partial",
         generationId,
+        attemptEpoch: 4,
+        generationSeq: 2,
+        bodyHash: "2".repeat(64),
+      });
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "canonical snapshot",
+        generationId,
+        attemptEpoch: 4,
+        generationSeq: 3,
+        bodyHash: "3".repeat(64),
+      });
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "duplicate snapshot",
+        generationId,
+        attemptEpoch: 4,
+        generationSeq: 3,
+        bodyHash: "4".repeat(64),
+      });
+      await options.onEvent({
+        type: "assistant_snapshot",
+        body: "stale attempt",
+        generationId,
+        attemptEpoch: 3,
+        generationSeq: 4,
+        bodyHash: "5".repeat(64),
+      });
+      await options.onEvent({
+        type: "assistant_delta",
+        delta: " plus tail",
+        generationId,
+        attemptEpoch: 4,
+        generationSeq: 4,
+        bodyHash: "6".repeat(64),
       });
       await streamPending;
       await options.onEvent({ type: "final", messages: [] });
@@ -463,11 +712,13 @@ describe("SideChatPanelView streaming reconciliation", () => {
       conversationId: sideConversation.id,
       inlineAnnotations: [],
     };
+    const streamScopeKey = sideChatGenerationScopeKey(sourceConversation.orgId, viewTarget);
     const renderProvidedView = (showView: boolean) => {
       act(() => {
         root.render(
           <QueryClientProvider client={queryClient}>
             <ChatGenerationProvider>
+              <GenerationProbe />
               <ToastProvider>
                 {showView ? (
                   <SideChatPanelView
@@ -498,6 +749,8 @@ describe("SideChatPanelView streaming reconciliation", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+    await vi.waitFor(() => expect(latestGenerations?.streamDrafts[streamScopeKey]?.body)
+      .toBe("canonical snapshot plus tail"));
 
     renderProvidedView(false);
     expect(host.querySelector('[data-testid="side-chat-process"]')).toBeNull();
@@ -506,6 +759,8 @@ describe("SideChatPanelView streaming reconciliation", () => {
     await vi.waitFor(() => expect(host.querySelector(
       '[data-testid="side-chat-process"]',
     )).not.toBeNull());
+    expect(latestGenerations?.streamDrafts[streamScopeKey]?.body)
+      .toBe("canonical snapshot plus tail");
 
     await act(async () => {
       releaseStream();
@@ -514,7 +769,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
     expect(host.querySelector('[aria-label="Sending Side Chat message"]')).toBeNull();
   });
 
-  it("deduplicates a rapid send and retries an acknowledged turn by editing its user message", async () => {
+  it("keeps an acknowledged retry explicit and preserves the current draft", async () => {
     const generationId = "80000000-0000-4000-8000-000000000022";
     const userMessage = {
       id: "70000000-0000-4000-8000-000000000022",
@@ -541,7 +796,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as unknown as ChatMessage;
-    const sendOptions: Array<{ editUserMessageId?: string | null }> = [];
+    const sendOptions: Array<{ clientMutationId: string; editUserMessageId?: string | null }> = [];
     let retried = false;
     vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
       conversationId === sideConversation.id ? sideConversation : sourceConversation
@@ -588,14 +843,22 @@ describe("SideChatPanelView streaming reconciliation", () => {
     await vi.waitFor(() => expect(host.textContent).toContain("Something went wrong. Try again."));
     expect(chatsApi.sendMessageStream).toHaveBeenCalledOnce();
 
+    await vi.waitFor(() => expect(host.textContent).toContain("Resume response"));
+    expect(sendOptions).toHaveLength(1);
+
+    const newDraft = "Keep my new draft while resuming the old response.";
+    changeTextarea(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!, newDraft);
     await act(async () => {
-      host.querySelector<HTMLButtonElement>(
-        '[aria-label="Send Side Chat message"]',
-      )?.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
       await Promise.resolve();
     });
+    expect(sendOptions).toHaveLength(1);
+    clickButton("Resume response");
     await vi.waitFor(() => expect(sendOptions).toHaveLength(2));
-    expect(sendOptions[1]?.editUserMessageId).toBe(userMessage.id);
+    expect(sendOptions[1]?.clientMutationId).toBe(sendOptions[0]?.clientMutationId);
+    expect(sendOptions[1]?.editUserMessageId).toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')?.value)
+      .toBe(newDraft);
     await vi.waitFor(() => expect(host.textContent).toContain("The retried answer."));
     expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2);
   });
@@ -1227,6 +1490,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       authoritativeMessages = [userMessage, failedAssistant];
       await options.onEvent({
         type: "error",
+        terminal: true,
         error: "The stream disconnected after persistence.",
         messageId: failedAssistant.id,
       });
@@ -1328,13 +1592,18 @@ describe("SideChatPanelView response annotations", () => {
   });
 
   it("keeps an annotation draft and does not create a Side Chat while the dev runtime is stale", async () => {
+    await renderView({
+      viewTarget: {
+        ...target,
+        inlineAnnotations: [{ ...annotation, comment: "Please review this response." }],
+      },
+    });
     queryClient.setQueryData(queryKeys.health, {
       devServer: {
         enabled: true,
         restartRequired: true,
       },
     });
-    await renderView();
 
     await act(async () => {
       host.querySelector<HTMLButtonElement>(
@@ -1354,6 +1623,10 @@ describe("SideChatPanelView response annotations", () => {
 
   it("keeps the Side Chat provisional until annotation-only Send and owns comment files", async () => {
     const screenshot = new File(["image"], "evidence.png", { type: "image/png" });
+    Object.defineProperty(screenshot, "arrayBuffer", {
+      configurable: true,
+      value: async () => new TextEncoder().encode("image").buffer,
+    });
     vi.mocked(chatsApi.sendMessageStream).mockImplementation(async (
       conversationId,
       body,
@@ -1409,7 +1682,7 @@ describe("SideChatPanelView response annotations", () => {
       send.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(chatsApi.sendMessageStream, `DOM: ${host.textContent}`).toHaveBeenCalledOnce());
 
     expect(chatsApi.createSideChat).toHaveBeenCalledWith(
       sourceConversation.id,
@@ -1466,6 +1739,22 @@ describe("SideChatPanelView response annotations", () => {
       { id: "gpt-5.6-terra", label: "GPT-5.6-terra", variants: ["xhigh"] },
     ]);
     vi.mocked(chatsApi.sendMessageStream).mockRejectedValueOnce(new Error("Admission failed."));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (conversationId, body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: {
+          id: "70000000-0000-4000-8000-000000000009",
+          conversationId,
+          role: "user",
+          body,
+        } as ChatMessage,
+      } as ChatStreamEvent);
+      await options.onEvent({ type: "final", messages: [] } as ChatStreamEvent);
+    });
+    vi.mocked(chatsApi.reconcilePendingMessageSend).mockImplementationOnce(async (_conversationId, request) => ({
+      outcome: "not_found",
+      clientMutationId: request.clientMutationId,
+    }));
     await renderView({ viewTarget: { ...target, inlineAnnotations: [] } });
 
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="chat-agent-selector"]')?.click());
@@ -1502,11 +1791,19 @@ describe("SideChatPanelView response annotations", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(host.textContent).toContain("Something went wrong. Try again."));
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Retry previous message"));
+    expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledOnce();
     await act(async () => {
-      host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Retry previous message")?.click();
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledTimes(1);
+    const firstMutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
+    expect(firstMutationId).toEqual(expect.any(String));
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][2].clientMutationId).toBe(firstMutationId);
     expect(chatsApi.sendMessageStream).toHaveBeenLastCalledWith(
       sideConversation.id,
       "Retry with the same runtime.",
@@ -1514,7 +1811,137 @@ describe("SideChatPanelView response annotations", () => {
     );
   });
 
+  it("does not dispatch an attachment after the full Side Chat target changes during hashing", async () => {
+    vi.mocked(chatsApi.destroySideChat).mockClear();
+    const originalCrypto = globalThis.crypto;
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    const digestStarted = deferred();
+    const releaseDigest = deferred();
+    const realDigest = originalCrypto.subtle.digest.bind(originalCrypto.subtle) as (
+      algorithm: AlgorithmIdentifier,
+      data: BufferSource,
+    ) => Promise<ArrayBuffer>;
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: {
+        randomUUID: () => "mutation-stale-side-chat",
+        subtle: {
+          digest: async (algorithm: AlgorithmIdentifier, data: BufferSource) => {
+            digestStarted.resolve();
+            await releaseDigest.promise;
+            return realDigest(algorithm, data);
+          },
+        },
+      },
+    });
+    try {
+      await renderView({ viewTarget: { ...target, inlineAnnotations: [] } });
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Add files and options"]')?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+      ));
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Add files"));
+      const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", {
+          configurable: true,
+          value: [new File(["original evidence"], "evidence.txt", { type: "text/plain" })],
+        });
+        fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(host.textContent).toContain("evidence.txt"));
+      changeTextarea(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!, "Old Side Chat body");
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click());
+      await digestStarted.promise;
+
+      await renderView({
+        viewTarget: { ...target, conversationId: "other-side-chat", inlineAnnotations: [] },
+      });
+      releaseDigest.resolve();
+      await vi.waitFor(() => expect(chatsApi.destroySideChat).toHaveBeenCalledWith(sideConversation.id));
+      await vi.waitFor(() => expect(Boolean(latestGenerations?.sendInFlightByChatId[
+        sideChatGenerationScopeKey(sourceConversation.orgId, target)
+      ])).toBe(false));
+
+      expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+      expect(readPendingChatSendMutation(sourceConversation.orgId, sideConversation.id, null)?.status)
+        .toBe("settled");
+      expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')?.value).toBe("");
+      expect(host.textContent).not.toContain("Old Side Chat body");
+      expect(host.textContent).not.toContain("Something went wrong. Try again.");
+    } finally {
+      if (cryptoDescriptor) Object.defineProperty(globalThis, "crypto", cryptoDescriptor);
+      else delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  });
+
+  it("does not restore an old Side Chat draft or error when attachment hashing rejects after a scope switch", async () => {
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    const digestStarted = deferred();
+    const rejectDigest = deferred();
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: {
+        randomUUID: () => "mutation-rejected-old-side-chat",
+        subtle: {
+          digest: async () => {
+            digestStarted.resolve();
+            await rejectDigest.promise;
+            throw new Error("Old attachment digest failed.");
+          },
+        },
+      },
+    });
+    try {
+      await renderView({ viewTarget: { ...target, inlineAnnotations: [] } });
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Add files and options"]')?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+      ));
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Add files"));
+      const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", {
+          configurable: true,
+          value: [new File(["old bytes"], "old.txt", { type: "text/plain" })],
+        });
+        fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+        await Promise.resolve();
+      });
+      changeTextarea(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!, "Old failed body");
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click());
+      await digestStarted.promise;
+
+      await renderView({
+        viewOrganizationId: "org-2",
+        viewTarget: {
+          ...target,
+          sourceConversationId: "new-source-conversation",
+          sourceMessageId: "new-source-message",
+          clientMutationId: "new-side-chat-mutation",
+          conversationId: "new-side-chat",
+          inlineAnnotations: [],
+        },
+      });
+      await act(async () => {
+        rejectDigest.reject(new Error("Old attachment digest failed."));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await vi.waitFor(() => expect(Boolean(latestGenerations?.sendInFlightByChatId[
+        sideChatGenerationScopeKey(sourceConversation.orgId, target)
+      ])).toBe(false));
+
+      expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+      expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')?.value).toBe("");
+      expect(host.textContent).not.toContain("Old failed body");
+      expect(host.textContent).not.toContain("Something went wrong. Try again.");
+    } finally {
+      if (cryptoDescriptor) Object.defineProperty(globalThis, "crypto", cryptoDescriptor);
+      else delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  });
+
   it("does not restore a Side Chat draft when a pre-ack error identifies the committed user message", async () => {
+    localStorage.clear();
     vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
       _conversationId,
       _body,
@@ -1522,6 +1949,7 @@ describe("SideChatPanelView response annotations", () => {
     ) => {
       await options.onEvent({
         type: "error",
+        terminal: true,
         error: "The saved message could not be hydrated.",
         messageId: "70000000-0000-4000-8000-000000000002",
       });
@@ -1544,7 +1972,10 @@ describe("SideChatPanelView response annotations", () => {
 
     expect(draft.value).toBe("");
     expect(host.textContent).not.toContain("1 annotation");
+    expect(readPendingChatSendMutation(sourceConversation.orgId, sideConversation.id, null)?.status)
+      .toBe("settled");
   });
+
 });
 
 describe("SideChatPanelView composer controls", () => {

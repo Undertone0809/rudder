@@ -44,38 +44,100 @@ def wait_for_thread_start_release():
 
 
 def terminal():
+    answer = final_answer_item()
     return {
         "method": "turn/completed",
         "params": {
             "threadId": thread_id,
             "turn": {
                 "id": turn_id,
-                "status": "interrupted" if mode == "interrupted" else "completed",
+                "status": "interrupted" if mode in ("interrupted", "live-stop-cutoff") else "completed",
                 "itemsView": "full",
-                "items": [] if mode == "empty-answer" else [
-                    {"id": "answer-1", "type": "agentMessage", "phase": "final_answer", "text": "synthetic answer"}
-                ],
+                "items": [] if answer is None else [answer],
             },
         },
     }
 
 
+def final_answer_item():
+    if mode in ("empty-answer", "partial-empty-answer"):
+        return None
+    if mode == "output-flood":
+        text = "x" * 4089 + "TAIL"
+        item_id = "flood-answer"
+    elif mode in ("stream-output", "live-stop-output-after-stop"):
+        text = "same same answer"
+        item_id = "streamed-answer"
+    else:
+        text = "synthetic answer"
+        item_id = "answer-1"
+    return {"id": item_id, "type": "agentMessage", "phase": "final_answer", "text": text}
+
+
+def streamed_answer_item():
+    if mode == "partial-empty-answer":
+        return {
+            "id": "partial-answer",
+            "type": "agentMessage",
+            "phase": "final_answer",
+            "text": "same same answer",
+        }
+    return final_answer_item()
+
+
 def final_item():
-    if mode == "empty-answer":
+    answer = final_answer_item()
+    if answer is None:
         return None
     return {
         "method": "item/completed",
         "params": {
             "threadId": thread_id,
             "turnId": turn_id,
-            "item": {
-                "id": "answer-1",
-                "type": "agentMessage",
-                "phase": "final_answer",
-                "text": "synthetic answer",
-            },
+            "item": answer,
         },
     }
+
+
+def streamed_output_events(include_item_snapshot=True):
+    answer = streamed_answer_item()
+    if answer is None:
+        return []
+    events = [
+        {
+            "method": "item/started",
+            "params": {
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "item": {key: answer[key] for key in ("id", "type", "phase")},
+            },
+        },
+        *[
+            {
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "itemId": answer["id"],
+                    "delta": delta,
+                },
+            }
+            for delta in ("same ", "same ", "answer")
+        ],
+    ]
+    if include_item_snapshot:
+        events.append(final_item())
+    return events
+
+
+def wait_for_output_release():
+    home.joinpath("output-pending").write_text("pending", encoding="utf-8")
+    release = home.joinpath("release-output")
+    deadline = time.monotonic() + 30
+    while not release.exists():
+        if time.monotonic() >= deadline:
+            os._exit(24)
+        time.sleep(0.02)
 
 
 def usage_update():
@@ -95,6 +157,46 @@ def usage_update():
             },
         },
     }
+
+
+def wait_for_flood_release(stage, batch):
+    home.joinpath(f"output-flood-{stage}-pending-{batch}").write_text(
+        "pending", encoding="utf-8"
+    )
+    release = home.joinpath(f"output-flood-{stage}-release-{batch}")
+    deadline = time.monotonic() + 360
+    while not release.exists():
+        if time.monotonic() >= deadline:
+            os._exit(24)
+        time.sleep(0.005)
+
+
+def output_flood_prelude_events():
+    events = []
+    for index in range(130):
+        item = {"id": f"flood-tool-{index}", "type": "commandExecution"}
+        events.extend(
+            [
+                usage_update(),
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": item,
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {**item, "status": "completed"},
+                    },
+                },
+            ]
+        )
+    return events
 
 
 def config_read():
@@ -156,6 +258,13 @@ for raw in sys.stdin:
             },
         })
     elif method == "config/read":
+        if mode == "live-stop-config-pending":
+            home.joinpath("config-read-pending").write_text("pending", encoding="utf-8")
+            deadline = time.monotonic() + 30
+            while not home.joinpath("release-config-read").exists():
+                if time.monotonic() >= deadline:
+                    os._exit(24)
+                time.sleep(0.02)
         result = config_read()
         if mode == "project-layer":
             result["layers"].append({
@@ -165,7 +274,10 @@ for raw in sys.stdin:
             })
         emit({"id": request_id, "result": result})
     elif method == "thread/start":
-        if mode in ("g6-lease-revoke", "g6-cancel-drop", "live-stop-late-thread"):
+        if mode in (
+            "g6-lease-revoke", "g6-cancel-drop", "live-stop-late-thread",
+            "live-stop-thread-unknown",
+        ):
             wait_for_thread_start_release()
         emit({"id": request_id, "result": {"thread": {"id": thread_id, "ephemeral": False}}})
     elif method == "thread/resume":
@@ -173,7 +285,7 @@ for raw in sys.stdin:
         emit({"id": request_id, "result": {"thread": {"id": resumed_thread_id, "ephemeral": False}}})
     elif method == "turn/start":
         record({"turnStart": frame})
-        if mode == "live-stop-late-turn":
+        if mode in ("live-stop-late-turn", "live-stop-input-unknown"):
             home.joinpath("turn-start-pending").write_text("pending", encoding="utf-8")
             deadline = time.monotonic() + 30
             while not home.joinpath("release-turn-start").exists():
@@ -184,6 +296,28 @@ for raw in sys.stdin:
             stale = terminal()
             stale["params"]["turn"]["id"] = "previous-turn"
             emit(stale)
+        if mode == "live-stop-cutoff":
+            emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
+            answer = final_answer_item()
+            emit({
+                "method": "item/started",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "item": {key: answer[key] for key in ("id", "type", "phase")},
+                },
+            })
+            emit({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "itemId": answer["id"],
+                    "delta": "prefix",
+                },
+            })
+            wait_for_output_release()
+            continue
         if mode.startswith("live-stop"):
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
             continue
@@ -202,7 +336,119 @@ for raw in sys.stdin:
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
         else:
             emit({"id": request_id, "result": {"turn": {"id": turn_id}}})
-            if final_item() is not None:
+            if mode == "visible_checkpoint":
+                # The browser can disconnect and reload after a durable prefix
+                # without converting disconnect into Stop or another prompt.
+                answer = final_answer_item()
+                emit({
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {key: answer[key] for key in ("id", "type", "phase")},
+                    },
+                })
+                emit({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": answer["id"],
+                        "delta": "synthetic ",
+                    },
+                })
+                wait_for_output_release()
+                emit(final_item())
+            elif mode in ("stream-output", "partial-empty-answer"):
+                for event in streamed_output_events(
+                    include_item_snapshot=mode == "stream-output"
+                ):
+                    emit(event)
+            elif mode in ("output-flood", "many-observations"):
+                answer = final_answer_item()
+                emit({
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {key: answer[key] for key in ("id", "type", "phase")},
+                    },
+                })
+                prelude = output_flood_prelude_events()
+                # Keep the first notifications below the bounded early-turn
+                # buffer while the turn/start response is being correlated.
+                # The durable empty-delta marker lets the workflow release the
+                # remaining large batches only after exact-turn capture begins.
+                prelude_batch_sizes = (15, 64, 64, 64, 64, 64, 55)
+                offset = 0
+                for batch, batch_size in enumerate(prelude_batch_sizes):
+                    for event in prelude[offset : offset + batch_size]:
+                        emit(event)
+                    offset += batch_size
+                    # One empty final-answer delta gives the workflow test a
+                    # durable receipt proving the preceding mixed notifications
+                    # have drained before it releases another bounded batch.
+                    emit({
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": answer["id"],
+                            "delta": "",
+                        },
+                    })
+                    wait_for_flood_release("many" if mode == "many-observations" else "prelude", batch)
+                if offset != len(prelude):
+                    os._exit(25)
+                if mode == "many-observations":
+                    home.joinpath("many-observations-counts.json").write_text(
+                        json.dumps({"usage": 130, "toolStarted": 130, "toolCompleted": 130}),
+                        encoding="utf-8",
+                    )
+                    if final_item() is not None:
+                        emit(final_item())
+                else:
+                    home.joinpath("output-flood-prelude-counts.json").write_text(
+                        json.dumps({"usage": 130, "toolStarted": 130, "toolCompleted": 130}),
+                        encoding="utf-8",
+                    )
+                    output_count = 4089
+                    for index in range(output_count):
+                        emit({
+                            "method": "item/agentMessage/delta",
+                            "params": {
+                                "threadId": thread_id,
+                                "turnId": turn_id,
+                                "itemId": answer["id"],
+                                "delta": "x",
+                            },
+                        })
+                        if (index + 1) % 64 == 0 or index + 1 == output_count:
+                            wait_for_flood_release("output", index // 64)
+                    # The 4097th receipt and subsequent terminal snapshot are a
+                    # deliberate uncommitted tail. The workflow test never
+                    # releases this gate; D1 must reject the tail before publish.
+                    home.joinpath("output-flood-terminal-pending").write_text(
+                        "pending", encoding="utf-8"
+                    )
+                    emit({
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": answer["id"],
+                            "delta": "TAIL",
+                        },
+                    })
+                    release_terminal = home.joinpath("output-flood-terminal-release")
+                    deadline = time.monotonic() + 360
+                    while not release_terminal.exists():
+                        if time.monotonic() >= deadline:
+                            os._exit(24)
+                        time.sleep(0.005)
+                    if final_item() is not None:
+                        emit(final_item())
+            elif final_item() is not None:
                 emit(final_item())
             emit(usage_update())
             emit(terminal())
@@ -213,6 +459,9 @@ for raw in sys.stdin:
         emit({"id": request_id, "result": {}})
         if mode == "live-stop-ack-only":
             continue
+        if mode == "live-stop-output-after-stop":
+            for event in streamed_output_events():
+                emit(event)
         value = terminal()
         value["params"]["turn"]["status"] = "completed" if mode == "live-stop-completed" else "interrupted"
         emit(value)

@@ -1,13 +1,14 @@
 //! Narrow continuation of an already-owned execution after durable Stop intent.
 //! It can observe late responses and dispatch one interrupt, never submit input.
 use super::{CheckpointReceipt, CheckpointTransition, ExecutionFence, LeaseReceipt, Result, http};
-use crate::native_chat::{auth, control::pin};
-use rudder_auth_core::VerifiedActor;
+use crate::native_chat::{NativeChatExecutionActor, auth, control::pin};
 use rudder_codex_app_server::{
-    CleanupReceipt, EffectResponseReceipt, OwnedTransport, RequestId, TransportError, TurnReceipt,
+    CleanupReceipt, ConnectionReceipt, EffectResponseReceipt, OwnedTransport, RequestId,
+    TransportError, TurnReceipt,
 };
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ pub struct StopIntent {
 
 pub async fn observe_stop(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<Option<StopIntent>> {
     let id = fence.identity();
@@ -29,13 +30,14 @@ pub async fn observe_stop(
         return Err(http(403, "Organization access denied"));
     }
     let mut tx = pool.begin().await?;
-    auth::authorize_org(&mut tx, actor, id.organization_id).await?;
-    crate::runtime_bindings::authorize_chat_target_read_tx(
+    auth::preauthorize_execution_org(&mut tx, actor, fence).await?;
+    crate::runtime_bindings::preauthorize_chat_execution_target_read_tx(
         &mut tx,
         actor,
         id.organization_id,
         id.conversation_id,
         id.agent_id,
+        fence,
     )
     .await?;
     // This is only a hint. Every Stop operation re-locks the exact action and
@@ -65,12 +67,80 @@ pub async fn observe_stop(
             };
             let mut tx = pool.begin().await?;
             super::context::lock_stopping_execution(&mut tx, actor, fence, &stop).await?;
-            auth::authorize_org(&mut tx, actor, id.organization_id).await?;
+            auth::authorize_execution_org(&mut tx, actor, fence).await?;
             tx.commit().await?;
             Ok(Some(stop))
         }
         _ => Err(http(409, "Native Chat Stop action is ambiguous")),
     }
+}
+
+/// Durably bind an observed Stop action to the exact live OwnedTransport
+/// connection. Epoch alone cannot distinguish two transports sharing an owner.
+pub async fn bind_stopping_connection(
+    pool: &PgPool,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    connection: &ConnectionReceipt,
+) -> Result<()> {
+    let id = fence.identity();
+    if !connection.matches_connection_claim(
+        id.run_id,
+        id.attempt_id,
+        fence.run_execution_owner_token(),
+        id.connection_epoch,
+        &fence.connection_claim_id,
+    ) {
+        return Err(http(
+            409,
+            "Stop connection does not match the execution fence",
+        ));
+    }
+    let proof = pin::digest(
+        "stop_connection_v1",
+        &json!(connection.connection_receipt_id()),
+    );
+    let mut tx = pool.begin().await?;
+    super::context::lock_stopping_execution(&mut tx, actor, fence, stop).await?;
+    let mut evidence: Value = sqlx::query_scalar(
+        "SELECT provider_evidence FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(id.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if evidence
+        .get("stoppingConnectionProof")
+        .is_some_and(|value| value.as_str() != Some(proof.as_str()))
+        || evidence
+            .get("stoppingConnectionEpoch")
+            .is_some_and(|value| value.as_i64() != Some(i64::from(id.connection_epoch)))
+        || evidence
+            .get("stoppingObservations")
+            .and_then(Value::as_array)
+            .is_some_and(|chain| {
+                chain
+                    .iter()
+                    .any(|entry| entry["connectionProof"].as_str() != Some(proof.as_str()))
+            })
+    {
+        return Err(http(409, "Stop connection registration changed"));
+    }
+    evidence["stoppingConnectionProof"] = json!(proof);
+    evidence["stoppingConnectionEpoch"] = json!(id.connection_epoch);
+    if evidence.to_string().len() > 65536 {
+        return Err(http(409, "Stop connection evidence exceeds bound"));
+    }
+    sqlx::query("UPDATE chat_control_actions SET provider_evidence=$3,updated_at=clock_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(id.organization_id)
+        .bind(&stop.action_id)
+        .bind(evidence)
+        .execute(&mut *tx)
+        .await?;
+    auth::authorize_execution_org(&mut tx, actor, fence).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub(super) async fn validate_action(
@@ -169,6 +239,27 @@ pub(super) async fn validate_action(
     } else if evidence.get("stoppingCheckpointHash").is_some() {
         return Err(http(409, "Stop checkpoint chain is missing"));
     }
+    let connection_proof = evidence
+        .get("stoppingConnectionProof")
+        .and_then(Value::as_str);
+    let connection_epoch = evidence
+        .get("stoppingConnectionEpoch")
+        .and_then(Value::as_i64);
+    if connection_proof.is_some() != connection_epoch.is_some()
+        || connection_proof.is_some_and(|proof| {
+            proof.len() != 64
+                || connection_epoch != Some(i64::from(fence.connection_epoch))
+                || evidence["stoppingObservations"]
+                    .as_array()
+                    .is_some_and(|chain| {
+                        chain
+                            .iter()
+                            .any(|entry| entry["connectionProof"].as_str() != Some(proof))
+                    })
+        })
+    {
+        return Err(http(409, "Stop connection registration is invalid"));
+    }
     if !pinned.same_identity(&current) || current.checkpoint_hash != checkpoint_hash {
         return Err(http(409, "Native Chat Stop execution pin changed"));
     }
@@ -177,13 +268,23 @@ pub(super) async fn validate_action(
 
 pub(super) async fn record_checkpoint(
     tx: &mut auth::Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &StopIntent,
     previous: &rudder_runtime_core::native_chat::NativeChatProtocolCheckpoint,
     next: &rudder_runtime_core::native_chat::NativeChatProtocolCheckpoint,
     observation: &EffectResponseReceipt,
 ) -> Result<()> {
+    let identity = fence.identity();
+    if !observation.matches_connection_claim(
+        identity.run_id,
+        identity.attempt_id,
+        fence.run_execution_owner_token(),
+        identity.connection_epoch,
+        &fence.connection_claim_id,
+    ) {
+        return Err(http(409, "Stop response belongs to another connection"));
+    }
     let current =
         pin::capture(tx, &fence.organization_id, &fence.run_id, &fence.attempt_id).await?;
     let mut evidence: Value = sqlx::query_scalar(
@@ -219,7 +320,7 @@ pub(super) async fn record_checkpoint(
     sqlx::query("UPDATE chat_control_actions SET provider_evidence=$3,updated_at=clock_timestamp() WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence)
         .execute(&mut **tx).await?;
-    auth::authorize_org(tx, actor, &fence.organization_id).await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
     Ok(())
 }
 
@@ -227,14 +328,21 @@ pub(super) async fn record_checkpoint(
 /// prepare a new effect; terminal Stop observations use the finalizer receipt.
 pub async fn advance_stopping_checkpoint(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &StopIntent,
     phase: NativeChatProtocolPhase,
     revision: u64,
     observation: &EffectResponseReceipt,
 ) -> Result<CheckpointReceipt> {
-    if !observation.matches_execution(&fence.run_id, &fence.attempt_id, &fence.run_owner_token) {
+    let identity = fence.identity();
+    if !observation.matches_connection_claim(
+        identity.run_id,
+        identity.attempt_id,
+        fence.run_execution_owner_token(),
+        identity.connection_epoch,
+        &fence.connection_claim_id,
+    ) {
         return Err(http(409, "Stop response belongs to another execution"));
     }
     let transition = match observation.turn_id() {
@@ -260,7 +368,7 @@ pub async fn advance_stopping_checkpoint(
 
 pub async fn renew_stopping_lease(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &StopIntent,
 ) -> Result<LeaseReceipt> {
@@ -295,7 +403,7 @@ impl InterruptPermit {
 
 pub async fn reserve_interrupt(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &StopIntent,
     response: &EffectResponseReceipt,
@@ -319,8 +427,14 @@ pub async fn reserve_interrupt(
         .turn_id()
         .ok_or_else(|| http(409, "Native Chat Turn unavailable"))?
         .to_owned();
-    if !response.matches_execution(&fence.run_id, &fence.attempt_id, &fence.run_owner_token)
-        || response.thread_id() != thread
+    let identity = fence.identity();
+    if !response.matches_connection_claim(
+        identity.run_id,
+        identity.attempt_id,
+        fence.run_execution_owner_token(),
+        identity.connection_epoch,
+        &fence.connection_claim_id,
+    ) || response.thread_id() != thread
         || response.turn_id() != Some(turn.as_str())
     {
         return Err(http(
@@ -364,7 +478,7 @@ pub async fn reserve_interrupt(
         )
         .await?;
     }
-    auth::authorize_org(&mut tx, actor, &fence.organization_id).await?;
+    auth::authorize_execution_org(&mut tx, actor, fence).await?;
     tx.commit().await?;
     Ok((updated == 1).then(|| InterruptPermit {
         deadline: anchor + Duration::from_millis((remaining as u64).min(2000)),
@@ -410,9 +524,136 @@ pub(super) async fn frozen_message(
     }
 }
 
+/// A pre-submission Stop has no accepted assistant output to preserve. Refuse
+/// to cancel if the durable cutoff or frozen prefix contains any projection.
+pub(super) async fn require_empty_frozen_prefix(
+    tx: &mut auth::Tx<'_>,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+) -> Result<()> {
+    let id = fence.identity();
+    let row = sqlx::query(
+        "SELECT a.accepted_through_seq,a.frozen_body_hash,
+                g.accepted_through_seq AS generation_cutoff,g.frozen_body_hash AS generation_hash,
+                EXISTS(SELECT 1 FROM chat_messages m
+                       WHERE m.org_id=a.org_id AND m.conversation_id=g.conversation_id
+                         AND m.run_id=$4::uuid AND m.role='assistant') AS has_assistant_projection
+         FROM chat_control_actions a JOIN chat_generations g
+           ON g.org_id=a.org_id AND g.id=a.expected_generation_id
+         WHERE a.org_id=$1::uuid AND a.id=$2::uuid AND a.expected_generation_id=$3::uuid",
+    )
+    .bind(id.organization_id)
+    .bind(&stop.action_id)
+    .bind(id.generation_id)
+    .bind(id.run_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| http(409, "Native Chat Stop action is missing"))?;
+    let expected_empty_hash = format!("{:x}", Sha256::digest(b""));
+    if row.try_get::<Option<i32>, _>("accepted_through_seq")? != Some(0)
+        || row.try_get::<Option<i32>, _>("generation_cutoff")? != Some(0)
+        || row
+            .try_get::<Option<String>, _>("frozen_body_hash")?
+            .as_deref()
+            != Some(expected_empty_hash.as_str())
+        || row
+            .try_get::<Option<String>, _>("generation_hash")?
+            .as_deref()
+            != Some(expected_empty_hash.as_str())
+        || row.try_get::<bool, _>("has_assistant_projection")?
+    {
+        return Err(http(
+            409,
+            "Pre-submission Stop cannot finalize a nonempty frozen projection",
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve a Stop with a transport cleanup receipt when the current durable
+/// phase proves no input effect permit was committed. The interrupt disposition
+/// stays `not_sent`; this records input disposition, not provider completion.
+pub(super) async fn resolve_action_pre_submission(
+    tx: &mut auth::Tx<'_>,
+    actor: &impl NativeChatExecutionActor,
+    fence: &ExecutionFence,
+    stop: &StopIntent,
+    cleanup: &CleanupReceipt,
+    result: &Value,
+) -> Result<()> {
+    if !cleanup.matches_connection_claim(
+        &fence.run_id,
+        &fence.attempt_id,
+        fence.run_execution_owner_token(),
+        fence.identity().connection_epoch,
+        &fence.connection_claim_id,
+    ) {
+        return Err(http(
+            409,
+            "Stop cleanup receipt belongs to another execution",
+        ));
+    }
+    let mut evidence: Value = sqlx::query_scalar(
+        "SELECT provider_evidence FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let interrupt_disposition: String = sqlx::query_scalar(
+        "SELECT provider_disposition FROM chat_control_actions WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(&fence.organization_id)
+    .bind(&stop.action_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if interrupt_disposition != "not_sent" || evidence.get("interruptConnectionProof").is_some() {
+        return Err(http(
+            409,
+            "Stop interrupt evidence conflicts with no-input finalization",
+        ));
+    }
+    let connection = pin::digest(
+        "stop_connection_v1",
+        &json!(cleanup.connection_receipt_id()),
+    );
+    if evidence["stoppingConnectionProof"].as_str() != Some(connection.as_str())
+        || evidence["stoppingConnectionEpoch"].as_i64()
+            != Some(i64::from(fence.identity().connection_epoch))
+    {
+        return Err(http(
+            409,
+            "Stop cleanup connection is not the registered owner",
+        ));
+    }
+    if evidence.get("stoppingObservations").is_some_and(|value| {
+        value.as_array().is_none_or(|chain| {
+            chain.iter().any(|entry| {
+                entry["phase"] != "thread_known"
+                    || entry["connectionProof"].as_str() != Some(connection.as_str())
+            })
+        })
+    }) {
+        return Err(http(409, "Stop response connection conflicts with cleanup"));
+    }
+    evidence["stopResolution"] = json!({
+        "result":result,
+        "inputDisposition":"not_submitted",
+        "connectionProof":connection,
+    });
+    sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
+        .bind(&fence.organization_id)
+        .bind(&stop.action_id)
+        .bind(evidence)
+        .execute(&mut **tx)
+        .await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
+    Ok(())
+}
+
 pub(super) async fn resolve_action(
     tx: &mut auth::Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &StopIntent,
     turn: &TurnReceipt,
@@ -451,6 +692,6 @@ pub(super) async fn resolve_action(
     evidence["stopResolution"] = json!({"result":result,"actualProviderStatus":format!("{:?}",turn.status()),"connectionProof":connection});
     sqlx::query("UPDATE chat_control_actions SET local_disposition='stopped',resolved_at=clock_timestamp(),updated_at=clock_timestamp(),provider_evidence=$3 WHERE org_id=$1::uuid AND id=$2::uuid")
         .bind(&fence.organization_id).bind(&stop.action_id).bind(evidence).execute(&mut **tx).await?;
-    auth::authorize_org(tx, actor, &fence.organization_id).await?;
+    auth::authorize_execution_org(tx, actor, fence).await?;
     Ok(())
 }

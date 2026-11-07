@@ -123,6 +123,54 @@ async fn exact_admitted_input_excludes_chat_history_and_persists_thread_turn_wit
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
+async fn first_send_runs_through_owned_codex_workflow_with_one_exact_input() {
+    assert_ignored_external_dependencies();
+    let (database, host, actor, _conversation_id, run_id, attempt_id) =
+        database_and_first_send_admission("complete").await;
+    let (result, host) = execute_on_worker(&database, host, actor, run_id, attempt_id).await;
+    let observation = result.expect("synthetic first Chat Turn should be observed");
+    assert_eq!(observation.turn_receipt.thread_id(), THREAD);
+    assert_eq!(observation.turn_receipt.turn_id(), TURN);
+    assert_eq!(
+        observation.turn_receipt.final_text(),
+        Some("synthetic answer")
+    );
+    assert!(observation.cleanup_proven);
+    assert!(host.provider_started());
+
+    let events = host.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["received"]["method"] == "thread/start")
+            .count(),
+        1,
+        "first-send creates one owned Codex Thread"
+    );
+    let turn_start = events
+        .iter()
+        .find(|event| event.get("turnStart").is_some())
+        .expect("provider received the first admitted Turn");
+    let input = turn_start["turnStart"]["params"]["input"]
+        .as_array()
+        .expect("single Codex input array");
+    assert_eq!(input.len(), 1, "first-send submits exactly one input item");
+    assert_eq!(input[0]["text"], BODY);
+    assert!(
+        turn_start["turnStart"]["params"].get("history").is_none(),
+        "the provider request does not replay SQL conversation history"
+    );
+    assert!(
+        !input[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("old private history"),
+        "post-admission transcript content is not submitted"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires RUDDER_TEST_PROCESS_HOST; uses disposable PostgreSQL and a synthetic local provider only"]
 async fn terminal_notification_before_turn_response_is_buffered_and_observed() {
     assert_ignored_external_dependencies();
     let (database, host, actor, run_id, attempt_id) =

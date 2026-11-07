@@ -1,5 +1,5 @@
 //! External ownership host bridge. No PID-based adoption or cleanup is allowed.
-use super::{EventQueue, InputEvent};
+use crate::{EventQueue, InputEvent};
 use rudder_native_protocol::{PROTOCOL_MAJOR, PROTOCOL_MINOR};
 use rudder_process_host::{HostInput, MUX_MAX_FRAME_BYTES, MUX_MAX_RAW_BYTES, MUX_VERSION};
 use serde_json::Value;
@@ -199,7 +199,7 @@ enum Envelope {
 }
 
 fn decode(frame: &[u8], request_id: &str, owner_token: &str) -> io::Result<Envelope> {
-    let envelope = serde_json::from_slice::<crate::value::StrictValue>(frame)
+    let envelope = serde_json::from_slice::<crate::strict_json::StrictValue>(frame)
         .map_err(|_| invalid())?
         .0;
     let object = envelope.as_object().ok_or_else(invalid)?;
@@ -255,7 +255,9 @@ fn decode(frame: &[u8], request_id: &str, owner_token: &str) -> io::Result<Envel
             }
             let bytes = data
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| Ok(hex(pair[0])? * 16 + hex(pair[1])?))
                 .collect::<io::Result<Vec<u8>>>()?;
             Ok(if kind == "stdout" {

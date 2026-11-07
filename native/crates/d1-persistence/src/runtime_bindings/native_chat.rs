@@ -2,7 +2,8 @@
 //! These types are crate-private and never deserialize caller-provided binding
 //! identities. The caller supplies configuration resolved by the Rust host.
 
-use super::{IdentityInput, Result, Tx, VerifiedActor, http};
+use super::{IdentityInput, Result, Tx, http};
+use crate::native_chat::NativeChatActor;
 use sqlx::Row;
 
 pub(crate) struct EnsuredNativeChatBinding {
@@ -24,7 +25,7 @@ pub(crate) async fn lock_native_chat_target_tx(
 
 pub(crate) async fn ensure_native_chat_binding_tx(
     tx: &mut Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
     conversation_id: &str,
     identity: &IdentityInput,
@@ -39,7 +40,7 @@ pub(crate) async fn ensure_native_chat_binding_tx(
 /// Claim must acquire the target advisory lock before any row locks as well.
 pub(crate) async fn read_native_chat_binding_tx(
     tx: &mut Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     organization_id: &str,
     conversation_id: &str,
     identity: &IdentityInput,

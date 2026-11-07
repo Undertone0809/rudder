@@ -73,6 +73,11 @@ mod issue_metadata_reads;
 mod llm_reflection;
 mod native_bearer_auth;
 pub mod native_chat_worker;
+
+#[cfg(all(test, unix))]
+#[allow(unused_imports)]
+#[path = "../../native-chat-executor/tests/workflow/fixture.rs"]
+mod native_chat_test_fixture;
 mod organization_catalog_reads;
 mod overview_reads;
 mod project_reads;
@@ -86,7 +91,9 @@ mod run_workspace_reads;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 mod workspace_backup_reads;
-pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
+pub use public_ingress_config::{
+    NativeChatPublicRuntime, PublicIngressConfig, PublicIngressConfigError,
+};
 pub use workspace_backup_reads::WORKSPACE_BACKUP_READ_ACTION;
 
 pub use activity_link_reads::ACTIVITY_LINK_READ_ACTION;

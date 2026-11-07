@@ -17,7 +17,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
-import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockLegacyNativeChatQueueTarget, lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
 
@@ -199,6 +199,12 @@ export function createChatAnnotationMessagePersistence(
           }
           return { messageId: existing.id, replayed: true };
         }
+      }
+
+      const targetAuthority = await lockLegacyNativeChatQueueTarget(tx, orgId, conversationId);
+      if (targetAuthority === "missing") throw notFound("Chat conversation not found");
+      if (targetAuthority === "native_owned") {
+        throw conflict("This chat is controlled by the Rust Native Chat runtime");
       }
 
       if (editUserMessageId) {

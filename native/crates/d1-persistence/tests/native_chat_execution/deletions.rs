@@ -95,7 +95,9 @@ fn assert_binding_restrict_error(error: sqlx::Error) {
     let sqlx::Error::Database(error) = error else {
         panic!("expected the RuntimeBinding Agent foreign-key restriction, got {error}");
     };
-    assert_eq!(error.code().as_deref(), Some("23503"));
+    // PostgreSQL 18 distinguishes RESTRICT from the older generic FK error.
+    // Keep the exact constraint assertion below on both supported variants.
+    assert!(matches!(error.code().as_deref(), Some("23503" | "23001")));
     assert_eq!(
         error.constraint(),
         Some("runtime_bindings_agent_id_agents_id_fk")

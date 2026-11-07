@@ -26,6 +26,17 @@ pub(super) fn body(value: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
+pub(super) fn optional_override(value: Option<&str>, field: &str) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.len() > 120 || value.chars().any(char::is_control) {
+        return Err(http(400, format!("Invalid {field} override")));
+    }
+    Ok(Some(value.to_owned()))
+}
+
 pub(super) fn fingerprint(body: &str) -> String {
     use sha2::{Digest, Sha256};
 

@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::{Value, json};
 
-const MAX_EVENT_BYTES: i32 = 64 * 1024;
+const MAX_EVENT_BYTES: i32 = 512 * 1024;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -38,13 +38,13 @@ pub struct EventPage {
 /// adopts, or checkpoints execution. No raw provider or owner payload is exposed.
 pub async fn read_events(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     request: &ReadEvents,
 ) -> Result<EventPage> {
     validate_ids(actor, &request.conversation_id, &request.generation_id)?;
     if request.after_seq < 0
         || !(1..=100).contains(&request.limit)
-        || !(1024..=256 * 1024).contains(&request.max_bytes)
+        || !(1024..=1024 * 1024).contains(&request.max_bytes)
     {
         return Err(http(422, "Invalid Native Chat event page bounds"));
     }
@@ -62,16 +62,27 @@ pub async fn read_events(
         &request.generation_id,
     )
     .await?;
-    // Never materialize an unbounded raw JSON value in the Rust process. The
-    // extra row detects more pages; an oversized first event fails explicitly,
-    // without silently advancing the cursor over missing content.
-    let rows=sqlx::query(
-        "SELECT generation_seq,attempt_epoch,event_kind,assistant_message_id::text,control_action_id::text,
-          CASE WHEN octet_length(payload::text)<=$4 THEN payload END AS payload
-         FROM chat_generation_events WHERE org_id=$1::uuid AND generation_id=$2::uuid AND generation_seq>$3
-         ORDER BY generation_seq LIMIT $5",
+    // Bound raw payload materialization across the page, before decoding JSON.
+    // Include at most one event beyond the byte budget; a NULL sentinel keeps
+    // pagination honest without transferring the remaining large payloads.
+    let rows = sqlx::query(
+        "WITH bounded AS MATERIALIZED (
+           SELECT generation_seq,attempt_epoch,event_kind,assistant_message_id,control_action_id,
+             payload,octet_length(payload::text)::bigint AS payload_bytes
+           FROM chat_generation_events
+           WHERE org_id=$1::uuid AND generation_id=$2::uuid AND generation_seq>$3
+           ORDER BY generation_seq LIMIT $5
+         ), sized AS (
+           SELECT *,COALESCE(SUM(payload_bytes) OVER (
+             ORDER BY generation_seq ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0)
+             AS prior_bytes FROM bounded
+         )
+         SELECT generation_seq,attempt_epoch,event_kind,assistant_message_id::text,control_action_id::text,
+           CASE WHEN payload_bytes<=$4 AND prior_bytes<$6 THEN payload END AS payload
+         FROM sized ORDER BY generation_seq",
     ).bind(actor.organization_id()).bind(&request.generation_id).bind(request.after_seq)
-        .bind(MAX_EVENT_BYTES).bind(request.limit+1).fetch_all(&mut *tx).await?;
+        .bind(MAX_EVENT_BYTES).bind(request.limit+1).bind(request.max_bytes as i64)
+        .fetch_all(&mut *tx).await?;
     let mut page = EventPage {
         generation_id: request.generation_id.clone(),
         events: Vec::new(),
@@ -121,6 +132,9 @@ pub async fn read_events(
         page.next_seq = event.generation_seq;
         page.events.push(event);
     }
+    // Recheck wall-clock expiry after building a bounded response. No credential
+    // row locks are taken in this repeatable-read, read-only transaction.
+    auth::preauthorize_org(&mut tx, actor, actor.organization_id()).await?;
     tx.commit().await?;
     Ok(page)
 }
@@ -140,6 +154,7 @@ fn public_payload(kind: &str, raw: &Value) -> Result<Value> {
         "assistant_delta" => &["delta", "bodyHash"],
         "runtime_output" => &["body", "bodyHash"],
         "runtime_terminal" | "terminal_projected" => &["status"],
+        "dispatch_unavailable" => &["code"],
         _ => return Err(http(409, "Native Chat event kind has no public projection")),
     };
     let mut payload = json!({});
@@ -160,6 +175,7 @@ fn public_payload(kind: &str, raw: &Value) -> Result<Value> {
             "renderedBodyHash" | "requestedBodyHash" | "frozenBodyHash" | "bodyHash" => {
                 value.as_str().is_some_and(|v| normalize_hash(v).is_ok())
             }
+            "code" => value.as_str() == Some("dispatch_unavailable"),
             "status" => value
                 .as_str()
                 .is_some_and(|v| matches!(v, "succeeded" | "failed" | "cancelled")),

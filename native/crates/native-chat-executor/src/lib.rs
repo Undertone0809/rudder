@@ -13,6 +13,7 @@ use rudder_codex_app_server::{
 };
 use rudder_d1_persistence::{
     native_chat::{
+        NativeChatActor, NativeChatExecutionPrincipal,
         config::{LocalHostContext, ResolvedCodexConfig},
         execution::{
             self, CheckpointSnapshot, CheckpointTransition, EffectDispatch, ExecutionFence,
@@ -25,6 +26,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{
     collections::{BTreeMap, VecDeque},
+    fmt,
     future::Future,
     path::{Path, PathBuf},
     sync::{
@@ -64,6 +66,7 @@ pub enum Error {
 /// Installation paths, never accepted from an HTTP request. The isolated HOME
 /// must be provisioned by the Rust host; this executor does not copy credentials
 /// or use the operator's ambient environment.
+#[derive(Clone)]
 pub struct HostPaths {
     pub process_host: PathBuf,
     pub runtime_root: PathBuf,
@@ -108,10 +111,10 @@ pub async fn execute(
     let _cancel_on_drop = CancelOnDrop(Arc::clone(&request.cancelled));
     let handle = Handle::current();
     tokio::task::spawn_blocking(move || {
-        run_on_blocking_thread(
+        run_observed_with_request_actor_on_blocking_thread(
             &handle,
             &pool,
-            &actor,
+            actor,
             &host,
             &paths,
             ExecutionRequest {
@@ -125,11 +128,15 @@ pub async fn execute(
     })
     .await
     .map_err(|_| Error::WorkerInterrupted)?
+    .map_err(ExecutionFailure::into_error)
 }
 
 /// Observation only: even cleanup_proven=true does not release the durable hold
 /// or finish the Run. The finalizer must validate/persist projection and billing.
 pub struct ExecutionObservation {
+    /// Move-only identity minted by the successful D1 claim. Finalizers must
+    /// use this value, never the request actor that initiated admission.
+    pub execution_principal: NativeChatExecutionPrincipal,
     pub fence: ExecutionFence,
     pub turn_receipt: TurnReceipt,
     pub cleanup_receipt: Option<CleanupReceipt>,
@@ -167,28 +174,130 @@ pub enum ProcessDisposition {
 
 /// Opaque failure evidence, constructed only by the executor that owns launch
 /// and observes cleanup. It cannot be used to finalize a provider turn.
-#[derive(Debug)]
-pub struct ExecutionFailure {
+pub struct ExecutionFailure(Box<ExecutionFailureEvidence>);
+
+struct ExecutionFailureEvidence {
     error: Error,
     process: ProcessDisposition,
+    fence: Option<ExecutionFence>,
+    execution_principal: Option<NativeChatExecutionPrincipal>,
+    cleanup_receipt: Option<CleanupReceipt>,
+}
+
+impl fmt::Debug for ExecutionFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExecutionFailure")
+            .field("error", &self.0.error)
+            .field("process", &self.0.process)
+            .field("hasFence", &self.0.fence.is_some())
+            .field(
+                "hasExecutionPrincipal",
+                &self.0.execution_principal.is_some(),
+            )
+            .field("hasCleanupReceipt", &self.0.cleanup_receipt.is_some())
+            .finish()
+    }
 }
 
 impl ExecutionFailure {
     pub fn process_disposition(&self) -> ProcessDisposition {
-        self.process
+        self.0.process
+    }
+    /// True only when no child was launched or this exact claim's owned
+    /// transport supplied matching terminal cleanup evidence.
+    pub fn process_quiescent(&self) -> bool {
+        self.0.process != ProcessDisposition::Unresolved
+    }
+    /// Private in-process continuation evidence; absence of a fence is expected
+    /// for failures before the durable claim returned.
+    pub fn fence(&self) -> Option<&ExecutionFence> {
+        self.0.fence.as_ref()
+    }
+    /// Available only after a successful durable claim. A missing principal
+    /// means the request never crossed into execution authority.
+    pub fn execution_principal(&self) -> Option<&NativeChatExecutionPrincipal> {
+        self.0.execution_principal.as_ref()
+    }
+    /// Actual owned-transport cleanup proof, never inferred from the enum above.
+    pub fn cleanup_receipt(&self) -> Option<&CleanupReceipt> {
+        self.0.cleanup_receipt.as_ref()
     }
     pub fn into_error(self) -> Error {
-        self.error
+        self.0.error
+    }
+
+    fn not_launched(error: Error) -> Self {
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process: ProcessDisposition::NotLaunched,
+            fence: None,
+            execution_principal: None,
+            cleanup_receipt: None,
+        }))
+    }
+
+    fn before_launch(
+        error: Error,
+        execution_principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+    ) -> Self {
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process: ProcessDisposition::NotLaunched,
+            fence: Some(fence),
+            execution_principal: Some(execution_principal),
+            cleanup_receipt: None,
+        }))
+    }
+
+    fn after_claim(
+        error: Error,
+        execution_principal: NativeChatExecutionPrincipal,
+        fence: ExecutionFence,
+        cleanup_receipt: Option<CleanupReceipt>,
+    ) -> Self {
+        let cleanup_receipt =
+            cleanup_receipt.filter(|cleanup| cleanup_proves_owned_execution(&fence, cleanup));
+        let process = if cleanup_receipt.is_some() {
+            ProcessDisposition::CleanupProven
+        } else {
+            ProcessDisposition::Unresolved
+        };
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process,
+            fence: Some(fence),
+            execution_principal: Some(execution_principal),
+            cleanup_receipt,
+        }))
+    }
+
+    #[cfg(all(test, unix))]
+    fn after_launch(
+        error: Error,
+        fence: ExecutionFence,
+        cleanup_receipt: Option<CleanupReceipt>,
+    ) -> Self {
+        let cleanup_receipt =
+            cleanup_receipt.filter(|cleanup| cleanup_proves_owned_execution(&fence, cleanup));
+        let process = if cleanup_receipt.is_some() {
+            ProcessDisposition::CleanupProven
+        } else {
+            ProcessDisposition::Unresolved
+        };
+        Self(Box::new(ExecutionFailureEvidence {
+            error,
+            process,
+            fence: Some(fence),
+            execution_principal: None,
+            cleanup_receipt,
+        }))
     }
 }
 
-impl ExecutionFailure {
-    fn not_launched(error: Error) -> Self {
-        Self {
-            error,
-            process: ProcessDisposition::NotLaunched,
-        }
-    }
+fn cleanup_proves_owned_execution(fence: &ExecutionFence, cleanup: &CleanupReceipt) -> bool {
+    fence.matches_cleanup_receipt(cleanup)
 }
 
 /// Run only on a dedicated blocking worker (e.g. spawn_blocking), with the
@@ -216,6 +325,30 @@ pub fn run_observed_on_blocking_thread(
     paths: &HostPaths,
     request: ExecutionRequest<'_>,
 ) -> std::result::Result<ExecutionObservation, ExecutionFailure> {
+    run_observed_with_request_actor_on_blocking_thread(
+        handle,
+        pool,
+        actor.clone(),
+        host,
+        paths,
+        request,
+    )
+}
+
+/// Owned request-actor entrypoint used by Foundation jobs. Keeping the actor
+/// owned here lets the executor drop request-scoped browser credentials as
+/// soon as the D1 claim returns its sealed continuation principal.
+pub fn run_observed_with_request_actor_on_blocking_thread<A>(
+    handle: &Handle,
+    pool: &PgPool,
+    actor: A,
+    host: &LocalHostContext,
+    paths: &HostPaths,
+    request: ExecutionRequest<'_>,
+) -> std::result::Result<ExecutionObservation, ExecutionFailure>
+where
+    A: NativeChatActor,
+{
     if request.timeout.is_zero()
         || request.timeout > Duration::from_secs(3600)
         || request.cancelled.load(Ordering::Acquire)
@@ -223,34 +356,42 @@ pub fn run_observed_on_blocking_thread(
         return Err(ExecutionFailure::not_launched(Error::Cancelled));
     }
     let deadline = Instant::now() + request.timeout;
-    let (claimed, launch, snapshot) = (|| -> Result<_> {
-        validate_paths(paths)?;
-        let claimed = db(
-            handle,
-            deadline,
-            execution::claim_with_preflight(
-                pool,
-                actor,
-                request.organization_id,
-                request.run_id,
-                request.attempt_id,
-                host,
-                |config| {
-                    if request.cancelled.load(Ordering::Acquire) {
-                        return Err(runtime_bindings::Error::Http(
-                            409,
-                            "Native Chat execution was cancelled".into(),
-                        ));
-                    }
-                    profile::validate(config, paths).map_err(|_| {
-                        runtime_bindings::Error::Http(
-                            409,
-                            "Native Chat profile configuration is unsupported".into(),
-                        )
-                    })
-                },
-            ),
-        )?;
+    if let Err(error) = validate_paths(paths) {
+        return Err(ExecutionFailure::not_launched(error));
+    }
+    let claimed = db(
+        handle,
+        deadline,
+        execution::claim_with_preflight(
+            pool,
+            &actor,
+            request.organization_id,
+            request.run_id,
+            request.attempt_id,
+            host,
+            |config| {
+                if request.cancelled.load(Ordering::Acquire) {
+                    return Err(runtime_bindings::Error::Http(
+                        409,
+                        "Native Chat execution was cancelled".into(),
+                    ));
+                }
+                profile::validate(config, paths).map_err(|_| {
+                    runtime_bindings::Error::Http(
+                        409,
+                        "Native Chat profile configuration is unsupported".into(),
+                    )
+                })
+            },
+        ),
+    )
+    .map_err(ExecutionFailure::not_launched)?;
+    let (execution_principal, claimed_fence, claimed_config, connection_launch_permit) =
+        claimed.into_execution_parts();
+    // Request authentication has served its sole purpose. Every continuation
+    // below is fenced by the principal minted in the same D1 claim transaction.
+    drop(actor);
+    let (launch, snapshot) = match (|| -> Result<_> {
         if request.cancelled.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
@@ -260,32 +401,49 @@ pub fn run_observed_on_blocking_thread(
         db(
             handle,
             deadline,
-            execution::validate_submission_source(pool, actor, &claimed.fence),
+            execution::validate_submission_source(pool, &execution_principal, &claimed_fence),
         )?;
-        let launch = process_launch(&claimed.config, &claimed.fence, paths)?;
+        let launch = process_launch(&claimed_config, &claimed_fence, paths)?;
         let snapshot = db(
             handle,
             deadline,
-            execution::current_checkpoint(pool, actor, &claimed.fence),
+            execution::current_checkpoint(pool, &execution_principal, &claimed_fence),
         )?;
-        Ok((claimed, launch, snapshot))
-    })()
-    .map_err(ExecutionFailure::not_launched)?;
+        Ok((launch, snapshot))
+    })() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(ExecutionFailure::before_launch(
+                error,
+                execution_principal,
+                claimed_fence,
+            ));
+        }
+    };
     // Finish all fallible prelaunch reads before creating the process owner.
     // A launch error may have created an external owner; do not infer cleanup.
-    let transport =
-        OwnedTransport::launch_external(launch, &paths.process_host).map_err(|error| {
-            ExecutionFailure {
-                error: error.into(),
-                process: ProcessDisposition::Unresolved,
-            }
-        })?;
+    let launch_fence = claimed_fence.clone();
+    let transport = match OwnedTransport::launch_external_for_execution(
+        launch,
+        &paths.process_host,
+        connection_launch_permit,
+    ) {
+        Ok(transport) => transport,
+        Err(error) => {
+            return Err(ExecutionFailure::after_claim(
+                error.into(),
+                execution_principal,
+                launch_fence,
+                None,
+            ));
+        }
+    };
     let mut driver = Driver {
         handle,
         pool,
-        actor,
-        fence: claimed.fence,
-        config: claimed.config,
+        actor: &execution_principal,
+        fence: claimed_fence,
+        config: claimed_config,
         transport,
         snapshot,
         cancelled: request.cancelled,
@@ -295,45 +453,66 @@ pub fn run_observed_on_blocking_thread(
         notifications: VecDeque::new(),
         stop: None,
         stop_checked: Instant::now() - Duration::from_secs(1),
+        connection_registered: false,
         turn_response: None,
+        spawned: false,
         interrupt_attempted: false,
         interrupt_request: None,
     };
     let result = driver.execute();
-    // Stop even after permission, database, protocol, or provider failure. An
-    // absent/unproven receipt stays unproven and never becomes success by Drop.
+    // Stop even after permission, database, protocol, or provider failure. A
+    // returned cleanup receipt remains opaque evidence for a narrow Stop-only
+    // finalizer; the disposition enum is never sufficient authority.
     let cleanup_receipt = driver.stop_and_observe_cleanup();
-    let identity = driver.fence.identity();
-    let process = if cleanup_receipt.as_ref().is_some_and(|cleanup| {
-        cleanup.matches_execution(
-            identity.run_id,
-            identity.attempt_id,
-            driver.fence.run_execution_owner_token(),
-        )
-    }) {
-        ProcessDisposition::CleanupProven
-    } else {
-        ProcessDisposition::Unresolved
+    let provider_terminal = match result {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let fence = driver.fence.clone();
+            drop(driver);
+            return Err(ExecutionFailure::after_claim(
+                error,
+                execution_principal,
+                fence,
+                cleanup_receipt,
+            ));
+        }
     };
-    let failure = |error| ExecutionFailure { error, process };
-    let provider_terminal = result.map_err(failure)?;
-    let turn_receipt = driver
-        .transport
-        .take_turn_receipt()
-        .ok_or_else(|| failure(Error::InvalidProviderObservation))?;
+    let Some(turn_receipt) = driver.transport.take_turn_receipt() else {
+        let fence = driver.fence.clone();
+        drop(driver);
+        return Err(ExecutionFailure::after_claim(
+            Error::InvalidProviderObservation,
+            execution_principal,
+            fence,
+            cleanup_receipt,
+        ));
+    };
     if provider_terminal.thread_id != turn_receipt.thread_id()
         || provider_terminal.turn_id != turn_receipt.turn_id()
         || provider_terminal.status != turn_receipt.status()
     {
-        return Err(failure(Error::InvalidProviderObservation));
+        let fence = driver.fence.clone();
+        drop(driver);
+        return Err(ExecutionFailure::after_claim(
+            Error::InvalidProviderObservation,
+            execution_principal,
+            fence,
+            cleanup_receipt,
+        ));
     }
-    let cleanup_proven = cleanup_receipt.is_some();
+    let cleanup_proven = cleanup_receipt
+        .as_ref()
+        .is_some_and(|cleanup| cleanup_proves_owned_execution(&driver.fence, cleanup));
+    let fence = driver.fence.clone();
+    let stop = driver.stop.take();
+    drop(driver);
     Ok(ExecutionObservation {
-        fence: driver.fence,
+        execution_principal,
+        fence,
         turn_receipt,
         cleanup_receipt,
         cleanup_proven,
-        stop: driver.stop,
+        stop,
     })
 }
 
@@ -396,7 +575,7 @@ fn process_launch(
 struct Driver<'a> {
     handle: &'a Handle,
     pool: &'a PgPool,
-    actor: &'a VerifiedActor,
+    actor: &'a NativeChatExecutionPrincipal,
     fence: ExecutionFence,
     config: ResolvedCodexConfig,
     paths: &'a HostPaths,
@@ -408,7 +587,9 @@ struct Driver<'a> {
     notifications: VecDeque<(String, Value)>,
     stop: Option<execution::StopIntent>,
     stop_checked: Instant,
+    connection_registered: bool,
     turn_response: Option<EffectResponseReceipt>,
+    spawned: bool,
     interrupt_attempted: bool,
     interrupt_request: Option<RequestId>,
 }
@@ -441,6 +622,23 @@ impl Driver<'_> {
             self.deadline,
             execution::observe_stop(self.pool, self.actor, &self.fence),
         )?;
+        if let Some(stop) = &self.stop
+            && !self.connection_registered
+        {
+            let connection = self.transport.connection_receipt();
+            db(
+                self.handle,
+                self.deadline,
+                execution::bind_stopping_connection(
+                    self.pool,
+                    self.actor,
+                    &self.fence,
+                    stop,
+                    &connection,
+                ),
+            )?;
+            self.connection_registered = true;
+        }
         self.stop_checked = Instant::now();
         Ok(())
     }
@@ -565,8 +763,8 @@ impl Driver<'_> {
             params,
         })) = event
         {
-            // Only the terminal event is needed by this private executor. Other
-            // output belongs to the upcoming bounded projection owner.
+            // Keep terminal correlation private while persisting each visible
+            // output observation through the typed, connection-bound receipt.
             if method == "turn/completed" {
                 if !matches!(
                     self.snapshot.phase,
@@ -583,6 +781,35 @@ impl Driver<'_> {
             }
         } else if matches!(event, TransportEvent::Rpc(_)) {
             return Err(Error::InvalidProviderObservation);
+        }
+        self.persist_visible_outputs()?;
+        Ok(())
+    }
+
+    fn persist_visible_outputs(&mut self) -> Result<()> {
+        for receipt in self.transport.take_visible_output_receipts() {
+            // A Stop freezes the already committed prefix. Drop all later
+            // receipts instead of letting provider tail output change it.
+            if self.stop.is_some() {
+                continue;
+            }
+            match db(
+                self.handle,
+                self.deadline,
+                execution::record_visible_output(self.pool, self.actor, &self.fence, &receipt),
+            ) {
+                Ok(_) => (),
+                Err(error @ Error::Persistence(runtime_bindings::Error::Http(409, _))) => {
+                    self.poll_stop()?;
+                    if self.stop.is_some() {
+                        // The failed write crossed the durable Stop cutoff.
+                        // Remaining queued receipts are intentionally dropped.
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }
@@ -703,6 +930,7 @@ impl Driver<'_> {
             if let TransportEvent::Lifecycle(value) = self.next()?
                 && value["type"] == "spawned"
             {
+                self.spawned = true;
                 break;
             }
         }
@@ -839,6 +1067,10 @@ impl Driver<'_> {
         self.turn_response = Some(proof);
         self.transport
             .begin_turn_receipt(thread_id.clone(), turn_id.clone())?;
+        // The transport may have buffered exact-turn output before the
+        // turn/start response identified its opaque Turn. Persist it now that
+        // both the durable checkpoint and receipt tracker are correlated.
+        self.persist_visible_outputs()?;
         loop {
             if let Some((_, value)) = self.notifications.pop_front() {
                 // Replayed terminals from another Turn cannot suppress this
@@ -858,6 +1090,32 @@ impl Driver<'_> {
     }
 
     fn stop_and_observe_cleanup(&mut self) -> Option<CleanupReceipt> {
+        // `next()` may already have consumed the host's terminal lifecycle
+        // frame while `spawned` was still false locally. Preserve a cleanup
+        // receipt the transport has already validated before polling again;
+        // a subsequent `Closed` poll cannot recover that consumed frame.
+        if let Some(receipt) = self.transport.take_cleanup_receipt() {
+            return Some(receipt);
+        }
+        if !self.spawned {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                match self.transport.poll(Duration::from_millis(100)) {
+                    Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "spawned" => {
+                        self.spawned = true;
+                        break;
+                    }
+                    Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "terminal" => {
+                        return self.transport.take_cleanup_receipt();
+                    }
+                    Err(_) => return None,
+                    _ => (),
+                }
+            }
+            if !self.spawned {
+                return None;
+            }
+        }
         if self.transport.stop().is_err() {
             return None;
         }
@@ -872,5 +1130,195 @@ impl Driver<'_> {
             }
         }
         None
+    }
+}
+
+#[cfg(all(test, unix))]
+extern crate self as rudder_native_chat_executor;
+
+#[cfg(all(test, unix))]
+#[path = "../tests/workflow/fixture.rs"]
+mod cleanup_claim_fixture;
+
+#[cfg(all(test, unix))]
+mod cleanup_claim_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn browser_request_credentials_cannot_be_used_as_execution_authority_without_claim() {
+        let host = cleanup_claim_fixture::FixtureHost::new("complete");
+        let paths = host.paths();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .expect("lazy test pool");
+        let session_id = "browser-session-preclaim-cancel";
+        let actor =
+            rudder_d1_persistence::native_chat::BrowserPrincipal::from_trusted_browser_auth(
+                "native-chat-executor-owner",
+                cleanup_claim_fixture::ORG,
+                session_id,
+                rudder_d1_persistence::native_chat::BrowserCredentialBinding::session(
+                    session_id, [3; 32],
+                ),
+            )
+            .expect("Foundation-authenticated browser principal");
+        let cancelled = AtomicBool::new(true);
+
+        let result = run_observed_with_request_actor_on_blocking_thread(
+            &Handle::current(),
+            &pool,
+            actor,
+            host.context(),
+            &paths,
+            ExecutionRequest {
+                organization_id: cleanup_claim_fixture::ORG,
+                run_id: "21000000-0000-4000-8000-000000000391",
+                attempt_id: "22000000-0000-4000-8000-000000000391",
+                timeout: Duration::from_secs(30),
+                cancelled: &cancelled,
+            },
+        );
+        let failure = match result {
+            Err(failure) => failure,
+            Ok(_) => panic!("pre-claim cancellation must not proceed"),
+        };
+
+        assert_eq!(
+            failure.process_disposition(),
+            ProcessDisposition::NotLaunched
+        );
+        assert!(failure.fence().is_none());
+        assert!(failure.execution_principal().is_none());
+    }
+
+    fn stop_and_take_cleanup(transport: &mut OwnedTransport) -> CleanupReceipt {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut spawned = false;
+        while Instant::now() < deadline {
+            match transport.poll(Duration::from_millis(100)) {
+                Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "spawned" => {
+                    spawned = true;
+                    break;
+                }
+                Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "terminal" => {
+                    return transport
+                        .take_cleanup_receipt()
+                        .expect("terminal host wrote owned cleanup receipt");
+                }
+                Ok(_) => (),
+                Err(error) => panic!("owned host startup failed before cleanup: {error}"),
+            }
+        }
+        assert!(spawned, "owned host did not report the child as spawned");
+        transport.stop().expect("queue owned host Stop");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match transport.poll(Duration::from_millis(100)) {
+                Ok(Some(TransportEvent::Lifecycle(value))) if value["type"] == "terminal" => {
+                    return transport
+                        .take_cleanup_receipt()
+                        .expect("host wrote owned cleanup receipt");
+                }
+                Ok(_) => (),
+                Err(error) => panic!("owned host cleanup failed: {error}"),
+            }
+        }
+        panic!("owned host cleanup timed out")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires RUDDER_TEST_PROCESS_HOST and disposable PostgreSQL"]
+    async fn same_owner_epoch_wrong_claim_cleanup_does_not_prove_quiescence() {
+        let (database, host, actor, run_id, attempt_id) =
+            cleanup_claim_fixture::database_and_admission("complete").await;
+        let claimed = cleanup_claim_fixture::claim(
+            &database.pool,
+            &actor,
+            cleanup_claim_fixture::ORG,
+            &run_id,
+            &attempt_id,
+            host.context(),
+        )
+        .await
+        .expect("claim admitted execution");
+        let (fence, config, permit) = claimed.into_parts();
+        let identity = fence.identity();
+        let launch = process_launch(&config, &fence, &host.paths()).expect("valid launch");
+        let mut owned = OwnedTransport::launch_external_for_execution(
+            launch,
+            &host.paths().process_host,
+            permit,
+        )
+        .expect("launch with claim-issued permit");
+
+        // This second connection deliberately shares every durable owner
+        // dimension and epoch, but its different claim ID cannot prove the
+        // first connection quiescent.
+        let wrong_permit = rudder_codex_app_server::ConnectionLaunchPermit::from_claim(
+            identity.run_id.to_owned(),
+            identity.attempt_id.to_owned(),
+            fence.run_execution_owner_token().to_owned(),
+            identity.connection_epoch,
+            "different-connection-claim".into(),
+        );
+        // A process-host runtime root owns a single child. Keep the same
+        // durable Run/Attempt/owner/epoch identity to exercise claim binding,
+        // but give the deliberately wrong connection its own task-owned host
+        // paths so process-host exclusivity does not reject it first.
+        let decoy_root = tempfile::tempdir().expect("create decoy host paths");
+        let decoy_runtime_root = decoy_root.path().join("runtime-root");
+        let decoy_isolated_home = decoy_root.path().join("isolated-home");
+        std::fs::create_dir_all(&decoy_runtime_root).expect("create decoy runtime root");
+        std::fs::create_dir_all(&decoy_isolated_home).expect("create decoy isolated home");
+        let base_paths = host.paths();
+        let decoy_paths = HostPaths {
+            process_host: base_paths.process_host,
+            runtime_root: decoy_runtime_root
+                .canonicalize()
+                .expect("canonical decoy runtime root"),
+            isolated_home: decoy_isolated_home
+                .canonicalize()
+                .expect("canonical decoy isolated home"),
+        };
+        let launch = process_launch(&config, &fence, &decoy_paths).expect("valid decoy launch");
+        let mut decoy = OwnedTransport::launch_external_for_execution(
+            launch,
+            &decoy_paths.process_host,
+            wrong_permit,
+        )
+        .expect("launch decoy connection");
+        let wrong_cleanup = stop_and_take_cleanup(&mut decoy);
+        assert!(wrong_cleanup.matches_execution(
+            identity.run_id,
+            identity.attempt_id,
+            fence.run_execution_owner_token(),
+        ));
+        assert_eq!(
+            wrong_cleanup.connection_epoch(),
+            Some(identity.connection_epoch)
+        );
+        assert!(!cleanup_proves_owned_execution(&fence, &wrong_cleanup));
+        let failure = ExecutionFailure::after_launch(
+            Error::ProcessExited,
+            fence.clone(),
+            Some(wrong_cleanup),
+        );
+        assert_eq!(
+            failure.process_disposition(),
+            ProcessDisposition::Unresolved
+        );
+        assert!(!failure.process_quiescent());
+        assert!(failure.cleanup_receipt().is_none());
+
+        let owned_cleanup = stop_and_take_cleanup(&mut owned);
+        assert!(cleanup_proves_owned_execution(&fence, &owned_cleanup));
+        let failure =
+            ExecutionFailure::after_launch(Error::ProcessExited, fence, Some(owned_cleanup));
+        assert_eq!(
+            failure.process_disposition(),
+            ProcessDisposition::CleanupProven
+        );
+        assert!(failure.process_quiescent());
+        assert!(failure.cleanup_receipt().is_some());
     }
 }

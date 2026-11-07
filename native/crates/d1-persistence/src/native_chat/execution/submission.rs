@@ -2,8 +2,8 @@
 //! No conversation history or caller-supplied replacement enters this path.
 
 use super::{ExecutionFence, Result, context::lock_current_execution, http};
+use crate::native_chat::NativeChatExecutionActor;
 use crate::native_chat::validation;
-use rudder_auth_core::VerifiedActor;
 use rudder_runtime_core::native_chat::NativeChatProtocolPhase;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
@@ -45,7 +45,7 @@ impl SubmissionInput {
 /// later checkpoints cannot obtain a new send payload from this API.
 pub async fn load_submission(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<SubmissionInput> {
     let mut tx = pool.begin().await?;
@@ -78,7 +78,7 @@ pub async fn load_submission(
 /// `load_submission` and `authorize_effect` repeat the same checks for Submit.
 pub async fn validate_submission_source(
     pool: &PgPool,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;

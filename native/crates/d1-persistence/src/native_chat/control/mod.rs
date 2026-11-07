@@ -2,18 +2,21 @@
 //! provider cancellation, finalize a Run, release a hold, or dispatch work.
 //! Public routes and provider event ingestion are deliberately not wired here.
 
-use super::{Result, auth, http, validation};
+use super::{NativeChatActor, Result, auth, http, validation};
 use crate::runtime_bindings;
-use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
+mod checkpoint;
+mod messages;
 pub(super) mod pin;
 mod preclaim;
 mod projection;
 mod reads;
 mod stop;
 
+pub use checkpoint::{ClientCheckpointReceipt, ClientCheckpointRequest, record_client_checkpoint};
+pub use messages::{ReadTurn, TurnView, read_turn, read_turn_for_control};
 pub use preclaim::{FinalizeUnclaimedStop, UnclaimedStopReceipt, finalize_unclaimed_stop};
 pub use reads::{Event, EventPage, ReadEvents, read_events};
 pub use stop::request_stop;
@@ -58,12 +61,12 @@ struct Target {
 
 async fn target(
     tx: &mut auth::Tx<'_>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatActor,
     conversation_id: &str,
     generation_id: &str,
 ) -> Result<Target> {
     let org = actor.organization_id();
-    auth::authorize_org(tx, actor, org).await?;
+    auth::preauthorize_org(tx, actor, org).await?;
     let row = sqlx::query(
         "SELECT r.id::text AS run_id, r.agent_id::text AS agent_id
          FROM chat_generations g JOIN heartbeat_runs r
@@ -87,7 +90,7 @@ async fn target(
     };
     // Historical generations remain readable after selecting a different Agent.
     // Agent actors must still match the actual persisted Run association.
-    runtime_bindings::authorize_chat_target_read_tx(
+    runtime_bindings::preauthorize_chat_target_read_tx(
         tx,
         actor,
         org,
@@ -98,7 +101,7 @@ async fn target(
     Ok(target)
 }
 
-fn validate_ids(actor: &VerifiedActor, conversation: &str, generation: &str) -> Result<()> {
+fn validate_ids(actor: &impl NativeChatActor, conversation: &str, generation: &str) -> Result<()> {
     canonical_id(actor.organization_id(), "organization id")?;
     canonical_id(conversation, "conversation id")?;
     canonical_id(generation, "generation id")?;

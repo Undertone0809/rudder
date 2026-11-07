@@ -17,7 +17,10 @@ mod value;
 pub use effect_response::EffectResponseReceipt;
 pub use framing::{FrameDecoder, MAX_CHUNK_BYTES, MAX_FRAME_BYTES};
 pub use message::{Message, RequestId, RpcError, encode_notification, encode_request};
-pub use receipts::{CleanupReceipt, TurnReceipt, TurnStatus, TurnUsage};
+pub use receipts::{
+    CleanupReceipt, ConnectionLaunchPermit, ConnectionReceipt, TurnReceipt, TurnStatus, TurnUsage,
+    VisibleOutputKind, VisibleOutputReceipt,
+};
 pub use session::{
     MAX_PENDING_REQUESTS, PreparedRequest, RpcSession, SessionError, SessionObservation,
 };

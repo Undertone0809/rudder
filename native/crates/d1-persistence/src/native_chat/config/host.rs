@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// Local installation facts constructed by the Rust host. This type cannot be
 /// deserialized from a request, and intentionally has no `Debug` implementation.
+#[derive(Clone)]
 pub struct LocalHostContext {
     host_id: String,
     instance_root: PathBuf,

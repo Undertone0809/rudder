@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
 use super::auth::{
-    authorize_conversation, authorize_org, conversation, ensure_conversation_readable,
+    authorize_conversation, conversation, ensure_conversation_readable, preauthorize_org,
 };
 use super::projection::{binding_json, segment_json};
 
@@ -25,7 +25,9 @@ pub(super) async fn current_tx(
     organization_id: &str,
     conversation_id: &str,
 ) -> Result<Value> {
-    authorize_org(tx, actor, organization_id).await?;
+    // Reads share the caller's authorization snapshot and must also work in a
+    // READ ONLY transaction; mutation authorization deliberately retains row locks.
+    preauthorize_org(tx, actor, organization_id).await?;
     let conversation = conversation(tx, organization_id, conversation_id, false)
         .await?
         .ok_or_else(|| http(404, "Chat conversation not found"))?;
@@ -89,7 +91,9 @@ pub(super) async fn read_tx(
     organization_id: &str,
     binding_id: &str,
 ) -> Result<Value> {
-    authorize_org(tx, actor, organization_id).await?;
+    // Reads share the caller's authorization snapshot and must also work in a
+    // READ ONLY transaction; mutation authorization deliberately retains row locks.
+    preauthorize_org(tx, actor, organization_id).await?;
     let row = sqlx::query(
         "SELECT id::text AS id, conversation_id::text AS conversation_id,
                 target_type, target_id, agent_id::text AS agent_id,

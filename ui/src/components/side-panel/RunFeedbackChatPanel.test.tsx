@@ -5,6 +5,8 @@ import { ApiError } from "@/api/client";
 import { healthApi } from "@/api/health";
 import { projectsApi } from "@/api/projects";
 import { RunFeedbackChatPanel } from "@/components/side-panel/RunFeedbackChatPanel";
+import * as chatResponseAnnotationUtils from "@/lib/chat-response-annotations";
+import { preparePendingChatSendMutation, readPendingChatSendMutation } from "@/lib/chat-send-mutation-storage";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type { ChatInlineAnnotationInput, ChatMessage, ChatStreamEvent } from "@rudderhq/shared";
@@ -27,6 +29,7 @@ vi.mock("@/api/chats", () => ({
     get: vi.fn(async () => ({ id: "chat-1", title: "Run feedback" })),
     listMessages: vi.fn(async () => []),
     sendMessageStream: vi.fn(),
+    reconcilePendingMessageSend: vi.fn(),
     sendFirstMessageStream: vi.fn(),
     listQueue: vi.fn(),
     stopMessageStream: vi.fn(),
@@ -126,6 +129,55 @@ const projectAlpha = {
   color: "blue",
   icon: null,
 } as unknown as Awaited<ReturnType<typeof projectsApi.list>>[number];
+const baseNavigator = globalThis.navigator;
+
+async function seedPreviousPageSend(
+  orgId: string,
+  conversationId: string,
+  body: string,
+  status: "accepted" | "unknown" = "accepted",
+) {
+  const pending = await preparePendingChatSendMutation({
+    orgId,
+    conversationId,
+    body,
+    files: [],
+    inlineAnnotations: [],
+  });
+  if (status === "accepted") await pending.markAccepted();
+  else await pending.markUnknown();
+  const storageKey = Object.keys(window.localStorage).find((key) =>
+    key.startsWith("rudder:chat-send-mutations:v2:scope:"));
+  if (!storageKey) throw new Error("Expected the recovery test to persist a send identity.");
+  const document = JSON.parse(window.localStorage.getItem(storageKey) ?? "null") as {
+    mutations?: Record<string, { pageInstanceId?: string }>;
+  } | null;
+  if (!document?.mutations?.[pending.clientMutationId]) throw new Error("Expected the test send identity in scoped storage.");
+  document.mutations[pending.clientMutationId]!.pageInstanceId = "previous-page-instance";
+  window.localStorage.setItem(storageKey, JSON.stringify(document));
+  return pending.clientMutationId;
+}
+
+function installWebLocksStub() {
+  const queues = new Map<string, Promise<void>>();
+  const locks = {
+    request: async <T,>(name: string, _options: LockOptions, callback: (lock: Lock) => T | Promise<T>) => {
+      const previous = queues.get(name) ?? Promise.resolve();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      queues.set(name, previous.then(() => gate));
+      await previous;
+      try {
+        return await callback({ name, mode: "exclusive" } as Lock);
+      } finally {
+        release();
+      }
+    },
+  } as LockManager;
+  const navigatorStub = Object.create(baseNavigator) as Navigator;
+  Object.defineProperty(navigatorStub, "locks", { configurable: true, value: locks });
+  vi.stubGlobal("navigator", navigatorStub);
+}
 
 const annotation: ChatInlineAnnotationInput = {
   id: "30000000-0000-4000-8000-000000000001",
@@ -141,6 +193,14 @@ const annotation: ChatInlineAnnotationInput = {
   suffix: " Continue.",
 };
 
+function changeDraft(editor: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  act(() => {
+    setter?.call(editor, value);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 describe("RunFeedbackChatPanel", () => {
   let root: Root;
   let host: HTMLDivElement;
@@ -150,7 +210,17 @@ describe("RunFeedbackChatPanel", () => {
   let emitStreamEvent: ((event: ChatStreamEvent) => Promise<void> | void) | undefined;
   let queueTerminal = false;
 
+  async function waitForSendEnabled() {
+    await vi.waitFor(() => {
+      const button = host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]');
+      expect(button).not.toBeNull();
+      expect(button?.disabled).toBe(false);
+    });
+  }
+
   beforeEach(() => {
+    installWebLocksStub();
+    window.localStorage.clear();
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -171,6 +241,10 @@ describe("RunFeedbackChatPanel", () => {
       activeControlVersion: queueTerminal ? null : 9,
       activeGenerationStatus: queueTerminal ? null : "running",
       items: [],
+    }));
+    vi.mocked(chatsApi.reconcilePendingMessageSend).mockReset().mockImplementation(async (_chatId, request) => ({
+      outcome: "not_found",
+      clientMutationId: request.clientMutationId,
     }));
     vi.mocked(chatsApi.sendMessageStream).mockReset().mockImplementation(async (_chatId, _body, options) => {
       emitStreamEvent = options.onEvent;
@@ -233,6 +307,147 @@ describe("RunFeedbackChatPanel", () => {
     act(() => root.unmount());
     queryClient.clear();
     host.remove();
+  });
+
+  it("resets draft by organization and target scope when body props match", async () => {
+    const initialTarget = { ...target, body: "Shared body" };
+    const nextTarget = { ...initialTarget, organizationId: "org-2", agentId: "agent-2" };
+    const onReplaceTarget = vi.fn();
+    const renderTarget = (organizationId: string, value: typeof initialTarget) => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId={organizationId}
+          target={value}
+          onReplaceTarget={onReplaceTarget}
+        />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => renderTarget("org-1", initialTarget));
+    const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Feedback draft"]')!;
+    changeDraft(editor, "Unsaved text from the previous target");
+    expect(editor.value).toBe("Unsaved text from the previous target");
+
+    await act(async () => renderTarget("org-2", nextTarget));
+    expect(editor.value).toBe("Shared body");
+  });
+
+  it("does not dispatch a file send after its target scope changes during async hashing", async () => {
+    const pendingFile = {
+      name: "notes.txt",
+      size: 8,
+      type: "text/plain",
+      arrayBuffer: async () => new TextEncoder().encode("contents").slice().buffer as ArrayBuffer,
+    } as File;
+    const serializeSpy = vi.spyOn(chatResponseAnnotationUtils, "serializeChatResponseAnnotations")
+      .mockReturnValue({ inlineAnnotations: [], files: [pendingFile] });
+    let resolveDigest!: (value: ArrayBuffer) => void;
+    let digestStarted = false;
+    const digestResult = new Promise<ArrayBuffer>((resolve) => { resolveDigest = resolve; });
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn(() => "old-scope-mutation"),
+      subtle: {
+        digest: vi.fn(() => {
+          digestStarted = true;
+          return digestResult;
+        }),
+      },
+    } as unknown as Crypto);
+    const initialTarget = { ...target, body: "Shared body" };
+    const nextTarget = { ...target, organizationId: "org-2", agentId: "agent-2", conversationId: "chat-2", body: "New scope draft" };
+    const renderTarget = (organizationId: string, value: typeof initialTarget) => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId={organizationId}
+          target={value}
+          onReplaceTarget={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    try {
+      window.localStorage.clear();
+      await act(async () => renderTarget("org-1", initialTarget));
+      const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Feedback draft"]')!;
+      changeDraft(editor, "Old scope body");
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
+        await vi.waitFor(() => expect(digestStarted).toBe(true));
+      });
+
+      await act(async () => renderTarget("org-2", nextTarget));
+      expect(editor.value).toBe("New scope draft");
+      resolveDigest(new Uint8Array(32).buffer);
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+
+      expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+      expect(readPendingChatSendMutation("org-1", "chat-1", null)?.id).toBe("old-scope-mutation");
+      expect(readPendingChatSendMutation("org-2", "chat-2", null)).toBeNull();
+    } finally {
+      resolveDigest(new Uint8Array(32).buffer);
+      serializeSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not surface an old digest failure after the Run Feedback target changes", async () => {
+    const pendingFile = {
+      name: "notes.txt",
+      size: 8,
+      type: "text/plain",
+      arrayBuffer: async () => new TextEncoder().encode("contents").slice().buffer as ArrayBuffer,
+    } as File;
+    const serializeSpy = vi.spyOn(chatResponseAnnotationUtils, "serializeChatResponseAnnotations")
+      .mockReturnValue({ inlineAnnotations: [], files: [pendingFile] });
+    let rejectDigest!: (reason?: unknown) => void;
+    let digestStarted = false;
+    const digestResult = new Promise<ArrayBuffer>((_resolve, reject) => { rejectDigest = reject; });
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn(() => "old-scope-mutation"),
+      subtle: {
+        digest: vi.fn(() => {
+          digestStarted = true;
+          return digestResult;
+        }),
+      },
+    } as unknown as Crypto);
+    const initialTarget = { ...target, body: "Shared body" };
+    const nextTarget = { ...target, organizationId: "org-2", agentId: "agent-2", conversationId: "chat-2", body: "New scope draft" };
+    const renderTarget = (organizationId: string, value: typeof initialTarget) => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId={organizationId}
+          target={value}
+          onReplaceTarget={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    try {
+      window.localStorage.clear();
+      await act(async () => renderTarget("org-1", initialTarget));
+      const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Feedback draft"]')!;
+      changeDraft(editor, "Old scope body");
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
+        await vi.waitFor(() => expect(digestStarted).toBe(true));
+      });
+
+      await act(async () => renderTarget("org-2", nextTarget));
+      expect(editor.value).toBe("New scope draft");
+      rejectDigest(new Error("Old scope digest failure"));
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+
+      expect(chatsApi.sendMessageStream).not.toHaveBeenCalled();
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(editor.value).toBe("New scope draft");
+      expect(readPendingChatSendMutation("org-1", "chat-1", null)).toBeNull();
+      expect(readPendingChatSendMutation("org-2", "chat-2", null)).toBeNull();
+    } finally {
+      rejectDigest(new Error("cleanup"));
+      serializeSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ignores a legacy preferred Agent while sending the chosen Project through the Run Agent", async () => {
@@ -298,6 +513,62 @@ describe("RunFeedbackChatPanel", () => {
       releaseFirstStream?.();
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     });
+  });
+
+  it("replaces Run Feedback text with a newer snapshot and rejects stale render events", async () => {
+    const onReplaceTarget = vi.fn();
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel
+            organizationId="org-1"
+            target={target}
+            onReplaceTarget={onReplaceTarget}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await waitForSendEnabled();
+    act(() => (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="run-feedback-chat-streaming"]')?.textContent)
+      .toBe("Partial response"));
+
+    await act(async () => {
+      await emitStreamEvent?.({
+        type: "assistant_snapshot",
+        body: "authoritative snapshot",
+        generationId: "generation-1",
+        attemptEpoch: 4,
+        generationSeq: 10,
+        bodyHash: "a".repeat(64),
+      });
+      await emitStreamEvent?.({
+        type: "assistant_snapshot",
+        body: "duplicate snapshot",
+        generationId: "generation-1",
+        attemptEpoch: 4,
+        generationSeq: 10,
+        bodyHash: "b".repeat(64),
+      });
+      await emitStreamEvent?.({
+        type: "assistant_snapshot",
+        body: "stale epoch",
+        generationId: "generation-1",
+        attemptEpoch: 3,
+        generationSeq: 11,
+        bodyHash: "c".repeat(64),
+      });
+      await emitStreamEvent?.({
+        type: "assistant_delta",
+        delta: " plus tail",
+        generationId: "generation-1",
+        attemptEpoch: 4,
+        generationSeq: 11,
+        bodyHash: "d".repeat(64),
+      });
+    });
+    expect(host.querySelector('[data-testid="run-feedback-chat-streaming"]')?.textContent)
+      .toBe("authoritative snapshot plus tail");
   });
 
   it("automatically sends a new Debug Chat exactly once with the stable Run request", async () => {
@@ -667,18 +938,143 @@ describe("RunFeedbackChatPanel", () => {
       );
     });
 
+    await waitForSendEnabled();
+
     const draft = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Feedback draft"]')!;
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
-      await vi.waitFor(() => expect(host.textContent).toContain("Rudder could not process the request. Try again."));
+      await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(1));
     });
+    await vi.waitFor(() => expect(host.textContent).toContain("Rudder could not process the request. Try again."));
     expect(draft.value).toBe("Feedback");
     expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(1);
+
+    await vi.waitFor(() => expect(host.textContent).toContain("Retry previous message"));
+    await act(async () => {
+      Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Retry previous message")?.click();
+      await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    });
+    expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledOnce();
+    const firstMutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
+    expect(firstMutationId).toEqual(expect.any(String));
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][2].clientMutationId).toBe(firstMutationId);
+  });
+
+  it("requires explicit Resume for an accepted Run Feedback turn and preserves a newer draft", async () => {
+    const acceptedUserMessage = {
+      ...assistantMessage,
+      id: "user-recovery",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Original feedback",
+      runId: "run-recovery",
+    } as unknown as ChatMessage;
+    vi.mocked(chatsApi.sendMessageStream)
+      .mockImplementationOnce(async (_chatId, body, options) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: { ...acceptedUserMessage, body },
+          generationId: "generation-recovery",
+          attemptEpoch: 1,
+          generationSeq: 0,
+          bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+      })
+      .mockImplementationOnce(async (_chatId, body, options) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: { ...acceptedUserMessage, body },
+          generationId: "generation-recovery",
+          attemptEpoch: 1,
+          generationSeq: 0,
+          bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+        await options.onEvent({ type: "final", messages: [] });
+      });
+    const onReplaceTarget = vi.fn();
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel organizationId="org-1" target={target} onReplaceTarget={onReplaceTarget} />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForSendEnabled();
+
+    const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Feedback draft"]')!;
+    changeDraft(editor, "Original feedback");
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Resume response"));
+    const mutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.status).toBe("recoverable");
+    changeDraft(editor, "Keep this newer draft");
+    expect((host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')!).disabled).toBe(true);
+
+    await act(async () => {
+      Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Resume response")?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][1]).toBe("Original feedback");
+    expect(vi.mocked(chatsApi.sendMessageStream).mock.calls[1][2].clientMutationId).toBe(mutationId);
+    await vi.waitFor(() => expect(host.textContent).not.toContain("Resume response"));
+    expect(editor.value).toBe("Keep this newer draft");
+    expect(readPendingChatSendMutation("org-1", "chat-1")?.status).toBe("settled");
+  });
+
+  it("retries a committed pre-ack Run Feedback message as an edit", async () => {
+    const committedMessageId = "70000000-0000-4000-8000-000000000031";
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      _conversationId,
+      _body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "error",
+        terminal: true,
+        error: "The saved message could not be hydrated.",
+        messageId: committedMessageId,
+      });
+    });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel
+            organizationId="org-1"
+            target={target}
+            onReplaceTarget={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForSendEnabled();
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
+      await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(1));
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Something went wrong. Try again."));
+    const firstMutationId = vi.mocked(chatsApi.sendMessageStream).mock.calls[0][2].clientMutationId;
 
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
       await vi.waitFor(() => expect(chatsApi.sendMessageStream).toHaveBeenCalledTimes(2));
     });
+    const retry = vi.mocked(chatsApi.sendMessageStream).mock.calls[1];
+    expect(retry[1]).toBe("Feedback");
+    expect(retry[2].editUserMessageId).toBe(committedMessageId);
+    expect(retry[2].clientMutationId).not.toBe(firstMutationId);
   });
 
   it("exposes Stop while feedback streams and aborts only after the server accepts the cutoff", async () => {
@@ -695,7 +1091,7 @@ describe("RunFeedbackChatPanel", () => {
       );
     });
 
-    await vi.waitFor(() => expect(host.querySelector('[aria-label="Send feedback"]')).not.toBeNull());
+    await waitForSendEnabled();
     act(() => (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click());
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
@@ -804,7 +1200,7 @@ describe("RunFeedbackChatPanel", () => {
         </QueryClientProvider>,
       );
     });
-    await vi.waitFor(() => expect(host.querySelector('[aria-label="Send feedback"]')).not.toBeNull());
+    await waitForSendEnabled();
     act(() => (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click());
     await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
     await act(async () => {
@@ -843,7 +1239,7 @@ describe("RunFeedbackChatPanel", () => {
         </QueryClientProvider>,
       );
     });
-    await vi.waitFor(() => expect(host.querySelector('[aria-label="Send feedback"]')).not.toBeNull());
+    await waitForSendEnabled();
     act(() => (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click());
     await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
     await act(async () => {
@@ -883,7 +1279,7 @@ describe("RunFeedbackChatPanel", () => {
         </QueryClientProvider>,
       );
     });
-    await vi.waitFor(() => expect(host.querySelector('[aria-label="Send feedback"]')).not.toBeNull());
+    await waitForSendEnabled();
     act(() => (host.querySelector('[aria-label="Send feedback"]') as HTMLButtonElement).click());
     await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
 
@@ -955,5 +1351,141 @@ describe("RunFeedbackChatPanel", () => {
       releaseFirstStream?.();
       await Promise.resolve();
     });
+  });
+
+  it("keeps Stop available when recovery discovery fails for a newly acknowledged chat", async () => {
+    const draftTarget: Extract<SidePanelTarget, { kind: "run_feedback_chat" }> = {
+      ...target,
+      conversationId: null,
+      projectLocked: false,
+    };
+    let currentTarget: typeof draftTarget = draftTarget;
+    let renderTarget: () => void = () => undefined;
+    const onReplaceTarget = vi.fn((_key, nextTarget) => {
+      currentTarget = nextTarget as typeof draftTarget;
+      queueMicrotask(renderTarget);
+    });
+    renderTarget = () => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId="org-1"
+          target={currentTarget}
+          onReplaceTarget={onReplaceTarget}
+        />
+      </QueryClientProvider>,
+    );
+    await seedPreviousPageSend("org-1", "chat-created", "Earlier accepted message");
+    vi.mocked(chatsApi.reconcilePendingMessageSend).mockRejectedValueOnce(new Error("reconcile unavailable"));
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async (_orgId, _body, options) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: {
+          ...assistantMessage,
+          id: "new-user-message",
+          orgId: "org-1",
+          conversationId: "chat-created",
+          role: "user",
+          kind: "message",
+          status: "completed",
+          body: "Feedback",
+          runId: "new-run",
+        } as unknown as ChatMessage,
+      });
+      await new Promise<void>((resolve) => { releaseFirstStream = resolve; });
+    });
+
+    await act(async () => renderTarget());
+    await waitForSendEnabled();
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Send feedback"]')?.click();
+      await vi.waitFor(() => expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledOnce());
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("could not confirm whether the previous send was accepted"));
+
+    const stop = host.querySelector<HTMLButtonElement>('[aria-label="Stop feedback"]');
+    expect(stop).not.toBeNull();
+    expect(stop?.disabled).toBe(false);
+    await act(async () => {
+      stop?.click();
+      await vi.waitFor(() => expect(chatsApi.stopMessageStream).toHaveBeenCalledOnce());
+    });
+    await act(async () => {
+      releaseFirstStream?.();
+      await Promise.resolve();
+    });
+  });
+
+  it("shows accepted recovery without waiting for chat query invalidation", async () => {
+    const clientMutationId = await seedPreviousPageSend("org-1", "chat-1", "Earlier accepted message");
+    const neverInvalidated = new Promise<void>(() => undefined);
+    vi.spyOn(queryClient, "invalidateQueries").mockImplementation(() => neverInvalidated);
+    vi.mocked(chatsApi.reconcilePendingMessageSend).mockResolvedValueOnce({
+      outcome: "accepted",
+      clientMutationId,
+      message: {
+        ...assistantMessage,
+        id: "previous-user-message",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Earlier accepted message",
+        runId: "previous-run",
+      } as unknown as ChatMessage,
+      generationId: "previous-generation",
+      runId: "previous-run",
+      attemptEpoch: 1,
+      generationSeq: 0,
+      bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      generationStatus: "running",
+      runStatus: "running",
+      runtimeTerminal: false,
+    });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel organizationId="org-1" target={target} onReplaceTarget={vi.fn()} />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Resume response"));
+    expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledOnce();
+  });
+
+  it("offers Check again after a bounded recovery discovery timeout", async () => {
+    const clientMutationId = await seedPreviousPageSend("org-1", "chat-1", "Earlier accepted message", "unknown");
+    vi.mocked(chatsApi.reconcilePendingMessageSend)
+      .mockImplementationOnce(async () => await new Promise<never>(() => undefined))
+      .mockResolvedValueOnce({ outcome: "not_found", clientMutationId });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <RunFeedbackChatPanel organizationId="org-1" target={target} onReplaceTarget={vi.fn()} />
+          </QueryClientProvider>,
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledOnce();
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(host.textContent).toContain("Recovery check timed out");
+      const checkAgain = Array.from(host.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Check again");
+      expect(checkAgain).toBeDefined();
+      await act(async () => {
+        checkAgain?.click();
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(chatsApi.reconcilePendingMessageSend).toHaveBeenCalledTimes(2);
+      expect(host.textContent).toContain("Retry previous message");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -169,6 +169,96 @@ while IFS= read -r line; do :; done"#;
 }
 
 #[test]
+fn drains_typed_visible_output_receipts_after_exact_start_response() {
+    let script = r#"IFS= read -r request
+printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"ha"}}'
+printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","startedAtMs":1,"item":{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":""}}}'
+printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"ha"}}'
+printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"ha"}}'
+printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":"hahaha"}}}'
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","itemsView":"full","items":[{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":"hahaha"}]}}}'
+printf '%s\n' '{"id":0,"result":{"turn":{"id":"turn-1"}}}'
+while IFS= read -r line; do :; done"#;
+    let (mut transport, _root) = launch(script);
+    spawned(&mut transport);
+    transport.arm_turn_receipt().unwrap();
+    let request_id = transport.request("turn/start", json!({})).unwrap();
+    let mut written = false;
+    let mut replied = false;
+    while !written || !replied {
+        match transport.receive(WAIT).unwrap() {
+            TransportEvent::FrameWritten { request_id: actual } => {
+                assert_eq!(actual.as_ref(), Some(&request_id));
+                written = true;
+            }
+            TransportEvent::Rpc(SessionObservation::Incoming(Message::Notification { .. })) => {}
+            TransportEvent::Rpc(SessionObservation::Completed { id, outcome, .. }) => {
+                assert_eq!(id, request_id);
+                assert_eq!(outcome.unwrap()["turn"]["id"], "turn-1");
+                replied = true;
+            }
+            TransportEvent::Lifecycle(value) => assert_ne!(value["type"], "terminal"),
+            _ => panic!("unexpected visible-output transport event"),
+        }
+    }
+    transport
+        .begin_turn_receipt("thread-1".into(), "turn-1".into())
+        .unwrap();
+
+    let outputs = transport.take_visible_output_receipts();
+    assert_eq!(outputs.len(), 4);
+    assert_eq!(
+        outputs
+            .iter()
+            .map(|output| output.ordinal())
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    assert_eq!(
+        outputs
+            .iter()
+            .map(|output| output.text())
+            .collect::<Vec<_>>(),
+        ["ha", "ha", "ha", "hahaha"]
+    );
+    assert_eq!(
+        outputs[0].kind(),
+        rudder_codex_app_server::VisibleOutputKind::Delta
+    );
+    assert_eq!(
+        outputs[1].kind(),
+        rudder_codex_app_server::VisibleOutputKind::Delta
+    );
+    assert_eq!(
+        outputs[2].kind(),
+        rudder_codex_app_server::VisibleOutputKind::Delta
+    );
+    assert_eq!(
+        outputs[3].kind(),
+        rudder_codex_app_server::VisibleOutputKind::Snapshot
+    );
+    assert!(outputs.iter().all(|output| {
+        output.thread_id() == "thread-1"
+            && output.turn_id() == "turn-1"
+            && output.item_id() == "answer-1"
+            && output.connection_receipt_id() == outputs[0].connection_receipt_id()
+    }));
+
+    transport.stop().unwrap();
+    loop {
+        if let TransportEvent::Lifecycle(value) = transport.receive(WAIT).unwrap()
+            && value["type"] == "terminal"
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        transport.take_turn_receipt().unwrap().final_text(),
+        Some("hahaha")
+    );
+}
+
+#[test]
 fn prior_resumed_turn_usage_is_ignored_before_next_turn_start() {
     let script = r#"
 printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"prior-turn","tokenUsage":{"last":{"totalTokens":900,"inputTokens":700,"cachedInputTokens":0,"outputTokens":200,"reasoningOutputTokens":0}}}}'

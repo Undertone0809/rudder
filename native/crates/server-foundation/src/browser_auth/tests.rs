@@ -500,3 +500,40 @@ async fn real_issuer_cookies_public_listener_revocation_memberships_and_bearer_p
     task.await.unwrap().unwrap();
     pool.close().await;
 }
+
+#[test]
+fn authenticated_browser_actor_adapts_only_row_id_and_token_digest() {
+    use rudder_d1_persistence::native_chat::NativeChatActor;
+
+    let token = "signed-cookie-session-token";
+    let actor = BrowserActor {
+        user_id: "browser-user".into(),
+        session_id: "session-row".into(),
+        source: "session",
+        credential: AuthenticatedBrowserCredential::Session {
+            row_id: "session-row".into(),
+            fingerprint: Sha256::digest(token.as_bytes()).into(),
+        },
+    };
+    let principal = actor
+        .native_chat_principal("10000000-0000-4000-8000-000000000001")
+        .expect("adapt trusted browser actor");
+    assert_eq!(principal.actor().id, "browser-user");
+    assert_eq!(
+        principal.organization_id(),
+        "10000000-0000-4000-8000-000000000001"
+    );
+    assert_eq!(principal.session_id(), "session-row");
+
+    let local = BrowserActor {
+        user_id: "local-board".into(),
+        session_id: "local-implicit".into(),
+        source: "local_implicit",
+        credential: AuthenticatedBrowserCredential::LocalImplicit,
+    };
+    assert!(
+        local
+            .native_chat_principal("10000000-0000-4000-8000-000000000001")
+            .is_ok()
+    );
+}

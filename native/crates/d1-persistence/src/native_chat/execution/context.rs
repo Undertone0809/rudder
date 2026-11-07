@@ -1,6 +1,6 @@
 use super::{ExecutionFence, Result, http};
+use crate::native_chat::NativeChatExecutionActor;
 use crate::runtime_bindings;
-use rudder_auth_core::VerifiedActor;
 use rudder_runtime_core::native_chat::{NativeChatProtocolCheckpoint, NativeChatProtocolPhase};
 use serde_json::Value;
 use sqlx::{Postgres, Row, Transaction};
@@ -21,7 +21,7 @@ pub(super) struct LockedExecution {
 /// an in-memory fence alone never grants authority.
 pub(super) async fn lock_current_execution(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
 ) -> Result<LockedExecution> {
     lock_execution(tx, actor, fence, None).await
@@ -29,7 +29,7 @@ pub(super) async fn lock_current_execution(
 
 pub(super) async fn lock_stopping_execution(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: &super::stopping::StopIntent,
 ) -> Result<LockedExecution> {
@@ -38,7 +38,7 @@ pub(super) async fn lock_stopping_execution(
 
 async fn lock_execution(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &VerifiedActor,
+    actor: &impl NativeChatExecutionActor,
     fence: &ExecutionFence,
     stop: Option<&super::stopping::StopIntent>,
 ) -> Result<LockedExecution> {
@@ -46,7 +46,7 @@ async fn lock_execution(
     if actor.organization_id() != id.organization_id {
         return Err(http(403, "Organization access denied"));
     }
-    super::super::auth::authorize_org(tx, actor, id.organization_id).await?;
+    super::super::auth::preauthorize_execution_org(tx, actor, fence).await?;
 
     let hint = sqlx::query(
         "SELECT agent_id::text AS agent_id,
@@ -71,24 +71,26 @@ async fn lock_execution(
 
     // Verify access before taking the advisory lock, then serialize all
     // checkpoint operations with Native Chat admission/segment rotation.
-    runtime_bindings::authorize_chat_target_read_tx(
+    runtime_bindings::preauthorize_chat_execution_target_read_tx(
         tx,
         actor,
         id.organization_id,
         id.conversation_id,
         &hinted_agent_id,
+        fence,
     )
     .await?;
     runtime_bindings::lock_native_chat_target_tx(tx, id.organization_id, id.conversation_id)
         .await?;
 
-    runtime_bindings::authorize_chat_target_run_mutation_tx(
+    runtime_bindings::authorize_chat_execution_target_run_mutation_tx(
         tx,
         actor,
         id.organization_id,
         id.conversation_id,
         &hinted_agent_id,
         id.run_id,
+        fence,
     )
     .await?;
 
@@ -214,13 +216,14 @@ async fn lock_execution(
 
     // Revalidate target scope after all higher-level locks. Conversation rows
     // cannot change while locked, and the Run association is now locked too.
-    let principal_scope_ref = runtime_bindings::authorize_chat_target_run_mutation_tx(
+    let principal_scope_ref = runtime_bindings::authorize_chat_execution_target_run_mutation_tx(
         tx,
         actor,
         id.organization_id,
         id.conversation_id,
         &run_agent_id,
         id.run_id,
+        fence,
     )
     .await?;
 
@@ -445,7 +448,7 @@ async fn lock_execution(
         return Err(http(409, "Native Chat source message association changed"));
     }
 
-    super::super::auth::authorize_org(tx, actor, id.organization_id).await?;
+    super::super::auth::authorize_execution_org(tx, actor, fence).await?;
     Ok(LockedExecution {
         checkpoint,
         agent_id: run_agent_id,

@@ -8049,6 +8049,63 @@ describe("chat routes", { retry: 2 }, () => {
     }
   });
 
+  it("rejects legacy Native Chat sends and Stop before local or durable effects", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "native-generation-1",
+      executionAuthority: "native_rust",
+      status: "running",
+    });
+
+    const plainMessage = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "must be handled by Rust" });
+    expect(plainMessage.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessage).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const streamMessage = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "must be handled by Rust" });
+    expect(streamMessage.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const stop = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stop.status).toBe(409);
+    expect(mockChatService.generationProtocol.getLatestVisibleCheckpoint).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.beginStopAction).not.toHaveBeenCalled();
+    expect(hasActiveChatGeneration("chat-1")).toBe(false);
+
+    const agentMessage = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "must not become a legacy assistant message" });
+    expect(agentMessage.status).toBe(409);
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+
+    const agentStream = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "must be refused before the legacy stream policy" });
+    expect(agentStream.status).toBe(409);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
   it("aborts the active stream only through the explicit stop endpoint", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");

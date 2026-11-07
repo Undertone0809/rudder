@@ -23,3 +23,6 @@ mod resume_fixture;
 
 #[path = "workflow/live_stop.rs"]
 mod live_stop;
+
+#[path = "workflow/browser_principal.rs"]
+mod browser_principal;
