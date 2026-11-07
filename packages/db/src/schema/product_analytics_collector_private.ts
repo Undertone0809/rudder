@@ -72,6 +72,7 @@ export const privateProductAnalyticsCollectorInstallations = rudderAnalyticsSche
     analyticsSubject: text("analytics_subject"),
     revoked: boolean("revoked").notNull().default(false),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    firstObservedEventAt: timestamp("first_observed_event_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

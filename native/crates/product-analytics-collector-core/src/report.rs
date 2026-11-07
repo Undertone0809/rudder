@@ -145,15 +145,15 @@ pub async fn handle_report(
             "timezone": "UTC",
             "activityWindow": "trailing_elapsed_days_ending_at_window_to_utc_day_end_inclusive_clipped_to_window_from",
             "dauStatus": "in_progress_until_window_to_utc_day_is_complete",
-            "retentionCohort": "utc_calendar_day_of_installation_first_seen_at",
-            "retentionMaturity": "latest_exact_first_seen_at_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end",
+            "retentionCohort": "utc_calendar_day_of_first_observed_production_event",
+            "retentionMaturity": "latest_exact_first_observed_production_event_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end",
             "meaningfulEvents": meaningful,
             "productiveEvents": productive,
             "meaningfulDau": "installation_level_24_hour_proxy_not_account_dau",
             "productiveWau": "installation_level_7_day_proxy_not_account_wau",
-            "meaningfulW1": "meaningful_activity_at_age_days_gte_7_and_lt_14_from_installation_first_seen_time",
-            "loopW1": "valid_work_loop_completion_at_age_days_gte_7_and_lt_14_from_installation_first_seen_time",
-            "loopW4": "valid_work_loop_completion_at_age_days_gte_28_and_lt_35_from_installation_first_seen_time",
+            "meaningfulW1": "meaningful_activity_at_age_days_gte_7_and_lt_14_from_first_observed_production_event",
+            "loopW1": "valid_work_loop_completion_at_age_days_gte_7_and_lt_14_from_first_observed_production_event",
+            "loopW4": "valid_work_loop_completion_at_age_days_gte_28_and_lt_35_from_first_observed_production_event",
         },
         "quality": {
             "receivedBatchCount": quality.received,
@@ -349,7 +349,7 @@ fn retention(
     #[derive(Default)]
     struct RetentionAggregate {
         contributing_installations: Option<i64>,
-        latest_first_seen_at: Option<OffsetDateTime>,
+        latest_first_observed_at: Option<OffsetDateTime>,
         meaningful_w1: Option<i64>,
         loop_w1: Option<i64>,
         loop_w4: Option<i64>,
@@ -378,14 +378,14 @@ fn retention(
         entry.contributing_installations = Some(aggregate.contributing_installations);
         if let Some(first_seen_us) = aggregate
             .dimensions
-            .get("latest_first_seen_at_us")
+            .get("latest_first_observed_at_us")
             .and_then(Value::as_i64)
             && let Ok(first_seen_at) =
                 OffsetDateTime::from_unix_timestamp_nanos(i128::from(first_seen_us) * 1_000)
         {
-            entry.latest_first_seen_at = Some(
+            entry.latest_first_observed_at = Some(
                 entry
-                    .latest_first_seen_at
+                    .latest_first_observed_at
                     .map_or(first_seen_at, |latest| latest.max(first_seen_at)),
             );
         }
@@ -403,7 +403,7 @@ fn retention(
         eligible: BTreeSet<String>,
         aggregated_eligible: Option<i64>,
         aggregated_meaningful_w1: Option<i64>,
-        latest_first_seen_at: Option<OffsetDateTime>,
+        latest_first_observed_at: Option<OffsetDateTime>,
     }
     let mut cohorts = BTreeMap::<Date, Cohort>::new();
     for (installation, first_seen_at) in first_seen {
@@ -413,9 +413,9 @@ fn retention(
         }
         let entry = cohorts.entry(cohort_day).or_default();
         entry.eligible.insert(installation.clone());
-        entry.latest_first_seen_at = Some(
+        entry.latest_first_observed_at = Some(
             entry
-                .latest_first_seen_at
+                .latest_first_observed_at
                 .map_or(first_seen_at, |latest| latest.max(first_seen_at)),
         );
     }
@@ -426,14 +426,14 @@ fn retention(
         if cohort_day < range.from || cohort_day > range.to {
             continue;
         }
-        if aggregate.latest_first_seen_at.is_none() && !cohorts.contains_key(&cohort_day) {
+        if aggregate.latest_first_observed_at.is_none() && !cohorts.contains_key(&cohort_day) {
             continue;
         }
         let entry = cohorts.entry(cohort_day).or_default();
         entry.aggregated_eligible = aggregate.contributing_installations;
         entry.aggregated_meaningful_w1 = aggregate.meaningful_w1;
-        if aggregate.latest_first_seen_at.is_some() {
-            entry.latest_first_seen_at = aggregate.latest_first_seen_at;
+        if aggregate.latest_first_observed_at.is_some() {
+            entry.latest_first_observed_at = aggregate.latest_first_observed_at;
         }
     }
     cohorts.retain(|cohort_day, cohort| {
@@ -446,12 +446,12 @@ fn retention(
         .map(|(cohort_day, cohort)| {
         let cohort_name = cohort_day.to_string();
         let aggregate = retention_aggregates.get(&cohort_name);
-        let latest_first_seen_at = cohort
-            .latest_first_seen_at
-            .expect("cohort has an observed first-seen timestamp");
-        let meaningful_w1_mature = latest_first_seen_at + Duration::days(14) <= report_end;
+        let latest_first_observed_at = cohort
+            .latest_first_observed_at
+            .expect("cohort has an observed first-event timestamp");
+        let meaningful_w1_mature = latest_first_observed_at + Duration::days(14) <= report_end;
         let loop_w1_mature = meaningful_w1_mature;
-        let loop_w4_mature = latest_first_seen_at + Duration::days(35) <= report_end;
+        let loop_w4_mature = latest_first_observed_at + Duration::days(35) <= report_end;
         let eligible_installations = cohort
             .aggregated_eligible
             .unwrap_or(cohort.eligible.len() as i64);
@@ -668,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn retention_uses_exact_first_seen_and_reports_maturity_separately() {
+    fn retention_uses_exact_first_observed_event_and_reports_maturity_separately() {
         let rows = vec![
             rollup(
                 "old-a",

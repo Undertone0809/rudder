@@ -8,7 +8,7 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     thread,
     time::Duration as StdDuration,
 };
@@ -41,12 +41,16 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     create_runtime_roles(&admin).await;
     run_migrations(&binary, &postgres.admin_url);
     verify_rollup_capabilities(&admin, &postgres).await;
+    verify_startup_rejects_privilege_drift(&binary, &postgres, &binary_sha256, &admin).await;
 
     let now = OffsetDateTime::now_utc();
     let today = now.date();
     let report_from = today - Duration::days(70);
     seed_metric_window(&admin, now, today).await;
     seed_retention_cohorts(&admin, now, today).await;
+    let (consent_cohort_day, first_event_cohort_day) =
+        seed_consent_before_event_cohort(&admin, today).await;
+    seed_two_subject_rollup_events(&admin, now).await;
 
     let listener_port = unused_loopback_port();
     let mut process = CollectorProcess::spawn(&binary, &postgres, listener_port, &binary_sha256);
@@ -94,6 +98,18 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     assert_eq!(batch.0, 200, "batch response: {}", batch.1);
     assert_eq!(batch.1["accepted"], 1);
     assert_eq!(batch.1["rejected"].as_array().map(Vec::len), Some(0));
+    let first_observed_event_matches: bool = sqlx::query_scalar(&format!(
+        "SELECT first_observed_event_at = $2::timestamptz FROM {INSTALLATIONS} WHERE installation_id = $1"
+    ))
+    .bind(live_id)
+    .bind(format_time(now))
+    .fetch_one(&admin)
+    .await
+    .expect("read first production event timestamp persisted during ingestion");
+    assert!(
+        first_observed_event_matches,
+        "ingestion must persist the event timestamp, not the consent timestamp"
+    );
 
     let path =
         format!("/api/analytics/v1/report?from={report_from}T00:00:00Z&to={today}T23:59:59.999Z");
@@ -108,9 +124,13 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
         );
         assert_eq!(response.0, 200, "report response: {}", response.1);
         report = response.1;
+        let retention = report["retention"].as_array().expect("retention array");
         if report["quality"]["acceptedEventCount"] == 1
             && report["metrics"]["meaningfulActiveInstallations1d"] == 2
             && report["metrics"]["meaningfulActiveInstallations7d"] == 5
+            && retention
+                .iter()
+                .any(|row| row["cohortDay"] == first_event_cohort_day)
         {
             break;
         }
@@ -139,10 +159,52 @@ async fn hashed_binary_migrates_and_serves_real_loopback_report() {
     );
     assert_eq!(
         report["metricSemantics"]["retentionMaturity"],
-        "latest_exact_first_seen_at_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end"
+        "latest_exact_first_observed_production_event_in_utc_cohort_plus_window_must_be_at_or_before_window_to_utc_day_end"
+    );
+    assert_eq!(
+        report["metricSemantics"]["retentionCohort"],
+        "utc_calendar_day_of_first_observed_production_event"
+    );
+    assert_eq!(
+        report["metricSemantics"]["meaningfulW1"],
+        "meaningful_activity_at_age_days_gte_7_and_lt_14_from_first_observed_production_event"
+    );
+    assert_eq!(
+        report["metricSemantics"]["loopW4"],
+        "valid_work_loop_completion_at_age_days_gte_28_and_lt_35_from_first_observed_production_event"
     );
 
     let cohorts = report["retention"].as_array().expect("retention array");
+    assert!(
+        !cohorts
+            .iter()
+            .any(|row| row["cohortDay"] == consent_cohort_day),
+        "consent timestamp must not create an exact retention cohort: {cohorts:?}"
+    );
+    let consent_before_event = find_cohort(cohorts, &first_event_cohort_day);
+    assert_eq!(consent_before_event["eligibleInstallations"], 2);
+    assert_eq!(consent_before_event["loopW4"], Value::Null);
+    assert_eq!(consent_before_event["loopW4Status"], "immature");
+
+    let mut subject_rollup = (0_i64, 0_i64);
+    for _ in 0..80 {
+        subject_rollup = sqlx::query_as(&format!(
+            "SELECT count(*)::bigint, coalesce(sum(event_count), 0)::bigint FROM {DAILY_ROLLUPS} WHERE installation_id='two-subject-installation' AND event_name='organization_created'"
+        ))
+        .fetch_one(&admin)
+        .await
+        .expect("read installation-level two-subject rollup");
+        if subject_rollup == (1, 2) {
+            break;
+        }
+        thread::sleep(StdDuration::from_millis(100));
+    }
+    assert_eq!(
+        subject_rollup,
+        (1, 2),
+        "subjects must aggregate at installation level"
+    );
+
     let w1_day = (today - Duration::days(20)).to_string();
     let w1 = find_cohort(cohorts, &w1_day);
     let precision_rollup: String = sqlx::query_scalar(&format!(
@@ -206,6 +268,246 @@ async fn create_runtime_roles(admin: &PgPool) {
             .await
             .expect("create disposable runtime role");
     }
+}
+
+async fn verify_startup_rejects_privilege_drift(
+    binary: &Path,
+    postgres: &PostgresHarness,
+    binary_sha256: &str,
+    admin: &PgPool,
+) {
+    for privilege in ["SELECT", "INSERT"] {
+        sqlx::query(&format!(
+            "GRANT {privilege} ON {EVENTS} TO rudder_analytics_collector WITH GRANT OPTION"
+        ))
+        .execute(admin)
+        .await
+        .expect("grant raw-event privilege option for startup regression");
+        assert_startup_rejected(
+            binary,
+            postgres,
+            binary_sha256,
+            "product_analytics_database_privilege_denied",
+        );
+        sqlx::query(&format!(
+            "REVOKE GRANT OPTION FOR {privilege} ON {EVENTS} FROM rudder_analytics_collector"
+        ))
+        .execute(admin)
+        .await
+        .expect("revoke only raw-event grant option after startup regression");
+
+        let baseline_privilege_remains: bool = sqlx::query_scalar(&format!(
+            "SELECT has_table_privilege('rudder_analytics_collector', '{EVENTS}', '{privilege}')"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check raw-event baseline privilege after revoking grant option");
+        assert!(
+            baseline_privilege_remains,
+            "revoking {privilege} grant option must preserve the baseline privilege"
+        );
+        let grant_option_remains: bool = sqlx::query_scalar(&format!(
+            "SELECT has_table_privilege('rudder_analytics_collector', '{EVENTS}', '{privilege} WITH GRANT OPTION')"
+        ))
+        .fetch_one(admin)
+        .await
+        .expect("check raw-event grant option was removed");
+        assert!(
+            !grant_option_remains,
+            "revoking {privilege} grant option must remove only that option"
+        );
+    }
+    let accepted_port = unused_loopback_port();
+    let mut accepted_process =
+        CollectorProcess::spawn(binary, postgres, accepted_port, binary_sha256);
+    let accepted_health = wait_for_health(
+        &mut accepted_process,
+        SocketAddr::from(([127, 0, 0, 1], accepted_port)),
+    );
+    assert_eq!(accepted_health["service"], "product-analytics-collector");
+
+    for privilege in ["DELETE", "TRUNCATE"] {
+        sqlx::query(&format!(
+            "GRANT {privilege} ON {EVENTS} TO rudder_analytics_collector"
+        ))
+        .execute(admin)
+        .await
+        .expect("grant collector raw-event privilege for startup regression");
+        assert_startup_rejected(
+            binary,
+            postgres,
+            binary_sha256,
+            "product_analytics_database_privilege_denied",
+        );
+        sqlx::query(&format!(
+            "REVOKE {privilege} ON {EVENTS} FROM rudder_analytics_collector"
+        ))
+        .execute(admin)
+        .await
+        .expect("remove collector raw-event privilege after startup regression");
+    }
+
+    sqlx::query(&format!(
+        "GRANT INSERT, UPDATE, DELETE, TRUNCATE ON {DAILY_ROLLUPS}, rudder_analytics.product_analytics_collector_privacy_aggregates, rudder_analytics.product_analytics_collector_quality_counters TO rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("grant reader write privileges for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_privilege_denied",
+    );
+    sqlx::query(&format!(
+        "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON {DAILY_ROLLUPS}, rudder_analytics.product_analytics_collector_privacy_aggregates, rudder_analytics.product_analytics_collector_quality_counters FROM rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("remove reader write privileges after startup regression");
+
+    sqlx::query(&format!(
+        "GRANT UPDATE (event_count) ON {DAILY_ROLLUPS} TO rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("grant reader column-level write privilege for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_privilege_denied",
+    );
+    sqlx::query(&format!(
+        "REVOKE UPDATE (event_count) ON {DAILY_ROLLUPS} FROM rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("remove reader column-level write privilege after startup regression");
+
+    sqlx::query(&format!(
+        "REVOKE SELECT ON {DAILY_ROLLUPS} FROM rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("remove reader table-level select for startup regression");
+    sqlx::query(&format!(
+        "GRANT SELECT (day) ON {DAILY_ROLLUPS} TO rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("grant reader column-only select for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_privilege_denied",
+    );
+    sqlx::query(&format!(
+        "REVOKE SELECT (day) ON {DAILY_ROLLUPS} FROM rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("remove reader column-only select after startup regression");
+    sqlx::query(&format!(
+        "GRANT SELECT ON {DAILY_ROLLUPS} TO rudder_analytics_reader"
+    ))
+    .execute(admin)
+    .await
+    .expect("restore reader table-level select after startup regression");
+
+    sqlx::query(
+        "GRANT EXECUTE ON FUNCTION rudder_analytics.erase_product_analytics_installation(text) TO rudder_analytics_collector WITH GRANT OPTION",
+    )
+    .execute(admin)
+    .await
+    .expect("grant erase-function execute grant option for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_privilege_denied",
+    );
+    sqlx::query(
+        "REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION rudder_analytics.erase_product_analytics_installation(text) FROM rudder_analytics_collector",
+    )
+    .execute(admin)
+    .await
+    .expect("remove erase-function execute grant option after startup regression");
+
+    sqlx::query("CREATE ROLE rudder_analytics_unexpected_grant NOLOGIN")
+        .execute(admin)
+        .await
+        .expect("create inherited-grant regression role");
+    sqlx::raw_sql(&format!(
+        "GRANT DELETE ON {EVENTS} TO rudder_analytics_unexpected_grant; GRANT rudder_analytics_unexpected_grant TO rudder_analytics_collector"
+    ))
+    .execute(admin)
+    .await
+    .expect("grant inherited raw-event privilege for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_privilege_denied",
+    );
+    sqlx::query("REVOKE rudder_analytics_unexpected_grant FROM rudder_analytics_collector")
+        .execute(admin)
+        .await
+        .expect("remove inherited-grant membership");
+    sqlx::raw_sql(&format!(
+        "REVOKE DELETE ON {EVENTS} FROM rudder_analytics_unexpected_grant"
+    ))
+    .execute(admin)
+    .await
+    .expect("remove inherited raw-event privilege");
+    sqlx::query("DROP ROLE rudder_analytics_unexpected_grant")
+        .execute(admin)
+        .await
+        .expect("drop inherited-grant regression role");
+
+    sqlx::query("CREATE ROLE rudder_analytics_unexpected_member NOLOGIN")
+        .execute(admin)
+        .await
+        .expect("create role-membership regression role");
+    sqlx::query("GRANT rudder_analytics_unexpected_member TO rudder_analytics_reader")
+        .execute(admin)
+        .await
+        .expect("grant empty role membership for startup regression");
+    assert_startup_rejected(
+        binary,
+        postgres,
+        binary_sha256,
+        "product_analytics_database_role_membership_denied",
+    );
+    sqlx::query("REVOKE rudder_analytics_unexpected_member FROM rudder_analytics_reader")
+        .execute(admin)
+        .await
+        .expect("remove role-membership regression grant");
+    sqlx::query("DROP ROLE rudder_analytics_unexpected_member")
+        .execute(admin)
+        .await
+        .expect("drop role-membership regression role");
+}
+
+fn assert_startup_rejected(
+    binary: &Path,
+    postgres: &PostgresHarness,
+    binary_sha256: &str,
+    expected_error: &str,
+) {
+    let mut process =
+        CollectorProcess::spawn(binary, postgres, unused_loopback_port(), binary_sha256);
+    let output = process.wait_for_exit();
+    assert!(
+        !output.status.success(),
+        "collector unexpectedly accepted role drift"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(expected_error),
+        "unexpected startup rejection; wanted {expected_error}, stderr={stderr}"
+    );
 }
 
 fn run_migrations(binary: &Path, database_url: &str) {
@@ -444,6 +746,14 @@ async fn seed_retention_cohorts(admin: &PgPool, now: OffsetDateTime, today: Date
     .execute(admin)
     .await
     .expect("seed exact first-seen event time");
+    sqlx::query(&format!(
+        "UPDATE {INSTALLATIONS} SET first_observed_event_at=$2::timestamptz WHERE installation_id=$1"
+    ))
+    .bind(&w1_installations[1])
+    .bind(format_time(second_first_seen))
+    .execute(admin)
+    .await
+    .expect("seed exact first observed event timestamp");
     insert_event(
         admin,
         &w1_installations[1],
@@ -480,6 +790,60 @@ async fn seed_retention_cohorts(admin: &PgPool, now: OffsetDateTime, today: Date
     );
     seed_cohort(admin, "below-threshold", suppressed, 1).await;
     let _ = now;
+}
+
+async fn seed_consent_before_event_cohort(admin: &PgPool, today: Date) -> (String, String) {
+    let consent_at = at_date(today - Duration::days(45), Time::from_hms(9, 0, 0).unwrap());
+    let first_event_at = at_date(
+        today - Duration::days(15),
+        Time::from_hms(12, 0, 0).unwrap(),
+    );
+    for index in 0..2 {
+        let installation_id = format!("consented-before-event-{index}");
+        sqlx::query(&format!(
+            "INSERT INTO {INSTALLATIONS} (installation_id, mode, consent_version, consent_epoch, analytics_subject, revoked, first_seen_at, last_seen_at, updated_at) VALUES ($1, 'anonymous', 'process-test-v1', 1, NULL, false, $2::timestamptz, $2::timestamptz, now())"
+        ))
+        .bind(&installation_id)
+        .bind(format_time(consent_at))
+        .execute(admin)
+        .await
+        .expect("seed consent timestamp before first production event");
+        insert_event(
+            admin,
+            &installation_id,
+            "organization_created",
+            first_event_at,
+            format!("{:064x}", 20_000 + index),
+            None,
+            None,
+        )
+        .await;
+    }
+    (
+        consent_at.date().to_string(),
+        first_event_at.date().to_string(),
+    )
+}
+
+async fn seed_two_subject_rollup_events(admin: &PgPool, now: OffsetDateTime) {
+    let installation_id = "two-subject-installation";
+    sqlx::query(&format!(
+        "INSERT INTO {INSTALLATIONS} (installation_id, mode, consent_version, consent_epoch, analytics_subject, revoked, first_seen_at, last_seen_at, updated_at) VALUES ($1, 'account_linked', 'process-test-v1', 0, NULL, true, $2::timestamptz, $2::timestamptz, now())"
+    ))
+    .bind(installation_id)
+    .bind(format_time(now))
+    .execute(admin)
+    .await
+    .expect("seed shared installation for two subject rollup");
+    for index in 0..2 {
+        insert_subject_event(
+            admin,
+            installation_id,
+            &format!("{:064x}", 30_000 + index),
+            now - Duration::hours(2),
+        )
+        .await;
+    }
 }
 
 async fn seed_cohort(
@@ -536,6 +900,40 @@ async fn insert_event(
     .execute(admin)
     .await
     .expect("seed raw telemetry event");
+    sqlx::query(&format!(
+        "UPDATE {INSTALLATIONS} SET first_observed_event_at = LEAST(COALESCE(first_observed_event_at, $2::timestamptz), $2::timestamptz) WHERE installation_id = $1"
+    ))
+    .bind(installation_id)
+    .bind(format_time(occurred_at))
+    .execute(admin)
+    .await
+    .expect("persist the seeded first observed event timestamp");
+}
+
+async fn insert_subject_event(
+    admin: &PgPool,
+    installation_id: &str,
+    analytics_subject: &str,
+    occurred_at: OffsetDateTime,
+) {
+    sqlx::query(&format!(
+        "INSERT INTO {EVENTS} (event_id, installation_id, analytics_subject, event_name, schema_version, occurred_at, effective_at, environment, app_version, release_channel, deployment_mode, actor_kind, origin, properties, confidence, is_backfill, late, consent_version, consent_epoch, payload_sha256) VALUES ($1::uuid, $2, $3, 'organization_created', 1, $4::timestamptz, $4::timestamptz, 'production', 'test', 'stable', 'desktop_local', 'user', 'human', '{{}}'::jsonb, 'exact', false, false, 'process-test-v1', 1, repeat('c', 64))"
+    ))
+    .bind(event_uuid(NEXT_EVENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
+    .bind(installation_id)
+    .bind(analytics_subject)
+    .bind(format_time(occurred_at))
+    .execute(admin)
+    .await
+    .expect("seed raw event for account-linked subject");
+    sqlx::query(&format!(
+        "UPDATE {INSTALLATIONS} SET first_observed_event_at = LEAST(COALESCE(first_observed_event_at, $2::timestamptz), $2::timestamptz) WHERE installation_id = $1"
+    ))
+    .bind(installation_id)
+    .bind(format_time(occurred_at))
+    .execute(admin)
+    .await
+    .expect("persist the subject event timestamp");
 }
 
 fn human_work_started_event(event_id: &str, pseudo: &str, occurred_at: OffsetDateTime) -> Value {
@@ -790,6 +1188,34 @@ impl CollectorProcess {
             panic!("spawn hash-identified collector {binary_hash}: {error}")
         });
         Self(child)
+    }
+
+    fn wait_for_exit(&mut self) -> Output {
+        for _ in 0..100 {
+            if let Some(status) = self.0.try_wait().expect("poll collector startup process") {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                self.0
+                    .stdout
+                    .as_mut()
+                    .expect("capture collector stdout")
+                    .read_to_end(&mut stdout)
+                    .expect("read collector stdout");
+                self.0
+                    .stderr
+                    .as_mut()
+                    .expect("capture collector stderr")
+                    .read_to_end(&mut stderr)
+                    .expect("read collector stderr");
+                return Output {
+                    status,
+                    stdout,
+                    stderr,
+                };
+            }
+            thread::sleep(StdDuration::from_millis(50));
+        }
+        panic!("collector remained running with a deliberately invalid role profile");
     }
 }
 

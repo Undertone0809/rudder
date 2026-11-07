@@ -7,7 +7,7 @@ use crate::{
 };
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgPoolOptions};
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const SCHEMA: &str = "rudder_analytics";
@@ -19,6 +19,7 @@ const DAILY_ROLLUPS: &str = "rudder_analytics.product_analytics_collector_daily_
 const PRIVACY_AGGREGATES: &str = "rudder_analytics.product_analytics_collector_privacy_aggregates";
 const WORK_LOOP_REVISIONS: &str =
     "rudder_analytics.product_analytics_collector_work_loop_revisions";
+const MIGRATION_HISTORY: &str = "rudder_analytics._product_analytics_migrations";
 const EXPIRE_EVENTS_FUNCTION: &str =
     "rudder_analytics.expire_product_analytics_raw_events(timestamptz)";
 const ERASE_INSTALLATION_FUNCTION: &str =
@@ -136,102 +137,170 @@ async fn assert_role_boundary(
             "product_analytics_schema_create_denied".into(),
         ));
     }
-    match boundary {
-        RoleBoundary::Collector => {
-            require_table_privilege(pool, RAW_EVENTS, "SELECT").await?;
-            require_table_privilege(pool, RAW_EVENTS, "INSERT").await?;
-            require_table_privilege(pool, INSTALLATIONS, "SELECT").await?;
-            require_table_privilege(pool, INSTALLATIONS, "INSERT").await?;
-            require_table_privilege(pool, INSTALLATIONS, "UPDATE").await?;
-            require_table_privilege(pool, SUBJECTS, "SELECT").await?;
-            require_table_privilege(pool, SUBJECTS, "INSERT").await?;
-            require_table_privilege(pool, SUBJECTS, "UPDATE").await?;
-            require_table_privilege(pool, QUALITY, "INSERT").await?;
-            require_table_privilege(pool, QUALITY, "UPDATE").await?;
-            for function in [
-                EXPIRE_EVENTS_FUNCTION,
-                ERASE_INSTALLATION_FUNCTION,
-                ERASE_SUBJECT_FUNCTION,
-            ] {
-                require_function_privilege(pool, function, "EXECUTE").await?;
+    assert_table_privilege_profile(pool, boundary).await?;
+    assert_function_privilege_profile(pool, boundary).await?;
+    assert_no_role_memberships(pool).await?;
+    Ok(())
+}
+
+async fn assert_table_privilege_profile(
+    pool: &PgPool,
+    boundary: RoleBoundary,
+) -> Result<(), CollectorError> {
+    const TABLES: &[&str] = &[
+        RAW_EVENTS,
+        INSTALLATIONS,
+        SUBJECTS,
+        QUALITY,
+        DAILY_ROLLUPS,
+        PRIVACY_AGGREGATES,
+        WORK_LOOP_REVISIONS,
+        MIGRATION_HISTORY,
+    ];
+    const PRIVILEGES: &[&str] = &[
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    ];
+
+    let rows = sqlx::query(
+        "SELECT n.nspname || '.' || c.relname AS relation_name, p.privilege FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']::text[]) AS p(privilege) WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') AND has_table_privilege(current_user,c.oid,p.privilege)",
+    )
+    .bind(SCHEMA)
+    .fetch_all(pool)
+    .await?;
+    let actual = rows
+        .iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("relation_name")?,
+                row.try_get::<String, _>("privilege")?,
+            ))
+        })
+        .collect::<Result<BTreeSet<_>, sqlx::Error>>()?;
+
+    let has_table_grant_option: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']::text[]) AS p(privilege) WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') AND has_table_privilege(current_user,c.oid,p.privilege || ' WITH GRANT OPTION'))",
+    )
+    .bind(SCHEMA)
+    .fetch_one(pool)
+    .await?;
+    if has_table_grant_option {
+        return Err(CollectorError::Configuration(
+            "product_analytics_database_privilege_denied".into(),
+        ));
+    }
+
+    let has_partial_column_privileges: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']::text[]) AS p(privilege) WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') AND has_column_privilege(current_user,c.oid,a.attnum,p.privilege) AND NOT has_table_privilege(current_user,c.oid,p.privilege))",
+    )
+    .bind(SCHEMA)
+    .fetch_one(pool)
+    .await?;
+    if has_partial_column_privileges {
+        return Err(CollectorError::Configuration(
+            "product_analytics_database_privilege_denied".into(),
+        ));
+    }
+
+    let mut expected = BTreeSet::new();
+    for table in TABLES {
+        for privilege in PRIVILEGES {
+            if table_privilege_allowed(boundary, table, privilege) {
+                expected.insert(((*table).to_owned(), (*privilege).to_owned()));
             }
         }
-        RoleBoundary::Rollup => {
-            require_table_privilege(pool, RAW_EVENTS, "SELECT").await?;
-            require_table_privilege(pool, INSTALLATIONS, "SELECT").await?;
-            for table in [DAILY_ROLLUPS, PRIVACY_AGGREGATES, WORK_LOOP_REVISIONS] {
-                for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-                    require_table_privilege(pool, table, privilege).await?;
-                }
-            }
-            require_table_privilege(pool, QUALITY, "SELECT").await?;
-            require_table_privilege(pool, QUALITY, "DELETE").await?;
-            forbid_table_privileges(
-                pool,
-                RAW_EVENTS,
-                &["INSERT", "UPDATE", "DELETE", "TRUNCATE"],
-            )
-            .await?;
-            forbid_table_privileges(
-                pool,
-                INSTALLATIONS,
-                &["INSERT", "UPDATE", "DELETE", "TRUNCATE"],
-            )
-            .await?;
-            forbid_table_privileges(
-                pool,
-                SUBJECTS,
-                &["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"],
-            )
-            .await?;
-            forbid_table_privileges(pool, QUALITY, &["INSERT", "UPDATE", "TRUNCATE"]).await?;
-            forbid_function_privileges(
-                pool,
-                &[
-                    EXPIRE_EVENTS_FUNCTION,
-                    ERASE_INSTALLATION_FUNCTION,
-                    ERASE_SUBJECT_FUNCTION,
-                ],
-            )
-            .await?;
-        }
-        RoleBoundary::Reader => {
-            for table in [DAILY_ROLLUPS, PRIVACY_AGGREGATES, QUALITY] {
-                require_table_privilege(pool, table, "SELECT").await?;
-            }
-            for table in [RAW_EVENTS, INSTALLATIONS, SUBJECTS, WORK_LOOP_REVISIONS] {
-                let allowed: bool = has_table_privilege(pool, table, "SELECT").await?;
-                if allowed {
-                    return Err(CollectorError::Configuration(
-                        "product_analytics_reader_raw_access".into(),
-                    ));
-                }
-            }
-        }
+    }
+    if actual != expected {
+        return Err(CollectorError::Configuration(
+            "product_analytics_database_privilege_denied".into(),
+        ));
     }
     Ok(())
 }
 
-async fn has_table_privilege(
-    pool: &PgPool,
-    table: &str,
-    privilege: &str,
-) -> Result<bool, CollectorError> {
-    Ok(
-        sqlx::query_scalar("SELECT has_table_privilege(current_user, $1, $2)")
-            .bind(table)
-            .bind(privilege)
-            .fetch_one(pool)
-            .await?,
+fn table_privilege_allowed(boundary: RoleBoundary, table: &str, privilege: &str) -> bool {
+    matches!(
+        (boundary, table, privilege),
+        (RoleBoundary::Collector, RAW_EVENTS, "SELECT" | "INSERT")
+            | (
+                RoleBoundary::Collector,
+                INSTALLATIONS | SUBJECTS | QUALITY,
+                "SELECT" | "INSERT" | "UPDATE",
+            )
+            | (
+                RoleBoundary::Rollup,
+                RAW_EVENTS | INSTALLATIONS | QUALITY,
+                "SELECT"
+            )
+            | (RoleBoundary::Rollup, QUALITY, "DELETE")
+            | (
+                RoleBoundary::Rollup,
+                DAILY_ROLLUPS | PRIVACY_AGGREGATES | WORK_LOOP_REVISIONS,
+                "SELECT" | "INSERT" | "UPDATE" | "DELETE",
+            )
+            | (
+                RoleBoundary::Reader,
+                DAILY_ROLLUPS | PRIVACY_AGGREGATES | QUALITY,
+                "SELECT"
+            )
     )
 }
 
-async fn require_table_privilege(
+async fn assert_function_privilege_profile(
     pool: &PgPool,
-    table: &str,
-    privilege: &str,
+    boundary: RoleBoundary,
 ) -> Result<(), CollectorError> {
-    if !has_table_privilege(pool, table, privilege).await? {
+    let has_security_definer_grant_option: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.prokind IN ('f','p') AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE WITH GRANT OPTION'))",
+    )
+    .bind(SCHEMA)
+    .fetch_one(pool)
+    .await?;
+    if has_security_definer_grant_option {
+        return Err(CollectorError::Configuration(
+            "product_analytics_database_privilege_denied".into(),
+        ));
+    }
+
+    let rows = sqlx::query(
+        "SELECT p.proname AS function_name, pg_catalog.oidvectortypes(p.proargtypes) AS argument_types FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.prokind IN ('f','p') AND has_function_privilege(current_user,p.oid,'EXECUTE')",
+    )
+    .bind(SCHEMA)
+    .fetch_all(pool)
+    .await?;
+    let actual = rows
+        .iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("function_name")?,
+                row.try_get::<String, _>("argument_types")?,
+            ))
+        })
+        .collect::<Result<BTreeSet<_>, sqlx::Error>>()?;
+    let expected = if matches!(boundary, RoleBoundary::Collector) {
+        BTreeSet::from([
+            (
+                "expire_product_analytics_raw_events".to_owned(),
+                "timestamp with time zone".to_owned(),
+            ),
+            (
+                "erase_product_analytics_installation".to_owned(),
+                "text".to_owned(),
+            ),
+            (
+                "erase_product_analytics_subject".to_owned(),
+                "text".to_owned(),
+            ),
+        ])
+    } else {
+        BTreeSet::new()
+    };
+    if actual != expected {
         return Err(CollectorError::Configuration(
             "product_analytics_database_privilege_denied".into(),
         ));
@@ -239,54 +308,16 @@ async fn require_table_privilege(
     Ok(())
 }
 
-async fn forbid_table_privileges(
-    pool: &PgPool,
-    table: &str,
-    privileges: &[&str],
-) -> Result<(), CollectorError> {
-    for privilege in privileges {
-        if has_table_privilege(pool, table, privilege).await? {
-            return Err(CollectorError::Configuration(
-                "product_analytics_database_privilege_denied".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-async fn require_function_privilege(
-    pool: &PgPool,
-    function: &str,
-    privilege: &str,
-) -> Result<(), CollectorError> {
-    let allowed: bool = sqlx::query_scalar("SELECT has_function_privilege(current_user, $1, $2)")
-        .bind(function)
-        .bind(privilege)
-        .fetch_one(pool)
-        .await?;
-    if !allowed {
+async fn assert_no_role_memberships(pool: &PgPool) -> Result<(), CollectorError> {
+    let has_membership: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user))",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_membership {
         return Err(CollectorError::Configuration(
-            "product_analytics_database_privilege_denied".into(),
+            "product_analytics_database_role_membership_denied".into(),
         ));
-    }
-    Ok(())
-}
-
-async fn forbid_function_privileges(
-    pool: &PgPool,
-    functions: &[&str],
-) -> Result<(), CollectorError> {
-    for function in functions {
-        let allowed: bool =
-            sqlx::query_scalar("SELECT has_function_privilege(current_user, $1, 'EXECUTE')")
-                .bind(function)
-                .fetch_one(pool)
-                .await?;
-        if allowed {
-            return Err(CollectorError::Configuration(
-                "product_analytics_database_privilege_denied".into(),
-            ));
-        }
     }
     Ok(())
 }
@@ -520,6 +551,15 @@ async fn insert_or_dedupe(
         .bind(&event.event_name).bind(occurred_at).bind(format_time(now)?).bind(effective_at).bind(&event.environment).bind(&event.app_version).bind(&event.release_channel).bind(&event.deployment_mode).bind(&event.actor_kind).bind(&event.origin).bind(&event.pseudonymous_installation_id).bind(&event.pseudonymous_org_id).bind(&event.pseudonymous_work_id).bind(&event.pseudonymous_work_cycle_id).bind(&event.pseudonymous_root_run_id).bind(&event.pseudonymous_run_id).bind(event.completion_revision).bind(properties).bind(&event.confidence).bind(event.is_backfill).bind(event.late).bind(&authorization.consent_version).bind(database_integer_epoch(authorization.consent_epoch)?).bind(&event.payload_sha256)
         .fetch_optional(&mut **tx).await?;
     if inserted.is_some() {
+        if event.environment == "production" {
+            sqlx::query(&format!(
+                "UPDATE {INSTALLATIONS} SET first_observed_event_at = LEAST(COALESCE(first_observed_event_at, $2::timestamptz), $2::timestamptz) WHERE installation_id = $1"
+            ))
+            .bind(&authorization.installation_id)
+            .bind(occurred_at)
+            .execute(&mut **tx)
+            .await?;
+        }
         return Ok(accepted(&event.event_id, event.late));
     }
     let payload_sha256: String = sqlx::query_scalar(&format!(
@@ -712,6 +752,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/migrations/rust_product_analytics_collector_role_capabilities.sql"
+        )),
+    ),
+    (
+        "rust_product_analytics_collector_first_observed_event.sql",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/rust_product_analytics_collector_first_observed_event.sql"
         )),
     ),
 ];

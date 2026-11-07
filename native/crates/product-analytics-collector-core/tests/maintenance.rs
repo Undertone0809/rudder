@@ -643,6 +643,23 @@ async fn seed_rollup(
     .execute(admin)
     .await
     .map_err(|error| error.to_string())?;
+    sqlx::query(&format!(
+        "INSERT INTO {EVENTS} (event_id, installation_id, event_name, schema_version, occurred_at, effective_at, environment, app_version, release_channel, deployment_mode, actor_kind, origin, properties, confidence, is_backfill, late, consent_version, consent_epoch, payload_sha256) VALUES ($1::uuid, $2, 'human_work_started', 1, $3::timestamptz, $3::timestamptz, 'production', 'test', 'stable', 'desktop_local', 'user', 'human', '{{}}'::jsonb, 'exact', true, true, 'test-v1', 1, repeat('c', 64))"
+    ))
+    .bind(next_event_id())
+    .bind(&installation.id)
+    .bind(format_time(occurred_at)?)
+    .execute(admin)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(&format!(
+        "UPDATE {INSTALLATIONS} SET first_observed_event_at = LEAST(COALESCE(first_observed_event_at, $2::timestamptz), $2::timestamptz) WHERE installation_id = $1"
+    ))
+    .bind(&installation.id)
+    .bind(format_time(occurred_at)?)
+    .execute(admin)
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -923,6 +940,7 @@ async fn verify_migration_history(migrator: &PgPool) -> TestResult<()> {
         "0140_faulty_kitty_pryde.sql",
         "0141_product_analytics_revision_origin.sql",
         "0142_product_analytics_quality_counters.sql",
+        "rust_product_analytics_collector_first_observed_event.sql",
         "rust_product_analytics_collector_role_capabilities.sql",
     ];
     if tags.iter().map(String::as_str).collect::<Vec<_>>() != expected {

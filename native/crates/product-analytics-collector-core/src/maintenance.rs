@@ -26,7 +26,7 @@ pub struct MaintenanceResult {
 struct InstallationCohort {
     installation_id: String,
     cohort_day: String,
-    first_seen_at_us: i64,
+    first_observed_at_us: i64,
 }
 
 struct ValidWorkLoopCompletion {
@@ -45,7 +45,7 @@ struct WorkLoopRetentionAggregate {
     window: &'static str,
     metric_value: i64,
     contributing_installations: i64,
-    latest_first_seen_at_us: i64,
+    latest_first_observed_at_us: i64,
 }
 
 pub async fn run_maintenance(
@@ -185,7 +185,7 @@ async fn rebuild_daily_rollups(
     .execute(&mut **tx)
     .await?;
     let rows = sqlx::query(&format!(
-        "SELECT (occurred_at AT TIME ZONE 'UTC')::date::text AS day, installation_id, event_name, origin, jsonb_build_object('environment', environment, 'app_version', app_version, 'release_channel', release_channel, 'deployment_mode', deployment_mode, 'confidence', confidence, 'analytics_mode', CASE WHEN analytics_subject IS NULL THEN 'anonymous' ELSE 'account_linked' END)::text AS dimensions, count(*)::bigint AS event_count, min(occurred_at)::text AS first_occurred_at, max(occurred_at)::text AS last_occurred_at FROM {RAW_EVENTS} WHERE occurred_at >= $1::timestamptz AND environment='production' AND is_internal=false GROUP BY (occurred_at AT TIME ZONE 'UTC')::date, installation_id, event_name, origin, environment, app_version, release_channel, deployment_mode, confidence, analytics_subject"
+        "SELECT (occurred_at AT TIME ZONE 'UTC')::date::text AS day, installation_id, event_name, origin, jsonb_build_object('environment', environment, 'app_version', app_version, 'release_channel', release_channel, 'deployment_mode', deployment_mode, 'confidence', confidence, 'analytics_mode', CASE WHEN analytics_subject IS NULL THEN 'anonymous' ELSE 'account_linked' END)::text AS dimensions, count(*)::bigint AS event_count, min(occurred_at)::text AS first_occurred_at, max(occurred_at)::text AS last_occurred_at FROM {RAW_EVENTS} WHERE occurred_at >= $1::timestamptz AND environment='production' AND is_internal=false GROUP BY (occurred_at AT TIME ZONE 'UTC')::date, installation_id, event_name, origin, environment, app_version, release_channel, deployment_mode, confidence, CASE WHEN analytics_subject IS NULL THEN 'anonymous' ELSE 'account_linked' END"
     )).bind(from).fetch_all(&mut **tx).await?;
     let mut days = std::collections::BTreeSet::new();
     for row in rows {
@@ -255,7 +255,7 @@ async fn rebuild_privacy_aggregates(
     }
 
     let installation_rows = sqlx::query(&format!(
-        "SELECT installation_id, (first_seen_at AT TIME ZONE 'UTC')::date::text AS cohort_day, floor(extract(epoch FROM first_seen_at) * 1000000)::bigint AS first_seen_at_us FROM {INSTALLATIONS}"
+        "SELECT installation_id, (first_observed_event_at AT TIME ZONE 'UTC')::date::text AS cohort_day, floor(extract(epoch FROM first_observed_event_at) * 1000000)::bigint AS first_observed_at_us FROM {INSTALLATIONS} WHERE first_observed_event_at IS NOT NULL"
     ))
     .fetch_all(&mut **tx)
     .await?;
@@ -264,7 +264,7 @@ async fn rebuild_privacy_aggregates(
         installations.push(InstallationCohort {
             installation_id: row.try_get("installation_id")?,
             cohort_day: row.try_get("cohort_day")?,
-            first_seen_at_us: row.try_get("first_seen_at_us")?,
+            first_observed_at_us: row.try_get("first_observed_at_us")?,
         });
     }
 
@@ -283,7 +283,7 @@ async fn rebuild_privacy_aggregates(
     }
 
     let meaningful_rows = sqlx::query(&format!(
-        "SELECT event.installation_id, floor(extract(epoch FROM min(event.occurred_at)) * 1000000)::bigint AS occurred_at_us FROM {RAW_EVENTS} event JOIN {INSTALLATIONS} installation USING (installation_id) WHERE (installation.first_seen_at AT TIME ZONE 'UTC')::date >= $1::date AND event.environment='production' AND event.is_internal=false AND event.event_name IN ('human_work_started', 'review_decision_recorded', 'work_loop_completed') AND event.occurred_at >= installation.first_seen_at + interval '7 days' AND event.occurred_at < installation.first_seen_at + interval '14 days' GROUP BY event.installation_id"
+        "SELECT event.installation_id, floor(extract(epoch FROM min(event.occurred_at)) * 1000000)::bigint AS occurred_at_us FROM {RAW_EVENTS} event JOIN {INSTALLATIONS} installation USING (installation_id) WHERE (installation.first_observed_event_at AT TIME ZONE 'UTC')::date >= $1::date AND installation.first_observed_event_at IS NOT NULL AND event.environment='production' AND event.is_internal=false AND event.event_name IN ('human_work_started', 'review_decision_recorded', 'work_loop_completed') AND event.occurred_at >= installation.first_observed_event_at + interval '7 days' AND event.occurred_at < installation.first_observed_event_at + interval '14 days' GROUP BY event.installation_id, installation.first_observed_event_at"
     ))
     .bind(revision_cutoff_day)
     .fetch_all(&mut **tx)
@@ -313,7 +313,7 @@ async fn rebuild_privacy_aggregates(
         let dimensions = serde_json::json!({
             "cohort_day": aggregate.cohort_day,
             "window": aggregate.window,
-            "latest_first_seen_at_us": aggregate.latest_first_seen_at_us,
+            "latest_first_observed_at_us": aggregate.latest_first_observed_at_us,
         });
         insert_privacy(
             tx,
@@ -350,8 +350,8 @@ fn build_work_loop_retention_aggregates(
             .insert(installation.installation_id.clone());
         latest_first_seen_by_cohort
             .entry(installation.cohort_day.clone())
-            .and_modify(|latest| *latest = (*latest).max(installation.first_seen_at_us))
-            .or_insert(installation.first_seen_at_us);
+            .and_modify(|latest| *latest = (*latest).max(installation.first_observed_at_us))
+            .or_insert(installation.first_observed_at_us);
         installation_by_id.insert(installation.installation_id.as_str(), installation);
     }
 
@@ -361,7 +361,7 @@ fn build_work_loop_retention_aggregates(
             continue;
         };
         let age_us =
-            i128::from(completion.completed_at_us) - i128::from(installation.first_seen_at_us);
+            i128::from(completion.completed_at_us) - i128::from(installation.first_observed_at_us);
         let retained = retained_by_cohort
             .entry(installation.cohort_day.clone())
             .or_default();
@@ -379,7 +379,7 @@ fn build_work_loop_retention_aggregates(
         if contributing_installations < privacy_threshold {
             continue;
         }
-        let latest_first_seen_at_us = latest_first_seen_by_cohort[&cohort_day];
+        let latest_first_observed_at_us = latest_first_seen_by_cohort[&cohort_day];
         let (w1, w4) = retained_by_cohort.remove(&cohort_day).unwrap_or_default();
         for (window, installations) in [("w1", w1), ("w4", w4)] {
             aggregates.push(WorkLoopRetentionAggregate {
@@ -388,7 +388,7 @@ fn build_work_loop_retention_aggregates(
                 window,
                 metric_value: installations.len() as i64,
                 contributing_installations,
-                latest_first_seen_at_us,
+                latest_first_observed_at_us,
             });
         }
     }
@@ -414,8 +414,8 @@ fn build_meaningful_w1_aggregates(
             .insert(installation.installation_id.clone());
         latest_first_seen_by_cohort
             .entry(installation.cohort_day.clone())
-            .and_modify(|latest| *latest = (*latest).max(installation.first_seen_at_us))
-            .or_insert(installation.first_seen_at_us);
+            .and_modify(|latest| *latest = (*latest).max(installation.first_observed_at_us))
+            .or_insert(installation.first_observed_at_us);
         installation_by_id.insert(installation.installation_id.as_str(), installation);
     }
 
@@ -425,7 +425,7 @@ fn build_meaningful_w1_aggregates(
             continue;
         };
         let age_us =
-            i128::from(activity.occurred_at_us) - i128::from(installation.first_seen_at_us);
+            i128::from(activity.occurred_at_us) - i128::from(installation.first_observed_at_us);
         if (7 * DAY_MICROSECONDS..14 * DAY_MICROSECONDS).contains(&age_us) {
             retained_by_cohort
                 .entry(installation.cohort_day.clone())
@@ -448,7 +448,7 @@ fn build_meaningful_w1_aggregates(
                 window: "w1",
                 metric_value: installations.len() as i64,
                 contributing_installations,
-                latest_first_seen_at_us: latest_first_seen_by_cohort[&cohort_day],
+                latest_first_observed_at_us: latest_first_seen_by_cohort[&cohort_day],
             })
         })
         .collect()
@@ -509,11 +509,11 @@ mod tests {
 
     const DAY_US: i64 = 24 * 60 * 60 * 1_000_000;
 
-    fn installation(id: &str, cohort_day: &str, first_seen_at_us: i64) -> InstallationCohort {
+    fn installation(id: &str, cohort_day: &str, first_observed_at_us: i64) -> InstallationCohort {
         InstallationCohort {
             installation_id: id.to_owned(),
             cohort_day: cohort_day.to_owned(),
-            first_seen_at_us,
+            first_observed_at_us,
         }
     }
 
@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn meaningful_w1_uses_exact_installation_first_seen_microseconds() {
+    fn meaningful_w1_uses_exact_first_observed_event_microseconds() {
         let first_seen = timestamp_us("2026-08-04T10:00:00.123456Z");
         let second_first_seen = first_seen + 5 * 60 * 60 * 1_000_000 + 123_456;
         let installations = vec![
@@ -615,6 +615,6 @@ mod tests {
         assert_eq!(aggregates[0].window, "w1");
         assert_eq!(aggregates[0].metric_value, 1);
         assert_eq!(aggregates[0].contributing_installations, 2);
-        assert_eq!(aggregates[0].latest_first_seen_at_us, second_first_seen);
+        assert_eq!(aggregates[0].latest_first_observed_at_us, second_first_seen);
     }
 }
