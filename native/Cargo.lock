@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-agent-cli-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "reqwest",
  "rudder-agent-contract-core",
@@ -2611,14 +2611,14 @@ dependencies = [
 
 [[package]]
 name = "rudder-agent-contract-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "rudder-agent-request-planner"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-agent-contract-core",
  "serde",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-archive-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-auth-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "hex",
  "hmac 0.12.1",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-authority-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-claude-code"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-native-process-transport",
  "rudder-native-protocol",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-cli"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-agent-cli-core",
  "serde_json",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-cli-mcp-contract-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-workspace-manifest-core",
  "serde",
@@ -2698,7 +2698,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-codex-app-server"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-native-process-transport",
  "rudder-native-protocol",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-cursor-acp-adapter"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "rudder-native-process-transport",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-d1-persistence"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "awc",
  "base64 0.22.1",
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-hermes-acp"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-native-process-transport",
  "rudder-native-protocol",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "serde",
@@ -2798,7 +2798,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-history-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-migration-core",
  "serde",
@@ -2809,7 +2809,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-history-postgres"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-migration-core",
  "rudder-migration-history-core",
@@ -2821,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-service"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "percent-encoding",
@@ -2843,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "crc32fast",
  "rudder-agent-cli-core",
@@ -2860,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-chat-executor"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "actix-codec",
  "actix-http",
@@ -2895,7 +2895,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-process-transport"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-native-protocol",
  "rudder-process-host",
@@ -2906,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-protocol"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-opencode-native"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "awc",
  "futures-util",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-organization-mutation-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-pi-rpc"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "rudder-native-process-transport",
  "rudder-native-protocol",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-plugin-archive-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-postgres-lifecycle"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "serde",
@@ -2976,7 +2976,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-host"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "portable-pty",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-tree-sampler"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "serde_json",
@@ -2996,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-project-goal-link-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "hmac 0.12.1",
  "rudder-auth-core",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-run-evidence-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-attempt-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -3026,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-payload-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "flate2",
  "sha2 0.10.9",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-server-foundation"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "rudder-archive-core",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-server-foundation-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "actix-multipart",
  "actix-web",
@@ -3111,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "rudder-update-helper-core",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "serde",
@@ -3130,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-workspace-manifest-core"
-version = "0.7.24"
+version = "0.7.25"
 dependencies = [
  "libc",
  "notify",
