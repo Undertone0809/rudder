@@ -601,6 +601,10 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-migration-service --test process_tree_windows -- --test-threads=1
 
+      - name: Build native MCP fixture for Agent seed tests
+        if: runner.os != 'Windows'
+        run: cargo build --locked --manifest-path native/Cargo.toml -p rudder-native --bin rudder-native
+
       - name: Rust tests serially
         run: cargo test --locked --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1
 

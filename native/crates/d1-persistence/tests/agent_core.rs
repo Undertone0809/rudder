@@ -1927,9 +1927,49 @@ async fn execute_public_seed_create_for_runtime(
 }
 
 #[cfg(unix)]
+fn stage_native_mcp_for_seed_test() {
+    use std::{io::ErrorKind, os::unix::fs::symlink};
+
+    let executable = std::env::current_exe().expect("Agent core test executable");
+    let executable_dir = executable
+        .parent()
+        .expect("Agent core test executable directory");
+    // Cargo's split build layout keeps tests below <profile>/build.
+    // Recreate the installed sibling contract for the test fixture.
+    if !executable_dir.ends_with("out") {
+        return;
+    }
+    let Some(build_dir) = executable_dir
+        .ancestors()
+        .skip(2)
+        .take(2)
+        .find(|dir| dir.ends_with("build"))
+    else {
+        return;
+    };
+    let profile_dir = build_dir.parent().expect("Cargo profile directory");
+    let native_binary = profile_dir
+        .join("rudder-native")
+        .canonicalize()
+        .expect("build the rudder-native binary before running Agent seed tests");
+    let sibling = executable_dir.join("rudder-native");
+    match symlink(&native_binary, &sibling) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => assert_eq!(
+            sibling
+                .canonicalize()
+                .expect("Agent seed test native MCP sibling"),
+            native_binary,
+        ),
+        Err(error) => panic!("stage Agent seed test native MCP sibling: {error}"),
+    }
+}
+
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn public_first_agent_seed_runs_codex_and_process_fallback_without_persisting_secret_plaintext()
  {
+    stage_native_mcp_for_seed_test();
     let database = Database::start().await;
     seed_public_create_membership(&database).await;
 
@@ -2058,6 +2098,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"h
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn public_first_agent_seed_persists_invalid_profile_for_runtime_auth_warning() {
+    stage_native_mcp_for_seed_test();
     let database = Database::start().await;
     seed_public_create_membership(&database).await;
 
