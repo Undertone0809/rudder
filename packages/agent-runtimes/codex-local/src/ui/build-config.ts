@@ -3,8 +3,7 @@ import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST,
   DEFAULT_CODEX_LOCAL_SEARCH,
-  resolveCodexLocalModel,
-  resolveCodexLocalReasoningEffort,
+  withCodexLocalModelDefaults,
 } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
@@ -70,15 +69,16 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
 }
 
 export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unknown> {
-  const ac: Record<string, unknown> = {};
+  const ac = withCodexLocalModelDefaults({
+    model: v.model.trim(),
+    modelReasoningEffort: v.thinkingEffort.trim(),
+  });
   if (v.cwd) ac.cwd = v.cwd;
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
-  ac.model = resolveCodexLocalModel({ model: v.model });
   const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "codex_local", model: ac.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
-  ac.modelReasoningEffort = resolveCodexLocalReasoningEffort({ modelReasoningEffort: v.thinkingEffort });
   ac.timeoutSec = 0;
   ac.graceSec = 15;
   const env = parseEnvBindings(v.envBindings);

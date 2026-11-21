@@ -29,7 +29,7 @@ import {
   help
 } from "./agent-config-primitives";
 import { AdapterTypeDropdown, RuntimeAdvancedOptions } from "./AgentConfigForm.advanced";
-import { RuntimeEnvironmentStatus, filterRuntimeEnvironmentDisplayChecks, normalizeRuntimeEnvironmentDisplayStatus, shouldShowThinkingEffort, thinkingEffortKeyForRuntime, thinkingEffortLabelForRuntime, thinkingEffortOptionsForRuntime } from "./AgentConfigForm.helpers";
+import { defaultModelForRuntime, filterRuntimeEnvironmentDisplayChecks, normalizeRuntimeEnvironmentDisplayStatus, RuntimeEnvironmentStatus, shouldShowThinkingEffort, thinkingEffortKeyForRuntime, thinkingEffortLabelForRuntime, thinkingEffortOptionsForRuntime } from "./AgentConfigForm.helpers";
 import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
 
 /* ---- Create mode values ---- */
@@ -202,19 +202,24 @@ export function RuntimeProviderCard({
   );
   const requiresProviderModel = requiresExplicitProviderModel(runtimeType);
   const thinkingEffortKey = thinkingEffortKeyForRuntime(runtimeType);
-  const selectedModelMetadata = models.find((candidate) => candidate.id === model);
+  const defaultModel = createValues && runtimeType === "codex_local"
+    ? defaultModelForRuntime(runtimeType, "create")
+    : "";
+  const effortModel = model || defaultModel;
+  const selectedModelMetadata = models.find((candidate) => candidate.id === effortModel);
   const currentThinkingEffort = createValues
     ? createValues.thinkingEffort
     : String(config[thinkingEffortKey] ?? config.reasoningEffort ?? "");
   const currentCursorMode = createValues
     ? createValues.mode ?? ""
     : String(config.mode ?? "");
-  const thinkingEffortOptions = thinkingEffortOptionsForRuntime(runtimeType, model, selectedModelMetadata);
-  const showThinkingEffort = shouldShowThinkingEffort(runtimeType, model, selectedModelMetadata);
+  const thinkingEffortOptions = thinkingEffortOptionsForRuntime(runtimeType, effortModel, selectedModelMetadata);
+  const showThinkingEffort = shouldShowThinkingEffort(runtimeType, effortModel, selectedModelMetadata);
   const shouldClearThinkingEffortOnModelChange = (nextModel: string) => {
     if (!currentThinkingEffort) return false;
-    const nextModelMetadata = models.find((candidate) => candidate.id === nextModel);
-    const supportedEfforts = thinkingEffortOptionsForRuntime(runtimeType, nextModel, nextModelMetadata);
+    const nextEffortModel = nextModel || defaultModel;
+    const nextModelMetadata = models.find((candidate) => candidate.id === nextEffortModel);
+    const supportedEfforts = thinkingEffortOptionsForRuntime(runtimeType, nextEffortModel, nextModelMetadata);
     return !supportedEfforts.some((option) => option.id === currentThinkingEffort);
   };
   const updateThinkingEffort = (value: string) => {

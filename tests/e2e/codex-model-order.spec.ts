@@ -48,9 +48,11 @@ test.describe("Codex model order", () => {
     const modelOptions = page.locator(
       '[data-slot="popover-content"][data-state="open"] [data-inline-entity-option]',
     );
-    await expect(modelOptions).toHaveCount(8);
+    await expect(modelOptions).toHaveCount(10);
     expect(await modelOptions.allTextContents()).toEqual([
       "Default model",
+      "GPT-6.2-Sol",
+      "GPT-6.2-Astra",
       "GPT-5.6-sol",
       "GPT-5.6-terra",
       "GPT-5.6-luna",

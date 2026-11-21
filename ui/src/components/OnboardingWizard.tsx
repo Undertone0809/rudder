@@ -3,9 +3,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import {
-  DEFAULT_CODEX_LOCAL_MODEL,
-  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
-  DEFAULT_CODEX_LOCAL_SEARCH
+  DEFAULT_CODEX_LOCAL_SEARCH,
+  NEW_AGENT_CODEX_LOCAL_MODEL,
+  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import {
@@ -356,7 +356,7 @@ export function OnboardingWizard() {
   const availableThinkingEffortOptions = useMemo(
     () => thinkingEffortOptionsForRuntime(
       agentRuntimeType,
-      model || defaultModelForRuntime(agentRuntimeType),
+      model || defaultModelForRuntime(agentRuntimeType, "create"),
       selectedModelMetadata,
     ),
     [agentRuntimeType, model, selectedModelMetadata],
@@ -379,8 +379,8 @@ export function OnboardingWizard() {
     hasAnthropicApiKeyOverrideCheck;
   function selectRuntimeType(nextType: AdapterType) {
     setAdapterType(nextType);
-    setModel(defaultModelForRuntime(nextType));
-    setThinkingEffort(nextType === "codex_local" ? DEFAULT_CODEX_LOCAL_REASONING_EFFORT : "");
+    setModel(defaultModelForRuntime(nextType, "create"));
+    setThinkingEffort(nextType === "codex_local" ? NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT : "");
     setThinkingEffortOpen(false);
     setCursorMode("");
     setProviderApiKey("");
@@ -391,7 +391,7 @@ export function OnboardingWizard() {
     const nextEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, nextModel);
     const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(
       agentRuntimeType,
-      nextModel || defaultModelForRuntime(agentRuntimeType),
+      nextModel || defaultModelForRuntime(agentRuntimeType, "create"),
       availableAdapterModels.find((candidate) => candidate.id === nextModel),
     );
     setModel(nextModel);
@@ -470,7 +470,7 @@ export function OnboardingWizard() {
       agentRuntimeType,
       model:
         agentRuntimeType === "codex_local"
-          ? model || DEFAULT_CODEX_LOCAL_MODEL
+          ? model || NEW_AGENT_CODEX_LOCAL_MODEL
           : agentRuntimeType === "cursor"
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
           : model,
@@ -1040,7 +1040,7 @@ export function OnboardingWizard() {
                       />
                       {shouldShowThinkingEffort(
                         agentRuntimeType,
-                        model || defaultModelForRuntime(agentRuntimeType),
+                        model || defaultModelForRuntime(agentRuntimeType, "create"),
                         selectedModelMetadata,
                       ) ? (
                         <TooltipProvider>

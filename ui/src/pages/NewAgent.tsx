@@ -13,9 +13,9 @@ import {
 } from "@/lib/organization-skill-source-label";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import {
-  DEFAULT_CODEX_LOCAL_MODEL,
-  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH,
+  NEW_AGENT_CODEX_LOCAL_MODEL,
+  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -70,8 +70,8 @@ function createValuesForAdapterType(
   const { agentRuntimeType: _discard, ...defaults } = defaultCreateValues;
   const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType };
   if (agentRuntimeType === "codex_local") {
-    nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
-    nextValues.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
+    nextValues.model = NEW_AGENT_CODEX_LOCAL_MODEL;
+    nextValues.thinkingEffort = NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT;
     nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
     nextValues.dangerouslyBypassSandbox = false;
     nextValues.codexProfileId = "operator-default";

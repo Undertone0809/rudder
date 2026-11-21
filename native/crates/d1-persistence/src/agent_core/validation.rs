@@ -1111,6 +1111,20 @@ pub(super) fn apply_create_defaults(
     config: &mut Value,
     public_agent_create: bool,
 ) -> Result<()> {
+    apply_runtime_defaults(runtime_type, config, public_agent_create, true)
+}
+
+pub(super) fn apply_update_defaults(runtime_type: &str, config: &mut Value) -> Result<()> {
+    apply_runtime_defaults(runtime_type, config, true, false)
+}
+
+fn apply_runtime_defaults(
+    runtime_type: &str,
+    config: &mut Value,
+    public_agent_create: bool,
+    creating: bool,
+) -> Result<()> {
+    const NEW_CODEX_MODEL: &str = "gpt-6.2-sol";
     let Some(object) = config.as_object_mut() else {
         return Err(unsupported_field("agentRuntimeConfig"));
     };
@@ -1155,7 +1169,12 @@ pub(super) fn apply_create_defaults(
                 .and_then(Value::as_str)
                 .is_none_or(|value| value.trim().is_empty())
             {
-                object.insert("model".to_owned(), json!("gpt-5.6-luna"));
+                let model = if creating {
+                    NEW_CODEX_MODEL
+                } else {
+                    "gpt-5.6-luna"
+                };
+                object.insert("model".to_owned(), json!(model));
             }
             let has_reasoning_effort =
                 ["modelReasoningEffort", "reasoningEffort"]
@@ -1167,7 +1186,15 @@ pub(super) fn apply_create_defaults(
                             .is_some_and(|value| !value.trim().is_empty())
                     });
             if !has_reasoning_effort {
-                object.insert("modelReasoningEffort".to_owned(), json!("medium"));
+                let effort = if creating
+                    && object.get("model").and_then(Value::as_str).map(str::trim)
+                        == Some(NEW_CODEX_MODEL)
+                {
+                    "high"
+                } else {
+                    "medium"
+                };
+                object.insert("modelReasoningEffort".to_owned(), json!(effort));
             }
             if !object.get("search").is_some_and(Value::is_boolean) {
                 object.insert("search".to_owned(), json!(true));
@@ -2270,8 +2297,8 @@ mod tests {
 
         let mut config = json!({"profileId":"operator-default"});
         apply_create_defaults("codex_local", &mut config, true).unwrap();
-        assert_eq!(config["model"], "gpt-5.6-luna");
-        assert_eq!(config["modelReasoningEffort"], "medium");
+        assert_eq!(config["model"], "gpt-6.2-sol");
+        assert_eq!(config["modelReasoningEffort"], "high");
         assert_eq!(config["search"], true);
 
         let mut cursor = json!({});

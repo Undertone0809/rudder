@@ -27,16 +27,28 @@ describe("Codex creation model defaults", () => {
     const source = { model: "  ", reasoningEffort: "", search: false, env: { KEY: "value" } };
     expect(withCodexLocalModelDefaults(source)).toEqual({
       ...source,
-      model: "gpt-5.6-luna",
-      modelReasoningEffort: "medium",
+      model: "gpt-6.2-sol",
+      modelReasoningEffort: "high",
     });
     expect(source.model).toBe("  ");
     expect(source).not.toHaveProperty("modelReasoningEffort");
   });
 
+  it("keeps the established effort for explicitly selected older models and existing agents", () => {
+    expect(withCodexLocalModelDefaults({ model: "gpt-5.5" })).toEqual({
+      model: "gpt-5.5",
+      modelReasoningEffort: "medium",
+    });
+    expect(withCodexLocalModelDefaults({}, "update")).toEqual({
+      model: "gpt-5.6-luna",
+      modelReasoningEffort: "medium",
+    });
+  });
+
   it.each([
     { model: "gpt-5.6-sol", modelReasoningEffort: "ultra" },
     { model: "gpt-5.5", reasoningEffort: "high" },
+    { model: "gpt-6.2-astra", modelReasoningEffort: "ultra" },
   ])("preserves explicit model/effort settings: %j", (config) => {
     expect(withCodexLocalModelDefaults(config)).toEqual(config);
   });

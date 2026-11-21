@@ -590,7 +590,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         adapterAvailability={adapterAvailability}
                         onRuntimeTypeChange={(nextRuntimeType) => {
                           if (isCreate) {
-                            set!(createValuesForRuntime(nextRuntimeType));
+                            set!(createValuesForRuntime(nextRuntimeType, "create"));
                             return;
                           }
                           setOverlay((prev) => ({
