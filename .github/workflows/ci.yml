@@ -178,7 +178,8 @@ jobs:
     name: Affected qualification
     needs: plan
     if: needs.plan.outputs.run_affected == 'true'
-    runs-on: ubuntu-latest
+    # The lockfile's Playwright version supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CI: true
@@ -262,7 +263,8 @@ jobs:
     name: Docs qualification
     needs: plan
     if: needs.plan.outputs.run_docs == 'true'
-    runs-on: ubuntu-latest
+    # The lockfile's Playwright version supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CI: true
