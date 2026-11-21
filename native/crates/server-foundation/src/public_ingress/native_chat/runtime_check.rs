@@ -264,16 +264,13 @@ fn runtime_host_is_ready(process_host: &Path) -> bool {
     let Ok(metadata) = std::fs::metadata(process_host) else {
         return false;
     };
-    if !metadata.is_file() {
-        return false;
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
     }
     #[cfg(not(unix))]
     {
-        true
+        metadata.is_file()
     }
 }

@@ -104,9 +104,11 @@ test.describe("Agent configuration advanced options", () => {
     await page.getByTestId("agent-primary-model").click();
     const primaryModelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     const primaryModelOptions = primaryModelPopover.getByRole("button");
-    await expect(primaryModelOptions).toHaveCount(8);
+    await expect(primaryModelOptions).toHaveCount(10);
     expect(await primaryModelOptions.allTextContents()).toEqual([
       "Default",
+      "GPT-6.2-Sol",
+      "GPT-6.2-Astra",
       "GPT-5.6-sol",
       "GPT-5.6-terra",
       "GPT-5.6-luna",
@@ -132,7 +134,8 @@ test.describe("Agent configuration advanced options", () => {
     await expect(runtimeTypePopover.getByText("HTTP", { exact: true })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByText("Thinking effort", { exact: true }).first()).toBeVisible();
-    const primaryThinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true }).first();
+    const primaryCard = page.locator('[data-runtime-chain-item="primary"]');
+    const primaryThinkingEffortButton = primaryCard.getByRole("button", { name: "Medium", exact: true });
     await expect(primaryThinkingEffortButton).toBeVisible();
     await primaryThinkingEffortButton.click();
     const thinkingEffortPopover = page.locator('[data-radix-popper-content-wrapper]').last();
@@ -241,7 +244,8 @@ test.describe("Agent configuration advanced options", () => {
     });
 
     await expect(page.getByRole("heading", { name: "Naomi", exact: true })).toBeVisible();
-    const primaryThinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true }).first();
+    const primaryCard = page.locator('[data-runtime-chain-item="primary"]');
+    const primaryThinkingEffortButton = primaryCard.getByRole("button", { name: "Medium", exact: true });
     await expect(primaryThinkingEffortButton).toBeVisible();
     await primaryThinkingEffortButton.click();
     await page.locator("[data-radix-popper-content-wrapper]").last().getByText("High", { exact: true }).click();

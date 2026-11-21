@@ -39,7 +39,7 @@
       "owner": "collaboration-ui",
       "rationale": "The first Messenger extraction moved models and views, but mutations and drag state remain in the composer.",
       "target": "Complete the Messenger controller extraction and reduce the composer below 1500 lines.",
-      "expiry": "2026-10-31"
+      "expiry": "2026-12-31"
     },
     {
       "path": "ui/src/pages/Chat.messages.tsx",

@@ -25,6 +25,8 @@ export const CODEX_LOCAL_REASONING_EFFORTS = [
 ] as const;
 
 export const CODEX_LOCAL_REASONING_EFFORTS_BY_MODEL: Record<string, readonly string[]> = {
+  "gpt-6.2-sol": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
+  "gpt-6.2-astra": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
   "gpt-5.6-sol": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
   "gpt-5.6-terra": [...CODEX_LOCAL_REASONING_EFFORTS, "max", "ultra"],
   "gpt-5.6-luna": [...CODEX_LOCAL_REASONING_EFFORTS, "max"],
@@ -40,6 +42,8 @@ function codexModelVariants(model: string): string[] | undefined {
 }
 
 export const models = [
+  { id: "gpt-6.2-sol", label: "GPT-6.2-Sol", variants: codexModelVariants("gpt-6.2-sol") },
+  { id: "gpt-6.2-astra", label: "GPT-6.2-Astra", variants: codexModelVariants("gpt-6.2-astra") },
   { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[0], label: "GPT-5.6-sol", variants: codexModelVariants("gpt-5.6-sol") },
   { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[1], label: "GPT-5.6-terra", variants: codexModelVariants("gpt-5.6-terra") },
   { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[2], label: "GPT-5.6-luna", variants: codexModelVariants("gpt-5.6-luna") },
@@ -56,9 +60,9 @@ Adapter: codex_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
-- model (string, optional): Codex model id; defaults to gpt-5.6-luna
+- model (string, optional): Codex model id. New agents default to gpt-6.2-sol. For existing configurations with no model, the runtime uses gpt-5.6-luna
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- modelReasoningEffort (string, optional, defaults to medium): model-dependent Codex CLI reasoning effort override passed via -c model_reasoning_effort=.... Use the levels declared for the selected model by \`codex debug models\`; the installed catalog exposes low|medium|high|xhigh for standard models, max for Luna, and max|ultra for Sol/Terra.
+- modelReasoningEffort (string, optional): defaults to high when creating a GPT-6.2 Sol agent and medium for other omitted values. Rudder passes the model-dependent reasoning effort to Codex via -c model_reasoning_effort=.... Use the levels declared for the selected model by \`codex debug models\`; GPT-6.2 Sol and Astra support low|medium|high|xhigh|max|ultra.
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional, defaults to true on new Codex agents): run codex with --search
 - countSubscriptionUsageAsCost (boolean, optional, defaults to true): when Codex uses local subscription auth, estimate API-equivalent spend from token usage instead of recording subscription runs as $0. Known-model estimates count toward Rudder spend and budget hard stops. Rates are stored per model from the OpenAI/Codex price table used by Vibe Usage; unknown models remain subscription usage until added.

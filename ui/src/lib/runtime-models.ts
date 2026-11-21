@@ -4,6 +4,9 @@ import { models as cursorLocalModels } from "@rudderhq/agent-runtime-cursor-loca
 import type { AgentRuntimeEnvironmentTestResult } from "@rudderhq/shared";
 import type { AgentRuntimeModel } from "../api/agents";
 
+export const NEW_AGENT_CODEX_LOCAL_MODEL = "gpt-6.2-sol";
+export const NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT = "high";
+
 const FALLBACK_MODELS_BY_RUNTIME: Record<string, readonly AgentRuntimeModel[]> = {
   claude_local: claudeLocalModels,
   codex_local: codexLocalModels,

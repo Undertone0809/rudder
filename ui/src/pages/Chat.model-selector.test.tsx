@@ -50,8 +50,8 @@ describe("chat conversation model options", () => {
     expect(options.slice(0, 4).map((model) => model.id)).toEqual([
       "gpt-5.4",
       "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
+      "gpt-6.2-sol",
+      "gpt-6.2-astra",
     ]);
   });
 

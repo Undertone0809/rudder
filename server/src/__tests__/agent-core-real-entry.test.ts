@@ -1347,8 +1347,8 @@ console.log(JSON.stringify({type:"turn.completed"}));
                 expect(result.body.agentRuntimeConfig.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
                 expect(saved.dangerouslyBypassApprovalsAndSandbox).toBe(expected);
                 if ("dangerouslyBypassSandbox" in config) expect(saved.dangerouslyBypassSandbox).toBe(false);
-                expect(saved.model).toBe("gpt-5.6-luna");
-                expect(saved.modelReasoningEffort).toBe("medium");
+                expect(saved.model).toBe("gpt-6.2-sol");
+                expect(saved.modelReasoningEffort).toBe("high");
                 expect(saved.search).toBe(true);
             }
             nodeNativeIngressPathHits = 0;

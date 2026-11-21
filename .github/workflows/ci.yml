@@ -178,7 +178,8 @@ jobs:
     name: Affected qualification
     needs: plan
     if: needs.plan.outputs.run_affected == 'true'
-    runs-on: ubuntu-latest
+    # The lockfile's Playwright version supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CI: true
@@ -262,7 +263,8 @@ jobs:
     name: Docs qualification
     needs: plan
     if: needs.plan.outputs.run_docs == 'true'
-    runs-on: ubuntu-latest
+    # The lockfile's Playwright version supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CI: true
@@ -598,6 +600,10 @@ jobs:
       - name: Windows migration parent-death preflight
         if: runner.os == 'Windows'
         run: cargo test --locked --manifest-path native/Cargo.toml -p rudder-migration-service --test process_tree_windows -- --test-threads=1
+
+      - name: Build native MCP fixture for Agent seed tests
+        if: runner.os != 'Windows'
+        run: cargo build --locked --manifest-path native/Cargo.toml -p rudder-native --bin rudder-native
 
       - name: Rust tests serially
         run: cargo test --locked --manifest-path native/Cargo.toml --all-targets --no-fail-fast -- --test-threads=1

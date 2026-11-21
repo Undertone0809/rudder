@@ -224,6 +224,13 @@ fn resolve_config<'a>(
     })
 }
 fn installed_process_host() -> Option<PathBuf> {
+    // Cargo can launch tests outside the installed sibling layout.
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("RUDDER_TEST_PROCESS_HOST") {
+        let path = PathBuf::from(path).canonicalize().ok()?;
+        return path.is_file().then_some(path);
+    }
+
     let executable = std::env::current_exe().ok()?;
     let parent = executable.parent()?;
     let parent = if parent.file_name().is_some_and(|name| name == "deps") {

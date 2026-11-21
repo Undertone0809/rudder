@@ -30,17 +30,19 @@ async function expectOnboardingStep(page: Page, text: string) {
 }
 
 async function expectSelectedCodexModel(page: Page) {
-  const modelButton = page.getByRole("button", { name: /gpt-5(?:\.\d+)?(?:-[\w.-]+)?/i });
+  const modelButton = page.getByRole("button", { name: /gpt-[56](?:\.\d+)?(?:-[\w.-]+)?/i });
   await expect(modelButton).toBeVisible();
   const model = (await modelButton.textContent())?.trim();
-  expect(model).toMatch(/^gpt-5(?:\.\d+)?(?:-[\w.-]+)?$/i);
+  expect(model).toMatch(/^gpt-[56](?:\.\d+)?(?:-[\w.-]+)?$/i);
 
   await modelButton.click();
   const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
   const modelOptions = modelPopover.getByRole("button");
-  await expect(modelOptions).toHaveCount(8);
+  await expect(modelOptions).toHaveCount(10);
   expect(await modelOptions.allTextContents()).toEqual([
     "Default",
+    "GPT-6.2-Sol",
+    "GPT-6.2-Astra",
     "GPT-5.6-sol",
     "GPT-5.6-terra",
     "GPT-5.6-luna",
@@ -154,8 +156,8 @@ test.describe("Onboarding wizard", () => {
     await expectSelectedCodexModel(page);
     const onboardingDialog = page.getByTestId("onboarding-dialog");
 
-    const modelButton = onboardingDialog.getByRole("button", { name: "GPT-5.6-luna", exact: true });
-    await onboardingDialog.getByRole("button", { name: "Medium", exact: true }).click();
+    const modelButton = onboardingDialog.getByRole("button", { name: "GPT-6.2-Sol", exact: true });
+    await onboardingDialog.getByRole("button", { name: "High", exact: true }).click();
     await page.locator("[data-radix-popper-content-wrapper]").last()
       .getByText("Max", { exact: true }).click();
     await expect(onboardingDialog.getByRole("button", { name: "Max", exact: true })).toBeVisible();
@@ -441,16 +443,16 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingNameInput).toHaveValue(/\S+/, { timeout: 15_000 });
     await page.getByRole("button", { name: "Codex" }).click();
     const selectedCodexModel = await expectSelectedCodexModel(page);
-    expect(selectedCodexModel).toBe("gpt-5.6-luna");
-    const thinkingEffortButton = page.getByRole("button", { name: "Medium", exact: true });
+    expect(selectedCodexModel).toBe("gpt-6.2-sol");
+    const thinkingEffortButton = page.getByRole("button", { name: "High", exact: true });
     await expect(thinkingEffortButton).toBeVisible();
     await thinkingEffortButton.click();
     const thinkingEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Max", { exact: true })).toBeVisible();
-    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toHaveCount(0);
-    await thinkingEffortPopover.getByText("Medium", { exact: true }).click();
-    await expect(page.getByRole("button", { name: "Medium", exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(thinkingEffortButton).toBeVisible();
     await onboardingNameInput.fill(updatedAgentName);
 
     await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -491,7 +493,7 @@ test.describe("Onboarding wizard", () => {
     expect(rootAgent.title).toBe("Operator Assistant");
     expect(rootAgent.agentRuntimeType).toBe("codex_local");
     expect(rootAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
-    expect(rootAgent.agentRuntimeConfig.modelReasoningEffort).toBe("medium");
+    expect(rootAgent.agentRuntimeConfig.modelReasoningEffort).toBe("high");
 
     const profilesRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/intelligence-profiles`,

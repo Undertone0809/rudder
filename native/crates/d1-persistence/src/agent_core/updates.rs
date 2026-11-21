@@ -103,11 +103,7 @@ pub(super) async fn execute(
         }
 
         let mut effective_config = Value::Object(effective_config);
-        super::validation::apply_create_defaults(
-            &requested_runtime_type,
-            &mut effective_config,
-            true,
-        )?;
+        super::validation::apply_update_defaults(&requested_runtime_type, &mut effective_config)?;
         effective_config =
             super::validation::normalize_update_runtime_config(tx, ctx.org, &effective_config)
                 .await?;
