@@ -505,9 +505,10 @@ jobs:
             arch: x64
             runner: windows-latest
             native_target: x86_64-pc-windows-msvc
+          # Match the Linux foundation artifacts and the locked Playwright runtime.
           - platform: linux
             arch: x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             native_target: x86_64-unknown-linux-gnu
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
@@ -546,9 +547,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: native/target
-          key: rudder-server-foundation-${{ runner.os }}-${{ matrix.native_target }}-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
+          key: rudder-server-foundation-${{ runner.os == 'Linux' && matrix.runner || runner.os }}-${{ matrix.native_target }}-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
           restore-keys: |
-            rudder-server-foundation-${{ runner.os }}-${{ matrix.native_target }}-release-
+            rudder-server-foundation-${{ runner.os == 'Linux' && matrix.runner || runner.os }}-${{ matrix.native_target }}-release-
 
       - name: Enable pnpm
         run: |

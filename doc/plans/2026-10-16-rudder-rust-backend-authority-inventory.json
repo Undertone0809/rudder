@@ -59042,21 +59042,7 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [
-    {
-      "path": "packages/agent-runtimes/codex-local/src/index.ts",
-      "change_kind": "modified_node_compatibility",
-      "node_role": "compatibility_adapter",
-      "base_sha256": "a2023c6ae48b0cd9e79b43b7c6967d3a6759a4a7fa24d3f31a7736cd22b0ea4a",
-      "head_sha256": "96b70afb7bf3decc25b8c640489603401ae5edc697d6ad19c3b870e93a38febf",
-      "rust_authority": "native/crates/d1-persistence/src/agent_core/validation.rs owns public agent configuration defaults and validation.",
-      "compatibility_boundary": "The Codex package supplies static model and effort metadata and configuration documentation. It does not add Node-side default decisions, routes, or writes.",
-      "retirement_criterion": "Retire the Node catalog compatibility metadata when its consumers use Rust-owned capability metadata and the UI has an offline catalog.",
-      "reviewer": "/root/review",
-      "review_reference": "https://github.com/Undertone0809/rudder/pull/406 (independent static catalog review on 2026-11-21)",
-      "review_status": "reviewed"
-    }
-  ],
+  "reviewed_node_changes": [],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {

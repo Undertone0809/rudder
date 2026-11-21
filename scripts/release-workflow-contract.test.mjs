@@ -227,7 +227,11 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toMatch(/platform: macos\n\s+arch: x64/);
     expect(releaseWorkflow).toMatch(/platform: macos\n\s+arch: arm64/);
     expect(releaseWorkflow).toMatch(/platform: windows\n\s+arch: x64/);
-    expect(releaseWorkflow).toMatch(/platform: linux\n\s+arch: x64/);
+    expect(desktop).toMatch(/platform: linux\n\s+arch: x64\n\s+runner: ubuntu-24\.04\n\s+native_target: x86_64-unknown-linux-gnu\n/);
+    const foundations = workflowJob(testWorkflow, "server-foundation-artifacts");
+    for (const target of ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]) {
+      expect(foundations).toMatch(new RegExp(`- runner: ubuntu-24\\.04\\n\\s+target: ${target}\\n`));
+    }
     expect(releaseWorkflow).toContain("Smoke packaged App Builder");
     expect(releaseWorkflow).toContain("Smoke staged PostgreSQL runtime");
     expect(releaseWorkflow).toContain("Smoke packaged account gate");

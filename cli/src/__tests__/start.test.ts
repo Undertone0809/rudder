@@ -2502,7 +2502,8 @@ describe("runtime install helpers", () => {
         expect.objectContaining({ timeout: 42 }),
       );
       await vi.waitFor(async () => {
-        await expect(access(cacheDir)).rejects.toThrow();
+        await expect(access(cacheDir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(access(`${cacheDir}.install.lock`)).rejects.toMatchObject({ code: "ENOENT" });
       });
     } finally {
       await rm(root, { recursive: true, force: true });
