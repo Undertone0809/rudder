@@ -4,8 +4,6 @@ import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_SEARCH,
-  NEW_AGENT_CODEX_LOCAL_MODEL,
-  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import {
@@ -44,6 +42,8 @@ import {
   blockingRuntimeEnvironmentMessage,
   explicitProviderModelError,
   isProviderModelFormat,
+  NEW_AGENT_CODEX_LOCAL_MODEL,
+  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
   requiresExplicitProviderModel,
   resolveRuntimeModels,
   runtimeAuthRecoveryHint,

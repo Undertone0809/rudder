@@ -8,8 +8,6 @@ import {
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH,
-  NEW_AGENT_CODEX_LOCAL_MODEL,
-  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import type { CreateConfigValues, ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
@@ -21,6 +19,7 @@ import type {
 } from "@rudderhq/shared";
 import { getUIAdapter } from "../agent-runtimes";
 import type { AgentRuntimeModel } from "../api/agents";
+import { NEW_AGENT_CODEX_LOCAL_MODEL, NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT } from "../lib/runtime-models";
 import {
   claudeLocalThinkingEffortOptionsForModel,
   codexLocalReasoningEffortOptionsForModel,

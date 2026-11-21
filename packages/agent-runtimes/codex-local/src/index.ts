@@ -3,8 +3,6 @@ export const label = "Codex (local)";
 export {
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
-  NEW_AGENT_CODEX_LOCAL_MODEL,
-  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
   resolveCodexLocalModel,
   resolveCodexLocalReasoningEffort,
   withCodexLocalModelDefaults

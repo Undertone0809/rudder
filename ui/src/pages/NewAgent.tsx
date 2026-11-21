@@ -14,8 +14,6 @@ import {
 import { useNavigate, useSearchParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_SEARCH,
-  NEW_AGENT_CODEX_LOCAL_MODEL,
-  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,7 +28,13 @@ import { defaultModelForRuntime } from "../components/AgentConfigForm.helpers";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
-import { explicitProviderModelError, isProviderModelFormat, requiresExplicitProviderModel } from "../lib/runtime-models";
+import {
+  explicitProviderModelError,
+  isProviderModelFormat,
+  NEW_AGENT_CODEX_LOCAL_MODEL,
+  NEW_AGENT_CODEX_LOCAL_REASONING_EFFORT,
+  requiresExplicitProviderModel,
+} from "../lib/runtime-models";
 import { agentUrl } from "../lib/utils";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntimeType"]>([

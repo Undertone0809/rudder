@@ -136,13 +136,10 @@ export function createApplyCreateDefaultsByAdapterType() {
   return function applyCreateDefaultsByAdapterType(
     agentRuntimeType: string | null | undefined,
     agentRuntimeConfig: Record<string, unknown>,
-    { includeLegacyBypassDefault = true, mode = "create" }: {
-      includeLegacyBypassDefault?: boolean;
-      mode?: "create" | "update";
-    } = {},
+    includeLegacyBypassDefault = true,
   ): Record<string, unknown> {
     const next = agentRuntimeType === "codex_local"
-      ? withCodexLocalModelDefaults(agentRuntimeConfig, mode)
+      ? withCodexLocalModelDefaults(agentRuntimeConfig)
       : { ...agentRuntimeConfig };
     if (agentRuntimeType === "codex_local") {
       const hasBypassFlag =

@@ -345,7 +345,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       ((createInput.agentRuntimeConfig ?? {}) as Record<string, unknown>),
       // Rust owns permission defaults for its public create path. Existing
       // hire, legacy create, and PATCH callers retain their compatibility default.
-      { includeLegacyBypassDefault: !rustReadiness.enabled },
+      !rustReadiness.enabled,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       orgId,
@@ -883,7 +883,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       const effectiveAdapterConfig = applyCreateDefaultsByAdapterType(
         requestedAdapterType,
         rawEffectiveAdapterConfig,
-        { mode: "update" },
       );
       const normalizedEffectiveAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
         existing.orgId,
