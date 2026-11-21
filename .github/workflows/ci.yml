@@ -719,9 +719,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: native/target
-          key: rudder-server-foundation-${{ matrix.runner }}-${{ matrix.target }}-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
+          key: rudder-server-foundation-${{ runner.os == 'Linux' && matrix.runner || runner.os }}-${{ matrix.target }}-release-${{ hashFiles('native/Cargo.lock', 'native/Cargo.toml', 'native/**/Cargo.toml') }}
           restore-keys: |
-            rudder-server-foundation-${{ matrix.runner }}-${{ matrix.target }}-release-
+            rudder-server-foundation-${{ runner.os == 'Linux' && matrix.runner || runner.os }}-${{ matrix.target }}-release-
 
       - name: Install Linux ARM64 cross linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'
