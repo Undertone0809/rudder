@@ -67,6 +67,7 @@ vi.mock("../agent-runtimes", () => ({
       dangerouslySkipPermissions?: boolean;
       dangerouslyBypassSandbox?: boolean;
       codexProfileId?: string;
+      thinkingEffort?: string;
       permissionMode?: string;
       envBindings?: Record<string, unknown>;
     }) => {
@@ -80,6 +81,7 @@ vi.mock("../agent-runtimes", () => ({
       }
       if (agentRuntimeType === "codex_local") {
         config.profileId = values.codexProfileId ?? "operator-default";
+        if (values.thinkingEffort) config.modelReasoningEffort = values.thinkingEffort;
         config.dangerouslyBypassApprovalsAndSandbox = values.dangerouslyBypassSandbox;
       }
       if (values.permissionMode) config.permissionMode = values.permissionMode;
@@ -259,7 +261,7 @@ describe("OnboardingWizard runtime config", () => {
     document.body.innerHTML = "";
   });
 
-  it("defaults Codex onboarding to GPT-5.6 Luna with Medium reasoning", async () => {
+  it("defaults Codex onboarding to GPT-6.2 Sol with High reasoning", async () => {
     vi.mocked(agentsApi.testEnvironment).mockResolvedValue({ agentRuntimeType: "codex_local", status: "pass", testedAt: "2026-06-18T00:00:00.000Z", checks: [] });
     const { OnboardingWizard } = await import("./OnboardingWizard");
     await render(<OnboardingWizard />);
@@ -276,11 +278,17 @@ describe("OnboardingWizard runtime config", () => {
       await flush();
     });
 
-    expect(findButton(surface, "GPT-5.6-luna")).toBeTruthy();
-    expect(findButton(surface, "Medium")).toBeTruthy();
+    expect(findButton(surface, "GPT-6.2-Sol")).toBeTruthy();
+    expect(findButton(surface, "High")).toBeTruthy();
     await act(async () => { click(findButton(surface, "Create")); await flush(); });
     await vi.waitFor(() => expect(agentsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
-      agentRuntimeType: "codex_local", agentRuntimeConfig: expect.objectContaining({ profileId: "operator-default", dangerouslyBypassApprovalsAndSandbox: false }),
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: expect.objectContaining({
+        model: "gpt-6.2-sol",
+        modelReasoningEffort: "high",
+        profileId: "operator-default",
+        dangerouslyBypassApprovalsAndSandbox: false,
+      }),
     })));
   }, 15_000);
 
