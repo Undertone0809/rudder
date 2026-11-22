@@ -126,6 +126,11 @@ jobs:
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
           cargo test --locked --manifest-path native/Cargo.toml \
             --package rudder-server-foundation-core --lib \
+            public_ingress::tests::asset_http_tests::public_assets_persist_sanitize_scope_and_fail_without_node \
+            -- --exact --ignored --nocapture --test-threads=1 \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
             public_ingress::tests::cost_read_http_tests::native_cost_reads_revalidate_scope_and_keep_finance_events_in_rust \
             -- --exact --ignored --nocapture --test-threads=1 \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"

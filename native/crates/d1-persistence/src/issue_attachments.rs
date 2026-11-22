@@ -434,7 +434,7 @@ fn issue_attachment_object_key(org: &str, issue: &str, filename: Option<&str>) -
     )
 }
 
-fn split_filename(filename: Option<&str>) -> (String, String) {
+pub(crate) fn split_filename(filename: Option<&str>) -> (String, String) {
     let basename = filename
         .filter(|value| !value.is_empty())
         .and_then(|value| Path::new(value).file_name())

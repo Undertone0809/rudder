@@ -4704,7 +4704,7 @@
     },
     {
       "path": "server/src/routes/assets.ts",
-      "sha256": "330df11904ef6473eaa737fb7c27368626000465480a06f51d5bc1ef63b07050",
+      "sha256": "a356c945453e8f9892c888be56977ea6352c4a5c6592850bafc7905a3438d786",
       "families": [
         "identity_and_sessions",
         "public_http_and_routes",
@@ -17744,7 +17744,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/assets.ts",
-      "line": 313,
+      "line": 324,
       "signature": "server/src/routes/assets.ts|http-route|router|GET|/assets/:assetId/content",
       "receiver": "router",
       "method": "GET",
@@ -17754,7 +17754,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/assets.ts",
-      "line": 111,
+      "line": 112,
       "signature": "server/src/routes/assets.ts|http-route|router|POST|/orgs/:orgId/assets/images",
       "receiver": "router",
       "method": "POST",
@@ -17764,7 +17764,7 @@
       "type": "http_route",
       "family": "public_http_and_routes",
       "source": "server/src/routes/assets.ts",
-      "line": 214,
+      "line": 220,
       "signature": "server/src/routes/assets.ts|http-route|router|POST|/orgs/:orgId/logo",
       "receiver": "router",
       "method": "POST",
@@ -59042,7 +59042,22 @@
     "excluded_retained_electron_shell_source_files": 116,
     "reason": "Unknown/unclassified Node surfaces or any remaining backend Node source block a full Rust-backend completion claim. Electron shell source is inventoried as an explicit retained exception. Structural inventory is not semantic acceptance."
   },
-  "reviewed_node_changes": [],
+  "reviewed_node_changes": [
+    {
+      "path": "server/src/routes/assets.ts",
+      "change_kind": "modified_node_compatibility",
+      "node_role": "compatibility_adapter",
+      "rust_authority": "native/crates/server-foundation/src/public_ingress/assets.rs; native/crates/d1-persistence/src/assets.rs",
+      "scope": "Return 404 before legacy behavior on the three Asset upload/logo/content handlers only when the existing verified Rust private-hop assertion is present.",
+      "compatibility_boundary": "Registration/request fence only; Rust owns the reserved methods. Ingress-off legacy behavior remains explicit debt; no fallback for verified Rust requests.",
+      "retirement_criterion": "Remove these compatibility handlers with complete Rust default/no-Node cutover.",
+      "reviewer": "/root/messenger_merge_review",
+      "review_reference": "/Users/zeeland/.codex/rudder-rust-delivery/2026-10-28/asset-authority-source-r1/stage-review.md (sha256=cfdf6e056b2e3a4021f1ca90b8cf3ed4239ed580a4a41e50acce3058dd562a8c; source-stage accept)",
+      "review_status": "reviewed",
+      "base_sha256": "330df11904ef6473eaa737fb7c27368626000465480a06f51d5bc1ef63b07050",
+      "head_sha256": "a356c945453e8f9892c888be56977ea6352c4a5c6592850bafc7905a3438d786"
+    }
+  ],
   "reviewed_legacy_fence_changes": [],
   "reviewed_transport_admissions": [
     {
