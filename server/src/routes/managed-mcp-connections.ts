@@ -44,6 +44,8 @@ export interface ManagedMcpConnectionRoutesOptions
   extends ManagedMcpConnectionServiceOptions {
   serverPort: number;
   authPublicBaseUrl?: string | null;
+  /** Rust owns signed Run proxy execution; connection management remains migration debt. */
+  nativeRuntime?: boolean;
 }
 
 export function managedMcpConnectionRoutes(
@@ -66,7 +68,7 @@ export function managedMcpConnectionRoutes(
     createOAuthCredential: (orgId, connectionId) =>
       oauth.createCredential(orgId, connectionId),
   });
-  const runtime = managedMcpRuntimeService(db, {
+  const runtime = options.nativeRuntime ? undefined : managedMcpRuntimeService(db, {
     openClient: (orgId, connectionId, accessMode) =>
       svc.openRuntimeClient(orgId, connectionId, accessMode),
     requireUsableGrant: (orgId, connectionId, executor) =>
@@ -74,7 +76,7 @@ export function managedMcpConnectionRoutes(
   });
   const access = accessService(db);
   const bindings = managedMcpBindingService(db);
-  router.use(managedMcpRuntimeRoutes(runtime));
+  if (runtime) router.use(managedMcpRuntimeRoutes(runtime));
 
   function assertCanRead(req: Request, orgId: string) {
     assertBoard(req);

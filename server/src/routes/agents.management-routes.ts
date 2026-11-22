@@ -73,6 +73,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     db,
     storage,
     rustFoundationBridge,
+    nativeAgentExecution = false,
     svc,
     assets,
     access,
@@ -1030,7 +1031,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
 
 
-  router.post("/agents/:id/wakeup", validate(wakeAgentSchema), async (req, res) => {
+  if (!nativeAgentExecution) router.post("/agents/:id/wakeup", validate(wakeAgentSchema), async (req, res) => {
     const id = req.params.id as string;
     const agent = await svc.getById(id);
     if (!agent) {
@@ -1133,7 +1134,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     });
   });
 
-  router.post("/agents/:id/heartbeat/invoke", async (req, res) => {
+  if (!nativeAgentExecution) router.post("/agents/:id/heartbeat/invoke", async (req, res) => {
     const id = req.params.id as string;
     const agent = await svc.getById(id);
     if (!agent) {

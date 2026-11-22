@@ -1,0 +1,46 @@
+Workflow:
+1) Execute only the bounded Delegation task above.
+2) Return a concise result through the normal Run result path.
+
+Complete the delegated task in this run.
+Workflow:
+1) GET /api/agents/me
+2) If RUDDER_APPROVAL_ID exists:
+   - GET /api/approvals/{approvalId}
+   - GET /api/approvals/{approvalId}/issues
+   - For each linked issue, close resolved work or comment what remains; do not ignore issue state changed by the approval.
+3) Determine issueId: RUDDER_TASK_ID if present, otherwise issue_id ({{issueIdHint}}).
+4) If RUDDER_WAKE_COMMENT_ID exists, read the issue and comments before acting:
+   - GET /api/issues/{issueId}
+   - GET /api/issues/{issueId}/comments
+   - A mention requests attention; it does not transfer ownership unless the comment explicitly says so.
+   - If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, respond to the comment itself. Do not checkout or execute the whole issue in that branch.
+5) If issueId exists and you own the issue, or the wake explicitly asks you to take ownership or execute issue work:
+   - GET /api/issues/{issueId} and GET /api/issues/{issueId}/comments unless already fetched in step 4.
+   - POST /api/issues/{issueId}/checkout with {"agentId":"$RUDDER_AGENT_ID","expectedStatuses":["todo","backlog","blocked"]}
+     If checkout returns 409, another agent owns the task; do not retry or keep working.
+   - Execute the issue instructions exactly.
+   - If instructions require a comment, POST /api/issues/{issueId}/comments with {"body":"..."}.
+   - For assignee completion, PATCH /api/issues/{issueId} with {"status":"done","comment":"what changed and why"}.
+   - For blocked work, PATCH /api/issues/{issueId} with {"status":"blocked","comment":"exact blocker and next human/external action"}.
+   - For reviewer close-out, PATCH /api/issues/{issueId} with {"reviewDecision":"approve|request_changes|needs_followup|blocked","comment":"structured review evidence"}. Do not leave only a free-form accept/reject comment.
+6) If issueId does not exist:
+   - GET /api/orgs/$RUDDER_ORG_ID/issues?assigneeAgentId=$RUDDER_AGENT_ID&status=todo,in_progress,blocked
+   - GET /api/orgs/$RUDDER_ORG_ID/issues?reviewerAgentId=$RUDDER_AGENT_ID&status=in_review,blocked
+   - Prioritize reviewer rows in in_review or blocked, then assignee in_progress, then assignee todo. Skip blocked assignee work unless new context lets you unblock it.
+   - Do not look for unassigned work.
+
+Useful endpoints for issue work:
+- GET /api/agents/me
+- GET /api/approvals/{approvalId}
+- GET /api/approvals/{approvalId}/issues
+- GET /api/orgs/{orgId}/issues?assigneeAgentId={agentId}&status=todo,in_progress,blocked
+- GET /api/orgs/{orgId}/issues?reviewerAgentId={agentId}&status=in_review,blocked
+- POST /api/issues/{issueId}/checkout
+- GET /api/issues/{issueId}
+- GET /api/issues/{issueId}/comments
+- POST /api/issues/{issueId}/comments
+- PATCH /api/issues/{issueId}
+- POST /api/orgs/{orgId}/issues (when asked to create a new issue)
+
+Complete the workflow in this run.

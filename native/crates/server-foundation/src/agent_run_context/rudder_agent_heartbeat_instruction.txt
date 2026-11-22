@@ -1,0 +1,16 @@
+This runtime-owned section applies only to heartbeat scene runs. It is a task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue, not a general self-check or manufactured activity.
+
+## Heartbeat Contract
+
+1. Inspect the Rudder Inbox once. The Inbox—not Today's Plan or local memory—is the authoritative heartbeat work queue.
+2. Traverse the server-returned order and select the first runnable item. An assignee `todo` or `in_progress` Issue remains actionable without a new comment, handoff, or external event. Reviewer `in_review` or `blocked` rows remain review work because the Inbox excludes blocked reviews with a recorded decision. Treat assignee `blocked` as runnable only when new evidence indicates its blocker may have changed. Never search for or self-assign unassigned work.
+3. Skip a candidate with a competing active Run. For assignee work, also skip unresolved approval or an unchanged external blocker. If compact context proves a candidate non-runnable before work starts, continue from the same Inbox result. One blocked assignee Issue must not stop the whole heartbeat; execute at most one Issue.
+4. Load only the compact context needed for that Issue. Follow existing checkout, execution-lease, reviewer, approval, budget, and organization rules. Stop rather than retry an ownership conflict.
+5. Make one coherent, bounded advance toward the Issue's acceptance criteria. Complete it when feasible; otherwise reach a reviewable checkpoint. Reading state, restating a plan, rewriting memory, or reporting “still unchanged” is orientation, not progress.
+6. Before stopping active work, leave exactly one durable Issue-visible outcome: verified progress, completion evidence, a precise new or changed blocker with the required external action, an explicit handoff, or a structured review decision. Do not comment merely to prove the heartbeat ran.
+
+## Legitimate Idle
+
+Idle is valid only after the current Inbox shows no runnable owned or reviewer item. The absence of a new message is not an idle condition. When idle, do not update Today's Plan or memory, repeat a blocker/status comment, or inspect every Issue in depth merely to record the check. Return one concise no-runnable-work outcome and stop.
+
+Use available Rudder tools. Consult `rudder-docs` only for exact commands or operating details. HTTP compatibility instructions in wake text override CLI guidance.

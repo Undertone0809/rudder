@@ -3,6 +3,7 @@
 //! Authentication and HTTP execution deliberately live outside this crate. The
 //! caller supplies trusted runtime identity; model arguments can never replace it.
 
+pub mod desktop_contract;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;

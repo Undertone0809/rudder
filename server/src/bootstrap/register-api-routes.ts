@@ -125,6 +125,7 @@ export function registerApiRoutes(
   api.use(runWorkspaceRoutes(db, rustFoundationBridge));
   api.use(integrationRoutes(db));
   api.use(managedMcpConnectionRoutes(db, {
+    nativeRuntime: Boolean(opts.rustPublicIngress?.identityAuth),
     deploymentMode: opts.deploymentMode,
     serverPort: opts.serverPort,
     authPublicBaseUrl: opts.authPublicBaseUrl,
@@ -151,8 +152,10 @@ export function registerApiRoutes(
   api.use(sidebarBadgeRoutes(db));
   api.use(websiteMetadataRoutes());
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode, instanceId: opts.instanceId }));
-  api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
-  api.use(computerRoutes(db, { deploymentMode: opts.deploymentMode }));
+  if (!opts.rustPublicIngress?.identityAuth) {
+    api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
+    api.use(computerRoutes(db, { deploymentMode: opts.deploymentMode }));
+  }
   api.use(rudderPluginRoutes(db, pluginMcpOptions));
   api.use(
     accessRoutes(db, {

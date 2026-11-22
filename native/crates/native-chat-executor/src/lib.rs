@@ -1,6 +1,7 @@
 //! Private, single-owner Codex turn execution. No public HTTP activation or Run
 //! finalization authority lives here. Every exit retains the admission hold;
 //! provider terminal data and host receipts require a separate finalizer.
+pub mod agent_run;
 mod claude;
 mod cursor;
 mod goal;
@@ -12,7 +13,9 @@ mod pi;
 mod profile;
 mod rudder_instructions;
 mod wire;
-pub use claude::{ClaudeExecutionError, ClaudeExecutionObservation};
+pub use claude::{
+    ClaudeExecutionError, ClaudeExecutionObservation, compose_agent_instruction_context,
+};
 pub use cursor::{CursorExecutionError, CursorExecutionObservation};
 pub use goal::{
     GoalRunExecutionObservation, GoalRunExecutionState, GoalRunExecutorError,

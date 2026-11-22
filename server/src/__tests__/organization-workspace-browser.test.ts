@@ -165,7 +165,7 @@ describe("organization workspace browser", () => {
   });
 
   it("uses required native directory listing without widening mutation authority", async () => {
-    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    const rudderHome = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-")));
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
     process.env.RUDDER_INSTANCE_ID = "test-instance";

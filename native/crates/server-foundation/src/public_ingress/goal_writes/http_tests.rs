@@ -100,10 +100,7 @@ async fn start_ingress_with_runtime(
     }
 }
 
-async fn start_ingress_without_database(
-    node_upstream: &str,
-    native_runtime: crate::NativeChatPublicRuntime,
-) -> RunningIngress {
+async fn start_ingress_without_database(node_upstream: &str, directory: &Path) -> RunningIngress {
     let foundation = Arc::new(
         crate::AppState::new(crate::ServerConfig {
             actor_envelope_key: Some(
@@ -141,8 +138,30 @@ async fn start_ingress_without_database(
     config = config
         .with_browser_auth(browser_auth)
         .unwrap()
-        .with_native_chat_mutation_policy(mutation_policy)
-        .with_native_chat_runtime(native_runtime);
+        .with_native_chat_mutation_policy(mutation_policy);
+    // The generic execution owner is installed, but disabled database routing
+    // must return before it can dispatch or inspect any provider executable.
+    let placeholder = std::env::current_exe().unwrap();
+    config.agent_run_host = Some(Arc::new(crate::agent_run_context::AgentRunContextHost {
+        workspace: rudder_d1_persistence::agent_core::OrganizationWorkspaceHost {
+            instance_root: directory.display().to_string(),
+            workspace_home: directory.join("workspaces").display().to_string(),
+            previous_documents_root: directory.join("old-documents").display().to_string(),
+            friendly_workspace_home: false,
+            hostname: "database-disabled-fixture".into(),
+        },
+        operator_home: directory.into(),
+        process_cwd: directory.into(),
+        executable_search_path: "/usr/bin:/bin".into(),
+        environment: std::collections::BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+        runtime_root: directory.join("runtime"),
+        rudder_cli: placeholder.clone(),
+        process_host: placeholder,
+        api_url: "http://127.0.0.1:1".into(),
+        deployment_mode: "local_trusted".into(),
+        bundled_skills_root: None,
+        desktop_brokers: foundation.desktop_brokers.clone(),
+    }));
     let runtime = PublicIngressRuntime::bind(config, foundation).unwrap();
     let base = format!("http://{}", runtime.bound_addr());
     RunningIngress {
@@ -646,17 +665,9 @@ async fn public_goal_start_preserves_legacy_forwarding_when_native_identity_is_u
 
 #[actix_web::test]
 async fn public_goal_start_stays_native_and_fails_closed_when_database_is_disabled() {
-    let mut host = fixture::FixtureHost::new("public-goal-start-database-disabled");
-    install_goal_start_claude(&mut host);
-    // This request must fail before any provider dispatch, so the test binary
-    // is a safe placeholder and the all-targets suite needs no process-host
-    // executable merely to exercise database-disabled routing.
-    let paths = host.paths_with_process_host(std::env::current_exe().unwrap());
-    let context = host.take_context();
-    let native_runtime =
-        crate::NativeChatPublicRuntime::new(context, paths, Duration::from_secs(30)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
     let (node_url, node_hits, node_requests, node_task) = start_node_sentinel().await;
-    let ingress = start_ingress_without_database(&node_url, native_runtime).await;
+    let ingress = start_ingress_without_database(&node_url, directory.path()).await;
     let body = public_goal_start_body("database-disabled-native-start");
     let path = format!("/api/orgs/{}/goals/start", fixture::ORG);
 

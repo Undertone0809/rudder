@@ -439,8 +439,8 @@ async fn cancel_active_native_goal_runs(
     };
     let sql = format!(
         "SELECT id::text FROM heartbeat_runs WHERE org_id=$1::uuid
-           AND execution_authority='native_rust' AND goal_id IS NOT NULL
-           AND scene='heartbeat' AND target_type='wakeup_request' AND status='running'{agent_filter}
+           AND execution_authority='native_rust'
+           AND scene='heartbeat' AND target_type='wakeup_request' AND status IN ('queued','running'){agent_filter}
          ORDER BY created_at,id"
     );
     let mut query = sqlx::query_scalar::<_, String>(&sql).bind(event.org_id);
@@ -449,7 +449,7 @@ async fn cancel_active_native_goal_runs(
     }
     let run_ids = query.fetch_all(&mut **tx).await?;
     for run_id in run_ids {
-        crate::goal_runs::request_cancel_in_transaction(
+        crate::agent_execution::cancel_heartbeat_in_transaction(
             tx,
             event.org_id,
             &run_id,

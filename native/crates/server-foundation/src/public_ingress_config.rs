@@ -28,6 +28,8 @@ pub struct PublicIngressConfig {
     pub(crate) websocket_cookie_fallback: NativeWebSocketCookieFallback,
     pub(crate) private_host_gate: Option<crate::private_host_gate::NativePrivateHostGate>,
     pub(crate) issue_asset_storage: Option<Arc<NativeIssueAssetStorage>>,
+    pub(crate) managed_mcp_host: Option<Arc<crate::managed_mcp_runtime::Host>>,
+    pub(crate) agent_run_host: Option<Arc<crate::agent_run_context::AgentRunContextHost>>,
 }
 
 /// Trusted installation context required by the explicitly enabled public
@@ -510,6 +512,8 @@ impl PublicIngressConfig {
             websocket_cookie_fallback: NativeWebSocketCookieFallback::SessionCookie,
             private_host_gate: None,
             issue_asset_storage: None,
+            managed_mcp_host: None,
+            agent_run_host: None,
         })
     }
 

@@ -644,8 +644,8 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     }
 
     // A foreign-only short reference must be unresolved in this caller's org
-    // and retain Node's 404 surface instead of selecting a foreign Run and
-    // returning Rust's exact-UUID-style 403.
+    // and retain the 404 surface without selecting a foreign Run or
+    // forwarding an unresolved native control request to Node.
     let foreign_only_id = "deadbeef-0000-4000-8000-000000000001";
     seed_native_goal_run_with_id(
         &database,
@@ -672,7 +672,7 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"], "Agent run not found");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 2);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
 
     // A foreign collision must not make a uniquely in-scope native Goal Run
     // ambiguous. The typed short reference should still reach Rust and leave
@@ -710,7 +710,7 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(body["wakeupRequestId"], scoped_wakeup);
     assert_eq!(body["status"], "running");
     assert_eq!(body["errorCode"], "cancel_requested");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 2);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
     let foreign_collision_error: Option<String> = sqlx::query_scalar(
         "SELECT error_code FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid",
     )
@@ -721,8 +721,8 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     .unwrap();
     assert_eq!(foreign_collision_error, None);
 
-    // Duplicates in the caller's own org remain ambiguous and are delegated
-    // intact to the legacy resolver, which keeps the existing 409 response.
+    // Duplicates in the caller's own org retain the existing 409 response
+    // through the native scoped resolver, without compatibility forwarding.
     let duplicate_native_id = "baddad01-0000-4000-8000-000000000001";
     let duplicate_legacy_id = "baddad01-1111-4000-8000-000000000002";
     seed_native_goal_run_with_id(
@@ -752,7 +752,7 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "Run ID prefix is ambiguous");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
 
     // Node hides every side-chat Run from Agent callers before resolving a
     // prefix. The hidden Run must not make the visible native Goal Run
@@ -785,7 +785,7 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["id"], agent_visible_native_id);
     assert_eq!(body["errorCode"], "cancel_requested");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
 
     // Board callers can see only their own side-chat Runs. A collision with a
     // different user's same-org side chat must still resolve the unique
@@ -818,10 +818,10 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["id"], board_visible_native_id);
     assert_eq!(body["errorCode"], "cancel_requested");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 3);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
 
     // The Board caller's own side-chat Run remains visible, so the same
-    // collision is genuinely ambiguous and keeps Node's 409 response/body.
+    // collision is genuinely ambiguous and keeps the same 409 response/body.
     let board_owned_native_id = "facefeed-0000-4000-8000-000000000001";
     seed_native_goal_run_with_id(
         &database,
@@ -858,25 +858,15 @@ async fn native_goal_agent_run_cancel_owns_auth_transaction_projection_and_legac
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "Run ID prefix is ambiguous");
-    assert_eq!(node_hits.load(Ordering::SeqCst), 4);
+    assert_eq!(node_hits.load(Ordering::SeqCst), 1);
 
     let captured = node_requests.lock().unwrap();
-    assert_eq!(captured.len(), 4);
-    assert_eq!(captured[1].0, foreign_only_path);
     assert_eq!(
-        serde_json::from_slice::<Value>(&captured[1].1).unwrap(),
-        json!({"scope":"foreign-only"})
+        captured.len(),
+        1,
+        "only the explicitly legacy-owned Run reached Node"
     );
-    assert_eq!(captured[2].0, duplicate_path);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&captured[2].1).unwrap(),
-        duplicate_payload
-    );
-    assert_eq!(captured[3].0, board_ambiguous_path);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&captured[3].1).unwrap(),
-        board_ambiguous_payload
-    );
+    assert_eq!(captured[0].0, format!("/api/agent-runs/{legacy_id}/cancel"));
     legacy_ingress.task.abort();
     node_task.abort();
 }

@@ -1,5 +1,9 @@
 //! Transactional Agent and Board Issue checkout authority.
 
+mod native_wakeup;
+use native_wakeup::IssueWakeupAdmission;
+pub(crate) use native_wakeup::{NativeIssueWakeup, enqueue_native_agent_issue_wakeup};
+
 use crate::activity::{ActivityActor, ActivityOptions, ActivityWrite, write_activity_options};
 use crate::agent_core::{NativeAgentAccess, NativeAgentAuthorizer};
 use rudder_auth_core::VerifiedActor;
@@ -447,7 +451,7 @@ async fn resolve_agent_id(tx: &mut Tx<'_>, org: &str, raw: &str) -> Result<Strin
 
 /// Preserve the legacy Board checkout wake contract in the same transaction
 /// as the Issue assignment. The existing Node heartbeat owner remains the
-/// consumer of `legacy_ts` runs; this function owns durable admission only.
+/// consumer of already persisted `legacy_ts` runs; new wakes use the native owner.
 async fn enqueue_board_checkout_wakeup(
     tx: &mut Tx<'_>,
     org: &str,
@@ -473,14 +477,13 @@ async fn enqueue_board_checkout_wakeup(
         kind: "user",
         id: requested_by_user_id,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by)
+    enqueue_issue_wakeup_with_agent(tx, org, issue_id, agent, &wakeup, &requested_by, None, true)
         .await
         .map(|_| ())
 }
 
 /// Admit an assignment or reviewer wakeup in the same transaction as an Issue
-/// mutation. The legacy heartbeat process remains the execution consumer for
-/// the persisted `legacy_ts` wakeup/run rows.
+/// mutation. New intents use native execution; existing legacy rows retain their owner.
 pub(crate) async fn enqueue_issue_core_wakeup(
     tx: &mut Tx<'_>,
     org: &str,
@@ -509,9 +512,21 @@ pub(crate) async fn enqueue_issue_core_wakeup(
         runtime_config: &runtime_config,
         runtime_type: &runtime_type,
     };
-    enqueue_issue_wakeup_with_agent(tx, org, issue_id, &wakeup_agent, wakeup, requested_by).await
+    enqueue_issue_wakeup_with_agent(
+        tx,
+        org,
+        issue_id,
+        &wakeup_agent,
+        wakeup,
+        requested_by,
+        None,
+        true,
+    )
+    .await
+    .map(|admission| admission.run_id)
 }
 
+#[allow(clippy::too_many_arguments)] // Preserve the shared Issue admission and native producer transaction boundary.
 async fn enqueue_issue_wakeup_with_agent(
     tx: &mut Tx<'_>,
     org: &str,
@@ -519,7 +534,25 @@ async fn enqueue_issue_wakeup_with_agent(
     agent: &WakeupAgent<'_>,
     wakeup: &IssueWakeupIntent,
     requested_by: &IssueWakeupActor<'_>,
-) -> std::result::Result<Option<String>, IssueCheckoutError> {
+    native: Option<&NativeIssueWakeup<'_>>,
+    native_producer: bool,
+) -> std::result::Result<IssueWakeupAdmission, IssueCheckoutError> {
+    let native_execution = native_producer || native.is_some();
+    if native_execution {
+        crate::agent_execution::mark_native_write(tx).await?;
+    }
+    let source = native.map(|input| input.source).unwrap_or(wakeup.source);
+    let wake_reason = native
+        .map(|input| input.reason.unwrap_or(""))
+        .unwrap_or(wakeup.reason);
+    let trigger_detail = native
+        .map(|input| input.trigger_detail)
+        .unwrap_or(Some("system"));
+    let authority = if native_execution {
+        "native_rust"
+    } else {
+        "legacy_ts"
+    };
     let wake_on_demand = wake_on_demand_enabled(agent.runtime_config);
     let issue_context = sqlx::query(
         "SELECT i.id::text AS id, i.identifier, i.title, i.description, i.status, i.priority,
@@ -587,15 +620,23 @@ async fn enqueue_issue_wakeup_with_agent(
         "updatedAt": updated_at,
     });
     if let Some(expected_run_id) = wakeup.expected_issue_execution_run_id.as_deref() {
-        let active_matches = execution_run_id.as_deref() == Some(expected_run_id)
+        // Reopening clears the Issue pointer before admitting Steer's continuation.
+        // Keep validating the captured running Run through its existing Issue context;
+        // a pointer to a different Run still means the active execution changed.
+        let active_matches = execution_run_id
+            .as_deref()
+            .is_none_or(|run_id| run_id == expected_run_id)
             && (assignee_agent_id.as_deref() == Some(wakeup.agent_id.as_str())
                 || reviewer_agent_id.as_deref() == Some(wakeup.agent_id.as_str()))
             && sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND status='running')",
+                "SELECT EXISTS(SELECT 1 FROM heartbeat_runs WHERE org_id=$1::uuid AND id=$2::uuid AND agent_id=$3::uuid AND status='running'
+                   AND (id=$4::uuid OR context_snapshot->>'issueId'=$5))",
             )
             .bind(org)
             .bind(expected_run_id)
             .bind(&wakeup.agent_id)
+            .bind(execution_run_id.as_deref())
+            .bind(issue_id)
             .fetch_one(&mut **tx)
             .await?;
         if !active_matches {
@@ -611,7 +652,7 @@ async fn enqueue_issue_wakeup_with_agent(
         "taskKey": issue_id,
         "source": wakeup.context_source,
         "wakeSource": wakeup.wake_source,
-        "wakeReason": wakeup.reason,
+        "wakeReason": wake_reason,
         "wakeTriggerDetail": "system",
         "issue": issue,
     });
@@ -658,6 +699,41 @@ async fn enqueue_issue_wakeup_with_agent(
             .expect("payload is an object")
             .extend(extra.clone());
     }
+    if let Some(input) = native {
+        let hydrated_issue = context["issue"].clone();
+        let project_id = context.get("projectId").cloned();
+        let goal_id = context.get("goalId").cloned();
+        context = input.context.clone();
+        context["issue"] = hydrated_issue;
+        context["issueId"] = json!(issue_id);
+        context["taskId"] = json!(issue_id);
+        if let Some(project_id) = project_id
+            && context
+                .get("projectId")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            context["projectId"] = project_id;
+        }
+        if let Some(goal_id) = goal_id
+            && context
+                .get("goalId")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            context["goalId"] = goal_id;
+        }
+        payload = input.payload.clone();
+    }
+    let goal_id = if native_execution {
+        context
+            .get("goalId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .or(goal_id)
+    } else {
+        goal_id
+    };
     let deferred_payload = deferred_wakeup_payload(&payload, &context);
 
     // Match the legacy heartbeat's invocation preflight before creating a
@@ -677,7 +753,7 @@ async fn enqueue_issue_wakeup_with_agent(
     } else if agent.status == "paused" {
         (
             "deferred_agent_paused",
-            wakeup.reason,
+            wake_reason,
             deferred_payload.clone(),
         )
     } else if !wake_on_demand {
@@ -687,7 +763,7 @@ async fn enqueue_issue_wakeup_with_agent(
             payload.clone(),
         )
     } else {
-        ("queued", wakeup.reason, payload.clone())
+        ("queued", wake_reason, payload.clone())
     };
     let mut linked_run_id: Option<String> = None;
     let mut expected_response_run_id: Option<String> = None;
@@ -696,7 +772,7 @@ async fn enqueue_issue_wakeup_with_agent(
     if status == "queued" {
         let active = sqlx::query(
             "SELECT r.id::text AS id, r.agent_id::text AS agent_id, r.status,
-                    r.terminal_effects_pending, COALESCE(r.context_snapshot->>'issueId','') AS issue_id,
+                    r.terminal_effects_pending,r.context_snapshot,r.goal_id::text AS goal_id, COALESCE(r.context_snapshot->>'issueId','') AS issue_id,
                     a.name AS agent_name
              FROM heartbeat_runs r
              JOIN agents a ON a.org_id=r.org_id AND a.id=r.agent_id
@@ -736,7 +812,25 @@ async fn enqueue_issue_wakeup_with_agent(
                 .trim()
                 .eq_ignore_ascii_case(agent.name.trim())
                 && !terminal_effects_pending
+                && !(native_execution
+                    && active.try_get::<String, _>("status")? == "running"
+                    && context
+                        .get("wakeCommentId")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty()))
             {
+                let merged_context = if native_execution {
+                    let previous = active
+                        .try_get::<Option<Value>, _>("context_snapshot")?
+                        .unwrap_or_else(|| json!({}));
+                    let previous_goal: Option<String> = active.try_get("goal_id")?;
+                    if previous_goal.is_some() && goal_id.is_some() && previous_goal != goal_id {
+                        return Err(http(409, "An active run cannot be coalesced across Goals"));
+                    }
+                    crate::agent_execution::merge_coalesced_context(&previous, &context)
+                } else {
+                    context.clone()
+                };
                 sqlx::query(
                     "UPDATE heartbeat_runs SET context_snapshot=COALESCE(context_snapshot,'{}'::jsonb)||$3::jsonb,
                          goal_id=COALESCE(goal_id,$4::uuid),updated_at=clock_timestamp()
@@ -744,7 +838,7 @@ async fn enqueue_issue_wakeup_with_agent(
                 )
                 .bind(org)
                 .bind(&active_run_id)
-                .bind(context.to_string())
+                .bind(merged_context.to_string())
                 .bind(&goal_id)
                 .execute(&mut **tx)
                 .await?;
@@ -772,7 +866,7 @@ async fn enqueue_issue_wakeup_with_agent(
         }
     }
 
-    if status == "queued" {
+    if status == "queued" && !native_execution {
         let native_goal_run = sqlx::query_scalar::<_, String>(
             "SELECT id::text FROM heartbeat_runs
              WHERE org_id=$1::uuid AND agent_id=$2::uuid
@@ -796,7 +890,7 @@ async fn enqueue_issue_wakeup_with_agent(
             "SELECT id::text AS id, payload, coalesced_count
              FROM agent_wakeup_requests
              WHERE org_id=$1::uuid AND agent_id=$2::uuid AND status=$3
-               AND run_id IS NULL AND payload->>'issueId'=$4
+               AND run_id IS NULL AND payload->>'issueId'=$4 AND execution_authority=$5
              ORDER BY requested_at LIMIT 1
              FOR UPDATE",
         )
@@ -804,12 +898,23 @@ async fn enqueue_issue_wakeup_with_agent(
         .bind(&wakeup.agent_id)
         .bind(status)
         .bind(issue_id)
+        .bind(authority)
         .fetch_optional(&mut **tx)
         .await?;
         if let Some(existing) = existing {
             let existing_id: String = existing.try_get("id")?;
             let existing_payload: Option<Value> = existing.try_get("payload")?;
-            let merged_payload = merge_deferred_wakeup_payload(existing_payload.as_ref(), &payload);
+            let mut merged_payload =
+                merge_deferred_wakeup_payload(existing_payload.as_ref(), &payload);
+            if native_execution {
+                let old_context = existing_payload
+                    .as_ref()
+                    .and_then(|value| value.get("_paperclipWakeContext"))
+                    .unwrap_or(&Value::Null);
+                let incoming_context = payload.get("_paperclipWakeContext").unwrap_or(&Value::Null);
+                merged_payload["_paperclipWakeContext"] =
+                    crate::agent_execution::merge_coalesced_context(old_context, incoming_context);
+            }
             sqlx::query(
                 "UPDATE agent_wakeup_requests SET payload=$3::jsonb,
                    coalesced_count=coalesced_count+1,reason=$4,
@@ -833,29 +938,35 @@ async fn enqueue_issue_wakeup_with_agent(
             .bind(&existing_id)
             .fetch_one(&mut **tx)
             .await?;
-            return Ok(expected_response_run_id.or(run_id));
+            return Ok(IssueWakeupAdmission {
+                wakeup_id: existing_id,
+                run_id: expected_response_run_id.or(run_id),
+                status: status.into(),
+            });
         }
     }
 
     let wakeup_id = sqlx::query_scalar::<_, String>(
         "INSERT INTO agent_wakeup_requests
            (org_id,agent_id,source,trigger_detail,reason,payload,status,execution_authority,
-            requested_by_actor_type,requested_by_actor_id,run_id,finished_at)
-         VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,'legacy_ts',
-            $8,$9,$10::uuid,CASE WHEN $11 THEN clock_timestamp() ELSE NULL END)
+            requested_by_actor_type,requested_by_actor_id,run_id,finished_at,idempotency_key)
+         VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,$12,
+            $8,$9,$10::uuid,CASE WHEN $11 THEN clock_timestamp() ELSE NULL END,$13)
          RETURNING id::text",
     )
     .bind(org)
     .bind(&wakeup.agent_id)
-    .bind(wakeup.source)
-    .bind("system")
-    .bind(reason)
+    .bind(source)
+    .bind(trigger_detail)
+    .bind((!reason.is_empty()).then_some(reason))
     .bind(payload.to_string())
     .bind(status)
     .bind(requested_by.kind)
     .bind(requested_by.id)
     .bind(linked_run_id.as_deref())
     .bind(finished)
+    .bind(authority)
+    .bind(native.and_then(|input| input.idempotency_key))
     .fetch_one(&mut **tx)
     .await?;
 
@@ -901,25 +1012,56 @@ async fn enqueue_issue_wakeup_with_agent(
         } else {
             "none"
         };
+        let (session_params_before, session_id_before, session_reuse_scope) = if native_execution {
+            let selected = crate::agent_execution::select_claim_session(
+                tx,
+                org,
+                &wakeup.agent_id,
+                agent.runtime_type,
+                &context,
+            )
+            .await?;
+            let display = selected.display_id.or_else(|| {
+                selected
+                    .params
+                    .as_ref()
+                    .and_then(|value| value.get("sessionId"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            });
+            (selected.params, display, selected.reuse_scope)
+        } else {
+            (
+                session_params_before,
+                session_id_before,
+                session_reuse_scope,
+            )
+        };
         let run_id = sqlx::query_scalar::<_, String>(
             "INSERT INTO heartbeat_runs
                (org_id,agent_id,invocation_source,trigger_detail,status,wakeup_request_id,
                 execution_authority,goal_id,context_snapshot,session_reuse_scope,
-                session_id_before,session_params_before_json)
+                session_id_before,session_params_before_json,scene,target_type,target_id,idempotency_key,session_intent_json)
              VALUES($1::uuid,$2::uuid,$4,$5,'queued',$3::uuid,
-                'legacy_ts',$6::uuid,$7::jsonb,$8,$9,$10::jsonb)
+                $11,$6::uuid,$7::jsonb,$8,$9,$10::jsonb,
+                CASE WHEN $11='native_rust' THEN 'heartbeat' ELSE NULL END,
+                CASE WHEN $11='native_rust' THEN 'wakeup_request' ELSE NULL END,
+                CASE WHEN $11='native_rust' THEN $3::text ELSE NULL END,
+                CASE WHEN $11='native_rust' THEN 'agent-wakeup:'||$3::text ELSE NULL END,$12::jsonb)
              RETURNING id::text",
         )
         .bind(org)
         .bind(&wakeup.agent_id)
         .bind(&wakeup_id)
-        .bind(wakeup.source)
-        .bind("system")
+        .bind(source)
+        .bind(trigger_detail)
         .bind(&goal_id)
         .bind(context.to_string())
         .bind(session_reuse_scope)
-        .bind(session_id_before)
+        .bind(&session_id_before)
         .bind(session_params_before.as_ref().map(Value::to_string))
+        .bind(authority)
+        .bind(if native_execution {Some(json!({"kind":if session_reuse_scope=="none" {"fresh"} else {"resume"},"reuseScope":session_reuse_scope,"sourceRunId":null,"sessionId":session_id_before,"sessionParams":session_params_before}))} else {None})
         .fetch_one(&mut **tx)
         .await?;
         admitted_run_id = Some(run_id.clone());
@@ -944,7 +1086,11 @@ async fn enqueue_issue_wakeup_with_agent(
         .execute(&mut **tx)
         .await?;
     }
-    Ok(expected_response_run_id.or(admitted_run_id))
+    Ok(IssueWakeupAdmission {
+        wakeup_id,
+        run_id: expected_response_run_id.or(admitted_run_id),
+        status: status.into(),
+    })
 }
 
 fn wake_on_demand_enabled(runtime_config: &Value) -> bool {

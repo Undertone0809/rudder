@@ -138,7 +138,7 @@ pub async fn read_issue_core_with_native_auth(
     Ok(response)
 }
 
-async fn read_issue_collection(
+pub(crate) async fn read_issue_collection(
     tx: &mut Tx<'_>,
     org: &str,
     filters: &Value,

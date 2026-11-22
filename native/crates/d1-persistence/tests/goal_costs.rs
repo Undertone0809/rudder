@@ -100,7 +100,7 @@ async fn finalize_unlaunched_costed_goal(
             .await
             .expect("finalize a no-process Goal result")
     );
-    claim.run_id
+    claim.run_id.clone()
 }
 
 async fn insert_budget_policy(

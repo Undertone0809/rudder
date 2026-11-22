@@ -102,6 +102,8 @@ export async function preparePublicIngressStartup(
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
       deploymentMode: config.deploymentMode,
+      publicApiUrl,
+      ...(config.authPublicBaseUrl ? { authPublicBaseUrl: config.authPublicBaseUrl } : {}),
       privateHostGate: {
         enabled: config.deploymentMode === "authenticated" && config.deploymentExposure === "private",
         allowedHostnames: config.allowedHostnames,

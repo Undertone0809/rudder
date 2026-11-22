@@ -343,18 +343,36 @@ pub fn ensure_project_library(
     command: &ProjectLibraryCommand,
 ) -> Result<ProjectLibraryLayout, ProjectLibraryError> {
     let key = library_key(command)?;
-    if !command.organization_root.is_absolute()
-        || command
-            .organization_root
+    ensure_library_layout(&command.organization_root, &command.project_name, key)
+}
+
+/// The same layout/readme operation for an existing scoped Project. No
+/// Project-create intent, mutation, event or ownership record is created.
+pub fn ensure_existing_project_library(
+    organization_root: &Path,
+    project_id: &str,
+    project_name: &str,
+    project_url_key: &str,
+) -> Result<ProjectLibraryLayout, ProjectLibraryError> {
+    let key = library_key_fields(project_id, project_name, project_url_key)?;
+    ensure_library_layout(organization_root, project_name, key)
+}
+fn ensure_library_layout(
+    organization_root: &Path,
+    project_name: &str,
+    key: String,
+) -> Result<ProjectLibraryLayout, ProjectLibraryError> {
+    if !organization_root.is_absolute()
+        || organization_root
             .components()
             .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
     {
         return Err(ProjectLibraryError::InvalidPath);
     }
-    require_directory(&command.organization_root)?;
+    require_directory(organization_root)?;
     let relative_path = PathBuf::from("projects").join(key);
-    let projects_root = command.organization_root.join("projects");
-    let root = command.organization_root.join(&relative_path);
+    let projects_root = organization_root.join("projects");
+    let root = organization_root.join(&relative_path);
     ensure_directory(&projects_root)?;
     ensure_directory(&root)?;
     let readme_path = root.join("README.md");
@@ -363,7 +381,7 @@ pub fn ensure_project_library(
         .create_new(true)
         .open(&readme_path)
     {
-        Ok(mut file) => file.write_all(readme(&command.project_name).as_bytes())?,
+        Ok(mut file) => file.write_all(readme(project_name).as_bytes())?,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         // Windows CREATE_NEW reports ACCESS_DENIED for an existing directory.
         // Preserve that entry just like Node's wx/EEXIST behavior; a missing
@@ -399,14 +417,25 @@ fn ensure_directory(path: &Path) -> Result<(), ProjectLibraryError> {
 }
 
 fn library_key(command: &ProjectLibraryCommand) -> Result<String, ProjectLibraryError> {
-    let explicit = friendly_key(&command.project_url_key);
-    let name = friendly_key(&command.project_name);
+    library_key_fields(
+        &command.project_id,
+        &command.project_name,
+        &command.project_url_key,
+    )
+}
+fn library_key_fields(
+    project_id: &str,
+    project_name: &str,
+    project_url_key: &str,
+) -> Result<String, ProjectLibraryError> {
+    let explicit = friendly_key(project_url_key);
+    let name = friendly_key(project_name);
     let key = if !explicit.is_empty() {
         explicit
     } else if !name.is_empty() {
         name
     } else {
-        let id = js_trim(&command.project_id);
+        let id = js_trim(project_id);
         if id.is_empty()
             || !id
                 .bytes()
@@ -516,6 +545,30 @@ mod tests {
             ))
     }
 
+    #[test]
+    fn existing_project_wrapper_uses_explicit_runtime_key_and_preserves_custom_readme() {
+        let root = Fixture::new();
+        let layout =
+            ensure_existing_project_library(&root.0, "project-id", "Product.v2", "product-v2")
+                .unwrap();
+        assert_eq!(layout.relative_path, PathBuf::from("projects/product-v2"));
+        fs::write(&layout.readme_path, "custom project readme").unwrap();
+        assert_eq!(
+            ensure_existing_project_library(
+                &root.0,
+                "project-id",
+                "Changed display name",
+                "product-v2"
+            )
+            .unwrap(),
+            layout
+        );
+        assert_eq!(
+            fs::read_to_string(layout.readme_path).unwrap(),
+            "custom project readme"
+        );
+        assert!(!root.0.join("project-create-intents").exists());
+    }
     #[test]
     fn first_create_provisions_instance_data_and_retries_without_replacing_state() {
         let workspace = Fixture::new();

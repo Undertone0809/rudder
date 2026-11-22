@@ -337,7 +337,7 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
     let (missing_status, missing_body) =
         get_json(&client, &missing_detail, Some(&owner_token)).await;
     let (anonymous_status, anonymous) = get_json(&client, &overview, None).await;
-    let mut head_statuses = Vec::new();
+    let mut head_observations = Vec::new();
     for path in [
         format!("{base}/api/orgs/{org_id}/heartbeat-runs"),
         list_agent.clone(),
@@ -350,14 +350,13 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
         normal_operations.clone(),
         active_run.clone(),
     ] {
-        let status = client
-            .head(path)
+        let response = client
+            .head(&path)
             .insert_header((header::AUTHORIZATION, format!("Bearer {owner_token}")))
             .send()
             .await
-            .unwrap()
-            .status();
-        head_statuses.push(status);
+            .unwrap();
+        head_observations.push((path, response.status(), format!("{:?}", response.headers())));
     }
     let mut log_observations = Vec::new();
     for (path, token, status, content) in [
@@ -430,7 +429,7 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
             .send()
             .await
             .unwrap();
-        head_statuses.push(response.status());
+        head_observations.push((path, response.status(), format!("{:?}", response.headers())));
     }
     let before_passthrough = node_requests.load(Ordering::SeqCst);
     let (live_status, live_body) = get_json(
@@ -666,7 +665,14 @@ async fn public_run_reads_revalidate_scope_owner_and_never_fall_back() {
     assert_eq!(missing_body["error"], "Heartbeat run not found");
     assert_eq!(anonymous_status, StatusCode::UNAUTHORIZED);
     assert_eq!(anonymous["error"], "Unauthorized");
-    assert!(head_statuses.iter().all(|status| *status == StatusCode::OK));
+    let failed_heads = head_observations
+        .iter()
+        .filter(|(_, status, _)| *status != StatusCode::OK)
+        .collect::<Vec<_>>();
+    assert!(
+        failed_heads.is_empty(),
+        "Run HEAD requests must retain their GET status; failing path/status/headers: {failed_heads:#?}"
+    );
     assert_eq!(before_passthrough, 0);
     assert_eq!(live_status, StatusCode::OK);
     assert!(live_body.is_array());

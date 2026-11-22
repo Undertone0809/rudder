@@ -44,6 +44,58 @@ impl OrganizationWorkspaceHost {
     }
 }
 
+/// Read-only instruction payload for an already claimed Agent Run. This is
+/// deliberately not serializable: instruction text belongs in the provider
+/// invocation, never in a persisted runtime configuration or diagnostic.
+pub struct AgentRuntimeInstructions {
+    pub agent_home: std::path::PathBuf,
+    pub revision: String,
+    pub source_path: Option<std::path::PathBuf>,
+    pub entry_file: String,
+    pub entry_content: Option<String>,
+    pub sibling_content: Vec<(String, String)>,
+}
+
+/// Share the existing instruction storage/path checks with generic Runs.
+/// This does not reconcile or rewrite a bundle, nor relax AgentCore access.
+pub fn resolve_agent_runtime_instructions(
+    host: &OrganizationWorkspaceHost,
+    org_id: &str,
+    agent: &Value,
+    operator_home: &std::path::Path,
+    cwd: &std::path::Path,
+) -> std::io::Result<AgentRuntimeInstructions> {
+    let instance = std::path::Path::new(&host.instance_root);
+    let workspace = std::path::Path::new(&host.workspace_home);
+    let previous = std::path::Path::new(&host.previous_documents_root);
+    let agent_home = instructions::managed_agent_workspace_path(
+        instance,
+        workspace,
+        previous,
+        host.friendly_workspace_home,
+        org_id,
+        agent,
+    )?;
+    let value = instructions::resolve_readonly_for_runtime(
+        instance,
+        workspace,
+        previous,
+        host.friendly_workspace_home,
+        org_id,
+        agent,
+        operator_home,
+        cwd,
+    )?;
+    Ok(AgentRuntimeInstructions {
+        agent_home,
+        revision: value.revision,
+        source_path: value.source_path,
+        entry_file: value.entry_file,
+        entry_content: value.entry_content,
+        sibling_content: value.sibling_content,
+    })
+}
+
 /// Resolve the configured organization workspace display root without
 /// provisioning or migrating any filesystem state.
 pub fn resolve_organization_workspace_root(

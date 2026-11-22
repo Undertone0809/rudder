@@ -1,0 +1,548 @@
+[
+  {
+    "name": "rudder_computer_list_apps",
+    "description": "List running macOS applications. Use this to identify the exact target before observing it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rudder_computer_launch_app",
+    "description": "Launch an installed application without taking focus. Use the returned pid and window ID to observe it directly.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Exact installed application name."
+        },
+        "bundleId": {
+          "type": "string",
+          "description": "Exact application bundle identifier."
+        },
+        "newInstance": {
+          "type": "boolean",
+          "description": "Request a separate application instance when the platform supports it."
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "name"
+          ]
+        },
+        {
+          "required": [
+            "bundleId"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_list_windows",
+    "description": "List windows for a running application.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "Exact running app name or bundle identifier."
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Running application process identifier."
+        },
+        "windowId": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Exact application window identifier."
+        },
+        "onScreenOnly": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rudder_computer_get_app_state",
+    "description": "Observe one exact application window and return structured UI state plus an optional screenshot. Call this before actions and again after UI-changing actions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "Exact running app name or bundle identifier."
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Running application process identifier."
+        },
+        "windowId": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Exact application window identifier."
+        },
+        "includeScreenshot": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "maxElements": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rudder_computer_click",
+    "description": "Click an element or coordinates from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "x": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "y": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_drag",
+    "description": "Drag between coordinates in a window from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "fromX": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "fromY": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "toX": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "toY": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "fromX",
+        "fromY",
+        "toX",
+        "toY"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_type_text",
+    "description": "Type text into a target from a fresh observation. Typing sensitive data counts as transmission.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "x": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "y": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "delayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_press_key",
+    "description": "Press a key or key chord in a window from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "x": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "y": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "modifiers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cmd",
+              "shift",
+              "option",
+              "alt",
+              "ctrl",
+              "fn"
+            ]
+          },
+          "maxItems": 6
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_scroll",
+    "description": "Scroll a window from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "x": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "y": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "left",
+            "right"
+          ]
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "line",
+            "page"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "direction"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_set_value",
+    "description": "Set the value of an editable element from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 100000
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_select_text",
+    "description": "Select text by dragging between coordinates from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "fromX": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "fromY": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "toX": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "toY": {
+          "type": "number",
+          "minimum": -32768,
+          "maximum": 32768
+        },
+        "deliveryMode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "fromX",
+        "fromY",
+        "toX",
+        "toY"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_perform_secondary_action",
+    "description": "Perform a supported semantic secondary action on an element from a fresh observation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Fresh observation ID returned by get_app_state."
+        },
+        "elementIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "elementToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "show_menu",
+            "pick",
+            "confirm",
+            "cancel",
+            "open"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "rudder_computer_stop",
+    "description": "End this Run's Computer Use session and discard its observations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]

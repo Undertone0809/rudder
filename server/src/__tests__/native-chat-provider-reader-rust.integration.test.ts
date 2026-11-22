@@ -45,8 +45,8 @@ const SESSION_SECRET = "codex-reader-browser-session-fixture-secret";
 
 async function buildCandidate() {
   const child = spawn("cargo", [
-    "build", "--locked", "--release", "--manifest-path", path.join(root, "native/Cargo.toml"),
-    "--bin", "rudder-server-foundation", "--bin", "rudder-process-host", "--message-format=json",
+    "build", "--locked", ...(process.env.CI ? ["--release"] : []), "--manifest-path", path.join(root, "native/Cargo.toml"),
+    "--bin", "rudder-server-foundation", "--bin", "rudder-process-host", "--bin", "rudder-cli", "--message-format=json",
   ], {
     cwd: root,
     env: process.env,
@@ -390,6 +390,8 @@ describe("Codex exact-turn transcript through public Rust-backed HTTP", () => {
       publicIngress: {
         listenAddr: "127.0.0.1:0",
         nodeUpstream: nodeUrl,
+        publicApiUrl: nodeUrl,
+        authPublicBaseUrl: nodeUrl,
         authorizationKey: "codex-reader-public-ingress-fixture-key-32-bytes",
         deploymentMode: "authenticated",
         sessionAuth: {

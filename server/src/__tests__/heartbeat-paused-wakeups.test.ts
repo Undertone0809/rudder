@@ -1456,7 +1456,7 @@ describe("heartbeat paused wakeups", () => {
     });
   });
 
-  it("re-admits a deferred Issue checkout wake after the native Goal owner finishes", async () => {
+  it.each([true, false])("re-admits deferred Issue checkout after native heartbeat owner finishes (Goal: %s)", async (withGoal) => {
     const { orgId, agentId, issuePrefix } = await seedAgentFixture("idle");
     const goalId = randomUUID();
     const issueId = await seedIssue({ orgId, issuePrefix, assigneeAgentId: agentId });
@@ -1465,7 +1465,7 @@ describe("heartbeat paused wakeups", () => {
     const issueWakeupRequestId = randomUUID();
     const now = new Date();
 
-    await db.insert(goals).values({
+    if (withGoal) await db.insert(goals).values({
       id: goalId,
       orgId,
       title: "Native Goal execution",
@@ -1504,8 +1504,8 @@ describe("heartbeat paused wakeups", () => {
         startedAt: now,
         updatedAt: now,
         wakeupRequestId: nativeWakeupRequestId,
-        goalId,
-        contextSnapshot: { goalId, wakeReason: "goal_started" },
+        goalId: withGoal ? goalId : null,
+        contextSnapshot: withGoal ? { goalId, wakeReason: "goal_started" } : { wakeReason: "manual" },
         executionAuthority: "native_rust",
         nativeAdmissionHold: false,
         scene: "heartbeat",

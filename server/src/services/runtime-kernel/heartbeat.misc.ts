@@ -13,7 +13,7 @@ import type {
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
-import { and, asc, eq, gte, inArray, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
@@ -106,7 +106,7 @@ export async function hasActiveNativeGoalRun(tx: any, agentId: string) {
     .where(and(
       eq(heartbeatRuns.agentId, agentId),
       eq(heartbeatRuns.executionAuthority, "native_rust"),
-      isNotNull(heartbeatRuns.goalId),
+      eq(heartbeatRuns.scene, "heartbeat"),
       or(
         inArray(heartbeatRuns.status, ["queued", "running"]),
         eq(heartbeatRuns.terminalEffectsPending, true),
