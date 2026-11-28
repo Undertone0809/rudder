@@ -518,5 +518,26 @@
       "destination": "/zh/concepts/chat-messenger",
       "permanent": true
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/u/s.js",
+      "destination": "https://umami.foundria.dev/script.js"
+    },
+    {
+      "source": "/u/api/send",
+      "destination": "https://umami.foundria.dev/api/send"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin"
+        }
+      ]
+    }
   ]
 }
