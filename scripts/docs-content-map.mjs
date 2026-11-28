@@ -495,10 +495,18 @@ export function renderLlms(manifest, root = REPO_ROOT) {
 export function generatedArtifacts(manifest, root = REPO_ROOT) {
   const docsJson = JSON.parse(fs.readFileSync(path.join(root, DOCS_JSON_PATH), "utf8"));
   docsJson.redirects = expectedRedirects(manifest, "mintlify");
+  const vercelProduction = {
+    redirects: expectedRedirects(manifest, "vercel", { environment: "production" }),
+    rewrites: [
+      { source: "/u/s.js", destination: "https://umami.foundria.dev/script.js" },
+      { source: "/u/api/send", destination: "https://umami.foundria.dev/api/send" },
+    ],
+    headers: [{ source: "/(.*)", headers: [{ key: "Referrer-Policy", value: "strict-origin" }] }],
+  };
   return {
     docsJson: `${JSON.stringify(docsJson, null, 2)}\n`,
     llms: renderLlms(manifest, root),
-    vercelProduction: `${JSON.stringify({ redirects: expectedRedirects(manifest, "vercel", { environment: "production" }) }, null, 2)}\n`,
+    vercelProduction: `${JSON.stringify(vercelProduction, null, 2)}\n`,
   };
 }
 
